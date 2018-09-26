@@ -1,0 +1,153 @@
+// Copyright 2017 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use std::cmp::{Ord, Ordering, Reverse};
+use std::collections::BinaryHeap;
+use std::sync::mpsc;
+use std::thread::Builder;
+use std::time::Duration;
+use tokio_timer::{self, timer::Handle};
+use util::time::Instant;
+
+pub struct Timer<T> {
+    pending: BinaryHeap<Reverse<TimeoutTask<T>>>,
+}
+
+impl<T> Timer<T> {
+    pub fn new(capacity: usize) -> Self {
+        Timer {
+            pending: BinaryHeap::with_capacity(capacity),
+        }
+    }
+
+    /// Add a periodic task into the `Timer`.
+    pub fn add_task(&mut self, timeout: Duration, task: T) {
+        let task = TimeoutTask {
+            next_tick: Instant::now() + timeout,
+            task,
+        };
+        self.pending.push(Reverse(task));
+    }
+
+    /// Get the next `timeout` from the timer.
+    pub fn next_timeout(&mut self) -> Option<Instant> {
+        self.pending.peek().map(|task| task.0.next_tick)
+    }
+
+    /// Pop a `TimeoutTask` from the `Timer`, which should be tick before `instant`.
+    /// If there is no tasks should be ticked any more, None will be returned.
+    ///
+    /// The normal use case is keeping `pop_task_before` until get `None` in order
+    /// to retreive all avaliable events.
+    pub fn pop_task_before(&mut self, instant: Instant) -> Option<T> {
+        if self
+            .pending
+            .peek()
+            .map_or(false, |t| t.0.next_tick <= instant)
+        {
+            return self.pending.pop().map(|t| t.0.task);
+        }
+        None
+    }
+}
+
+#[derive(Debug)]
+struct TimeoutTask<T> {
+    next_tick: Instant,
+    task: T,
+}
+
+impl<T> PartialEq for TimeoutTask<T> {
+    fn eq(&self, other: &TimeoutTask<T>) -> bool {
+        self.next_tick == other.next_tick
+    }
+}
+
+impl<T> Eq for TimeoutTask<T> {}
+
+impl<T> PartialOrd for TimeoutTask<T> {
+    fn partial_cmp(&self, other: &TimeoutTask<T>) -> Option<Ordering> {
+        self.next_tick.partial_cmp(&other.next_tick)
+    }
+}
+
+impl<T> Ord for TimeoutTask<T> {
+    fn cmp(&self, other: &TimeoutTask<T>) -> Ordering {
+        // TimeoutTask.next_tick must have same type of instants.
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+lazy_static! {
+    pub static ref GLOBAL_TIMER_HANDLE: Handle = start_global_timer();
+}
+
+fn start_global_timer() -> Handle {
+    let (tx, rx) = mpsc::channel();
+    Builder::new()
+        .name(thd_name!("timer"))
+        .spawn(move || {
+            let mut timer = tokio_timer::Timer::default();
+            tx.send(timer.handle()).unwrap();
+            loop {
+                timer.turn(None).unwrap();
+            }
+        }).unwrap();
+    rx.recv().unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::Future;
+    use std::sync::mpsc::RecvTimeoutError;
+    use std::sync::mpsc::{self, Sender};
+
+    #[derive(Debug, PartialEq, Eq, Copy, Clone)]
+    enum Task {
+        A,
+        B,
+        C,
+    }
+
+    #[test]
+    fn test_timer() {
+        let mut timer = Timer::new(10);
+        timer.add_task(Duration::from_millis(20), Task::A);
+        timer.add_task(Duration::from_millis(150), Task::C);
+        timer.add_task(Duration::from_millis(100), Task::B);
+        assert_eq!(timer.pending.len(), 3);
+
+        let tick_time = timer.next_timeout().unwrap();
+        assert_eq!(timer.pop_task_before(tick_time).unwrap(), Task::A);
+        assert_eq!(timer.pop_task_before(tick_time), None);
+
+        let tick_time = timer.next_timeout().unwrap();
+        assert_eq!(timer.pop_task_before(tick_time).unwrap(), Task::B);
+        assert_eq!(timer.pop_task_before(tick_time), None);
+
+        let tick_time = timer.next_timeout().unwrap();
+        assert_eq!(timer.pop_task_before(tick_time).unwrap(), Task::C);
+        assert_eq!(timer.pop_task_before(tick_time), None);
+    }
+
+    #[test]
+    fn test_global_timer() {
+        let handle = super::GLOBAL_TIMER_HANDLE.clone();
+        let delay =
+            handle.delay(::std::time::Instant::now() + ::std::time::Duration::from_millis(100));
+        let timer = Instant::now();
+        delay.wait().unwrap();
+        assert!(timer.elapsed() >= Duration::from_millis(100));
+    }
+}
