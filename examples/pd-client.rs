@@ -23,7 +23,7 @@ fn main() {
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:3379".to_string());
     let addr = vec![addr.as_str()];
-    let pd_client = PdClient::new(&addr, Arc::clone(&security_manager))
+    let pd_client = PdRpcClient::new(&addr, Arc::clone(&security_manager))
         .unwrap_or_else(|e| panic!("failed to create rpc client: {:?}", e));
 
     println!("Cluster ID: {}", pd_client.get_cluster_id().unwrap());
