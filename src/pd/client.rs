@@ -18,10 +18,11 @@ use std::time::{Duration, Instant};
 use futures::Future;
 use grpc::{CallOption, EnvBuilder};
 use kvproto::metapb;
-use kvproto::pdpb::{GetStoreRequest, GetRegionByIDRequest, GetRegionRequest, Member};
+use kvproto::pdpb::{GetRegionByIDRequest, GetRegionRequest, GetStoreRequest, Member};
 
 use super::leader::{check_resp_header, validate_endpoints, LeaderClient, Request};
 use super::{Error, PdClient, RegionInfo, Result, PD_REQUEST_HISTOGRAM_VEC, REQUEST_TIMEOUT};
+use futures::sync::oneshot;
 use pd::{PdFuture, PdTimestamp};
 use util::security::SecurityManager;
 use util::time::duration_to_sec;
@@ -103,7 +104,7 @@ impl PdRpcClient {
                 Ok((region, leader))
             })) as PdFuture<_>
         };
-        self.request(req, executor, LEADER_CHANGE_RETRY).execute()
+        self.request(req, executor, LEADER_CHANGE_RETRY)
     }
 
     fn get_store_async(&self, store_id: u64) -> impl Future<Item = metapb::Store, Error = Error> {
@@ -127,7 +128,7 @@ impl PdRpcClient {
             })) as PdFuture<_>
         };
 
-        self.request(req, executor, LEADER_CHANGE_RETRY).execute()
+        self.request(req, executor, LEADER_CHANGE_RETRY)
     }
 
     pub fn get_cluster_id(&self) -> Result<u64> {
@@ -139,13 +140,24 @@ impl PdRpcClient {
         leader.on_reconnect = Some(f);
     }
 
-    pub fn request<Req, Resp, F>(&self, req: Req, func: F, retry: usize) -> Request<Req, Resp, F>
+    pub fn request<Req, Resp, F>(&self, req: Req, func: F, retry: usize) -> PdFuture<Resp>
     where
         Req: Clone + Send + 'static,
-        Resp: Send + 'static,
+        Resp: Send + fmt::Debug + 'static,
         F: FnMut(&RwLock<LeaderClient>, Req) -> PdFuture<Resp> + Send + 'static,
     {
-        Request::new(req, func, Arc::clone(&self.leader), retry)
+        let future = Request::new(req, func, Arc::clone(&self.leader), retry).execute();
+        let (tx, rx) = oneshot::channel();
+        let future = Box::new(
+            future
+                .and_then(move |resp| {
+                    tx.send(resp).unwrap();
+                    Ok(())
+                })
+                .map_err(|e| panic!("{}", e))
+        );
+        self.leader.wl().schedule(future);
+        Box::new(rx.map_err(Error::Canceled).and_then(Ok))
     }
 }
 
@@ -198,7 +210,7 @@ impl PdClient for PdRpcClient {
             })) as PdFuture<_>
         };
 
-        self.request(req, executor, LEADER_CHANGE_RETRY).execute()
+        self.request(req, executor, LEADER_CHANGE_RETRY)
     }
 
     fn get_ts(&self) -> PdFuture<PdTimestamp> {

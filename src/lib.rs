@@ -38,6 +38,6 @@ extern crate lazy_static;
 #[cfg(target_os = "linux")]
 extern crate libc;
 
-pub mod pd;
 #[macro_use]
 pub mod util;
+pub mod pd;

@@ -23,17 +23,6 @@ use util::time::duration_to_sec;
 use util::timer::GLOBAL_TIMER_HANDLE;
 use util::HandyRwLock;
 
-macro_rules! box_err {
-    ($e:expr) => ({
-        use std::error::Error;
-        let e: Box<Error + Sync + Send> = format!("[{}:{}]: {}", file!(), line!(),  $e).into();
-        e.into()
-    });
-    ($f:tt, $($arg:expr),+) => ({
-        box_err!(format!($f, $($arg),+))
-    });
-}
-
 macro_rules! request {
     ($cluster_id:expr, $type:ty) => {{
         let mut request = <$type>::new();
@@ -46,24 +35,27 @@ macro_rules! request {
 
 type TsoChannel = oneshot::Sender<PdTimestamp>;
 
-pub enum TsoTask {
-    Init,
-    Request,
-    Response(Vec<oneshot::Sender<PdTimestamp>>, TsoResponse),
+type PdRequest = Box<Future<Item = (), Error = ()> + Send>;
+
+pub enum PdTask {
+    TsoInit,
+    TsoRequest,
+    TsoResponse(Vec<oneshot::Sender<PdTimestamp>>, TsoResponse),
+    Request(PdRequest),
 }
 
-struct TsoDispatcher {
-    task_tx: Option<UnboundedSender<Option<TsoTask>>>,
-    rpc_tx: UnboundedSender<TsoRequest>,
-    rpc_rx: Option<UnboundedReceiver<TsoRequest>>,
+struct PdReactor {
+    task_tx: Option<UnboundedSender<Option<PdTask>>>,
+    tso_tx: UnboundedSender<TsoRequest>,
+    tso_rx: Option<UnboundedReceiver<TsoRequest>>,
 
     handle: Option<JoinHandle<()>>,
-    pending: Option<Vec<TsoChannel>>,
-    buffer: Option<Vec<TsoChannel>>,
-    batch: Vec<TsoChannel>,
+    tso_pending: Option<Vec<TsoChannel>>,
+    tso_buffer: Option<Vec<TsoChannel>>,
+    tso_batch: Vec<TsoChannel>,
 }
 
-impl Drop for TsoDispatcher {
+impl Drop for PdReactor {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
             handle.join().unwrap();
@@ -71,25 +63,25 @@ impl Drop for TsoDispatcher {
     }
 }
 
-impl TsoDispatcher {
-    fn new() -> TsoDispatcher {
-        let (rpc_tx, rpc_rx) = unbounded();
-        TsoDispatcher {
+impl PdReactor {
+    fn new() -> PdReactor {
+        let (tso_tx, tso_rx) = unbounded();
+        PdReactor {
             task_tx: None,
-            rpc_tx,
-            rpc_rx: Some(rpc_rx),
+            tso_tx,
+            tso_rx: Some(tso_rx),
             handle: None,
-            buffer: Some(Vec::with_capacity(8)),
-            batch: Vec::with_capacity(8),
-            pending: None,
+            tso_buffer: Some(Vec::with_capacity(8)),
+            tso_batch: Vec::with_capacity(8),
+            tso_pending: None,
         }
     }
 
     fn start(&mut self, client: Arc<RwLock<LeaderClient>>) {
         if self.handle.is_none() {
-            info!("starting tso dispatcher thread");
+            info!("starting pd reactor thread");
             let (task_tx, task_rx) = unbounded();
-            task_tx.unbounded_send(Some(TsoTask::Init)).unwrap();
+            task_tx.unbounded_send(Some(PdTask::TsoInit)).unwrap();
             self.task_tx = Some(task_tx);
             self.handle = Some(
                 thread::Builder::new()
@@ -99,14 +91,14 @@ impl TsoDispatcher {
             )
         } else {
             warn!("tso sender and receiver are stale, refreshing..");
-            let (rpc_tx, rpc_rx) = unbounded();
-            self.rpc_tx = rpc_tx;
-            self.rpc_rx = Some(rpc_rx);
-            self.schedule(TsoTask::Init);
+            let (tso_tx, tso_rx) = unbounded();
+            self.tso_tx = tso_tx;
+            self.tso_rx = Some(tso_rx);
+            self.schedule(PdTask::TsoInit);
         }
     }
 
-    fn schedule(&self, task: TsoTask) {
+    fn schedule(&self, task: PdTask) {
         self.task_tx
             .as_ref()
             .unwrap()
@@ -114,7 +106,7 @@ impl TsoDispatcher {
             .unwrap();
     }
 
-    fn poll(client: &Arc<RwLock<LeaderClient>>, rx: UnboundedReceiver<Option<TsoTask>>) {
+    fn poll(client: &Arc<RwLock<LeaderClient>>, rx: UnboundedReceiver<Option<PdTask>>) {
         let mut core = Core::new().unwrap();
         let handle = core.handle();
         {
@@ -129,10 +121,10 @@ impl TsoDispatcher {
     fn init(client: &Arc<RwLock<LeaderClient>>, handle: &OtherHandle) {
         let client = Arc::clone(client);
         let (tx, rx) = client.wl().client.tso().unwrap();
-        let rpc_rx = client.wl().tso.rpc_rx.take().unwrap();
+        let tso_rx = client.wl().reactor.tso_rx.take().unwrap();
         handle.spawn(
             tx.sink_map_err(Error::Grpc)
-                .send_all(rpc_rx.then(|r| match r {
+                .send_all(tso_rx.then(|r| match r {
                     Ok(r) => Ok((r, WriteFlags::default())),
                     Err(()) => Err(Error::Other(box_err!("failed to recv tso requests"))),
                 })).then(|r| match r {
@@ -149,31 +141,31 @@ impl TsoDispatcher {
         handle.spawn(
             rx.for_each(move |resp| {
                 let mut client = client.wl();
-                let tso = &mut client.tso;
-                let pending = tso.pending.take().unwrap();
-                tso.schedule(TsoTask::Response(pending, resp));
-                if !tso.batch.is_empty() {
-                    /* schedule another batch of request */
-                    tso.schedule(TsoTask::Request);
+                let reactor = &mut client.reactor;
+                let tso_pending = reactor.tso_pending.take().unwrap();
+                reactor.schedule(PdTask::TsoResponse(tso_pending, resp));
+                if !reactor.tso_batch.is_empty() {
+                    /* schedule another tso_batch of request */
+                    reactor.schedule(PdTask::TsoRequest);
                 }
                 Ok(())
             }).map_err(|e| panic!("unexpected error: {:?}", e)),
         );
     }
 
-    fn request(client: &Arc<RwLock<LeaderClient>>) {
+    fn tso_request(client: &Arc<RwLock<LeaderClient>>) {
         let mut client = client.wl();
         let cluster_id = client.cluster_id;
-        let tso = &mut client.tso;
-        let mut batch = tso.buffer.take().unwrap();
-        batch.extend(tso.batch.drain(..));
+        let reactor = &mut client.reactor;
+        let mut tso_batch = reactor.tso_buffer.take().unwrap();
+        tso_batch.extend(reactor.tso_batch.drain(..));
         let mut request = request!(cluster_id, TsoRequest);
-        request.set_count(batch.len() as u32);
-        tso.pending = Some(batch);
-        tso.rpc_tx.unbounded_send(request).unwrap();
+        request.set_count(tso_batch.len() as u32);
+        reactor.tso_pending = Some(tso_batch);
+        reactor.tso_tx.unbounded_send(request).unwrap();
     }
 
-    fn response(
+    fn tso_response(
         client: &Arc<RwLock<LeaderClient>>,
         mut requests: Vec<TsoChannel>,
         response: &TsoResponse,
@@ -186,24 +178,25 @@ impl TsoDispatcher {
                     logical: timestamp.logical + offset as i64,
                 }).unwrap();
         }
-        client.wl().tso.buffer = Some(requests);
+        client.wl().reactor.tso_buffer = Some(requests);
     }
 
-    fn dispatch(client: &Arc<RwLock<LeaderClient>>, task: TsoTask, handle: &OtherHandle) {
+    fn dispatch(client: &Arc<RwLock<LeaderClient>>, task: PdTask, handle: &OtherHandle) {
         match task {
-            TsoTask::Request => Self::request(client),
-            TsoTask::Response(requests, response) => Self::response(client, requests, &response),
-            TsoTask::Init => Self::init(client, handle),
+            PdTask::TsoRequest => Self::tso_request(client),
+            PdTask::TsoResponse(requests, response) => Self::tso_response(client, requests, &response),
+            PdTask::TsoInit => Self::init(client, handle),
+            PdTask::Request(task) => handle.spawn(task),
         }
     }
 
     fn get_ts(&mut self) -> PdFuture<PdTimestamp> {
         let timer = Instant::now();
         let (tx, rx) = oneshot::channel::<PdTimestamp>();
-        self.batch.push(tx);
-        if self.pending.is_none() {
+        self.tso_batch.push(tx);
+        if self.tso_pending.is_none() {
             /* schedule tso request to run */
-            self.schedule(TsoTask::Request);
+            self.schedule(PdTask::TsoRequest);
         }
         Box::new(rx.map_err(Error::Canceled).and_then(move |ts| {
             PD_REQUEST_HISTOGRAM_VEC
@@ -223,7 +216,7 @@ pub struct LeaderClient {
     cluster_id: u64,
     security_mgr: Arc<SecurityManager>,
     last_update: Instant,
-    tso: TsoDispatcher,
+    reactor: PdReactor,
 }
 
 impl LeaderClient {
@@ -241,16 +234,20 @@ impl LeaderClient {
             security_mgr,
             on_reconnect: None,
             last_update: Instant::now(),
-            tso: TsoDispatcher::new(),
+            reactor: PdReactor::new(),
             cluster_id,
         }));
 
-        client.wl().tso.start(Arc::clone(&client));
+        client.wl().reactor.start(Arc::clone(&client));
         client
     }
 
     pub fn get_ts(&mut self) -> PdFuture<PdTimestamp> {
-        self.tso.get_ts()
+        self.reactor.get_ts()
+    }
+
+    pub fn schedule(&self, task: PdRequest) {
+        self.reactor.schedule(PdTask::Request(task));
     }
 }
 
@@ -541,7 +538,7 @@ pub fn reconnect(leader: &Arc<RwLock<LeaderClient>>) -> Result<()> {
         if let Some(ref on_reconnect) = leader.on_reconnect {
             on_reconnect();
         }
-        leader.tso.start(leader_clone);
+        leader.reactor.start(leader_clone);
     }
     warn!("updating PD client done, spent {:?}", start.elapsed());
     Ok(())
