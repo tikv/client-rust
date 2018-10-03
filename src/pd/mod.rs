@@ -1,11 +1,10 @@
+#[macro_use]
+mod leader;
 mod client;
-mod util;
 
 pub mod errors;
 pub use self::client::PdRpcClient;
 pub use self::errors::{Error, Result};
-pub use self::util::validate_endpoints;
-pub use self::util::RECONNECT_INTERVAL_SEC;
 
 use std::ops::Deref;
 
@@ -39,6 +38,7 @@ impl Deref for RegionInfo {
 pub const INVALID_ID: u64 = 0;
 const REQUEST_TIMEOUT: u64 = 2; // 2s
 
+#[derive(Debug)]
 pub struct PdTimestamp {
     pub physical: i64,
     pub logical: i64,
@@ -81,4 +81,7 @@ pub trait PdClient: Send + Sync {
     //
     // Please note that this method should only be called once.
     fn handle_reconnect<F: Fn() + Sync + Send + 'static>(&self, _: F) {}
+
+    // get a timestamp from PD
+    fn get_ts(&self) -> PdFuture<PdTimestamp>;
 }

@@ -15,13 +15,12 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use futures::sync::oneshot;
 use futures::Future;
 use grpc::{CallOption, EnvBuilder};
 use kvproto::metapb;
-use kvproto::pdpb::{self, Member};
+use kvproto::pdpb::{GetStoreRequest, GetRegionByIDRequest, GetRegionRequest, Member};
 
-use super::util::{check_resp_header, validate_endpoints, LeaderClient, Request};
+use super::leader::{check_resp_header, validate_endpoints, LeaderClient, Request};
 use super::{Error, PdClient, RegionInfo, Result, PD_REQUEST_HISTOGRAM_VEC, REQUEST_TIMEOUT};
 use pd::{PdFuture, PdTimestamp};
 use util::security::SecurityManager;
@@ -45,16 +44,6 @@ pub struct PdRpcClient {
     leader: Arc<RwLock<LeaderClient>>,
 }
 
-macro_rules! request {
-    ($cluster_id:expr, $type:ty) => {{
-        let mut request = <$type>::new();
-        let mut header = pdpb::RequestHeader::new();
-        header.set_cluster_id($cluster_id);
-        request.set_header(header);
-        request
-    }};
-}
-
 impl PdRpcClient {
     pub fn new(endpoints: &[&str], security_mgr: Arc<SecurityManager>) -> Result<PdRpcClient> {
         let env = Arc::new(
@@ -67,12 +56,7 @@ impl PdRpcClient {
 
         Ok(PdRpcClient {
             cluster_id: members.get_header().get_cluster_id(),
-            leader: Arc::new(RwLock::new(LeaderClient::new(
-                env,
-                security_mgr,
-                client,
-                members,
-            ))),
+            leader: LeaderClient::new(env, security_mgr, client, members),
         })
     }
 
@@ -91,10 +75,10 @@ impl PdRpcClient {
     ) -> impl Future<Item = (metapb::Region, Option<metapb::Peer>), Error = Error> {
         let timer = Instant::now();
 
-        let mut req = request!(self.cluster_id, pdpb::GetRegionRequest);
+        let mut req = request!(self.cluster_id, GetRegionRequest);
         req.set_region_key(key.to_owned());
 
-        let executor = move |client: &RwLock<LeaderClient>, req: pdpb::GetRegionRequest| {
+        let executor = move |client: &RwLock<LeaderClient>, req: GetRegionRequest| {
             let receiver = client
                 .rl()
                 .client
@@ -125,10 +109,10 @@ impl PdRpcClient {
     fn get_store_async(&self, store_id: u64) -> impl Future<Item = metapb::Store, Error = Error> {
         let timer = Instant::now();
 
-        let mut req = request!(self.cluster_id, pdpb::GetStoreRequest);
+        let mut req = request!(self.cluster_id, GetStoreRequest);
         req.set_store_id(store_id);
 
-        let executor = move |client: &RwLock<LeaderClient>, req: pdpb::GetStoreRequest| {
+        let executor = move |client: &RwLock<LeaderClient>, req: GetStoreRequest| {
             let receiver = client
                 .rl()
                 .client
@@ -148,27 +132,6 @@ impl PdRpcClient {
 
     pub fn get_cluster_id(&self) -> Result<u64> {
         Ok(self.cluster_id)
-    }
-
-    pub fn get_ts(&self) -> Result<PdTimestamp> {
-        self.get_ts_async().wait()
-    }
-
-    pub fn get_ts_async(&self) -> PdFuture<PdTimestamp> {
-        let timer = Instant::now();
-
-        let mut req = request!(self.cluster_id, pdpb::TsoRequest);
-        req.set_count(1);
-
-        let (tx, rx) = oneshot::channel::<PdTimestamp>();
-        let leader = self.leader.wl();
-        leader.tso_requests_sender.unbounded_send(tx).unwrap();
-        Box::new(rx.map_err(Error::Canceled).and_then(move |ts| {
-            PD_REQUEST_HISTOGRAM_VEC
-                .with_label_values(&["get_ts"])
-                .observe(duration_to_sec(timer.elapsed()));
-            Ok(ts)
-        }))
     }
 
     pub fn on_reconnect(&self, f: Box<Fn() + Sync + Send + 'static>) {
@@ -213,10 +176,10 @@ impl PdClient for PdRpcClient {
     fn get_region_by_id(&self, region_id: u64) -> PdFuture<Option<metapb::Region>> {
         let timer = Instant::now();
 
-        let mut req = request!(self.cluster_id, pdpb::GetRegionByIDRequest);
+        let mut req = request!(self.cluster_id, GetRegionByIDRequest);
         req.set_region_id(region_id);
 
-        let executor = move |client: &RwLock<LeaderClient>, req: pdpb::GetRegionByIDRequest| {
+        let executor = move |client: &RwLock<LeaderClient>, req: GetRegionByIDRequest| {
             let handler = client
                 .rl()
                 .client
@@ -236,6 +199,10 @@ impl PdClient for PdRpcClient {
         };
 
         self.request(req, executor, LEADER_CHANGE_RETRY).execute()
+    }
+
+    fn get_ts(&self) -> PdFuture<PdTimestamp> {
+        self.leader.wl().get_ts()
     }
 }
 

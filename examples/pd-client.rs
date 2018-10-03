@@ -31,4 +31,8 @@ fn main() {
     println!("Store: {:?}", store);
     let region = pd_client.get_region(b"abc").wait();
     println!("Region: {:?}", region);
+    for _ in 0..10 {
+        let tso = pd_client.get_ts().wait();
+        println!("TSO: {:?}", tso);
+    }
 }
