@@ -7,7 +7,6 @@ extern crate tikv_client;
 use std::env;
 use std::sync::Arc;
 
-use futures::future::Future;
 use simplelog::*;
 
 use tikv_client::pd::*;
@@ -26,13 +25,10 @@ fn main() {
     let pd_client = PdRpcClient::new(&addr, Arc::clone(&security_manager))
         .unwrap_or_else(|e| panic!("failed to create rpc client: {:?}", e));
 
-    println!("Cluster ID: {}", pd_client.get_cluster_id().unwrap());
-    let store = pd_client.get_store(1).wait();
-    println!("Store: {:?}", store);
-    let region = pd_client.get_region(b"abc").wait();
-    println!("Region: {:?}", region);
+    println!("Cluster ID: {:?}", pd_client.get_cluster_id());
+    println!("Store: {:?}", pd_client.get_store(1));
+    println!("Region: {:?}", pd_client.get_region(b"abc"));
     for _ in 0..10 {
-        let tso = pd_client.get_ts().wait();
-        println!("TSO: {:?}", tso);
+        println!("TSO: {:?}", pd_client.get_ts());
     }
 }

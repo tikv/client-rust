@@ -15,7 +15,7 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use futures::Future;
+use futures::{future, Future};
 use grpc::{CallOption, EnvBuilder};
 use kvproto::metapb;
 use kvproto::pdpb::{GetRegionByIDRequest, GetRegionRequest, GetStoreRequest, Member};
@@ -61,13 +61,107 @@ impl PdRpcClient {
         })
     }
 
+    pub fn get_cluster_id(&self) -> Result<u64> {
+        Ok(self.cluster_id)
+    }
+
+    pub fn on_reconnect(&self, f: Box<Fn() + Sync + Send + 'static>) {
+        let mut leader = self.leader.wl();
+        leader.on_reconnect = Some(f);
+    }
+
+    pub fn get_cluster_config_async(&self) -> impl Future<Item = metapb::Cluster, Error = Error> {
+        future::ok(metapb::Cluster::new())
+    }
+
+    pub fn get_all_stores_async(&self) -> impl Future<Item = Vec<metapb::Store>, Error = Error> {
+        future::ok(Vec::new())
+    }
+
+    pub fn get_store_async(
+        &self,
+        store_id: u64,
+    ) -> impl Future<Item = metapb::Store, Error = Error> {
+        let timer = Instant::now();
+
+        let mut req = request!(self.cluster_id, GetStoreRequest);
+        req.set_store_id(store_id);
+
+        let executor = move |client: &RwLock<LeaderClient>, req: GetStoreRequest| {
+            let receiver = client
+                .rl()
+                .client
+                .get_store_async_opt(&req, Self::call_option())
+                .unwrap();
+            Box::new(receiver.map_err(Error::Grpc).and_then(move |mut resp| {
+                PD_REQUEST_HISTOGRAM_VEC
+                    .with_label_values(&["get_store"])
+                    .observe(duration_to_sec(timer.elapsed()));
+                check_resp_header(resp.get_header())?;
+                Ok(resp.take_store())
+            })) as PdFuture<_>
+        };
+
+        self.request(req, executor, LEADER_CHANGE_RETRY)
+    }
+
+    pub fn get_region_async(
+        &self,
+        key: &[u8],
+    ) -> impl Future<Item = metapb::Region, Error = Error> {
+        self.get_region_and_leader_async(key).and_then(|x| Ok(x.0))
+    }
+
+    pub fn get_region_info_async(
+        &self,
+        key: &[u8],
+    ) -> impl Future<Item = RegionInfo, Error = Error> {
+        self.get_region_and_leader_async(key)
+            .and_then(|x| Ok(RegionInfo::new(x.0, x.1)))
+    }
+
+    pub fn get_region_by_id_async(
+        &self,
+        region_id: u64,
+    ) -> impl Future<Item = Option<metapb::Region>, Error = Error> {
+        let timer = Instant::now();
+
+        let mut req = request!(self.cluster_id, GetRegionByIDRequest);
+        req.set_region_id(region_id);
+
+        let executor = move |client: &RwLock<LeaderClient>, req: GetRegionByIDRequest| {
+            let handler = client
+                .rl()
+                .client
+                .get_region_by_id_async_opt(&req, Self::call_option())
+                .unwrap();
+            Box::new(handler.map_err(Error::Grpc).and_then(move |mut resp| {
+                PD_REQUEST_HISTOGRAM_VEC
+                    .with_label_values(&["get_region_by_id"])
+                    .observe(duration_to_sec(timer.elapsed()));
+                check_resp_header(resp.get_header())?;
+                if resp.has_region() {
+                    Ok(Some(resp.take_region()))
+                } else {
+                    Ok(None)
+                }
+            })) as PdFuture<_>
+        };
+
+        self.request(req, executor, LEADER_CHANGE_RETRY)
+    }
+
+    pub fn get_ts_async(&self) -> impl Future<Item = PdTimestamp, Error = Error> {
+        self.leader.wl().get_ts()
+    }
+
+    fn get_leader(&self) -> Member {
+        self.leader.rl().members.get_leader().clone()
+    }
+
     #[inline]
     fn call_option() -> CallOption {
         CallOption::default().timeout(Duration::from_secs(REQUEST_TIMEOUT))
-    }
-
-    pub fn get_leader(&self) -> Member {
-        self.leader.rl().members.get_leader().clone()
     }
 
     fn get_region_and_leader_async(
@@ -107,40 +201,12 @@ impl PdRpcClient {
         self.request(req, executor, LEADER_CHANGE_RETRY)
     }
 
-    fn get_store_async(&self, store_id: u64) -> impl Future<Item = metapb::Store, Error = Error> {
-        let timer = Instant::now();
-
-        let mut req = request!(self.cluster_id, GetStoreRequest);
-        req.set_store_id(store_id);
-
-        let executor = move |client: &RwLock<LeaderClient>, req: GetStoreRequest| {
-            let receiver = client
-                .rl()
-                .client
-                .get_store_async_opt(&req, Self::call_option())
-                .unwrap();
-            Box::new(receiver.map_err(Error::Grpc).and_then(move |mut resp| {
-                PD_REQUEST_HISTOGRAM_VEC
-                    .with_label_values(&["get_store"])
-                    .observe(duration_to_sec(timer.elapsed()));
-                check_resp_header(resp.get_header())?;
-                Ok(resp.take_store())
-            })) as PdFuture<_>
-        };
-
-        self.request(req, executor, LEADER_CHANGE_RETRY)
-    }
-
-    pub fn get_cluster_id(&self) -> Result<u64> {
-        Ok(self.cluster_id)
-    }
-
-    pub fn on_reconnect(&self, f: Box<Fn() + Sync + Send + 'static>) {
-        let mut leader = self.leader.wl();
-        leader.on_reconnect = Some(f);
-    }
-
-    pub fn request<Req, Resp, F>(&self, req: Req, func: F, retry: usize) -> PdFuture<Resp>
+    fn request<Req, Resp, F>(
+        &self,
+        req: Req,
+        func: F,
+        retry: usize,
+    ) -> impl Future<Item = Resp, Error = Error>
     where
         Req: Clone + Send + 'static,
         Resp: Send + fmt::Debug + 'static,
@@ -153,11 +219,10 @@ impl PdRpcClient {
                 .and_then(move |resp| {
                     tx.send(resp).unwrap();
                     Ok(())
-                })
-                .map_err(|e| panic!("{}", e))
+                }).map_err(|e| panic!("{}", e)),
         );
         self.leader.wl().schedule(future);
-        Box::new(rx.map_err(Error::Canceled).and_then(Ok))
+        rx.map_err(Error::Canceled).and_then(Ok)
     }
 }
 
@@ -166,55 +231,32 @@ impl PdClient for PdRpcClient {
         Ok(self.cluster_id)
     }
 
-    fn get_cluster_config(&self) -> PdFuture<metapb::Cluster> {
-        unimplemented!()
+    fn get_store(&self, store_id: u64) -> Result<metapb::Store> {
+        self.get_store_async(store_id).wait()
     }
 
-    fn get_store(&self, store_id: u64) -> PdFuture<metapb::Store> {
-        Box::new(self.get_store_async(store_id).and_then(Ok))
+    fn get_all_stores(&self) -> Result<Vec<metapb::Store>> {
+        self.get_all_stores_async().wait()
     }
 
-    fn get_region(&self, key: &[u8]) -> PdFuture<metapb::Region> {
-        Box::new(self.get_region_and_leader_async(key).and_then(|x| Ok(x.0)))
+    fn get_cluster_config(&self) -> Result<metapb::Cluster> {
+        self.get_cluster_config_async().wait()
     }
 
-    fn get_region_info(&self, key: &[u8]) -> PdFuture<RegionInfo> {
-        Box::new(
-            self.get_region_and_leader_async(key)
-                .and_then(|x| Ok(RegionInfo::new(x.0, x.1))),
-        )
+    fn get_region(&self, key: &[u8]) -> Result<metapb::Region> {
+        self.get_region_async(key).wait()
     }
 
-    fn get_region_by_id(&self, region_id: u64) -> PdFuture<Option<metapb::Region>> {
-        let timer = Instant::now();
-
-        let mut req = request!(self.cluster_id, GetRegionByIDRequest);
-        req.set_region_id(region_id);
-
-        let executor = move |client: &RwLock<LeaderClient>, req: GetRegionByIDRequest| {
-            let handler = client
-                .rl()
-                .client
-                .get_region_by_id_async_opt(&req, Self::call_option())
-                .unwrap();
-            Box::new(handler.map_err(Error::Grpc).and_then(move |mut resp| {
-                PD_REQUEST_HISTOGRAM_VEC
-                    .with_label_values(&["get_region_by_id"])
-                    .observe(duration_to_sec(timer.elapsed()));
-                check_resp_header(resp.get_header())?;
-                if resp.has_region() {
-                    Ok(Some(resp.take_region()))
-                } else {
-                    Ok(None)
-                }
-            })) as PdFuture<_>
-        };
-
-        self.request(req, executor, LEADER_CHANGE_RETRY)
+    fn get_region_info(&self, key: &[u8]) -> Result<RegionInfo> {
+        self.get_region_info_async(key).wait()
     }
 
-    fn get_ts(&self) -> PdFuture<PdTimestamp> {
-        self.leader.wl().get_ts()
+    fn get_region_by_id(&self, region_id: u64) -> Result<Option<metapb::Region>> {
+        self.get_region_by_id_async(region_id).wait()
+    }
+
+    fn get_ts(&self) -> Result<PdTimestamp> {
+        self.get_ts_async().wait()
     }
 }
 

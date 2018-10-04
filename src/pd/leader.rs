@@ -34,7 +34,6 @@ macro_rules! request {
 }
 
 type TsoChannel = oneshot::Sender<PdTimestamp>;
-
 type PdRequest = Box<Future<Item = (), Error = ()> + Send>;
 
 pub enum PdTask {
@@ -184,13 +183,15 @@ impl PdReactor {
     fn dispatch(client: &Arc<RwLock<LeaderClient>>, task: PdTask, handle: &OtherHandle) {
         match task {
             PdTask::TsoRequest => Self::tso_request(client),
-            PdTask::TsoResponse(requests, response) => Self::tso_response(client, requests, &response),
+            PdTask::TsoResponse(requests, response) => {
+                Self::tso_response(client, requests, &response)
+            }
             PdTask::TsoInit => Self::init(client, handle),
             PdTask::Request(task) => handle.spawn(task),
         }
     }
 
-    fn get_ts(&mut self) -> PdFuture<PdTimestamp> {
+    fn get_ts(&mut self) -> impl Future<Item = PdTimestamp, Error = Error> {
         let timer = Instant::now();
         let (tx, rx) = oneshot::channel::<PdTimestamp>();
         self.tso_batch.push(tx);
@@ -198,12 +199,12 @@ impl PdReactor {
             /* schedule tso request to run */
             self.schedule(PdTask::TsoRequest);
         }
-        Box::new(rx.map_err(Error::Canceled).and_then(move |ts| {
+        rx.map_err(Error::Canceled).and_then(move |ts| {
             PD_REQUEST_HISTOGRAM_VEC
                 .with_label_values(&["get_ts"])
                 .observe(duration_to_sec(timer.elapsed()));
             Ok(ts)
-        }))
+        })
     }
 }
 
@@ -242,7 +243,7 @@ impl LeaderClient {
         client
     }
 
-    pub fn get_ts(&mut self) -> PdFuture<PdTimestamp> {
+    pub fn get_ts(&mut self) -> impl Future<Item = PdTimestamp, Error = Error> {
         self.reactor.get_ts()
     }
 
