@@ -27,6 +27,7 @@ fn main() {
 
     println!("Cluster ID: {:?}", pd_client.get_cluster_id());
     println!("Store: {:?}", pd_client.get_store(1));
+    println!("All Stores: {:?}", pd_client.get_all_stores());
     println!("Region: {:?}", pd_client.get_region(b"abc"));
     for _ in 0..10 {
         println!("TSO: {:?}", pd_client.get_ts());

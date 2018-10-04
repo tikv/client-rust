@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use futures::{future, Future};
 use grpc::{CallOption, EnvBuilder};
 use kvproto::metapb;
-use kvproto::pdpb::{GetRegionByIDRequest, GetRegionRequest, GetStoreRequest, Member};
+use kvproto::pdpb::{GetRegionByIDRequest, GetRegionRequest, GetStoreRequest, GetAllStoresRequest, Member};
 
 use super::leader::{check_resp_header, validate_endpoints, LeaderClient, Request};
 use super::{Error, PdClient, RegionInfo, Result, PD_REQUEST_HISTOGRAM_VEC, REQUEST_TIMEOUT};
@@ -75,7 +75,24 @@ impl PdRpcClient {
     }
 
     pub fn get_all_stores_async(&self) -> impl Future<Item = Vec<metapb::Store>, Error = Error> {
-        future::ok(Vec::new())
+        let timer = Instant::now();
+
+        let executor = move |client: &RwLock<LeaderClient>, req: GetAllStoresRequest| {
+            let receiver = client
+                .rl()
+                .client
+                .get_all_stores_async_opt(&req, Self::call_option())
+                .unwrap();
+            Box::new(receiver.map_err(Error::Grpc).and_then(move |mut resp| {
+                PD_REQUEST_HISTOGRAM_VEC
+                    .with_label_values(&["get_all_stores"])
+                    .observe(duration_to_sec(timer.elapsed()));
+                check_resp_header(resp.get_header())?;
+                Ok(resp.take_stores().into_vec())
+            })) as PdFuture<_>
+        };
+
+        self.request(request!(self.cluster_id, GetAllStoresRequest), executor, LEADER_CHANGE_RETRY)
     }
 
     pub fn get_store_async(

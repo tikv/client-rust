@@ -102,7 +102,7 @@ impl PdReactor {
             .as_ref()
             .unwrap()
             .unbounded_send(Some(task))
-            .unwrap();
+            .expect("unbounded send should never fail");
     }
 
     fn poll(client: &Arc<RwLock<LeaderClient>>, rx: UnboundedReceiver<Option<PdTask>>) {
