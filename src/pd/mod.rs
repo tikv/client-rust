@@ -2,9 +2,8 @@
 mod leader;
 mod client;
 
-pub mod errors;
 pub use self::client::PdRpcClient;
-pub use self::errors::{Error, Result};
+pub use errors::{Error, Result};
 
 use std::ops::Deref;
 
@@ -57,23 +56,20 @@ pub trait PdClient: Send + Sync {
     fn get_cluster_id(&self) -> Result<u64>;
 
     // Get store information.
-    fn get_store(&self, store_id: u64) -> Result<metapb::Store>;
+    fn get_store(&self, store_id: u64) -> PdFuture<metapb::Store>;
 
     // Get all stores information.
-    fn get_all_stores(&self) -> Result<Vec<metapb::Store>>;
-
-    // Get cluster meta information.
-    fn get_cluster_config(&self) -> Result<metapb::Cluster>;
+    fn get_all_stores(&self) -> PdFuture<Vec<metapb::Store>>;
 
     // For route.
     // Get region which the key belong to.
-    fn get_region(&self, key: &[u8]) -> Result<metapb::Region>;
+    fn get_region(&self, key: &[u8]) -> PdFuture<metapb::Region>;
 
     // Get region info which the key belong to.
-    fn get_region_info(&self, key: &[u8]) -> Result<RegionInfo>;
+    fn get_region_info(&self, key: &[u8]) -> PdFuture<RegionInfo>;
 
     // Get region by region id.
-    fn get_region_by_id(&self, region_id: u64) -> Result<Option<metapb::Region>>;
+    fn get_region_by_id(&self, region_id: u64) -> PdFuture<Option<metapb::Region>>;
 
     // Register a handler to the client, it will be invoked after reconnecting to PD.
     //
@@ -81,5 +77,5 @@ pub trait PdClient: Send + Sync {
     fn handle_reconnect<F: Fn() + Sync + Send + 'static>(&self, _: F) {}
 
     // get a timestamp from PD
-    fn get_ts(&self) -> Result<PdTimestamp>;
+    fn get_ts(&self) -> PdFuture<PdTimestamp>;
 }

@@ -40,4 +40,5 @@ extern crate libc;
 
 #[macro_use]
 pub mod util;
+pub mod errors;
 pub mod pd;
