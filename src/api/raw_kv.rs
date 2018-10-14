@@ -3,7 +3,7 @@ use std::io::Result;
 
 use *;
 
-pub struct RawKV;
+pub struct RawKv;
 
 macro_rules! define_cf_setter {
     () => {
@@ -35,7 +35,7 @@ pub struct Scan {
 }
 impl RequestType for Scan {}
 
-pub struct RawKVRequest<T, P>
+pub struct RawRequest<T, P>
 where
     T: Default,
 {
@@ -44,12 +44,12 @@ where
     cf: Option<String>,
 }
 
-impl<T, P> RawKVRequest<T, P>
+impl<T, P> RawRequest<T, P>
 where
     T: Default,
 {
     pub fn new(payload: P) -> Self {
-        RawKVRequest {
+        RawRequest {
             t: T::default(),
             payload,
             cf: None,
@@ -59,7 +59,7 @@ where
     define_cf_setter!();
 }
 
-pub struct RawKVBatchRequest<T, P>
+pub struct RawBatchRequest<T, P>
 where
     T: Default,
     P: Sized,
@@ -69,7 +69,7 @@ where
     cf: Option<String>,
 }
 
-impl<T, P> RawKVBatchRequest<T, P>
+impl<T, P> RawBatchRequest<T, P>
 where
     T: Default,
     P: Sized,
@@ -79,7 +79,7 @@ where
         I: Iterator<Item = K>,
         K: Into<P>,
     {
-        RawKVBatchRequest {
+        RawBatchRequest {
             t: T::default(),
             payloads: payloads.map(Into::into).collect(),
             cf: None,
@@ -89,103 +89,103 @@ where
     define_cf_setter!();
 }
 
-pub type RawKVKeyRequest<T> = RawKVRequest<T, Key>;
-pub type RawKVBatchKeyRequest<T> = RawKVBatchRequest<T, Key>;
-pub type RawKVKvPairRequest<T> = RawKVRequest<T, KvPair>;
-pub type RawKVBatchKvPairRequest<T> = RawKVBatchRequest<T, KvPair>;
-pub type RawKVRangeRequest<T> = RawKVRequest<T, KeyRange>;
-pub type RawKVBatchRangeRequest<T> = RawKVBatchRequest<T, KeyRange>;
+pub type RawKeyRequest<T> = RawRequest<T, Key>;
+pub type RawBatchKeyRequest<T> = RawBatchRequest<T, Key>;
+pub type RawKvPairRequest<T> = RawRequest<T, KvPair>;
+pub type RawBatchKvPairRequest<T> = RawBatchRequest<T, KvPair>;
+pub type RawRangeRequest<T> = RawRequest<T, KeyRange>;
+pub type RawBatchRangeRequest<T> = RawBatchRequest<T, KeyRange>;
 
-pub type RawKVGetRequest = RawKVKeyRequest<Get>;
-pub type RawKVBatchGetRequest = RawKVBatchKeyRequest<Get>;
-pub type RawKVPutRequest = RawKVKvPairRequest<Put>;
-pub type RawKVBatchPutRequest = RawKVBatchKvPairRequest<Put>;
-pub type RawKVDeleteRequest = RawKVKeyRequest<Delete>;
-pub type RawKVBatchDeleteRequest = RawKVBatchKeyRequest<Delete>;
-pub type RawKVScanRequest = RawKVRangeRequest<Scan>;
-pub type RawKVBatchScanRequest = RawKVBatchRangeRequest<Scan>;
-pub type RawKVDeleteRangeRequest = RawKVRequest<Delete, KeyRange>;
+pub type RawGetRequest = RawKeyRequest<Get>;
+pub type RawBatchGetRequest = RawBatchKeyRequest<Get>;
+pub type RawPutRequest = RawKvPairRequest<Put>;
+pub type RawBatchPutRequest = RawBatchKvPairRequest<Put>;
+pub type RawDeleteRequest = RawKeyRequest<Delete>;
+pub type RawBatchDeleteRequest = RawBatchKeyRequest<Delete>;
+pub type RawScanRequest = RawRangeRequest<Scan>;
+pub type RawBatchScanRequest = RawBatchRangeRequest<Scan>;
+pub type RawDeleteRangeRequest = RawRequest<Delete, KeyRange>;
 
-pub type RawKVGetResponse = Result<Value>;
-pub type RawKVBatchGetResponse = Result<Vec<KvPair>>;
-pub type RawKVPutResponse = Result<()>;
-pub type RawKVBatchPutResponse = Result<()>;
-pub type RawKVDeleteResponse = Result<()>;
-pub type RawKVBatchDeleteResponse = Result<()>;
-pub type RawKVDeleteRangeResponse = Result<()>;
-pub type RawKVScanResponse = Result<Vec<KvPair>>;
-pub type RawKVBatchScanResponse = Result<Vec<KvPair>>;
+pub type RawGetResponse = Result<Value>;
+pub type RawBatchGetResponse = Result<Vec<KvPair>>;
+pub type RawPutResponse = Result<()>;
+pub type RawBatchPutResponse = Result<()>;
+pub type RawDeleteResponse = Result<()>;
+pub type RawBatchDeleteResponse = Result<()>;
+pub type RawDeleteRangeResponse = Result<()>;
+pub type RawScanResponse = Result<Vec<KvPair>>;
+pub type RawBatchScanResponse = Result<Vec<KvPair>>;
 
-impl RawKV {
-    pub fn get<K>(key: K) -> RawKVGetRequest
+impl RawKv {
+    pub fn get<K>(key: K) -> RawGetRequest
     where
         K: Into<Key>,
     {
-        RawKVGetRequest::new(key.into())
+        RawGetRequest::new(key.into())
     }
 
-    pub fn batch_get<I, K>(keys: I) -> RawKVBatchGetRequest
+    pub fn batch_get<I, K>(keys: I) -> RawBatchGetRequest
     where
         I: IntoIterator<Item = K>,
         K: Into<Key>,
     {
-        RawKVBatchGetRequest::new(keys.into_iter())
+        RawBatchGetRequest::new(keys.into_iter())
     }
 
-    pub fn put<P>(pair: P) -> RawKVPutRequest
+    pub fn put<P>(pair: P) -> RawPutRequest
     where
         P: Into<KvPair>,
     {
-        RawKVPutRequest::new(pair.into())
+        RawPutRequest::new(pair.into())
     }
 
-    pub fn batch_put<I, P>(pairs: I) -> RawKVBatchPutRequest
+    pub fn batch_put<I, P>(pairs: I) -> RawBatchPutRequest
     where
         I: IntoIterator<Item = P>,
         P: Into<KvPair>,
     {
-        RawKVBatchPutRequest::new(pairs.into_iter())
+        RawBatchPutRequest::new(pairs.into_iter())
     }
 
-    pub fn delete<K>(key: K) -> RawKVDeleteRequest
+    pub fn delete<K>(key: K) -> RawDeleteRequest
     where
         K: Into<Key>,
     {
-        RawKVDeleteRequest::new(key.into())
+        RawDeleteRequest::new(key.into())
     }
 
-    pub fn batch_delete<I, K>(keys: I) -> RawKVBatchDeleteRequest
+    pub fn batch_delete<I, K>(keys: I) -> RawBatchDeleteRequest
     where
         I: IntoIterator<Item = K>,
         K: Into<Key>,
     {
-        RawKVBatchDeleteRequest::new(keys.into_iter())
+        RawBatchDeleteRequest::new(keys.into_iter())
     }
 
-    pub fn scan<R>(range: R, limit: u32) -> RawKVScanRequest
+    pub fn scan<R>(range: R, limit: u32) -> RawScanRequest
     where
         R: Into<KeyRange>,
     {
-        RawKVScanRequest::new(range.into()).limit(limit)
+        RawScanRequest::new(range.into()).limit(limit)
     }
 
-    pub fn batch_scan<I, R>(ranges: I, each_limit: u32) -> RawKVBatchScanRequest
+    pub fn batch_scan<I, R>(ranges: I, each_limit: u32) -> RawBatchScanRequest
     where
         I: IntoIterator<Item = R>,
         R: Into<KeyRange>,
     {
-        RawKVBatchScanRequest::new(ranges.into_iter()).each_limit(each_limit)
+        RawBatchScanRequest::new(ranges.into_iter()).each_limit(each_limit)
     }
 
-    pub fn delete_range<R>(range: R) -> RawKVDeleteRangeRequest
+    pub fn delete_range<R>(range: R) -> RawDeleteRangeRequest
     where
         R: Into<KeyRange>,
     {
-        RawKVDeleteRangeRequest::new(range.into())
+        RawDeleteRangeRequest::new(range.into())
     }
 }
 
-impl RawKVScanRequest {
+impl RawScanRequest {
     pub fn limit(mut self, limit: u32) -> Self {
         self.t.limit = limit;
         self
@@ -197,7 +197,7 @@ impl RawKVScanRequest {
     }
 }
 
-impl RawKVBatchScanRequest {
+impl RawBatchScanRequest {
     pub fn each_limit(mut self, each_limit: u32) -> Self {
         self.t.limit = each_limit;
         self
@@ -209,74 +209,74 @@ impl RawKVBatchScanRequest {
     }
 }
 
-impl Request for RawKVGetRequest {
-    type Response = RawKVGetResponse;
+impl Request for RawGetRequest {
+    type Response = RawGetResponse;
 
-    fn execute(self, _kv: &TiKV) -> RawKVGetResponse {
+    fn execute(self, _kv: &TiKv) -> RawGetResponse {
         unimplemented!()
     }
 }
 
-impl Request for RawKVBatchGetRequest {
-    type Response = RawKVBatchGetResponse;
+impl Request for RawBatchGetRequest {
+    type Response = RawBatchGetResponse;
 
-    fn execute(self, _kv: &TiKV) -> RawKVBatchGetResponse {
+    fn execute(self, _kv: &TiKv) -> RawBatchGetResponse {
         unimplemented!()
     }
 }
 
-impl Request for RawKVPutRequest {
-    type Response = RawKVPutResponse;
+impl Request for RawPutRequest {
+    type Response = RawPutResponse;
 
-    fn execute(self, _kv: &TiKV) -> RawKVPutResponse {
+    fn execute(self, _kv: &TiKv) -> RawPutResponse {
         unimplemented!()
     }
 }
 
-impl Request for RawKVBatchPutRequest {
-    type Response = RawKVBatchPutResponse;
+impl Request for RawBatchPutRequest {
+    type Response = RawBatchPutResponse;
 
-    fn execute(self, _kv: &TiKV) -> RawKVBatchPutResponse {
+    fn execute(self, _kv: &TiKv) -> RawBatchPutResponse {
         unimplemented!()
     }
 }
 
-impl Request for RawKVDeleteRequest {
-    type Response = RawKVDeleteResponse;
+impl Request for RawDeleteRequest {
+    type Response = RawDeleteResponse;
 
-    fn execute(self, _kv: &TiKV) -> RawKVDeleteResponse {
+    fn execute(self, _kv: &TiKv) -> RawDeleteResponse {
         unimplemented!()
     }
 }
 
-impl Request for RawKVBatchDeleteRequest {
-    type Response = RawKVBatchDeleteResponse;
+impl Request for RawBatchDeleteRequest {
+    type Response = RawBatchDeleteResponse;
 
-    fn execute(self, _kv: &TiKV) -> RawKVBatchDeleteResponse {
+    fn execute(self, _kv: &TiKv) -> RawBatchDeleteResponse {
         unimplemented!()
     }
 }
 
-impl Request for RawKVScanRequest {
-    type Response = RawKVScanResponse;
+impl Request for RawScanRequest {
+    type Response = RawScanResponse;
 
-    fn execute(self, _kv: &TiKV) -> RawKVScanResponse {
+    fn execute(self, _kv: &TiKv) -> RawScanResponse {
         unimplemented!()
     }
 }
 
-impl Request for RawKVBatchScanRequest {
-    type Response = RawKVBatchScanResponse;
+impl Request for RawBatchScanRequest {
+    type Response = RawBatchScanResponse;
 
-    fn execute(self, _kv: &TiKV) -> RawKVBatchScanResponse {
+    fn execute(self, _kv: &TiKv) -> RawBatchScanResponse {
         unimplemented!()
     }
 }
 
-impl Request for RawKVDeleteRangeRequest {
-    type Response = RawKVDeleteRangeResponse;
+impl Request for RawDeleteRangeRequest {
+    type Response = RawDeleteRangeResponse;
 
-    fn execute(self, _kv: &TiKV) -> RawKVDeleteRangeResponse {
+    fn execute(self, _kv: &TiKv) -> RawDeleteRangeResponse {
         unimplemented!()
     }
 }

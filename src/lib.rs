@@ -31,12 +31,12 @@ impl Into<KeyRange> for (Key, Key) {
 
 pub trait Request: Sized {
     type Response: Sized;
-    fn execute(self, kv: &TiKV) -> Self::Response;
+    fn execute(self, kv: &TiKv) -> Self::Response;
 }
 
-pub struct TiKV {}
+pub struct TiKv {}
 
-impl TiKV {
+impl TiKv {
     pub fn execute<E, R>(&self, request: E) -> R
     where
         E: Request<Response = R>,
