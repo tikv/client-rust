@@ -3,7 +3,13 @@ extern crate futures;
 use futures::Future;
 use std::io::Error;
 
-pub mod api;
+mod client;
+mod raw;
+mod txn;
+
+pub use client::Client;
+pub use raw::RawKv;
+pub use txn::{Oracle, Snapshot, Timestamp, Transaction, TxnKv};
 
 pub struct Key(Vec<u8>);
 pub struct Value(Vec<u8>);
@@ -35,10 +41,3 @@ impl Into<KeyRange> for (Key, Key) {
         KeyRange(self.0, self.1)
     }
 }
-
-pub trait Request: Sized {
-    type Response: Sized;
-    fn execute(self, kv: &Client) -> KvFuture<Self::Response>;
-}
-
-pub struct Client {}
