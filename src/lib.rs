@@ -1,7 +1,7 @@
 extern crate futures;
 
-use std::io::Error;
 use futures::Future;
+use std::io::Error;
 
 pub mod api;
 
@@ -10,7 +10,7 @@ pub struct Value(Vec<u8>);
 pub struct KvPair(Key, Value);
 pub struct KeyRange(Key, Key);
 
-pub type TiKvFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
+pub type KvFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 
 impl Into<Key> for Vec<u8> {
     fn into(self) -> Key {
@@ -38,17 +38,7 @@ impl Into<KeyRange> for (Key, Key) {
 
 pub trait Request: Sized {
     type Response: Sized;
-    fn execute(self, kv: &TiKv) -> TiKvFuture<Self::Response>;
+    fn execute(self, kv: &Client) -> KvFuture<Self::Response>;
 }
 
-pub struct TiKv {}
-
-impl TiKv {
-    pub fn execute<E, R>(&self, request: E) -> TiKvFuture<R>
-    where
-        E: Request<Response = R>,
-        R: Sized,
-    {
-        request.execute(self)
-    }
-}
+pub struct Client {}
