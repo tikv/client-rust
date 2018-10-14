@@ -9,3 +9,6 @@ description = "The rust language implementation of TiKV client."
 
 [lib]
 name = "tikv_client"
+
+[dependencies]
+futures = "0.1"

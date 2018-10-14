@@ -1,5 +1,4 @@
 use std::fmt::Debug;
-use std::io::Result;
 
 use *;
 
@@ -106,16 +105,6 @@ pub type RawScanRequest = RawRangeRequest<Scan>;
 pub type RawBatchScanRequest = RawBatchRangeRequest<Scan>;
 pub type RawDeleteRangeRequest = RawRequest<Delete, KeyRange>;
 
-pub type RawGetResponse = Result<Value>;
-pub type RawBatchGetResponse = Result<Vec<KvPair>>;
-pub type RawPutResponse = Result<()>;
-pub type RawBatchPutResponse = Result<()>;
-pub type RawDeleteResponse = Result<()>;
-pub type RawBatchDeleteResponse = Result<()>;
-pub type RawDeleteRangeResponse = Result<()>;
-pub type RawScanResponse = Result<Vec<KvPair>>;
-pub type RawBatchScanResponse = Result<Vec<KvPair>>;
-
 impl RawKv {
     pub fn get<K>(key: K) -> RawGetRequest
     where
@@ -210,73 +199,73 @@ impl RawBatchScanRequest {
 }
 
 impl Request for RawGetRequest {
-    type Response = RawGetResponse;
+    type Response = Value;
 
-    fn execute(self, _kv: &TiKv) -> RawGetResponse {
+    fn execute(self, _kv: &TiKv) -> TiKvFuture<Self::Response> {
         unimplemented!()
     }
 }
 
 impl Request for RawBatchGetRequest {
-    type Response = RawBatchGetResponse;
+    type Response = KvPair;
 
-    fn execute(self, _kv: &TiKv) -> RawBatchGetResponse {
+    fn execute(self, _kv: &TiKv) -> TiKvFuture<Self::Response> {
         unimplemented!()
     }
 }
 
 impl Request for RawPutRequest {
-    type Response = RawPutResponse;
+    type Response = ();
 
-    fn execute(self, _kv: &TiKv) -> RawPutResponse {
+    fn execute(self, _kv: &TiKv) -> TiKvFuture<Self::Response> {
         unimplemented!()
     }
 }
 
 impl Request for RawBatchPutRequest {
-    type Response = RawBatchPutResponse;
+    type Response = ();
 
-    fn execute(self, _kv: &TiKv) -> RawBatchPutResponse {
+    fn execute(self, _kv: &TiKv) -> TiKvFuture<Self::Response> {
         unimplemented!()
     }
 }
 
 impl Request for RawDeleteRequest {
-    type Response = RawDeleteResponse;
+    type Response = ();
 
-    fn execute(self, _kv: &TiKv) -> RawDeleteResponse {
+    fn execute(self, _kv: &TiKv) -> TiKvFuture<Self::Response> {
         unimplemented!()
     }
 }
 
 impl Request for RawBatchDeleteRequest {
-    type Response = RawBatchDeleteResponse;
+    type Response = ();
 
-    fn execute(self, _kv: &TiKv) -> RawBatchDeleteResponse {
+    fn execute(self, _kv: &TiKv) -> TiKvFuture<Self::Response> {
         unimplemented!()
     }
 }
 
 impl Request for RawScanRequest {
-    type Response = RawScanResponse;
+    type Response = Vec<KvPair>;
 
-    fn execute(self, _kv: &TiKv) -> RawScanResponse {
+    fn execute(self, _kv: &TiKv) -> TiKvFuture<Self::Response> {
         unimplemented!()
     }
 }
 
 impl Request for RawBatchScanRequest {
-    type Response = RawBatchScanResponse;
+    type Response = Vec<KvPair>;
 
-    fn execute(self, _kv: &TiKv) -> RawBatchScanResponse {
+    fn execute(self, _kv: &TiKv) -> TiKvFuture<Self::Response> {
         unimplemented!()
     }
 }
 
 impl Request for RawDeleteRangeRequest {
-    type Response = RawDeleteRangeResponse;
+    type Response = ();
 
-    fn execute(self, _kv: &TiKv) -> RawDeleteRangeResponse {
+    fn execute(self, _kv: &TiKv) -> TiKvFuture<Self::Response> {
         unimplemented!()
     }
 }
