@@ -8,8 +8,8 @@ mod raw;
 mod txn;
 
 pub use client::Client;
-pub use raw::RawKv;
-pub use txn::{Oracle, Snapshot, Timestamp, Transaction, TxnKv};
+pub use raw::Raw;
+pub use txn::{Oracle, Snapshot, Timestamp, Transaction, Txn};
 
 pub struct Key(Vec<u8>);
 pub struct Value(Vec<u8>);

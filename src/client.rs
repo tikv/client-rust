@@ -1,10 +1,10 @@
-use raw::RawKv;
-use txn::{Oracle, Snapshot, Timestamp, Transaction, TxnKv};
+use raw::Raw;
+use txn::{Oracle, Snapshot, Timestamp, Transaction, Txn};
 use {Key, KeyRange, KvFuture, KvPair, Value};
 
 pub struct Client {}
 
-impl RawKv for Client {
+impl Raw for Client {
     fn get<K, C>(&self, key: K, cf: C) -> KvFuture<Value>
     where
         K: Into<Key>,
@@ -98,7 +98,7 @@ impl RawKv for Client {
     }
 }
 
-impl TxnKv for Client {
+impl Txn for Client {
     fn begin(&self) -> KvFuture<Transaction> {
         unimplemented!()
     }

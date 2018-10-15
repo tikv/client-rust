@@ -202,7 +202,7 @@ impl Oracle {
     }
 }
 
-pub trait TxnKv {
+pub trait Txn {
     fn begin(&self) -> KvFuture<Transaction> {
         unimplemented!()
     }

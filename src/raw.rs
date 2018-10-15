@@ -1,6 +1,6 @@
 use {Key, KeyRange, KvFuture, KvPair, Value};
 
-pub trait RawKv {
+pub trait Raw {
     fn get<K, C>(&self, key: K, cf: C) -> KvFuture<Value>
     where
         K: Into<Key>,
