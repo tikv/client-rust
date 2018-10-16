@@ -2,7 +2,7 @@ use std::io::Error;
 
 use futures::{Poll, Stream};
 
-use *;
+use {Config, Key, KvFuture, KvPair, Value};
 
 #[derive(Copy, Clone)]
 pub struct Timestamp(u64);
@@ -202,7 +202,15 @@ impl Oracle {
     }
 }
 
-pub trait Txn {
+pub trait Client {
+    fn new<C>(config: C) -> KvFuture<Self>
+    where
+        C: Into<Config>,
+    {
+        drop(config);
+        unimplemented!()
+    }
+
     fn begin(&self) -> KvFuture<Transaction> {
         unimplemented!()
     }

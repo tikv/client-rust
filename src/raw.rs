@@ -1,6 +1,14 @@
-use {Key, KeyRange, KvFuture, KvPair, Value};
+use {Config, Key, KeyRange, KvFuture, KvPair, Value};
 
-pub trait Raw {
+pub trait Client {
+    fn new<C>(config: C) -> KvFuture<Self>
+    where
+        C: Into<Config>,
+    {
+        drop(config);
+        unimplemented!()
+    }
+
     fn get<K, C>(&self, key: K, cf: C) -> KvFuture<Value>
     where
         K: Into<Key>,

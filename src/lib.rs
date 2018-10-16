@@ -6,13 +6,8 @@ extern crate serde_derive;
 use futures::Future;
 use std::io::Error;
 
-mod client;
-mod raw;
-mod txn;
-
-pub use client::Client;
-pub use raw::Raw;
-pub use txn::{Oracle, Snapshot, Timestamp, Transaction, Txn};
+pub mod raw;
+pub mod transaction;
 
 pub struct Key(Vec<u8>);
 pub struct Value(Vec<u8>);
@@ -42,5 +37,48 @@ impl Into<KvPair> for (Key, Value) {
 impl Into<KeyRange> for (Key, Key) {
     fn into(self) -> KeyRange {
         KeyRange(self.0, self.1)
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+#[serde(rename_all = "kebab-case")]
+pub struct Config {
+    pub pd_endpoints: Vec<String>,
+    pub ca_path: Option<String>,
+    pub cert_path: Option<String>,
+    pub key_path: Option<String>,
+}
+
+impl Config {
+    pub fn new<E>(pd_endpoints: E) -> Self
+    where
+        E: IntoIterator<Item = String>,
+    {
+        Config {
+            pd_endpoints: pd_endpoints.into_iter().collect(),
+            ca_path: None,
+            cert_path: None,
+            key_path: None,
+        }
+    }
+
+    pub fn security(mut self, ca_path: String, cert_path: String, key_path: String) -> Self {
+        self.ca_path = Some(ca_path);
+        self.cert_path = Some(cert_path);
+        self.key_path = Some(key_path);
+        self
+    }
+}
+
+impl Into<Config> for String {
+    fn into(self) -> Config {
+        Config::new(Some(self))
+    }
+}
+
+impl<'a> Into<Config> for Vec<String> {
+    fn into(self) -> Config {
+        Config::new(self)
     }
 }
