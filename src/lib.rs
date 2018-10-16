@@ -1,4 +1,7 @@
 extern crate futures;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
 
 use futures::Future;
 use std::io::Error;

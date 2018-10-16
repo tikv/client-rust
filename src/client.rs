@@ -2,7 +2,60 @@ use raw::Raw;
 use txn::{Oracle, Snapshot, Timestamp, Transaction, Txn};
 use {Key, KeyRange, KvFuture, KvPair, Value};
 
-pub struct Client {}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+#[serde(rename_all = "kebab-case")]
+pub struct Config {
+    pub pd_endpoints: Vec<String>,
+    pub ca_path: Option<String>,
+    pub cert_path: Option<String>,
+    pub key_path: Option<String>,
+}
+
+impl Config {
+    pub fn new<E>(pd_endpoints: E) -> Self
+    where
+        E: IntoIterator<Item = String>,
+    {
+        Config {
+            pd_endpoints: pd_endpoints.into_iter().collect(),
+            ca_path: None,
+            cert_path: None,
+            key_path: None,
+        }
+    }
+
+    pub fn security(mut self, ca_path: String, cert_path: String, key_path: String) -> Self {
+        self.ca_path = Some(ca_path);
+        self.cert_path = Some(cert_path);
+        self.key_path = Some(key_path);
+        self
+    }
+}
+
+impl Into<Config> for String {
+    fn into(self) -> Config {
+        Config::new(Some(self))
+    }
+}
+
+impl<'a> Into<Config> for Vec<String> {
+    fn into(self) -> Config {
+        Config::new(self)
+    }
+}
+
+pub struct Client;
+
+impl Client {
+    pub fn new<C>(config: C) -> KvFuture<Self>
+    where
+        C: Into<Config>,
+    {
+        drop(config);
+        unimplemented!()
+    }
+}
 
 impl Raw for Client {
     fn get<K, C>(&self, key: K, cf: C) -> KvFuture<Value>
