@@ -203,11 +203,7 @@ impl Oracle {
 }
 
 pub trait Client {
-    fn new<C>(config: C) -> KvFuture<Self>
-    where
-        C: Into<Config>,
-    {
-        drop(config);
+    fn new(_config: &Config) -> KvFuture<Self> {
         unimplemented!()
     }
 

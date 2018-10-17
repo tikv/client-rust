@@ -63,22 +63,20 @@ impl Config {
         }
     }
 
-    pub fn security(mut self, ca_path: String, cert_path: String, key_path: String) -> Self {
-        self.ca_path = Some(ca_path);
-        self.cert_path = Some(cert_path);
-        self.key_path = Some(key_path);
-        self
-    }
-}
-
-impl Into<Config> for String {
-    fn into(self) -> Config {
-        Config::new(Some(self))
-    }
-}
-
-impl<'a> Into<Config> for Vec<String> {
-    fn into(self) -> Config {
-        Config::new(self)
+    pub fn with_security<E>(
+        pd_endpoints: E,
+        ca_path: String,
+        cert_path: String,
+        key_path: String,
+    ) -> Self
+    where
+        E: IntoIterator<Item = String>,
+    {
+        Config {
+            pd_endpoints: pd_endpoints.into_iter().collect(),
+            ca_path: Some(ca_path),
+            cert_path: Some(cert_path),
+            key_path: Some(key_path),
+        }
     }
 }
