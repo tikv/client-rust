@@ -3,8 +3,10 @@ extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 
-use futures::Future;
 use std::io::Error;
+use std::path::PathBuf;
+
+use futures::Future;
 
 pub mod raw;
 pub mod transaction;
@@ -45,9 +47,9 @@ impl Into<KeyRange> for (Key, Key) {
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
     pub pd_endpoints: Vec<String>,
-    pub ca_path: Option<String>,
-    pub cert_path: Option<String>,
-    pub key_path: Option<String>,
+    pub ca_path: Option<PathBuf>,
+    pub cert_path: Option<PathBuf>,
+    pub key_path: Option<PathBuf>,
 }
 
 impl Config {
@@ -65,9 +67,9 @@ impl Config {
 
     pub fn with_security<E>(
         pd_endpoints: E,
-        ca_path: String,
-        cert_path: String,
-        key_path: String,
+        ca_path: PathBuf,
+        cert_path: PathBuf,
+        key_path: PathBuf,
     ) -> Self
     where
         E: IntoIterator<Item = String>,
