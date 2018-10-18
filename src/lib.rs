@@ -11,9 +11,13 @@ use futures::Future;
 pub mod raw;
 pub mod transaction;
 
+#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub struct Key(Vec<u8>);
+#[derive(Default, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct Value(Vec<u8>);
+#[derive(Default, Clone, Eq, PartialEq, Debug)]
 pub struct KvPair(Key, Value);
+#[derive(Default, Clone, Eq, PartialEq, Debug)]
 pub struct KeyRange(Key, Key);
 
 pub type KvFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
