@@ -1,0 +1,16 @@
+[package]
+name = "tikv-client"
+version = "0.0.0"
+keywords = ["TiKV", "KV", "distributed-systems"]
+license = "Apache-2.0"
+authors = ["The TiKV Project Developers"]
+repository = "https://github.com/tikv/client-rust"
+description = "The rust language implementation of TiKV client."
+
+[lib]
+name = "tikv_client"
+
+[dependencies]
+futures = "0.1"
+serde = "1.0"
+serde_derive = "1.0"
