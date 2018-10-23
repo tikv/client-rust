@@ -190,18 +190,6 @@ impl Retriever for Snapshot {
     }
 }
 
-pub struct Oracle;
-
-impl Oracle {
-    pub fn timestamp(&self) -> KvFuture<Timestamp> {
-        unimplemented!()
-    }
-
-    pub fn is_expired(&self, _lock_timestamp: Timestamp, _ttl: Timestamp) -> KvFuture<bool> {
-        unimplemented!()
-    }
-}
-
 pub trait Client {
     fn new(_config: &Config) -> KvFuture<Self> {
         unimplemented!()
@@ -220,10 +208,6 @@ pub trait Client {
     }
 
     fn current_timestamp(&self) -> Timestamp {
-        unimplemented!()
-    }
-
-    fn oracle(&self) -> Oracle {
         unimplemented!()
     }
 }
