@@ -17,14 +17,18 @@ pub struct Key(Vec<u8>);
 pub struct Value(Vec<u8>);
 #[derive(Default, Clone, Eq, PartialEq, Debug)]
 pub struct KvPair(Key, Value);
-#[derive(Default, Clone, Eq, PartialEq, Debug)]
-pub struct KeyRange(Key, Key);
 
 pub type KvFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 
 impl Into<Key> for Vec<u8> {
     fn into(self) -> Key {
         Key(self)
+    }
+}
+
+impl AsRef<Key> for Key {
+    fn as_ref(&self) -> &Self {
+        self
     }
 }
 
@@ -40,12 +44,6 @@ impl Into<KvPair> for (Key, Value) {
     }
 }
 
-impl Into<KeyRange> for (Key, Key) {
-    fn into(self) -> KeyRange {
-        KeyRange(self.0, self.1)
-    }
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 #[serde(rename_all = "kebab-case")]
@@ -57,12 +55,13 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new<E>(pd_endpoints: E) -> Self
+    pub fn new<E, S>(pd_endpoints: E) -> Self
     where
-        E: IntoIterator<Item = String>,
+        E: IntoIterator<Item = S>,
+        S: Into<String>,
     {
         Config {
-            pd_endpoints: pd_endpoints.into_iter().collect(),
+            pd_endpoints: pd_endpoints.into_iter().map(Into::into).collect(),
             ca_path: None,
             cert_path: None,
             key_path: None,

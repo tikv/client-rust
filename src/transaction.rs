@@ -51,20 +51,19 @@ impl Stream for Scanner {
 pub trait Retriever {
     fn get<K>(&self, key: K) -> KvFuture<Value>
     where
-        K: Into<Key>;
+        K: AsRef<Key>;
 
-    fn batch_get<I, K>(&self, keys: I) -> KvFuture<Vec<KvPair>>
+    fn batch_get<K>(&self, keys: K) -> KvFuture<Vec<KvPair>>
     where
-        I: IntoIterator<Item = K>,
-        K: Into<Key>;
+        K: AsRef<[Key]>;
 
     fn seek<K>(&self, key: K) -> KvFuture<Scanner>
     where
-        K: Into<Key>;
+        K: AsRef<Key>;
 
     fn seek_reverse<K>(&self, key: K) -> KvFuture<Scanner>
     where
-        K: Into<Key>;
+        K: AsRef<Key>;
 }
 
 pub trait Mutator {
@@ -74,24 +73,23 @@ pub trait Mutator {
 
     fn delete<K>(&mut self, key: K) -> KvFuture<()>
     where
-        K: Into<Key>;
+        K: AsRef<Key>;
 }
 
 pub struct Transaction;
 
 impl Transaction {
-    pub fn commit(&mut self) -> KvFuture<()> {
+    pub fn commit(self) -> KvFuture<()> {
         unimplemented!()
     }
 
-    pub fn rollback(&mut self) -> KvFuture<()> {
+    pub fn rollback(self) -> KvFuture<()> {
         unimplemented!()
     }
 
-    pub fn lock_keys<I, K>(&mut self, keys: I) -> KvFuture<()>
+    pub fn lock_keys<K>(&mut self, keys: K) -> KvFuture<()>
     where
-        I: IntoIterator<Item = I>,
-        K: Into<Key>,
+        K: AsRef<[Key]>,
     {
         drop(keys);
         unimplemented!()
@@ -113,16 +111,15 @@ impl Transaction {
 impl Retriever for Transaction {
     fn get<K>(&self, key: K) -> KvFuture<Value>
     where
-        K: Into<Key>,
+        K: AsRef<Key>,
     {
         drop(key);
         unimplemented!()
     }
 
-    fn batch_get<I, K>(&self, keys: I) -> KvFuture<Vec<KvPair>>
+    fn batch_get<K>(&self, keys: K) -> KvFuture<Vec<KvPair>>
     where
-        I: IntoIterator<Item = K>,
-        K: Into<Key>,
+        K: AsRef<[Key]>,
     {
         drop(keys);
         unimplemented!()
@@ -130,7 +127,7 @@ impl Retriever for Transaction {
 
     fn seek<K>(&self, key: K) -> KvFuture<Scanner>
     where
-        K: Into<Key>,
+        K: AsRef<Key>,
     {
         drop(key);
         unimplemented!()
@@ -138,7 +135,7 @@ impl Retriever for Transaction {
 
     fn seek_reverse<K>(&self, key: K) -> KvFuture<Scanner>
     where
-        K: Into<Key>,
+        K: AsRef<Key>,
     {
         drop(key);
         unimplemented!()
@@ -156,7 +153,7 @@ impl Mutator for Transaction {
 
     fn delete<K>(&mut self, key: K) -> KvFuture<()>
     where
-        K: Into<Key>,
+        K: AsRef<Key>,
     {
         drop(key);
         unimplemented!()
@@ -168,16 +165,15 @@ pub struct Snapshot;
 impl Retriever for Snapshot {
     fn get<K>(&self, key: K) -> KvFuture<Value>
     where
-        K: Into<Key>,
+        K: AsRef<Key>,
     {
         drop(key);
         unimplemented!()
     }
 
-    fn batch_get<I, K>(&self, keys: I) -> KvFuture<Vec<KvPair>>
+    fn batch_get<K>(&self, keys: K) -> KvFuture<Vec<KvPair>>
     where
-        I: IntoIterator<Item = K>,
-        K: Into<Key>,
+        K: AsRef<[Key]>,
     {
         drop(keys);
         unimplemented!()
@@ -185,7 +181,7 @@ impl Retriever for Snapshot {
 
     fn seek<K>(&self, key: K) -> KvFuture<Scanner>
     where
-        K: Into<Key>,
+        K: AsRef<Key>,
     {
         drop(key);
         unimplemented!()
@@ -193,7 +189,7 @@ impl Retriever for Snapshot {
 
     fn seek_reverse<K>(&self, key: K) -> KvFuture<Scanner>
     where
-        K: Into<Key>,
+        K: AsRef<Key>,
     {
         drop(key);
         unimplemented!()
@@ -201,10 +197,24 @@ impl Retriever for Snapshot {
 }
 
 pub trait Client {
-    fn new(_config: &Config) -> KvFuture<Self> {
+    fn begin(&self) -> KvFuture<Transaction>;
+
+    fn begin_with_timestamp(&self, _timestamp: Timestamp) -> KvFuture<Transaction>;
+
+    fn snapshot(&self) -> KvFuture<Snapshot>;
+
+    fn current_timestamp(&self) -> Timestamp;
+}
+
+pub struct TxnClient {}
+
+impl TxnClient {
+    pub fn new(_config: &Config) -> KvFuture<Self> {
         unimplemented!()
     }
+}
 
+impl Client for TxnClient {
     fn begin(&self) -> KvFuture<Transaction> {
         unimplemented!()
     }
