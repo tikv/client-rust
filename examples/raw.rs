@@ -14,35 +14,51 @@ fn main() {
     let key: Key = b"Company".to_vec().into();
     let value: Value = b"PingCAP".to_vec().into();
 
-    raw.put((Clone::clone(&key), Clone::clone(&value)), None)
+    raw.put((Clone::clone(&key), Clone::clone(&value)))
+        .cf("test_cf")
         .wait()
         .expect("Could not put kv pair to tikv");
     println!("Successfully put {:?}:{:?} to tikv", key, value);
 
-    let value = raw.get(&key, None).wait().expect("Could not get value");
+    let value = raw
+        .get(&key)
+        .cf("test_cf")
+        .wait()
+        .expect("Could not get value");
     println!("Found val: {:?} for key: {:?}", value, key);
 
-    raw.delete(&key, None)
+    raw.delete(&key)
+        .cf("test_cf")
         .wait()
         .expect("Could not delete value");
     println!("Key: {:?} deleted", key);
 
-    raw.get(&key, None)
+    raw.get(&key)
+        .cf("test_cf")
         .wait()
         .expect_err("Get returned value for not existing key");
 
     let keys = vec![b"k1".to_vec().into(), b"k2".to_vec().into()];
 
     let values = raw
-        .batch_get(&keys, None)
+        .batch_get(&keys)
+        .cf("test_cf")
         .wait()
         .expect("Could not get values");
     println!("Found values: {:?} for keys: {:?}", values, keys);
 
     let start: Key = b"k1".to_vec().into();
     let end: Key = b"k2".to_vec().into();
-    raw.scan(&start..&end, 10, false, None);
+    raw.scan(&start..&end, 10)
+        .cf("test_cf")
+        .key_only()
+        .wait()
+        .expect("Could not scan");
 
     let ranges = [&start..&end, &start..&end];
-    raw.batch_scan(&ranges, 10, false, None);
+    raw.batch_scan(&ranges, 10)
+        .cf("test_cf")
+        .key_only()
+        .wait()
+        .expect("Could not batch scan");
 }
