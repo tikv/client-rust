@@ -49,31 +49,19 @@ impl Stream for Scanner {
 }
 
 pub trait Retriever {
-    fn get<K>(&self, key: K) -> KvFuture<Value>
-    where
-        K: AsRef<Key>;
+    fn get(&self, key: impl AsRef<Key>) -> KvFuture<Value>;
 
-    fn batch_get<K>(&self, keys: K) -> KvFuture<Vec<KvPair>>
-    where
-        K: AsRef<[Key]>;
+    fn batch_get(&self, keys: impl AsRef<[Key]>) -> KvFuture<Vec<KvPair>>;
 
-    fn seek<K>(&self, key: K) -> KvFuture<Scanner>
-    where
-        K: AsRef<Key>;
+    fn seek(&self, key: impl AsRef<Key>) -> KvFuture<Scanner>;
 
-    fn seek_reverse<K>(&self, key: K) -> KvFuture<Scanner>
-    where
-        K: AsRef<Key>;
+    fn seek_reverse(&self, key: impl AsRef<Key>) -> KvFuture<Scanner>;
 }
 
 pub trait Mutator {
-    fn set<P>(&mut self, pair: P) -> KvFuture<()>
-    where
-        P: Into<KvPair>;
+    fn set(&mut self, pair: impl Into<KvPair>) -> KvFuture<()>;
 
-    fn delete<K>(&mut self, key: K) -> KvFuture<()>
-    where
-        K: AsRef<Key>;
+    fn delete(&mut self, key: impl AsRef<Key>) -> KvFuture<()>;
 }
 
 pub struct Transaction;
@@ -87,10 +75,7 @@ impl Transaction {
         unimplemented!()
     }
 
-    pub fn lock_keys<K>(&mut self, keys: K) -> KvFuture<()>
-    where
-        K: AsRef<[Key]>,
-    {
+    pub fn lock_keys(&mut self, keys: impl AsRef<[Key]>) -> KvFuture<()> {
         drop(keys);
         unimplemented!()
     }
@@ -109,52 +94,34 @@ impl Transaction {
 }
 
 impl Retriever for Transaction {
-    fn get<K>(&self, key: K) -> KvFuture<Value>
-    where
-        K: AsRef<Key>,
-    {
+    fn get(&self, key: impl AsRef<Key>) -> KvFuture<Value> {
         drop(key);
         unimplemented!()
     }
 
-    fn batch_get<K>(&self, keys: K) -> KvFuture<Vec<KvPair>>
-    where
-        K: AsRef<[Key]>,
-    {
+    fn batch_get(&self, keys: impl AsRef<[Key]>) -> KvFuture<Vec<KvPair>> {
         drop(keys);
         unimplemented!()
     }
 
-    fn seek<K>(&self, key: K) -> KvFuture<Scanner>
-    where
-        K: AsRef<Key>,
-    {
+    fn seek(&self, key: impl AsRef<Key>) -> KvFuture<Scanner> {
         drop(key);
         unimplemented!()
     }
 
-    fn seek_reverse<K>(&self, key: K) -> KvFuture<Scanner>
-    where
-        K: AsRef<Key>,
-    {
+    fn seek_reverse(&self, key: impl AsRef<Key>) -> KvFuture<Scanner> {
         drop(key);
         unimplemented!()
     }
 }
 
 impl Mutator for Transaction {
-    fn set<P>(&mut self, pair: P) -> KvFuture<()>
-    where
-        P: Into<KvPair>,
-    {
+    fn set(&mut self, pair: impl Into<KvPair>) -> KvFuture<()> {
         drop(pair);
         unimplemented!()
     }
 
-    fn delete<K>(&mut self, key: K) -> KvFuture<()>
-    where
-        K: AsRef<Key>,
-    {
+    fn delete(&mut self, key: impl AsRef<Key>) -> KvFuture<()> {
         drop(key);
         unimplemented!()
     }
@@ -163,34 +130,22 @@ impl Mutator for Transaction {
 pub struct Snapshot;
 
 impl Retriever for Snapshot {
-    fn get<K>(&self, key: K) -> KvFuture<Value>
-    where
-        K: AsRef<Key>,
-    {
+    fn get(&self, key: impl AsRef<Key>) -> KvFuture<Value> {
         drop(key);
         unimplemented!()
     }
 
-    fn batch_get<K>(&self, keys: K) -> KvFuture<Vec<KvPair>>
-    where
-        K: AsRef<[Key]>,
-    {
+    fn batch_get(&self, keys: impl AsRef<[Key]>) -> KvFuture<Vec<KvPair>> {
         drop(keys);
         unimplemented!()
     }
 
-    fn seek<K>(&self, key: K) -> KvFuture<Scanner>
-    where
-        K: AsRef<Key>,
-    {
+    fn seek(&self, key: impl AsRef<Key>) -> KvFuture<Scanner> {
         drop(key);
         unimplemented!()
     }
 
-    fn seek_reverse<K>(&self, key: K) -> KvFuture<Scanner>
-    where
-        K: AsRef<Key>,
-    {
+    fn seek_reverse(&self, key: impl AsRef<Key>) -> KvFuture<Scanner> {
         drop(key);
         unimplemented!()
     }

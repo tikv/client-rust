@@ -6,9 +6,9 @@ extern crate serde_derive;
 extern crate quick_error;
 extern crate grpcio as grpc;
 
+pub mod errors;
 pub mod raw;
 pub mod transaction;
-pub mod errors;
 
 use std::path::PathBuf;
 
@@ -61,11 +61,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new<E, S>(pd_endpoints: E) -> Self
-    where
-        E: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
+    pub fn new(pd_endpoints: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Config {
             pd_endpoints: pd_endpoints.into_iter().map(Into::into).collect(),
             ca_path: None,
@@ -75,16 +71,13 @@ impl Config {
     }
 
     pub fn with_security<E>(
-        pd_endpoints: E,
+        pd_endpoints: impl IntoIterator<Item = impl Into<String>>,
         ca_path: PathBuf,
         cert_path: PathBuf,
         key_path: PathBuf,
-    ) -> Self
-    where
-        E: IntoIterator<Item = String>,
-    {
+    ) -> Self {
         Config {
-            pd_endpoints: pd_endpoints.into_iter().collect(),
+            pd_endpoints: pd_endpoints.into_iter().map(Into::into).collect(),
             ca_path: Some(ca_path),
             cert_path: Some(cert_path),
             key_path: Some(key_path),
