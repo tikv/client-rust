@@ -11,6 +11,7 @@ pub mod raw;
 pub mod transaction;
 
 use std::path::PathBuf;
+use std::ops::Deref;
 
 use futures::Future;
 
@@ -38,9 +39,25 @@ impl AsRef<Key> for Key {
     }
 }
 
+impl Deref for Key {
+    type Target = Vec<u8>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl Into<Value> for Vec<u8> {
     fn into(self) -> Value {
         Value(self)
+    }
+}
+
+impl Deref for Value {
+    type Target = Vec<u8>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 

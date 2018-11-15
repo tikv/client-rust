@@ -5,8 +5,7 @@ use futures::{Async, Future, Stream};
 use tikv_client::transaction::{Client, Mutator, Retriever, TxnClient};
 use tikv_client::*;
 
-fn puts(client: &TxnClient, pairs: impl IntoIterator<Item = impl Into<KvPair>>)
-{
+fn puts(client: &TxnClient, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
     let mut txn = client.begin().wait().expect("Could not begin transaction");
     let _: Vec<()> = pairs
         .into_iter()
@@ -41,8 +40,7 @@ fn scan(client: &TxnClient, start: &Key, limit: usize) {
     }
 }
 
-fn dels(client: &TxnClient, pairs: impl IntoIterator<Item = Key>)
-{
+fn dels(client: &TxnClient, pairs: impl IntoIterator<Item = Key>) {
     let mut txn = client.begin().wait().expect("Could not begin transaction");
     let _: Vec<()> = pairs
         .into_iter()
