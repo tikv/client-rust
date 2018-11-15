@@ -3,31 +3,26 @@ extern crate tikv_client;
 
 use std::ops::RangeBounds;
 
-use futures::{Future, Stream};
+use futures::{future, Future, Stream};
 use tikv_client::transaction::{Client, Mutator, Retriever, TxnClient};
 use tikv_client::*;
 
 fn puts(client: &TxnClient, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
-    let mut txn = client.begin().wait().expect("Could not begin transaction");
-    let _: Vec<()> = pairs
-        .into_iter()
-        .map(Into::into)
-        .map(|p| {
-            txn.set(p).wait().expect("Could not set key value pair");
-        }).collect();
+    let mut txn = client.begin();
+    let _: Vec<()> = future::join_all(pairs.into_iter().map(Into::into).map(|p| txn.set(p)))
+        .wait()
+        .expect("Could not set key value pairs");
     txn.commit().wait().expect("Could not commit transaction");
 }
 
 fn get(client: &TxnClient, key: &Key) -> Value {
-    let txn = client.begin().wait().expect("Could not begin transaction");
+    let txn = client.begin();
     txn.get(key).wait().expect("Could not get value")
 }
 
 fn scan(client: &TxnClient, range: impl RangeBounds<Key>, mut limit: usize) {
     client
         .begin()
-        .wait()
-        .expect("Could not begin transaction")
         .scan(range)
         .take_while(move |_| {
             Ok(if limit == 0 {
@@ -44,7 +39,7 @@ fn scan(client: &TxnClient, range: impl RangeBounds<Key>, mut limit: usize) {
 }
 
 fn dels(client: &TxnClient, keys: impl IntoIterator<Item = Key>) {
-    let mut txn = client.begin().wait().expect("Could not begin transaction");
+    let mut txn = client.begin();
     let _: Vec<()> = keys
         .into_iter()
         .map(|p| {

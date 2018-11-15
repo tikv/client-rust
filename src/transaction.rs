@@ -55,6 +55,12 @@ pub trait Mutator {
     fn delete(&mut self, key: impl AsRef<Key>) -> KvFuture<()>;
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum IsolationLevel {
+    SnapshotIsolation,
+    ReadCommitted,
+}
+
 pub struct Transaction;
 
 impl Transaction {
@@ -79,7 +85,11 @@ impl Transaction {
         unimplemented!()
     }
 
-    pub fn snapshot(&self) -> KvFuture<Snapshot> {
+    pub fn snapshot(&self) -> Snapshot {
+        unimplemented!()
+    }
+
+    pub fn set_isolation_level(&mut self, _level: IsolationLevel) {
         unimplemented!()
     }
 }
@@ -143,11 +153,11 @@ impl Retriever for Snapshot {
 }
 
 pub trait Client {
-    fn begin(&self) -> KvFuture<Transaction>;
+    fn begin(&self) -> Transaction;
 
-    fn begin_with_timestamp(&self, _timestamp: Timestamp) -> KvFuture<Transaction>;
+    fn begin_with_timestamp(&self, _timestamp: Timestamp) -> Transaction;
 
-    fn snapshot(&self) -> KvFuture<Snapshot>;
+    fn snapshot(&self) -> Snapshot;
 
     fn current_timestamp(&self) -> Timestamp;
 }
@@ -161,15 +171,15 @@ impl TxnClient {
 }
 
 impl Client for TxnClient {
-    fn begin(&self) -> KvFuture<Transaction> {
+    fn begin(&self) -> Transaction {
         unimplemented!()
     }
 
-    fn begin_with_timestamp(&self, _timestamp: Timestamp) -> KvFuture<Transaction> {
+    fn begin_with_timestamp(&self, _timestamp: Timestamp) -> Transaction {
         unimplemented!()
     }
 
-    fn snapshot(&self) -> KvFuture<Snapshot> {
+    fn snapshot(&self) -> Snapshot {
         unimplemented!()
     }
 
