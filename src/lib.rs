@@ -10,8 +10,8 @@ pub mod errors;
 pub mod raw;
 pub mod transaction;
 
-use std::path::PathBuf;
 use std::ops::Deref;
+use std::path::PathBuf;
 
 use futures::Future;
 
@@ -87,7 +87,7 @@ impl Config {
         }
     }
 
-    pub fn with_security<E>(
+    pub fn with_security(
         pd_endpoints: impl IntoIterator<Item = impl Into<String>>,
         ca_path: PathBuf,
         cert_path: PathBuf,

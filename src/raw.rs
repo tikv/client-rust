@@ -19,14 +19,14 @@ impl<'a> Into<ColumnFamily> for &'a str {
     }
 }
 
-pub struct Get<'a, AClient: Client + 'a> {
-    client: &'a AClient,
+pub struct Get<'a, Impl: Client + 'a> {
+    client: &'a Impl,
     key: Key,
     cf: Option<ColumnFamily>,
 }
 
-impl<'a, AClient: Client + 'a> Get<'a, AClient> {
-    fn new(client: &'a AClient, key: Key) -> Self {
+impl<'a, Impl: Client + 'a> Get<'a, Impl> {
+    fn new(client: &'a Impl, key: Key) -> Self {
         Get {
             client,
             key,
@@ -40,7 +40,7 @@ impl<'a, AClient: Client + 'a> Get<'a, AClient> {
     }
 }
 
-impl<'a, AClient: Client + 'a> Future for Get<'a, AClient> {
+impl<'a, Impl: Client + 'a> Future for Get<'a, Impl> {
     type Item = Value;
     type Error = ();
 
@@ -52,14 +52,14 @@ impl<'a, AClient: Client + 'a> Future for Get<'a, AClient> {
     }
 }
 
-pub struct BatchGet<'a, AClient: Client + 'a> {
-    client: &'a AClient,
+pub struct BatchGet<'a, Impl: Client + 'a> {
+    client: &'a Impl,
     keys: Vec<Key>,
     cf: Option<ColumnFamily>,
 }
 
-impl<'a, AClient: Client + 'a> BatchGet<'a, AClient> {
-    fn new(client: &'a AClient, keys: Vec<Key>) -> Self {
+impl<'a, Impl: Client + 'a> BatchGet<'a, Impl> {
+    fn new(client: &'a Impl, keys: Vec<Key>) -> Self {
         BatchGet {
             client,
             keys,
@@ -73,7 +73,7 @@ impl<'a, AClient: Client + 'a> BatchGet<'a, AClient> {
     }
 }
 
-impl<'a, AClient: Client + 'a> Future for BatchGet<'a, AClient> {
+impl<'a, Impl: Client + 'a> Future for BatchGet<'a, Impl> {
     type Item = Vec<KvPair>;
     type Error = ();
 
@@ -85,14 +85,14 @@ impl<'a, AClient: Client + 'a> Future for BatchGet<'a, AClient> {
     }
 }
 
-pub struct Put<'a, AClient: Client + 'a> {
-    client: &'a AClient,
+pub struct Put<'a, Impl: Client + 'a> {
+    client: &'a Impl,
     pair: KvPair,
     cf: Option<ColumnFamily>,
 }
 
-impl<'a, AClient: Client + 'a> Put<'a, AClient> {
-    fn new(client: &'a AClient, pair: KvPair) -> Self {
+impl<'a, Impl: Client + 'a> Put<'a, Impl> {
+    fn new(client: &'a Impl, pair: KvPair) -> Self {
         Put {
             client,
             pair,
@@ -106,7 +106,7 @@ impl<'a, AClient: Client + 'a> Put<'a, AClient> {
     }
 }
 
-impl<'a, AClient: Client + 'a> Future for Put<'a, AClient> {
+impl<'a, Impl: Client + 'a> Future for Put<'a, Impl> {
     type Item = ();
     type Error = ();
 
@@ -118,14 +118,14 @@ impl<'a, AClient: Client + 'a> Future for Put<'a, AClient> {
     }
 }
 
-pub struct BatchPut<'a, AClient: Client + 'a> {
-    client: &'a AClient,
+pub struct BatchPut<'a, Impl: Client + 'a> {
+    client: &'a Impl,
     pairs: Vec<KvPair>,
     cf: Option<ColumnFamily>,
 }
 
-impl<'a, AClient: Client + 'a> BatchPut<'a, AClient> {
-    fn new(client: &'a AClient, pairs: Vec<KvPair>) -> Self {
+impl<'a, Impl: Client + 'a> BatchPut<'a, Impl> {
+    fn new(client: &'a Impl, pairs: Vec<KvPair>) -> Self {
         BatchPut {
             client,
             pairs,
@@ -139,7 +139,7 @@ impl<'a, AClient: Client + 'a> BatchPut<'a, AClient> {
     }
 }
 
-impl<'a, AClient: Client + 'a> Future for BatchPut<'a, AClient> {
+impl<'a, Impl: Client + 'a> Future for BatchPut<'a, Impl> {
     type Item = ();
     type Error = ();
 
@@ -151,14 +151,14 @@ impl<'a, AClient: Client + 'a> Future for BatchPut<'a, AClient> {
     }
 }
 
-pub struct Delete<'a, AClient: Client + 'a> {
-    client: &'a AClient,
+pub struct Delete<'a, Impl: Client + 'a> {
+    client: &'a Impl,
     key: Key,
     cf: Option<ColumnFamily>,
 }
 
-impl<'a, AClient: Client + 'a> Delete<'a, AClient> {
-    fn new(client: &'a AClient, key: Key) -> Self {
+impl<'a, Impl: Client + 'a> Delete<'a, Impl> {
+    fn new(client: &'a Impl, key: Key) -> Self {
         Delete {
             client,
             key,
@@ -172,7 +172,7 @@ impl<'a, AClient: Client + 'a> Delete<'a, AClient> {
     }
 }
 
-impl<'a, AClient: Client + 'a> Future for Delete<'a, AClient> {
+impl<'a, Impl: Client + 'a> Future for Delete<'a, Impl> {
     type Item = ();
     type Error = ();
 
@@ -184,14 +184,14 @@ impl<'a, AClient: Client + 'a> Future for Delete<'a, AClient> {
     }
 }
 
-pub struct BatchDelete<'a, AClient: Client + 'a> {
-    client: &'a AClient,
+pub struct BatchDelete<'a, Impl: Client + 'a> {
+    client: &'a Impl,
     keys: Vec<Key>,
     cf: Option<ColumnFamily>,
 }
 
-impl<'a, AClient: Client + 'a> BatchDelete<'a, AClient> {
-    fn new(client: &'a AClient, keys: Vec<Key>) -> Self {
+impl<'a, Impl: Client + 'a> BatchDelete<'a, Impl> {
+    fn new(client: &'a Impl, keys: Vec<Key>) -> Self {
         BatchDelete {
             client,
             keys,
@@ -205,7 +205,7 @@ impl<'a, AClient: Client + 'a> BatchDelete<'a, AClient> {
     }
 }
 
-impl<'a, AClient: Client + 'a> Future for BatchDelete<'a, AClient> {
+impl<'a, Impl: Client + 'a> Future for BatchDelete<'a, Impl> {
     type Item = ();
     type Error = ();
 
@@ -217,22 +217,24 @@ impl<'a, AClient: Client + 'a> Future for BatchDelete<'a, AClient> {
     }
 }
 
-pub struct Scan<'a, AClient: Client + 'a> {
-    client: &'a AClient,
+pub struct Scan<'a, Impl: Client + 'a> {
+    client: &'a Impl,
     range: (Key, Key),
     limit: u32,
     key_only: bool,
     cf: Option<ColumnFamily>,
+    reverse: bool,
 }
 
-impl<'a, AClient: Client + 'a> Scan<'a, AClient> {
-    fn new(client: &'a AClient, range: (Key, Key), limit: u32) -> Self {
+impl<'a, Impl: Client + 'a> Scan<'a, Impl> {
+    fn new(client: &'a Impl, range: (Key, Key), limit: u32) -> Self {
         Scan {
             client,
             range,
             limit,
             key_only: false,
             cf: None,
+            reverse: false,
         }
     }
 
@@ -245,9 +247,14 @@ impl<'a, AClient: Client + 'a> Scan<'a, AClient> {
         self.cf = Some(cf.into());
         self
     }
+
+    pub fn reverse(mut self) -> Self {
+        self.reverse = true;
+        self
+    }
 }
 
-impl<'a, AClient: Client + 'a> Future for Scan<'a, AClient> {
+impl<'a, Impl: Client + 'a> Future for Scan<'a, Impl> {
     type Item = Vec<KvPair>;
     type Error = ();
 
@@ -261,22 +268,24 @@ impl<'a, AClient: Client + 'a> Future for Scan<'a, AClient> {
     }
 }
 
-pub struct BatchScan<'a, AClient: Client + 'a> {
-    client: &'a AClient,
+pub struct BatchScan<'a, Impl: Client + 'a> {
+    client: &'a Impl,
     ranges: Vec<(Key, Key)>,
     each_limit: u32,
     key_only: bool,
     cf: Option<ColumnFamily>,
+    reverse: bool,
 }
 
-impl<'a, AClient: Client + 'a> BatchScan<'a, AClient> {
-    fn new(client: &'a AClient, ranges: Vec<(Key, Key)>, each_limit: u32) -> Self {
+impl<'a, Impl: Client + 'a> BatchScan<'a, Impl> {
+    fn new(client: &'a Impl, ranges: Vec<(Key, Key)>, each_limit: u32) -> Self {
         BatchScan {
             client,
             ranges,
             each_limit,
             key_only: false,
             cf: None,
+            reverse: false,
         }
     }
 
@@ -289,9 +298,14 @@ impl<'a, AClient: Client + 'a> BatchScan<'a, AClient> {
         self.cf = Some(cf.into());
         self
     }
+
+    pub fn reverse(mut self) -> Self {
+        self.reverse = true;
+        self
+    }
 }
 
-impl<'a, AClient: Client + 'a> Future for BatchScan<'a, AClient> {
+impl<'a, Impl: Client + 'a> Future for BatchScan<'a, Impl> {
     type Item = Vec<KvPair>;
     type Error = ();
 
@@ -305,14 +319,14 @@ impl<'a, AClient: Client + 'a> Future for BatchScan<'a, AClient> {
     }
 }
 
-pub struct DeleteRange<'a, AClient: Client + 'a> {
-    client: &'a AClient,
+pub struct DeleteRange<'a, Impl: Client + 'a> {
+    client: &'a Impl,
     range: (Key, Key),
     cf: Option<ColumnFamily>,
 }
 
-impl<'a, AClient: Client + 'a> DeleteRange<'a, AClient> {
-    fn new(client: &'a AClient, range: (Key, Key)) -> Self {
+impl<'a, Impl: Client + 'a> DeleteRange<'a, Impl> {
+    fn new(client: &'a Impl, range: (Key, Key)) -> Self {
         DeleteRange {
             client,
             range,
@@ -326,7 +340,7 @@ impl<'a, AClient: Client + 'a> DeleteRange<'a, AClient> {
     }
 }
 
-impl<'a, AClient: Client + 'a> Future for DeleteRange<'a, AClient> {
+impl<'a, Impl: Client + 'a> Future for DeleteRange<'a, Impl> {
     type Item = ();
     type Error = ();
 
@@ -339,35 +353,29 @@ impl<'a, AClient: Client + 'a> Future for DeleteRange<'a, AClient> {
 }
 
 pub trait Client {
-    type AClient: Client;
+    type Impl: Client;
 
-    fn get(&self, key: impl AsRef<Key>) -> Get<Self::AClient>;
+    fn get(&self, key: impl AsRef<Key>) -> Get<Self::Impl>;
 
-    fn batch_get(&self, keys: impl AsRef<[Key]>) -> BatchGet<Self::AClient>;
+    fn batch_get(&self, keys: impl AsRef<[Key]>) -> BatchGet<Self::Impl>;
 
-    fn put(&self, pair: impl Into<KvPair>) -> Put<Self::AClient>;
+    fn put(&self, pair: impl Into<KvPair>) -> Put<Self::Impl>;
 
-    fn batch_put(
-        &self,
-        pairs: impl IntoIterator<Item = impl Into<KvPair>>,
-    ) -> BatchPut<Self::AClient>;
+    fn batch_put(&self, pairs: impl IntoIterator<Item = impl Into<KvPair>>)
+        -> BatchPut<Self::Impl>;
 
-    fn delete(&self, key: impl AsRef<Key>) -> Delete<Self::AClient>;
+    fn delete(&self, key: impl AsRef<Key>) -> Delete<Self::Impl>;
 
-    fn batch_delete(&self, keys: impl AsRef<[Key]>) -> BatchDelete<Self::AClient>;
+    fn batch_delete(&self, keys: impl AsRef<[Key]>) -> BatchDelete<Self::Impl>;
 
-    fn scan(&self, range: impl RangeBounds<Key>, limit: u32) -> Scan<Self::AClient>;
+    fn scan(&self, range: impl RangeBounds<Key>, limit: u32) -> Scan<Self::Impl>;
 
-    fn batch_scan<Ranges, Bounds>(
-        &self,
-        ranges: Ranges,
-        each_limit: u32,
-    ) -> BatchScan<Self::AClient>
+    fn batch_scan<Ranges, Bounds>(&self, ranges: Ranges, each_limit: u32) -> BatchScan<Self::Impl>
     where
         Ranges: AsRef<[Bounds]>,
         Bounds: RangeBounds<Key>;
 
-    fn delete_range(&self, range: impl RangeBounds<Key>) -> DeleteRange<Self::AClient>;
+    fn delete_range(&self, range: impl RangeBounds<Key>) -> DeleteRange<Self::Impl>;
 }
 
 pub struct RawClient;
@@ -383,7 +391,7 @@ impl RawClient {
 }
 
 impl Client for RawClient {
-    type AClient = Self;
+    type Impl = Self;
 
     fn get(&self, key: impl AsRef<Key>) -> Get<Self> {
         Get::new(self, key.as_ref().clone())

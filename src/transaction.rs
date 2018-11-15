@@ -1,4 +1,5 @@
-use std::io::Error;
+use std::ops::RangeBounds;
+use Error;
 
 use futures::{Poll, Stream};
 
@@ -29,16 +30,6 @@ impl Timestamp {
 
 pub struct Scanner;
 
-impl Scanner {
-    pub fn set_limit(&mut self, _limit: u32) {
-        unimplemented!()
-    }
-
-    pub fn set_key_only(&mut self, _key_only: bool) {
-        unimplemented!()
-    }
-}
-
 impl Stream for Scanner {
     type Item = KvPair;
     type Error = Error;
@@ -53,9 +44,9 @@ pub trait Retriever {
 
     fn batch_get(&self, keys: impl AsRef<[Key]>) -> KvFuture<Vec<KvPair>>;
 
-    fn seek(&self, key: impl AsRef<Key>) -> KvFuture<Scanner>;
+    fn scan(&self, range: impl RangeBounds<Key>) -> Scanner;
 
-    fn seek_reverse(&self, key: impl AsRef<Key>) -> KvFuture<Scanner>;
+    fn scan_reverse(&self, range: impl RangeBounds<Key>) -> Scanner;
 }
 
 pub trait Mutator {
@@ -104,13 +95,13 @@ impl Retriever for Transaction {
         unimplemented!()
     }
 
-    fn seek(&self, key: impl AsRef<Key>) -> KvFuture<Scanner> {
-        drop(key);
+    fn scan(&self, range: impl RangeBounds<Key>) -> Scanner {
+        drop(range);
         unimplemented!()
     }
 
-    fn seek_reverse(&self, key: impl AsRef<Key>) -> KvFuture<Scanner> {
-        drop(key);
+    fn scan_reverse(&self, range: impl RangeBounds<Key>) -> Scanner {
+        drop(range);
         unimplemented!()
     }
 }
@@ -140,13 +131,13 @@ impl Retriever for Snapshot {
         unimplemented!()
     }
 
-    fn seek(&self, key: impl AsRef<Key>) -> KvFuture<Scanner> {
-        drop(key);
+    fn scan(&self, range: impl RangeBounds<Key>) -> Scanner {
+        drop(range);
         unimplemented!()
     }
 
-    fn seek_reverse(&self, key: impl AsRef<Key>) -> KvFuture<Scanner> {
-        drop(key);
+    fn scan_reverse(&self, range: impl RangeBounds<Key>) -> Scanner {
+        drop(range);
         unimplemented!()
     }
 }

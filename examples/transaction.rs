@@ -1,7 +1,9 @@
 extern crate futures;
 extern crate tikv_client;
 
-use futures::{Async, Future, Stream};
+use std::ops::RangeBounds;
+
+use futures::{Future, Stream};
 use tikv_client::transaction::{Client, Mutator, Retriever, TxnClient};
 use tikv_client::*;
 
@@ -21,28 +23,29 @@ fn get(client: &TxnClient, key: &Key) -> Value {
     txn.get(key).wait().expect("Could not get value")
 }
 
-fn scan(client: &TxnClient, start: &Key, limit: usize) {
-    let txn = client.begin().wait().expect("Could not begin transaction");
-    let mut scanner = txn.seek(start).wait().expect("Could not seek to start key");
-    let mut limit = limit;
-    loop {
-        if limit == 0 {
-            break;
-        }
-        match scanner.poll() {
-            Ok(Async::Ready(None)) => return,
-            Ok(Async::Ready(Some(pair))) => {
+fn scan(client: &TxnClient, range: impl RangeBounds<Key>, mut limit: usize) {
+    client
+        .begin()
+        .wait()
+        .expect("Could not begin transaction")
+        .scan(range)
+        .take_while(move |_| {
+            Ok(if limit == 0 {
+                false
+            } else {
                 limit -= 1;
-                println!("{:?}", pair);
-            }
-            _ => break,
-        }
-    }
+                true
+            })
+        }).for_each(|pair| {
+            println!("{:?}", pair);
+            Ok(())
+        }).wait()
+        .expect("Could not scan keys");
 }
 
-fn dels(client: &TxnClient, pairs: impl IntoIterator<Item = Key>) {
+fn dels(client: &TxnClient, keys: impl IntoIterator<Item = Key>) {
     let mut txn = client.begin().wait().expect("Could not begin transaction");
-    let _: Vec<()> = pairs
+    let _: Vec<()> = keys
         .into_iter()
         .map(|p| {
             txn.delete(p).wait().expect("Could not delete key");
@@ -70,7 +73,7 @@ fn main() {
 
     // scan
     let key1: Key = b"key1".to_vec().into();
-    scan(&txn, &key1, 10);
+    scan(&txn, key1.., 10);
 
     // delete
     let key1: Key = b"key1".to_vec().into();
