@@ -1,3 +1,4 @@
+#![cfg_attr(not(feature = "cargo-clippy"), allow(unknown_lints))]
 extern crate futures;
 extern crate serde;
 #[macro_use]
@@ -13,8 +14,6 @@ pub mod transaction;
 use std::ops::Deref;
 use std::path::PathBuf;
 
-use futures::Future;
-
 pub use errors::Error;
 pub use errors::Result;
 
@@ -24,8 +23,6 @@ pub struct Key(Vec<u8>);
 pub struct Value(Vec<u8>);
 #[derive(Default, Clone, Eq, PartialEq, Debug)]
 pub struct KvPair(Key, Value);
-
-pub type KvFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 
 impl Into<Key> for Vec<u8> {
     fn into(self) -> Key {

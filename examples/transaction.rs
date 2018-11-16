@@ -4,10 +4,10 @@ extern crate tikv_client;
 use std::ops::RangeBounds;
 
 use futures::{future, Future, Stream};
-use tikv_client::transaction::{Client, IsolationLevel, Mutator, Retriever, TxnClient};
+use tikv_client::transaction::{Client, IsolationLevel};
 use tikv_client::*;
 
-fn puts(client: &TxnClient, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
+fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
     let mut txn = client.begin();
     let _: Vec<()> = future::join_all(pairs.into_iter().map(Into::into).map(|p| txn.set(p)))
         .wait()
@@ -15,12 +15,12 @@ fn puts(client: &TxnClient, pairs: impl IntoIterator<Item = impl Into<KvPair>>) 
     txn.commit().wait().expect("Could not commit transaction");
 }
 
-fn get(client: &TxnClient, key: &Key) -> Value {
+fn get(client: &Client, key: &Key) -> Value {
     let txn = client.begin();
     txn.get(key).wait().expect("Could not get value")
 }
 
-fn scan(client: &TxnClient, range: impl RangeBounds<Key>, mut limit: usize) {
+fn scan(client: &Client, range: impl RangeBounds<Key>, mut limit: usize) {
     client
         .begin()
         .scan(range)
@@ -38,7 +38,7 @@ fn scan(client: &TxnClient, range: impl RangeBounds<Key>, mut limit: usize) {
         .expect("Could not scan keys");
 }
 
-fn dels(client: &TxnClient, keys: impl IntoIterator<Item = Key>) {
+fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {
     let mut txn = client.begin();
     txn.set_isolation_level(IsolationLevel::ReadCommitted);
     let _: Vec<()> = keys
@@ -51,7 +51,7 @@ fn dels(client: &TxnClient, keys: impl IntoIterator<Item = Key>) {
 
 fn main() {
     let config = Config::new(vec!["127.0.0.1:3379"]);
-    let txn = TxnClient::new(&config)
+    let txn = Client::new(&config)
         .wait()
         .expect("Could not connect to tikv");
 

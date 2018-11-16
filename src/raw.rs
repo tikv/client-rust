@@ -1,8 +1,8 @@
 use std::ops::RangeBounds;
 
-use futures::{Future, Poll};
+use futures::{future, Future, Poll};
 
-use {Config, Key, KvFuture, KvPair, Value};
+use {Config, Error, Key, KvPair, Value};
 
 #[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub struct ColumnFamily(String);
@@ -87,15 +87,17 @@ impl<'a> Future for BatchGet<'a> {
 
 pub struct Put<'a> {
     client: &'a Client,
-    pair: KvPair,
+    key: Key,
+    value: Value,
     cf: Option<ColumnFamily>,
 }
 
 impl<'a> Put<'a> {
-    fn new(client: &'a Client, pair: KvPair) -> Self {
+    fn new(client: &'a Client, key: Key, value: Value) -> Self {
         Put {
             client,
-            pair,
+            key,
+            value,
             cf: None,
         }
     }
@@ -112,7 +114,8 @@ impl<'a> Future for Put<'a> {
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let _ = &self.client;
-        let _ = &self.pair;
+        let _ = &self.key;
+        let _ = &self.value;
         let _ = &self.cf;
         unimplemented!()
     }
@@ -355,12 +358,9 @@ impl<'a> Future for DeleteRange<'a> {
 pub struct Client;
 
 impl Client {
-    pub fn new(_config: &Config) -> KvFuture<Self> {
-        unimplemented!()
-    }
-
-    fn extract_range(_range: &impl RangeBounds<Key>) -> (Key, Key) {
-        unimplemented!()
+    #![allow(new_ret_no_self)]
+    pub fn new(_config: &Config) -> impl Future<Item = Self, Error = Error> + Send {
+        future::ok(Client {})
     }
 
     pub fn get(&self, key: impl AsRef<Key>) -> Get {
@@ -371,8 +371,8 @@ impl Client {
         BatchGet::new(self, keys.as_ref().to_vec())
     }
 
-    pub fn put(&self, pair: impl Into<KvPair>) -> Put {
-        Put::new(self, pair.into())
+    pub fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Put {
+        Put::new(self, key.into(), value.into())
     }
 
     pub fn batch_put(&self, pairs: impl IntoIterator<Item = impl Into<KvPair>>) -> BatchPut {
@@ -405,5 +405,9 @@ impl Client {
 
     pub fn delete_range(&self, range: impl RangeBounds<Key>) -> DeleteRange {
         DeleteRange::new(self, Self::extract_range(&range))
+    }
+
+    fn extract_range(_range: &impl RangeBounds<Key>) -> (Key, Key) {
+        unimplemented!()
     }
 }

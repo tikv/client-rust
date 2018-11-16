@@ -1,9 +1,8 @@
 use std::ops::RangeBounds;
-use Error;
 
-use futures::{Poll, Stream};
+use futures::{future, Future, Poll, Stream};
 
-use {Config, Key, KvFuture, KvPair, Value};
+use {Config, Error, Key, KvPair, Value};
 
 #[derive(Copy, Clone)]
 pub struct Timestamp(u64);
@@ -39,22 +38,6 @@ impl Stream for Scanner {
     }
 }
 
-pub trait Retriever {
-    fn get(&self, key: impl AsRef<Key>) -> KvFuture<Value>;
-
-    fn batch_get(&self, keys: impl AsRef<[Key]>) -> KvFuture<Vec<KvPair>>;
-
-    fn scan(&self, range: impl RangeBounds<Key>) -> Scanner;
-
-    fn scan_reverse(&self, range: impl RangeBounds<Key>) -> Scanner;
-}
-
-pub trait Mutator {
-    fn set(&mut self, pair: impl Into<KvPair>) -> KvFuture<()>;
-
-    fn delete(&mut self, key: impl AsRef<Key>) -> KvFuture<()>;
-}
-
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum IsolationLevel {
     SnapshotIsolation,
@@ -64,17 +47,20 @@ pub enum IsolationLevel {
 pub struct Transaction;
 
 impl Transaction {
-    pub fn commit(self) -> KvFuture<()> {
-        unimplemented!()
+    pub fn commit(self) -> impl Future<Item = (), Error = Error> + Send {
+        future::ok(())
     }
 
-    pub fn rollback(self) -> KvFuture<()> {
-        unimplemented!()
+    pub fn rollback(self) -> impl Future<Item = (), Error = Error> + Send {
+        future::ok(())
     }
 
-    pub fn lock_keys(&mut self, keys: impl AsRef<[Key]>) -> KvFuture<()> {
+    pub fn lock_keys(
+        &mut self,
+        keys: impl AsRef<[Key]>,
+    ) -> impl Future<Item = (), Error = Error> + Send {
         drop(keys);
-        unimplemented!()
+        future::ok(())
     }
 
     pub fn is_readonly(&self) -> bool {
@@ -92,98 +78,89 @@ impl Transaction {
     pub fn set_isolation_level(&mut self, _level: IsolationLevel) {
         unimplemented!()
     }
-}
 
-impl Retriever for Transaction {
-    fn get(&self, key: impl AsRef<Key>) -> KvFuture<Value> {
+    pub fn get(&self, key: impl AsRef<Key>) -> impl Future<Item = Value, Error = Error> + Send {
         drop(key);
-        unimplemented!()
+        future::ok(b"".to_vec().into())
     }
 
-    fn batch_get(&self, keys: impl AsRef<[Key]>) -> KvFuture<Vec<KvPair>> {
+    pub fn batch_get(
+        &self,
+        keys: impl AsRef<[Key]>,
+    ) -> impl Future<Item = Vec<KvPair>, Error = Error> + Send {
         drop(keys);
-        unimplemented!()
+        future::ok(Vec::new())
     }
 
-    fn scan(&self, range: impl RangeBounds<Key>) -> Scanner {
+    pub fn scan(&self, range: impl RangeBounds<Key>) -> Scanner {
         drop(range);
         unimplemented!()
     }
 
-    fn scan_reverse(&self, range: impl RangeBounds<Key>) -> Scanner {
+    pub fn scan_reverse(&self, range: impl RangeBounds<Key>) -> Scanner {
         drop(range);
         unimplemented!()
     }
-}
 
-impl Mutator for Transaction {
-    fn set(&mut self, pair: impl Into<KvPair>) -> KvFuture<()> {
+    pub fn set(&mut self, pair: impl Into<KvPair>) -> impl Future<Item = (), Error = Error> + Send {
         drop(pair);
-        unimplemented!()
+        future::ok(())
     }
 
-    fn delete(&mut self, key: impl AsRef<Key>) -> KvFuture<()> {
+    pub fn delete(&mut self, key: impl AsRef<Key>) -> impl Future<Item = (), Error = Error> + Send {
         drop(key);
-        unimplemented!()
+        future::ok(())
     }
 }
 
 pub struct Snapshot;
 
-impl Retriever for Snapshot {
-    fn get(&self, key: impl AsRef<Key>) -> KvFuture<Value> {
+impl Snapshot {
+    pub fn get(&self, key: impl AsRef<Key>) -> impl Future<Item = Value, Error = Error> + Send {
         drop(key);
-        unimplemented!()
+        future::ok(b"".to_vec().into())
     }
 
-    fn batch_get(&self, keys: impl AsRef<[Key]>) -> KvFuture<Vec<KvPair>> {
+    pub fn batch_get(
+        &self,
+        keys: impl AsRef<[Key]>,
+    ) -> impl Future<Item = Vec<KvPair>, Error = Error> + Send {
         drop(keys);
-        unimplemented!()
+        future::ok(Vec::new())
     }
 
-    fn scan(&self, range: impl RangeBounds<Key>) -> Scanner {
+    pub fn scan(&self, range: impl RangeBounds<Key>) -> Scanner {
         drop(range);
         unimplemented!()
     }
 
-    fn scan_reverse(&self, range: impl RangeBounds<Key>) -> Scanner {
+    pub fn scan_reverse(&self, range: impl RangeBounds<Key>) -> Scanner {
         drop(range);
         unimplemented!()
     }
 }
 
-pub trait Client {
-    fn begin(&self) -> Transaction;
+pub struct Client {}
 
-    fn begin_with_timestamp(&self, _timestamp: Timestamp) -> Transaction;
-
-    fn snapshot(&self) -> Snapshot;
-
-    fn current_timestamp(&self) -> Timestamp;
-}
-
-pub struct TxnClient {}
-
-impl TxnClient {
-    pub fn new(_config: &Config) -> KvFuture<Self> {
-        unimplemented!()
+impl Client {
+    #![allow(new_ret_no_self)]
+    pub fn new(_config: &Config) -> impl Future<Item = Self, Error = Error> + Send {
+        future::ok(Client {})
     }
-}
 
-impl Client for TxnClient {
-    fn begin(&self) -> Transaction {
+    pub fn begin(&self) -> Transaction {
         unimplemented!()
     }
 
-    fn begin_with_timestamp(&self, _timestamp: Timestamp) -> Transaction {
+    pub fn begin_with_timestamp(&self, _timestamp: Timestamp) -> Transaction {
         unimplemented!()
     }
 
-    fn snapshot(&self) -> Snapshot {
+    pub fn snapshot(&self) -> Snapshot {
         unimplemented!()
     }
 
-    fn current_timestamp(&self) -> Timestamp {
+    pub fn current_timestamp(&self) -> Timestamp {
         unimplemented!()
     }
 }

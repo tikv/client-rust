@@ -13,7 +13,7 @@ fn main() {
     let key: Key = b"Company".to_vec().into();
     let value: Value = b"PingCAP".to_vec().into();
 
-    raw.put((key.clone(), value.clone()))
+    raw.put(key.clone(), value.clone())
         .cf("test_cf")
         .wait()
         .expect("Could not put kv pair to tikv");
