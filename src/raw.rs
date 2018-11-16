@@ -358,7 +358,7 @@ impl<'a> Future for DeleteRange<'a> {
 pub struct Client;
 
 impl Client {
-    #![allow(new_ret_no_self)]
+    #![cfg_attr(feature = "cargo-clippy", allow(new_ret_no_self))]
     pub fn new(_config: &Config) -> impl Future<Item = Self, Error = Error> + Send {
         future::ok(Client {})
     }

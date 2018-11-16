@@ -1,4 +1,3 @@
-#![cfg_attr(not(feature = "cargo-clippy"), allow(unknown_lints))]
 extern crate futures;
 extern crate serde;
 #[macro_use]
