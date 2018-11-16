@@ -2,12 +2,11 @@ extern crate futures;
 extern crate tikv_client;
 
 use futures::future::Future;
-use tikv_client::raw::Client;
 use tikv_client::*;
 
 fn main() {
     let config = Config::new(vec!["127.0.0.1:3379"]);
-    let raw = raw::RawClient::new(&config)
+    let raw = raw::Client::new(&config)
         .wait()
         .expect("Could not connect to tikv");
 

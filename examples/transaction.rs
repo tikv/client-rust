@@ -4,7 +4,7 @@ extern crate tikv_client;
 use std::ops::RangeBounds;
 
 use futures::{future, Future, Stream};
-use tikv_client::transaction::{Client, Mutator, Retriever, TxnClient};
+use tikv_client::transaction::{Client, IsolationLevel, Mutator, Retriever, TxnClient};
 use tikv_client::*;
 
 fn puts(client: &TxnClient, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
@@ -40,6 +40,7 @@ fn scan(client: &TxnClient, range: impl RangeBounds<Key>, mut limit: usize) {
 
 fn dels(client: &TxnClient, keys: impl IntoIterator<Item = Key>) {
     let mut txn = client.begin();
+    txn.set_isolation_level(IsolationLevel::ReadCommitted);
     let _: Vec<()> = keys
         .into_iter()
         .map(|p| {
