@@ -57,6 +57,20 @@ impl Deref for Value {
     }
 }
 
+impl KvPair {
+    pub fn new(key: Key, value: Value) -> Self {
+        KvPair(key, value)
+    }
+
+    pub fn key(&self) -> &Key {
+        &self.0
+    }
+
+    pub fn value(&self) -> &Value {
+        &self.1
+    }
+}
+
 impl Into<KvPair> for (Key, Value) {
     fn into(self) -> KvPair {
         KvPair(self.0, self.1)

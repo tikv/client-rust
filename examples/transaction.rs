@@ -9,9 +9,13 @@ use tikv_client::*;
 
 fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
     let mut txn = client.begin();
-    let _: Vec<()> = future::join_all(pairs.into_iter().map(Into::into).map(|p| txn.set(p)))
-        .wait()
-        .expect("Could not set key value pairs");
+    let _: Vec<()> = future::join_all(
+        pairs
+            .into_iter()
+            .map(Into::into)
+            .map(|p| txn.set(p.key().clone(), p.value().clone())),
+    ).wait()
+    .expect("Could not set key value pairs");
     txn.commit().wait().expect("Could not commit transaction");
 }
 

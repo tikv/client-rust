@@ -1,6 +1,6 @@
 use std::ops::RangeBounds;
 
-use futures::{future, Future, Poll};
+use futures::{Future, Poll};
 
 use {Config, Error, Key, KvPair, Value};
 
@@ -42,7 +42,7 @@ impl<'a> Get<'a> {
 
 impl<'a> Future for Get<'a> {
     type Item = Value;
-    type Error = ();
+    type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let _ = &self.client;
@@ -355,12 +355,32 @@ impl<'a> Future for DeleteRange<'a> {
     }
 }
 
+pub struct Connect {
+    config: Config,
+}
+
+impl Connect {
+    fn new(config: Config) -> Self {
+        Connect { config }
+    }
+}
+
+impl Future for Connect {
+    type Item = Client;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        let _config = &self.config;
+        unimplemented!()
+    }
+}
+
 pub struct Client;
 
 impl Client {
     #![cfg_attr(feature = "cargo-clippy", allow(new_ret_no_self))]
-    pub fn new(_config: &Config) -> impl Future<Item = Self, Error = Error> + Send {
-        future::ok(Client {})
+    pub fn new(config: &Config) -> Connect {
+        Connect::new(config.clone())
     }
 
     pub fn get(&self, key: impl AsRef<Key>) -> Get {
