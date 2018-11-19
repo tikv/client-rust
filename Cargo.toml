@@ -6,6 +6,7 @@ license = "Apache-2.0"
 authors = ["The TiKV Project Authors"]
 repository = "https://github.com/tikv/client-rust"
 description = "The rust language implementation of TiKV client."
+edition = "2018"
 
 [lib]
 name = "tikv_client"
