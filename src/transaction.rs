@@ -13,14 +13,15 @@
 
 use crate::{Config, Error, Key, KvPair, Value};
 use futures::{Future, Poll, Stream};
-use std::ops::RangeBounds;
+use std::ops::{RangeBounds, Deref};
 
+/// A logical timestamp produced by PD.
 #[derive(Copy, Clone)]
 pub struct Timestamp(u64);
 
-impl Into<Timestamp> for u64 {
-    fn into(self) -> Timestamp {
-        Timestamp(self)
+impl From<u64> for Timestamp {
+    fn from(v: u64) -> Self {
+        Timestamp(v)
     }
 }
 

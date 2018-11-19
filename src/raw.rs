@@ -15,6 +15,26 @@ use crate::{Config, Error, Key, KvPair, Value};
 use futures::{Future, Poll};
 use std::ops::RangeBounds;
 
+/// A [`ColumnFamily`](struct.ColumnFamily.html) is an optional parameter for [`raw::Client`](struct.Client.html) requests.
+/// 
+/// TiKV uses RocksDB's `ColumnFamily` support. You can learn more about RocksDB's `ColumnFamily`s [on their wiki](https://github.com/facebook/rocksdb/wiki/Column-Families).
+/// 
+/// By default in TiKV data is stored in three different `ColumnFamily` values, configurable in the TiKV server's configuration:
+/// 
+/// * Default: Where real user data is stored. Set by `[rocksdb.defaultcf]`.
+/// * Write: Where MVCC and index related data are stored. Set by `[rocksdb.writecf]`.
+/// * Lock: Where lock information is stored. Set by `[rocksdb.lockcf]`.
+/// 
+/// Not providing a call a `ColumnFamily` means it will use the default value of `default`.
+/// 
+/// The best (and only) way to create a [`ColumnFamily`](struct.ColumnFamily.html) is via the `From` implementation:
+/// 
+/// ```rust
+/// # use tikv_client::raw::ColumnFamily;
+/// let cf = ColumnFamily::from("write");
+/// let cf = ColumnFamily::from(String::from("write"));
+/// let cf = ColumnFamily::from(&String::from("write"));
+/// ```
 #[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub struct ColumnFamily(String);
 
@@ -27,6 +47,7 @@ where
     }
 }
 
+/// A raw request to get the [`Value`](struct.Value.html) of a given [`Key`](struct.key.html).
 pub struct Get<'a> {
     client: &'a Client,
     key: Key,
@@ -42,6 +63,7 @@ impl<'a> Get<'a> {
         }
     }
 
+    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.cf = Some(cf.into());
         self
@@ -74,7 +96,7 @@ impl<'a> BatchGet<'a> {
             cf: None,
         }
     }
-
+    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.cf = Some(cf.into());
         self
@@ -110,6 +132,7 @@ impl<'a> Put<'a> {
         }
     }
 
+    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.cf = Some(cf.into());
         self
@@ -144,6 +167,7 @@ impl<'a> BatchPut<'a> {
         }
     }
 
+    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.cf = Some(cf.into());
         self
@@ -177,6 +201,7 @@ impl<'a> Delete<'a> {
         }
     }
 
+    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.cf = Some(cf.into());
         self
@@ -210,6 +235,7 @@ impl<'a> BatchDelete<'a> {
         }
     }
 
+    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.cf = Some(cf.into());
         self
@@ -254,6 +280,7 @@ impl<'a> Scan<'a> {
         self
     }
 
+    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.cf = Some(cf.into());
         self
@@ -305,6 +332,7 @@ impl<'a> BatchScan<'a> {
         self
     }
 
+    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.cf = Some(cf.into());
         self
@@ -345,6 +373,7 @@ impl<'a> DeleteRange<'a> {
         }
     }
 
+    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.cf = Some(cf.into());
         self
@@ -363,6 +392,14 @@ impl<'a> Future for DeleteRange<'a> {
     }
 }
 
+/// A future which resolves the initial connection between the [`Client`](struct.Client.html) and the TiKV cluster.
+/// 
+/// ```rust,no_run
+/// # use tikv_client::{Config, raw::{Client, Connect}};
+/// # use futures::Future;
+/// let connect = Client::new(&Config::default());
+/// let client = connect.wait();
+/// ```
 pub struct Connect {
     config: Config,
 }
@@ -383,42 +420,59 @@ impl Future for Connect {
     }
 }
 
+/// The TiKV raw [`Client`](struct.Client.html) is used to issue requests to the TiKV server and PD cluster.
 pub struct Client;
 
 impl Client {
     #![cfg_attr(feature = "cargo-clippy", allow(clippy::new_ret_no_self))]
+    /// Create a new [`Client`](struct.Client.html) once the [`Connect`](struct.Connect.html) resolves.
+    /// 
+    /// ```rust,no_run
+    /// # use tikv_client::{Config, raw::{Client, Connect}};
+    /// # use futures::Future;
+    /// let connect = Client::new(&Config::default());
+    /// let client = connect.wait();
+    /// ```
     pub fn new(config: &Config) -> Connect {
         Connect::new(config.clone())
     }
 
+    /// Create a new [`Get`](struct.Get.html) request.
     pub fn get(&self, key: impl AsRef<Key>) -> Get {
         Get::new(self, key.as_ref().clone())
     }
 
+    /// Create a new [`BatchGet`](struct.BatchGet.html) request.
     pub fn batch_get(&self, keys: impl AsRef<[Key]>) -> BatchGet {
         BatchGet::new(self, keys.as_ref().to_vec())
     }
 
+    /// Create a new [`Put`](struct.Put.html) request.
     pub fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Put {
         Put::new(self, key.into(), value.into())
     }
-
+    
+    /// Create a new [`BatchPut`](struct.BatchPut.html) request.
     pub fn batch_put(&self, pairs: impl IntoIterator<Item = impl Into<KvPair>>) -> BatchPut {
         BatchPut::new(self, pairs.into_iter().map(Into::into).collect())
     }
 
+    /// Create a new [`Delete`](struct.Delete.html) request.
     pub fn delete(&self, key: impl AsRef<Key>) -> Delete {
         Delete::new(self, key.as_ref().clone())
     }
 
+    /// Create a new [`BatchDelete`](struct.BatchDelete.html) request.
     pub fn batch_delete(&self, keys: impl AsRef<[Key]>) -> BatchDelete {
         BatchDelete::new(self, keys.as_ref().to_vec())
     }
 
+    /// Create a new [`Scan`](struct.Scan.html) request.
     pub fn scan(&self, range: impl RangeBounds<Key>, limit: u32) -> Scan {
         Scan::new(self, Self::extract_range(&range), limit)
     }
 
+    /// Create a new [`BatchScan`](struct.BatchScan.html) request.
     pub fn batch_scan<Ranges, Bounds>(&self, ranges: Ranges, each_limit: u32) -> BatchScan
     where
         Ranges: AsRef<[Bounds]>,
@@ -431,10 +485,12 @@ impl Client {
         )
     }
 
+    /// Create a new [`DeleteRange`](struct.DeleteRange.html) request.
     pub fn delete_range(&self, range: impl RangeBounds<Key>) -> DeleteRange {
         DeleteRange::new(self, Self::extract_range(&range))
     }
 
+    // Returns the bounds for a given [`RangeBounds<T>`](struct.RangeBounds.html).
     fn extract_range(_range: &impl RangeBounds<Key>) -> (Key, Key) {
         unimplemented!()
     }
