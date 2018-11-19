@@ -11,15 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-extern crate futures;
-extern crate tikv_client;
-
+use futures::{future, Future, Stream};
 use std::ops::RangeBounds;
 use std::path::PathBuf;
-
-use futures::{future, Future, Stream};
-use tikv_client::transaction::{Client, IsolationLevel};
-use tikv_client::*;
+use tikv_client::{
+    transaction::{Client, IsolationLevel},
+    Config, Key, KvPair, Value,
+};
 
 fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
     let mut txn = client.begin();
@@ -28,7 +26,8 @@ fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
             .into_iter()
             .map(Into::into)
             .map(|p| txn.set(p.key().clone(), p.value().clone())),
-    ).wait()
+    )
+    .wait()
     .expect("Could not set key value pairs");
     txn.commit().wait().expect("Could not commit transaction");
 }
@@ -49,10 +48,12 @@ fn scan(client: &Client, range: impl RangeBounds<Key>, mut limit: usize) {
                 limit -= 1;
                 true
             })
-        }).for_each(|pair| {
+        })
+        .for_each(|pair| {
             println!("{:?}", pair);
             Ok(())
-        }).wait()
+        })
+        .wait()
         .expect("Could not scan keys");
 }
 
@@ -63,7 +64,8 @@ fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {
         .into_iter()
         .map(|p| {
             txn.delete(p).wait().expect("Could not delete key");
-        }).collect();
+        })
+        .collect();
     txn.commit().wait().expect("Could not commit transaction");
 }
 

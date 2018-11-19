@@ -11,12 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-extern crate futures;
-extern crate tikv_client;
-
-use std::path::PathBuf;
-
 use futures::future::Future;
+use std::path::PathBuf;
 use tikv_client::*;
 
 fn main() {
