@@ -15,7 +15,7 @@ use std::ops::RangeBounds;
 
 use futures::{Future, Poll};
 
-use {Config, Error, Key, KvPair, Value};
+use crate::{Config, Error, Key, KvPair, Value};
 
 #[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub struct ColumnFamily(String);
