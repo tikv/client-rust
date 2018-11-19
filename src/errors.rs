@@ -11,10 +11,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use quick_error::quick_error;
 use grpcio;
-use std::error;
-use std::result;
+use quick_error::quick_error;
+use std::{error, result};
 
 quick_error!{
     #[derive(Debug)]

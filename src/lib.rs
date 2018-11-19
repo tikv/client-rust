@@ -11,9 +11,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use serde_derive::*;
 use std::ops::Deref;
 use std::path::PathBuf;
-use serde_derive::*;
 
 pub mod errors;
 pub mod raw;
