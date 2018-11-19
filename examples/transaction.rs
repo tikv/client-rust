@@ -2,6 +2,7 @@ extern crate futures;
 extern crate tikv_client;
 
 use std::ops::RangeBounds;
+use std::path::PathBuf;
 
 use futures::{future, Future, Stream};
 use tikv_client::transaction::{Client, IsolationLevel};
@@ -54,7 +55,11 @@ fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {
 }
 
 fn main() {
-    let config = Config::new(vec!["127.0.0.1:3379"]);
+    let config = Config::new(vec!["127.0.0.1:3379"]).with_security(
+        PathBuf::from("/path/to/ca.pem"),
+        PathBuf::from("/path/to/client.pem"),
+        PathBuf::from("/path/to/client-key.pem"),
+    );
     let txn = Client::new(&config)
         .wait()
         .expect("Could not connect to tikv");

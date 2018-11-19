@@ -99,13 +99,13 @@ impl Config {
 
     pub fn with_security(
         mut self,
-        ca_path: PathBuf,
-        cert_path: PathBuf,
-        key_path: PathBuf,
+        ca_path: impl Into<PathBuf>,
+        cert_path: impl Into<PathBuf>,
+        key_path: impl Into<PathBuf>,
     ) -> Self {
-        self.ca_path = Some(ca_path);
-        self.cert_path = Some(cert_path);
-        self.key_path = Some(key_path);
+        self.ca_path = Some(ca_path.into());
+        self.cert_path = Some(cert_path.into());
+        self.key_path = Some(key_path.into());
         self
     }
 }
