@@ -1,0 +1,4 @@
+nightly
+
+# We explicitly use nightly for the moment even though we target stable so we
+# can develop for the 2018 edition.

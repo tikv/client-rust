@@ -15,7 +15,7 @@ use std::ops::RangeBounds;
 
 use futures::{Future, Poll, Stream};
 
-use {Config, Error, Key, KvPair, Value};
+use crate::{Config, Error, Key, KvPair, Value};
 
 #[derive(Copy, Clone)]
 pub struct Timestamp(u64);

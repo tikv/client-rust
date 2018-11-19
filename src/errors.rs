@@ -11,6 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use quick_error::quick_error;
+use grpcio;
 use std::error;
 use std::result;
 
@@ -22,7 +24,7 @@ quick_error!{
             cause(err)
             description(err.description())
         }
-        Grpc(err: ::grpc::Error) {
+        Grpc(err: grpcio::Error) {
             from()
             cause(err)
             description(err.description())
