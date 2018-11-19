@@ -7,15 +7,12 @@ use {Config, Error, Key, KvPair, Value};
 #[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub struct ColumnFamily(String);
 
-impl Into<ColumnFamily> for String {
-    fn into(self) -> ColumnFamily {
-        ColumnFamily(self)
-    }
-}
-
-impl<'a> Into<ColumnFamily> for &'a str {
-    fn into(self) -> ColumnFamily {
-        ColumnFamily(self.to_owned())
+impl<T> From<T> for ColumnFamily
+where
+    T: ToString,
+{
+    fn from(i: T) -> ColumnFamily {
+        ColumnFamily(i.to_string())
     }
 }
 
