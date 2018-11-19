@@ -98,16 +98,14 @@ impl Config {
     }
 
     pub fn with_security(
-        pd_endpoints: impl IntoIterator<Item = impl Into<String>>,
+        mut self,
         ca_path: PathBuf,
         cert_path: PathBuf,
         key_path: PathBuf,
     ) -> Self {
-        Config {
-            pd_endpoints: pd_endpoints.into_iter().map(Into::into).collect(),
-            ca_path: Some(ca_path),
-            cert_path: Some(cert_path),
-            key_path: Some(key_path),
-        }
+        self.ca_path = Some(ca_path);
+        self.cert_path = Some(cert_path);
+        self.key_path = Some(key_path);
+        self
     }
 }
