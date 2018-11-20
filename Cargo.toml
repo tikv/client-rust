@@ -3,7 +3,7 @@ name = "tikv-client"
 version = "0.0.0"
 keywords = ["TiKV", "KV", "distributed-systems"]
 license = "Apache-2.0"
-authors = ["The TiKV Project Developers"]
+authors = ["The TiKV Project Authors"]
 repository = "https://github.com/tikv/client-rust"
 description = "The rust language implementation of TiKV client."
 
