@@ -12,68 +12,54 @@
 // limitations under the License.
 
 use serde_derive::*;
-use std::ops::Deref;
-use std::path::PathBuf;
+use std::{ops::{Deref, Bound}, path::PathBuf};
 
-pub mod errors;
+mod errors;
 pub mod raw;
 pub mod transaction;
 
+#[doc(inline)]
 pub use crate::errors::Error;
+#[doc(inline)]
 pub use crate::errors::Result;
 
 /// The key part of a key/value pair.
 /// 
-/// In TiKV, keys are an ordered sequence of bytes. This has an advantage over choosing `String` as valid `UTF-8` is not required.
-/// This means that the user is permitted to store any data they wish, as long as it can be represented by bytes.
+/// In TiKV, keys are an ordered sequence of bytes. This has an advantage over choosing `String` as valid `UTF-8` is not required. This means that the user is permitted to store any data they wish,
+/// as long as it can be represented by bytes. (Which is to say, pretty much anything!)
 /// 
-/// This type implements `Deref<Target=Vec<u8>>` so it can be used like one transparently.
+/// This is a *wrapper type* that implements `Deref<Target=Vec<u8>>` so it can be used like one transparently.
 /// 
-/// This type contains an owned value, so it should be treated it like `String` or `Vec<u8>` over a `&str` or `&[u8]`.
+/// This type also implements `From` for many types. With one exception, these are all done without reallocation. Using a `&'static str`, like many examples do for simplicity, has an internal
+/// allocation cost. 
+/// 
+/// This type wraps around an owned value, so it should be treated it like `String` or `Vec<u8>`
+/// over a `&str` or `&[u8]`.
 /// 
 /// ```rust
-/// # use tikv_client::Key;
-/// let from_bytes = Key::from(b"TiKV".to_vec());
-/// let from_string = Key::from(String::from("TiKV"));
+/// use tikv_client::Key;
 /// 
-/// assert_eq!(from_bytes, from_string);
-/// assert_eq!(*from_bytes, b"TiKV".to_vec());
+/// let static_str: &'static str = "TiKV";
+/// let from_static_str = Key::from(static_str);
+/// 
+/// let string: String = String::from(static_str);
+/// let from_string = Key::from(string);
+/// assert_eq!(from_static_str, from_string);
+/// 
+/// let vec: Vec<u8> = static_str.as_bytes().to_vec();
+/// let from_vec = Key::from(vec);
+/// assert_eq!(from_static_str, from_vec);
+/// 
+/// let bytes = static_str.as_bytes().to_vec();
+/// let from_bytes = Key::from(bytes);
+/// assert_eq!(from_static_str, from_bytes);
 /// ```
+/// 
+/// **But, you should not need to worry about all this:** Many functions which accept a `Key` 
+/// accept an `Into<Key>`, which means all of the above types can be passed directly to those
+/// functions.
 #[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub struct Key(Vec<u8>);
-
-/// The value part of a key/value pair.
-/// 
-/// In TiKV, values are an ordered sequence of bytes. This has an advantage over choosing `String` as valid `UTF-8` is not required.
-/// This means that the user is permitted to store any data they wish, as long as it can be represented by bytes.
-/// 
-/// This type implements `Deref<Target=Vec<u8>>` so it can be used like one transparently.
-/// 
-/// This type contains an owned value, so it should be treated it like `String` or `Vec<u8>` over a `&str` or `&[u8]`.
-/// 
-/// ```rust
-/// # use tikv_client::Value;
-/// let from_bytes = Value::from(b"TiKV".to_vec());
-/// let from_string = Value::from(String::from("TiKV"));
-/// 
-/// assert_eq!(from_bytes, from_string);
-/// assert_eq!(*from_bytes, b"TiKV".to_vec());
-/// ```
-#[derive(Default, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct Value(Vec<u8>);
-/// A key/value pair.
-/// 
-/// Used primarily in batch and scan requests.
-/// 
-/// ```rust
-/// # use tikv_client::{Key, Value, KvPair};
-/// let key = b"key".to_vec();
-/// let value = b"value".to_vec();
-/// let constructed = KvPair::new(key.clone(), value.clone());
-/// let from_tuple = KvPair::from((key.into(), value.into()));
-/// assert_eq!(constructed, from_tuple);
-#[derive(Default, Clone, Eq, PartialEq, Debug)]
-pub struct KvPair(Key, Value);
 
 impl From<Vec<u8>> for Key {
     fn from(v: Vec<u8>) -> Self {
@@ -84,6 +70,14 @@ impl From<Vec<u8>> for Key {
 impl From<String> for Key {
     fn from(v: String) -> Key {
         Key(v.into_bytes())
+    }
+}
+
+impl<'a> From<&'static str> for Key {
+    fn from(v: &'static str) -> Key {
+        let mut vec = Vec::new();
+        vec.extend_from_slice(v.as_bytes());
+        Key(vec)
     }
 }
 
@@ -101,6 +95,50 @@ impl Deref for Key {
     }
 }
 
+impl Key {
+    pub fn new(value: Vec<u8>) -> Self {
+        Key(value)
+    }
+}
+
+/// The value part of a key/value pair.
+///
+/// In TiKV, values are an ordered sequence of bytes. This has an advantage over choosing `String` as valid `UTF-8` is not required. This means that the user is permitted to store any data they wish,
+/// as long as it can be represented by bytes. (Which is to say, pretty much anything!)
+///
+/// This is a *wrapper type* that implements `Deref<Target=Vec<u8>>` so it can be used like one transparently.
+///
+/// This type also implements `From` for many types. With one exception, these are all done without reallocation. Using a `&'static str`, like many examples do for simplicity, has an internal
+/// allocation cost.
+///
+/// This type wraps around an owned value, so it should be treated it like `String` or `Vec<u8>`
+/// over a `&str` or `&[u8]`.
+///
+/// ```rust
+/// use tikv_client::Value;
+///
+/// let static_str: &'static str = "TiKV";
+/// let from_static_str = Value::from(static_str);
+///
+/// let string: String = String::from(static_str);
+/// let from_string = Value::from(string);
+/// assert_eq!(from_static_str, from_string);
+///
+/// let vec: Vec<u8> = static_str.as_bytes().to_vec();
+/// let from_vec = Value::from(vec);
+/// assert_eq!(from_static_str, from_vec);
+///
+/// let bytes = static_str.as_bytes().to_vec();
+/// let from_bytes = Value::from(bytes);
+/// assert_eq!(from_static_str, from_bytes);
+/// ```
+///
+/// **But, you should not need to worry about all this:** Many functions which accept a `Value`
+/// accept an `Into<Value>`, which means all of the above types can be passed directly to those
+/// functions.
+#[derive(Default, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct Value(Vec<u8>);
+
 impl From<Vec<u8>> for Value {
     fn from(v: Vec<u8>) -> Self {
         Value(v)
@@ -113,6 +151,14 @@ impl From<String> for Value {
     }
 }
 
+impl From<&'static str> for Value {
+    fn from(v: &'static str) -> Value {
+        let mut vec = Vec::new();
+        vec.extend_from_slice(v.as_bytes());
+        Value(vec)
+    }
+}
+
 impl Deref for Value {
     type Target = Vec<u8>;
 
@@ -121,23 +167,64 @@ impl Deref for Value {
     }
 }
 
+/// A key/value pair.
+/// 
+/// ```rust
+/// # use tikv_client::{Key, Value, KvPair};
+/// let key = "key";
+/// let value = "value";
+/// let constructed = KvPair::new(key, value);
+/// let from_tuple = KvPair::from((key, value));
+/// assert_eq!(constructed, from_tuple);
+/// ```
+/// 
+/// **But, you should not need to worry about all this:** Many functions which accept a `KvPair`
+/// accept an `Into<KvPair>`, which means all of the above types can be passed directly to those
+/// functions.
+#[derive(Default, Clone, Eq, PartialEq, Debug)]
+pub struct KvPair(Key, Value);
+
 impl KvPair {
+    /// Create a new `KvPair`.
     pub fn new(key: impl Into<Key>, value: impl Into<Value>) -> Self {
         KvPair(key.into(), value.into())
     }
 
+    /// Immutably borrow the `Key` part of the `KvPair`.
     pub fn key(&self) -> &Key {
         &self.0
     }
 
+    /// Immutably borrow the `Value` part of the `KvPair`.
     pub fn value(&self) -> &Value {
         &self.1
     }
+
+    /// Mutably borrow the `Key` part of the `KvPair`.
+    pub fn key_mut(&mut self) -> &mut Key {
+        &mut self.0
+    }
+
+    /// Mutably borrow the `Value` part of the `KvPair`.
+    pub fn value_mut(&mut self) -> &mut Value {
+        &mut self.1
+    }
+
+    /// Set the `Key` part of the `KvPair`.
+    pub fn set_key(&mut self, k: impl Into<Key>) {
+        self.0 = k.into();
+    }
+
+    /// Set the `Value` part of the `KvPair`.
+    pub fn set_value(&mut self, v: impl Into<Value>) {
+        self.1 = v.into();
+    }
 }
 
-impl From<(Key, Value)> for KvPair {
-    fn from((k, v): (Key, Value)) -> KvPair {
-        KvPair(k, v)
+impl<K, V> From<(K, V)> for KvPair
+where K: Into<Key>, V: Into<Value> {
+    fn from((k, v): (K, V)) -> Self {
+        KvPair(k.into(), v.into())
     }
 }
 
@@ -191,5 +278,17 @@ impl Config {
         self.cert_path = Some(cert_path.into());
         self.key_path = Some(key_path.into());
         self
+    }
+}
+
+fn transmute_bound<K>(b: Bound<&K>) -> Bound<Key>
+where
+    K: Into<Key> + Clone,
+{
+    use std::ops::Bound::*;
+    match b {
+        Included(k) => Included(k.clone().into()),
+        Excluded(k) => Excluded(k.clone().into()),
+        Unbounded => Unbounded,
     }
 }

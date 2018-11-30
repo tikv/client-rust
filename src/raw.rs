@@ -11,9 +11,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Config, Error, Key, KvPair, Value};
+/*! Raw related functionality.
+
+Using the [`raw::Client`](struct.Client.html) you can utilize TiKV's raw interface.
+
+This interface offers optimal performance as it does not require coordination with a timestamp
+oracle, while the transactional interface does.
+
+**Warning:** It is not advisible to use the both raw and transactional functionality in the same keyspace.
+ */
+
+use crate::{transmute_bound, Config, Error, Key, KvPair, Value};
 use futures::{Future, Poll};
-use std::ops::RangeBounds;
+use std::{u32, ops::{RangeBounds, Bound}};
 
 /// A [`ColumnFamily`](struct.ColumnFamily.html) is an optional parameter for [`raw::Client`](struct.Client.html) requests.
 /// 
@@ -186,6 +196,19 @@ impl<'a> Future for BatchPut<'a> {
     }
 }
 
+/// An unresolved delete request.
+///
+/// Once resolved this request will result in the deletion of the given key.
+///
+/// ```rust,no_run
+/// use tikv_client::{Config, raw::Client};
+/// use futures::Future;
+/// let connecting_client = Client::new(&Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+/// let connected_client = connecting_client.wait().unwrap();
+/// let key = "TiKV";
+/// let delete_req = connected_client.delete(key);
+/// delete_req.wait();
+/// ```
 pub struct Delete<'a> {
     client: &'a Client,
     key: Key,
@@ -256,7 +279,7 @@ impl<'a> Future for BatchDelete<'a> {
 
 pub struct Scan<'a> {
     client: &'a Client,
-    range: (Key, Key),
+    range: (Bound<Key>, Bound<Key>),
     limit: u32,
     key_only: bool,
     cf: Option<ColumnFamily>,
@@ -264,7 +287,7 @@ pub struct Scan<'a> {
 }
 
 impl<'a> Scan<'a> {
-    fn new(client: &'a Client, range: (Key, Key), limit: u32) -> Self {
+    fn new(client: &'a Client, range: (Bound<Key>, Bound<Key>), limit: u32) -> Self {
         Scan {
             client,
             range,
@@ -308,7 +331,7 @@ impl<'a> Future for Scan<'a> {
 
 pub struct BatchScan<'a> {
     client: &'a Client,
-    ranges: Vec<(Key, Key)>,
+    ranges: Vec<(Bound<Key>, Bound<Key>)>,
     each_limit: u32,
     key_only: bool,
     cf: Option<ColumnFamily>,
@@ -316,7 +339,7 @@ pub struct BatchScan<'a> {
 }
 
 impl<'a> BatchScan<'a> {
-    fn new(client: &'a Client, ranges: Vec<(Key, Key)>, each_limit: u32) -> Self {
+    fn new(client: &'a Client, ranges: Vec<(Bound<Key>, Bound<Key>)>, each_limit: u32) -> Self {
         BatchScan {
             client,
             ranges,
@@ -360,12 +383,12 @@ impl<'a> Future for BatchScan<'a> {
 
 pub struct DeleteRange<'a> {
     client: &'a Client,
-    range: (Key, Key),
+    range: (Bound<Key>, Bound<Key>),
     cf: Option<ColumnFamily>,
 }
 
 impl<'a> DeleteRange<'a> {
-    fn new(client: &'a Client, range: (Key, Key)) -> Self {
+    fn new(client: &'a Client, range: (Bound<Key>, Bound<Key>)) -> Self {
         DeleteRange {
             client,
             range,
@@ -424,74 +447,208 @@ impl Future for Connect {
 pub struct Client;
 
 impl Client {
-    #![cfg_attr(feature = "cargo-clippy", allow(clippy::new_ret_no_self))]
     /// Create a new [`Client`](struct.Client.html) once the [`Connect`](struct.Connect.html) resolves.
     /// 
     /// ```rust,no_run
-    /// # use tikv_client::{Config, raw::{Client, Connect}};
-    /// # use futures::Future;
+    /// use tikv_client::{Config, raw::{Client, Connect}};
+    /// use futures::Future;
     /// let connect = Client::new(&Config::default());
     /// let client = connect.wait();
     /// ```
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::new_ret_no_self))]
     pub fn new(config: &Config) -> Connect {
         Connect::new(config.clone())
     }
 
     /// Create a new [`Get`](struct.Get.html) request.
-    pub fn get(&self, key: impl AsRef<Key>) -> Get {
-        Get::new(self, key.as_ref().clone())
+    ///
+    /// Once resolved this request will result in the fetching of the value associated with the given key.
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Value, Config, raw::Client};
+    /// # use futures::Future;
+    /// # let connecting_client = Client::new(&Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connected_client = connecting_client.wait().unwrap();
+    /// let key = "TiKV";
+    /// let req = connected_client.get(key);
+    /// let result: Value = req.wait().unwrap();
+    /// ```
+    pub fn get(&self, key: impl Into<Key>) -> Get {
+        Get::new(self, key.into())
     }
 
     /// Create a new [`BatchGet`](struct.BatchGet.html) request.
-    pub fn batch_get(&self, keys: impl AsRef<[Key]>) -> BatchGet {
-        BatchGet::new(self, keys.as_ref().to_vec())
+    ///
+    /// Once resolved this request will result in the fetching of the values associated with the given keys.
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{KvPair, Config, raw::Client};
+    /// # use futures::Future;
+    /// # let connecting_client = Client::new(&Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connected_client = connecting_client.wait().unwrap();
+    /// let keys = vec!["TiKV", "TiDB"];
+    /// let req = connected_client.batch_get(keys);
+    /// let result: Vec<KvPair> = req.wait().unwrap();
+    /// ```
+    pub fn batch_get(&self, keys: impl IntoIterator<Item=impl Into<Key>>) -> BatchGet {
+        BatchGet::new(self, keys.into_iter().map(|v| v.into()).collect())
     }
 
     /// Create a new [`Put`](struct.Put.html) request.
+    ///
+    /// Once resolved this request will result in the setting of the value associated with the given key.
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Value, Config, raw::Client};
+    /// # use futures::Future;
+    /// # let connecting_client = Client::new(&Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connected_client = connecting_client.wait().unwrap();
+    /// let key = "TiKV";
+    /// let val = "TiKV";
+    /// let req = connected_client.put(key, val);
+    /// let result: () = req.wait().unwrap();
+    /// ```
     pub fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Put {
         Put::new(self, key.into(), value.into())
     }
     
     /// Create a new [`BatchPut`](struct.BatchPut.html) request.
+    ///
+    /// Once resolved this request will result in the setting of the value associated with the given key.
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Error, Result, KvPair, Key, Value, Config, raw::Client};
+    /// # use futures::Future;
+    /// # let connecting_client = Client::new(&Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connected_client = connecting_client.wait().unwrap();
+    /// let kvpair1 = ("PD", "Go");
+    /// let kvpair2 = ("TiKV", "Rust");
+    /// let iterable = vec![kvpair1, kvpair2];
+    /// let req = connected_client.batch_put(iterable);
+    /// let result: () = req.wait().unwrap();
+    /// ```
     pub fn batch_put(&self, pairs: impl IntoIterator<Item = impl Into<KvPair>>) -> BatchPut {
         BatchPut::new(self, pairs.into_iter().map(Into::into).collect())
     }
 
     /// Create a new [`Delete`](struct.Delete.html) request.
-    pub fn delete(&self, key: impl AsRef<Key>) -> Delete {
-        Delete::new(self, key.as_ref().clone())
+    /// 
+    /// Once resolved this request will result in the deletion of the given key.
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Config, raw::Client};
+    /// # use futures::Future;
+    /// # let connecting_client = Client::new(&Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connected_client = connecting_client.wait().unwrap();
+    /// let key = "TiKV";
+    /// let req = connected_client.delete(key);
+    /// let result: () = req.wait().unwrap();
+    /// ```
+    pub fn delete(&self, key: impl Into<Key>) -> Delete {
+        Delete::new(self, key.into())
     }
 
     /// Create a new [`BatchDelete`](struct.BatchDelete.html) request.
-    pub fn batch_delete(&self, keys: impl AsRef<[Key]>) -> BatchDelete {
-        BatchDelete::new(self, keys.as_ref().to_vec())
+    ///
+    /// Once resolved this request will result in the deletion of the given keys.
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Config, raw::Client};
+    /// # use futures::Future;
+    /// # let connecting_client = Client::new(&Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connected_client = connecting_client.wait().unwrap();
+    /// let keys = vec!["TiKV", "TiDB"];
+    /// let req = connected_client.batch_delete(keys);
+    /// let result: () = req.wait().unwrap();
+    /// ```
+    pub fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> BatchDelete {
+        BatchDelete::new(self, keys.into_iter().map(Into::into).collect())
     }
 
     /// Create a new [`Scan`](struct.Scan.html) request.
-    pub fn scan(&self, range: impl RangeBounds<Key>, limit: u32) -> Scan {
-        Scan::new(self, Self::extract_range(&range), limit)
+    ///
+    /// Once resolved this request will result in a scanner over the given keys.
+    ///
+    /// If not passed a `limit` parameter, it will default to `u32::MAX`.
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{KvPair, Config, raw::Client};
+    /// # use futures::Future;
+    /// # let connecting_client = Client::new(&Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connected_client = connecting_client.wait().unwrap();
+    /// let inclusive_range = "TiKV"..="TiDB";
+    /// let req = connected_client.scan(inclusive_range, 2);
+    /// let result: Vec<KvPair> = req.wait().unwrap();
+    /// ```
+    pub fn scan<K>(&self, range: impl RangeBounds<K>, limit: impl Into<Option<u32>>) -> Scan
+    where
+        K: Into<Key> + Clone,
+    {
+        Scan::new(self,
+            (transmute_bound(range.start_bound()), transmute_bound(range.end_bound())),
+            limit.into().unwrap_or(u32::MAX)
+        )
     }
 
     /// Create a new [`BatchScan`](struct.BatchScan.html) request.
-    pub fn batch_scan<Ranges, Bounds>(&self, ranges: Ranges, each_limit: u32) -> BatchScan
+    ///
+    /// Once resolved this request will result in a set of scanners over the given keys.
+    ///
+    /// If not passed a `limit` parameter, it will default to `u32::MAX`.
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Config, raw::Client};
+    /// # use futures::Future;
+    /// # let connecting_client = Client::new(&Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connected_client = connecting_client.wait().unwrap();
+    /// let inclusive_range1 = "TiDB"..="TiKV";
+    /// let inclusive_range2 = "TiKV"..="TiSpark";
+    /// let iterable = vec![inclusive_range1, inclusive_range2];
+    /// let req = connected_client.batch_scan(iterable, 2);
+    /// let result = req.wait();
+    /// ```
+    pub fn batch_scan<K>(
+        &self,
+        ranges: impl IntoIterator<Item = impl RangeBounds<K>>,
+        each_limit: impl Into<Option<u32>>,
+    ) -> BatchScan
     where
-        Ranges: AsRef<[Bounds]>,
-        Bounds: RangeBounds<Key>,
+        K: Into<Key> + Clone,
     {
         BatchScan::new(
             self,
-            ranges.as_ref().iter().map(Self::extract_range).collect(),
-            each_limit,
+            ranges.into_iter().map(|v| 
+                (transmute_bound(v.start_bound()), transmute_bound(v.end_bound()))
+            ).collect(),
+            each_limit.into().unwrap_or(u32::MAX),
         )
     }
 
     /// Create a new [`DeleteRange`](struct.DeleteRange.html) request.
-    pub fn delete_range(&self, range: impl RangeBounds<Key>) -> DeleteRange {
-        DeleteRange::new(self, Self::extract_range(&range))
-    }
-
-    // Returns the bounds for a given [`RangeBounds<T>`](struct.RangeBounds.html).
-    fn extract_range(_range: &impl RangeBounds<Key>) -> (Key, Key) {
-        unimplemented!()
+    ///
+    /// Once resolved this request will result in the deletion of all keys over the given range.
+    ///
+    /// If not passed a `limit` parameter, it will default to `u32::MAX`.
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Config, raw::Client};
+    /// # use futures::Future;
+    /// # let connecting_client = Client::new(&Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connected_client = connecting_client.wait().unwrap();
+    /// let inclusive_range = "TiKV"..="TiDB";
+    /// let req = connected_client.delete_range(inclusive_range);
+    /// let result: () = req.wait().unwrap();
+    /// ```
+    pub fn delete_range<K>(&self, range: impl RangeBounds<K>) -> DeleteRange
+    where
+        K: Into<Key> + Clone,
+    {
+        DeleteRange::new(
+            self,
+            (
+                transmute_bound(range.start_bound()),
+                transmute_bound(range.end_bound()),
+            ),
+        )
     }
 }
