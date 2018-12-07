@@ -13,36 +13,56 @@
 
 use futures::future::Future;
 use std::path::PathBuf;
-use tikv_client::*;
+use tikv_client::{Result, Config, raw::Client, Key, Value};
 
-fn main() {
-    let config = Config::new(vec!["127.0.0.1:3379"]).with_security(
+const KEY: &str = "TiKV";
+const VALUE: &str = "Rust";
+const CUSTOM_CF: &str = "custom_cf";
+
+fn main() -> Result<()> {
+    // Create a configuration to use for the example.
+    // Optionally encrypt the traffic.
+    let config = Config::new(vec![
+        "192.168.0.101:3379", // Avoid a single point of failure,
+        "192.168.0.100:3379", // use at least two PD endpoints.
+    ]).with_security(
         PathBuf::from("/path/to/ca.pem"),
         PathBuf::from("/path/to/client.pem"),
         PathBuf::from("/path/to/client-key.pem"),
     );
-    let raw = raw::Client::new(&config)
-        .wait()
-        .expect("Could not connect to tikv");
 
-    let key: Key = b"Company".to_vec().into();
-    let value: Value = b"PingCAP".to_vec().into();
+    // When we first create a client we recieve a `Connect` structure which must be resolved before
+    // the client is actually connected and usable.
+    let unconnnected_client = Client::new(&config);
+    let client = unconnnected_client.wait()?;
 
-    raw.put(key.clone(), value.clone())
-        .cf("test_cf")
-        .wait()
-        .expect("Could not put kv pair to tikv");
-    println!("Successfully put {:?}:{:?} to tikv", key, value);
+    // Requests are created from the connected client. These calls return structures which 
+    // implement `Future`. This means the `Future` must be resolved before the action ever takes
+    // place.
+    //
+    // Here we set the key `TiKV` to have the value `Rust` associated with it.
+    let put_request = client.put(KEY, VALUE);
+    let put_result: () = put_request.wait()?; // Returns a `tikv_client::Error` on failure.
+    println!("Put key \"{}\", value \"{}\".", KEY, VALUE);
 
-    let value = raw
-        .get(&key)
-        .cf("test_cf")
-        .wait()
-        .expect("Could not get value");
-    println!("Found val: {:?} for key: {:?}", value, key);
+    // 
+    // Unlike a standard Rust HashMap all calls take owned values. This is because under the hood
+    // protobufs must take ownership of the data. If we only took a borrow we'd need to internally // clone it. This is against Rust API guidelines, so you must manage this yourself.
+    //
+    // Above, you saw we can use a `&'static str`, this is primarily for making examples short.
+    // This type is practical to use for real things, and usage forces an internal copy.
+    //
+    // It is best to pass a `Vec<u8>` in terms of explictness and speed. `String`s and a few other
+    // types are supported  as well, but it all ends up as `Vec<u8>` in the end.
+    let key: String = String::from(KEY);
+    let value: Value = client.get(key).wait()?;
+    assert_eq!(value.as_ref(), VALUE);
+    println!("Get key \"{:?}\" returned value \"{:?}\".", value, KEY);
 
-    raw.delete(&key)
-        .cf("test_cf")
+    // You can also set the `ColumnFamily` used by the request.
+    // This is *advanced usage* and should have some special considerations.
+    let req = raw.delete(&key)
+        .cf(CUSTOM_CF)
         .wait()
         .expect("Could not delete value");
     println!("Key: {:?} deleted", key);
@@ -70,9 +90,12 @@ fn main() {
         .expect("Could not scan");
 
     let ranges = [&start..&end, &start..&end];
-    raw.batch_scan(&ranges, 10)
+    raw.batch_scan(ranges, 10)
         .cf("test_cf")
         .key_only()
         .wait()
         .expect("Could not batch scan");
+
+    // Cleanly exit.
+    Ok(())
 }

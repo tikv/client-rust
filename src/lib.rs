@@ -228,23 +228,31 @@ where K: Into<Key>, V: Into<Value> {
     }
 }
 
-/// The configuration of either a [`raw::Client`](raw/struct.Client.html) or a [`transaction::Client`](transaction/struct.Client.html).
+/// The configuration for either a [`raw::Client`](raw/struct.Client.html) or a
+/// [`transaction::Client`](transaction/struct.Client.html).
 /// 
-/// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster the endpoints for PD must be provided, **not** the TiKV nodes.
+/// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for PD
+/// must be provided, **not** the TiKV nodes.
 ///
 /// It's important to **include more than one PD endpoint** (include all, if possible!) This helps avoid having a *single point of failure*.
+/// 
+/// By default, this client will use an insecure connection over encryption-on-the-wire. Your
+/// deployment may have chosen to rely on security measures such as a private network, or a VPN
+/// layer providing secure transmission. TiKV does not currently offer encryption-at-rest.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
-    pub pd_endpoints: Vec<String>,
-    pub ca_path: Option<PathBuf>,
-    pub cert_path: Option<PathBuf>,
-    pub key_path: Option<PathBuf>,
+    pd_endpoints: Vec<String>,
+    ca_path: Option<PathBuf>,
+    cert_path: Option<PathBuf>,
+    key_path: Option<PathBuf>,
 }
 
 impl Config {
     /// Create a new [`Config`](struct.Config.html) which coordinates with the given PD endpoints.
+    /// 
+    /// It's important to **include more than one PD endpoint** (include all, if possible!) This helps avoid having a *single point of failure*.
     /// 
     /// ```rust
     /// # use tikv_client::Config;
@@ -281,6 +289,14 @@ impl Config {
     }
 }
 
+/// Unfortunately due to the API limitations of `RangeBound` we can only ever get an `&` (not a
+/// `&mut` or owned value) of a `Bound<T>`. So in order to coherce the value into the bound we want
+/// we must clone the data.
+/// 
+/// The only way to avoid this would be to only accept two `Bound<T>` arguments, not one
+/// `RangeBound<T>` argument. This would mean `"abc"..="xyz"` would not be possible.
+/// 
+// TODO: If you feel tricky please try to remove this clone!
 fn transmute_bound<K>(b: Bound<&K>) -> Bound<Key>
 where
     K: Into<Key> + Clone,

@@ -286,6 +286,17 @@ impl Snapshot {
     }
 }
 
+/// An unresolved [`Client`](struct.Client.html) connection to a TiKV cluster.
+///
+/// Once resolved it will result in a connected [`Client`](struct.Client.html).
+///
+/// ```rust,no_run
+/// use tikv_client::{Config, transaction::{Client, Connect}};
+/// use futures::Future;
+///
+/// let connect: Connect = Client::new(&Config::default());
+/// let client: Client = connect.wait().unwrap();
+/// ```
 pub struct Connect {
     config: Config,
 }
@@ -306,26 +317,81 @@ impl Future for Connect {
     }
 }
 
+/// The TiKV transactional [`Client`](struct.Client.html) is used to issue requests to the TiKV server and PD cluster.
 pub struct Client {}
 
 impl Client {
-    #![cfg_attr(feature = "cargo-clippy", allow(clippy::new_ret_no_self))]
+    /// Create a new [`Client`](struct.Client.html) once the [`Connect`](struct.Connect.html) resolves.
+    ///
+    /// ```rust,no_run
+    /// use tikv_client::{Config, transaction::Client};
+    /// use futures::Future;
+    /// let connect = Client::new(&Config::default());
+    /// let client = connect.wait();
+    /// ```
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::new_ret_no_self))]
     pub fn new(config: &Config) -> Connect {
         Connect::new(config.clone())
     }
 
+    /// Create a new [`Transaction`](struct.Transaction.html) using the timestamp from [`current_timestamp`](struct.Client.html#method.current_timestamp).
+    /// 
+    /// Using the transaction you can issue commands like [`get`](struct.Transaction.html#method.get) or [`set`](file:///home/hoverbear/git/client-rust/target/doc/tikv_client/transaction/struct.Transaction.html#method.set).
+    /// 
+    /// ```rust,no_run
+    /// use tikv_client::{Config, transaction::Client};
+    /// use futures::Future;
+    /// let connect = Client::new(&Config::default());
+    /// let client = connect.wait().unwrap();
+    /// let transaction = client.begin();
+    /// // ... Issue some commands.
+    /// let commit = transaction.commit();
+    /// let result: () = commit.wait().unwrap();
+    /// ```
     pub fn begin(&self) -> Transaction {
         unimplemented!()
     }
 
+    /// Create a new [`Transaction`](struct.Transaction.html) at the provded timestamp.
+    /// 
+    /// ```rust,no_run
+    /// use tikv_client::{Config, transaction::Client};
+    /// use futures::Future;
+    /// let connect = Client::new(&Config::default());
+    /// let client = connect.wait().unwrap();
+    /// let timestamp = client.current_timestamp();
+    /// let transaction = client.begin_with_timestamp(timestamp);
+    /// // ... Issue some commands.
+    /// let commit = transaction.commit();
+    /// let result: () = commit.wait().unwrap();
+    /// ```
     pub fn begin_with_timestamp(&self, _timestamp: Timestamp) -> Transaction {
         unimplemented!()
     }
 
+    /// Get a [`Snapshot`](struct.Snapshot.html) using the timestamp from [`current_timestamp`](struct.Client.html#method.current_timestamp).
+    /// 
+    /// ```rust,no_run
+    /// use tikv_client::{Config, transaction::Client};
+    /// use futures::Future;
+    /// let connect = Client::new(&Config::default());
+    /// let client = connect.wait().unwrap();
+    /// let snapshot = client.snapshot();
+    /// // ... Issue some commands.
+    /// ```
     pub fn snapshot(&self) -> Snapshot {
         unimplemented!()
     }
 
+    /// Retrieve the current [`Timestamp`](struct.Timestamp.html).
+    /// 
+    /// ```rust,no_run
+    /// use tikv_client::{Config, transaction::Client};
+    /// use futures::Future;
+    /// let connect = Client::new(&Config::default());
+    /// let client = connect.wait().unwrap();
+    /// let timestamp = client.current_timestamp();
+    /// ```
     pub fn current_timestamp(&self) -> Timestamp {
         unimplemented!()
     }
