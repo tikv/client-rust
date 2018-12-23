@@ -11,10 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::error;
-use std::result;
+use grpcio;
+use quick_error::quick_error;
+use std::{error, result};
 
-quick_error!{
+quick_error! {
     #[derive(Debug)]
     pub enum Error {
         Io(err: ::std::io::Error) {
@@ -22,7 +23,7 @@ quick_error!{
             cause(err)
             description(err.description())
         }
-        Grpc(err: ::grpc::Error) {
+        Grpc(err: grpcio::Error) {
             from()
             cause(err)
             description(err.description())

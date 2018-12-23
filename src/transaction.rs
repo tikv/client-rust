@@ -11,11 +11,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::ops::RangeBounds;
-
+use crate::{Config, Error, Key, KvPair, Value};
 use futures::{Future, Poll, Stream};
-
-use {Config, Error, Key, KvPair, Value};
+use std::ops::RangeBounds;
 
 #[derive(Copy, Clone)]
 pub struct Timestamp(u64);
@@ -302,7 +300,7 @@ impl Future for Connect {
 pub struct Client {}
 
 impl Client {
-    #![cfg_attr(feature = "cargo-clippy", allow(new_ret_no_self))]
+    #![allow(clippy::new_ret_no_self)]
     pub fn new(config: &Config) -> Connect {
         Connect::new(config.clone())
     }
