@@ -58,9 +58,34 @@ impl Stream for Scanner {
     }
 }
 
+/// The isolation level guarantees provided by the transaction.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum IsolationLevel {
+    /// Consistent reads and conflict free writes.
+    ///
+    /// Snapshot isolation guarantees:
+    /// * All reads will see the last committed value of the data at the snapshot timestamp.
+    /// * The transaction will only successfully commit if no updates to the data have created a
+    ///   conflict with concurrent updates made sine the snapshot.
+    ///
+    /// Using this level means:
+    /// * Lost updates don't occur.
+    /// * Dirty reads don't occur.
+    /// * Non-repeatable reads don't occur.
+    /// * Phantom reads don't occur.
     SnapshotIsolation,
+    /// Reads may not be consistent, but writes are conflict free.
+    ///
+    /// Read committed guarantees:
+    /// * All reads are committed at the moment it is read.
+    /// not repeatable.
+    /// * Write locks are only released at the end of the transaction.
+    ///
+    /// Using this level means:
+    /// * Lost updates don't occur.
+    /// * Dirty reads don't occur.
+    /// * Non-repeatable reads may occur.
+    /// * Phantom reads may occur.
     ReadCommitted,
 }
 
@@ -206,15 +231,32 @@ impl Future for Delete {
     }
 }
 
+/// A undo-able set of actions on the dataset.
+/// 
+/// Using a transaction you can prepare a set of actions (such as `get`, or `set`) on data at a 
+/// particular timestamp obtained from the placement driver.
+/// 
+/// Once a transaction is commited, a new commit timestamp is obtained from the placement driver.
 pub struct Transaction {
     snapshot: Snapshot,
 }
 
 impl Transaction {
+    /// Create a new transaction operating on the given snapshot.
+    pub fn new(snapshot: Snapshot) -> Self {
+        Self {
+            snapshot
+        }
+    }
+
+    /// Commit the actions of the transaction.
+    /// 
+    /// Once committed, it is no longer possible to `rollback` the actions in the transaction.
     pub fn commit(self) -> Commit {
         Commit::new(self)
     }
 
+    /// Rollback the actions of the transaction.
     pub fn rollback(self) -> Rollback {
         Rollback::new(self)
     }
@@ -227,14 +269,19 @@ impl Transaction {
         unimplemented!()
     }
 
+    /// Returns the timestamp which the transaction started at.
+    /// 
+    /// 
     pub fn start_ts(&self) -> Timestamp {
         unimplemented!()
     }
 
+    /// Get the `Snapshot` the transaction is operating on.
     pub fn snapshot(&self) -> Snapshot {
         unimplemented!()
     }
 
+    /// Set the isolation level of the transaction.
     pub fn set_isolation_level(&mut self, _level: IsolationLevel) {
         unimplemented!()
     }
@@ -264,6 +311,7 @@ impl Transaction {
     }
 }
 
+/// A snapshot of dataset at a particular point in time.
 pub struct Snapshot;
 
 impl Snapshot {

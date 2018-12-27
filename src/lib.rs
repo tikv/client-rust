@@ -12,7 +12,10 @@
 // limitations under the License.
 
 use serde_derive::*;
-use std::{ops::{Deref, Bound}, path::PathBuf};
+use std::{
+    ops::{Deref, Bound, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive},
+    path::PathBuf,
+};
 
 mod errors;
 pub mod raw;
@@ -289,6 +292,113 @@ impl Config {
     }
 }
 
+/// A convenience trait for expressing ranges.
+///
+/// In TiKV, keys are an ordered sequence of bytes. This means we can have ranges over those
+/// bytes. Eg `001` is before `010`.
+///
+/// This trait has implementations for common range types like `a..b`, `a..=b` where `a` and `b`
+/// `impl Into<Key>`. You could implement this for your own types.
+///
+/// ```rust
+/// use tikv_client::{KeyRange, Key};
+/// use std::ops::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull, Bound};
+///
+/// let explict_range: Range<Key> = Range { start: Key::from("Rust"), end: Key::from("TiKV") };
+/// let from_explict_range = explict_range.into_bounds();
+/// 
+/// let range: Range<&str> = "Rust".."TiKV";
+/// let from_range = range.into_bounds();
+/// assert_eq!(from_explict_range, from_range);
+/// 
+/// let range: RangeInclusive<&str> = "Rust"..="TiKV";
+/// let from_range = range.into_bounds();
+/// assert_eq!(
+///     (Bound::Included(Key::from("Rust")), Bound::Included(Key::from("TiKV"))),
+///     from_range
+/// );
+/// 
+/// let range_from: RangeFrom<&str> = "Rust"..;
+/// let from_range_from = range_from.into_bounds();
+/// assert_eq!(
+///     (Bound::Included(Key::from("Rust")), Bound::Unbounded),
+///     from_range_from,
+/// );
+///
+/// let range_to: RangeTo<&str> = .."TiKV";
+/// let from_range_to = range_to.into_bounds();
+/// assert_eq!(
+///     (Bound::Unbounded, Bound::Excluded(Key::from("TiKV"))),
+///     from_range_to,
+/// );
+/// 
+/// let range_to_inclusive: RangeToInclusive<&str> = ..="TiKV";
+/// let from_range_to_inclusive = range_to_inclusive.into_bounds();
+/// assert_eq!(
+///     (Bound::Unbounded, Bound::Included(Key::from("TiKV"))),
+///     from_range_to_inclusive,
+/// );
+///
+/// let range_full: RangeFull = ..;
+/// let from_range_full = range_full.into_bounds();
+/// assert_eq!(
+///     (Bound::Unbounded, Bound::Unbounded),
+///     from_range_full
+/// );
+/// ```
+///
+/// **But, you should not need to worry about all this:** Many functions accept a `impl KeyRange`
+/// which means all of the above types can be passed directly to those functions.
+pub trait KeyRange {
+    fn into_bounds(self) -> (Bound<Key>, Bound<Key>);
+}
+
+impl<T: Into<Key>> KeyRange for Range<T> {
+    fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
+        (
+            Bound::Included(self.start.into()),
+            Bound::Excluded(self.end.into()),
+        )
+    }
+}
+
+impl<T: Into<Key>> KeyRange for RangeFrom<T> {
+    fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
+        (Bound::Included(self.start.into()), Bound::Unbounded)
+    }
+}
+
+impl KeyRange for RangeFull {
+    fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
+        (Bound::Unbounded, Bound::Unbounded)
+    }
+}
+
+impl<T: Into<Key>> KeyRange for RangeInclusive<T> {
+    fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
+        let (start, end) = self.into_inner();
+        (Bound::Included(start.into()), Bound::Included(end.into()))
+    }
+}
+
+impl<T: Into<Key>> KeyRange for RangeTo<T> {
+    fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
+        (Bound::Unbounded, Bound::Excluded(self.end.into()))
+    }
+}
+
+impl<T: Into<Key>> KeyRange for RangeToInclusive<T> {
+    fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
+        (Bound::Unbounded, Bound::Included(self.end.into()))
+    }
+}
+
+impl<T: Into<Key>> KeyRange for (Bound<T>, Bound<T>) {
+    fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
+        (transmute_bound(self.0), transmute_bound(self.1))
+    }
+}
+
 /// Unfortunately due to the API limitations of `RangeBound` we can only ever get an `&` (not a
 /// `&mut` or owned value) of a `Bound<T>`. So in order to coherce the value into the bound we want
 /// we must clone the data.
@@ -296,15 +406,14 @@ impl Config {
 /// The only way to avoid this would be to only accept two `Bound<T>` arguments, not one
 /// `RangeBound<T>` argument. This would mean `"abc"..="xyz"` would not be possible.
 /// 
-// TODO: If you feel tricky please try to remove this clone!
-fn transmute_bound<K>(b: Bound<&K>) -> Bound<Key>
+fn transmute_bound<K>(b: Bound<K>) -> Bound<Key>
 where
-    K: Into<Key> + Clone,
+    K: Into<Key>,
 {
     use std::ops::Bound::*;
     match b {
-        Included(k) => Included(k.clone().into()),
-        Excluded(k) => Excluded(k.clone().into()),
+        Included(k) => Included(k.into()),
+        Excluded(k) => Excluded(k.into()),
         Unbounded => Unbounded,
     }
 }

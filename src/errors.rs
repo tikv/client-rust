@@ -16,7 +16,7 @@ use quick_error::quick_error;
 use std::{error, result};
 
 quick_error!{
-    /// An error originating from Raft or dependencies.
+    /// An error originating from the TiKV client or dependencies.
     ///
     /// This client currently uses [`quick_error`](https://docs.rs/quick-error/1.2.2/quick_error/)
     /// for errors. *This may change in future versions.*
@@ -42,7 +42,7 @@ quick_error!{
         }
         /// An unknown error.
         ///
-        /// Generally, this is not an expected error.
+        /// Generally, this is not an expected error. Please report it if encountered.
         Other(err: Box<error::Error + Sync + Send>) {
             from()
             cause(err.as_ref())
@@ -92,4 +92,5 @@ quick_error!{
     }
 }
 
+/// A result holding an [`Error`](enum.Error.html).
 pub type Result<T> = result::Result<T, Error>;
