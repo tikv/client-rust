@@ -70,7 +70,7 @@ fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {
 }
 
 fn main() {
-    let config = Config::new(vec!["127.0.0.1:3379"]).with_security(
+    let config = Config::new(vec!["127.0.0.1:2379"]).with_security(
         PathBuf::from("/path/to/ca.pem"),
         PathBuf::from("/path/to/client.pem"),
         PathBuf::from("/path/to/client-key.pem"),

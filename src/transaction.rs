@@ -11,9 +11,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Config, Error, Key, KvPair, Value};
-use futures::{Future, Poll, Stream};
 use std::ops::RangeBounds;
+
+use futures::{Future, Poll, Stream};
+
+use crate::{Config, Error, Key, KvPair, Value};
+
+pub enum Mutation {
+    Put(Key, Value),
+    Del(Key),
+    Lock(Key),
+    Rollback(Key),
+}
+
+pub struct TxnInfo {
+    pub txn: u64,
+    pub status: u64,
+}
 
 #[derive(Copy, Clone)]
 pub struct Timestamp(u64);
@@ -242,10 +256,6 @@ impl Transaction {
         self.snapshot.scan(range)
     }
 
-    pub fn scan_reverse(&self, range: impl RangeBounds<Key>) -> Scanner {
-        self.snapshot.scan_reverse(range)
-    }
-
     pub fn set(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Set {
         Set::new(key.into(), value.into())
     }
@@ -267,11 +277,6 @@ impl Snapshot {
     }
 
     pub fn scan(&self, range: impl RangeBounds<Key>) -> Scanner {
-        drop(range);
-        unimplemented!()
-    }
-
-    pub fn scan_reverse(&self, range: impl RangeBounds<Key>) -> Scanner {
         drop(range);
         unimplemented!()
     }

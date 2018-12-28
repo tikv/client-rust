@@ -11,9 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Config, Error, Key, KvPair, Value};
-use futures::{Future, Poll};
-use std::ops::RangeBounds;
+use std::{
+    ops::{Bound, Deref, DerefMut, RangeBounds},
+    sync::Arc,
+};
+
+use futures::{future, Async, Future, Poll};
+
+use crate::{rpc::RpcClient, Config, Error, Key, KvFuture, KvPair, Result, Value};
 
 #[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub struct ColumnFamily(String);
@@ -27,17 +32,35 @@ where
     }
 }
 
-pub struct Get<'a> {
-    client: &'a Client,
-    key: Key,
+impl ColumnFamily {
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+pub trait RequestInner: Sized {
+    type Resp;
+
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp>;
+}
+
+pub struct Request<Inner>
+where
+    Inner: RequestInner,
+{
+    inner: Option<(Arc<RpcClient>, Inner)>,
+    future: Option<KvFuture<Inner::Resp>>,
     cf: Option<ColumnFamily>,
 }
 
-impl<'a> Get<'a> {
-    fn new(client: &'a Client, key: Key) -> Self {
-        Get {
-            client,
-            key,
+impl<Inner> Request<Inner>
+where
+    Inner: RequestInner,
+{
+    fn new(client: Arc<RpcClient>, inner: Inner) -> Self {
+        Request {
+            inner: Some((client, inner)),
+            future: None,
             cf: None,
         }
     }
@@ -48,320 +71,319 @@ impl<'a> Get<'a> {
     }
 }
 
-impl<'a> Future for Get<'a> {
-    type Item = Value;
+impl<Inner> Deref for Request<Inner>
+where
+    Inner: RequestInner,
+{
+    type Target = Inner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner.as_ref().unwrap().1
+    }
+}
+
+impl<Inner> DerefMut for Request<Inner>
+where
+    Inner: RequestInner,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner.as_mut().unwrap().1
+    }
+}
+
+impl<Inner> Future for Request<Inner>
+where
+    Inner: RequestInner,
+{
+    type Item = Inner::Resp;
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let _ = &self.client;
-        let _ = &self.key;
-        let _ = &self.cf;
-        unimplemented!()
-    }
-}
-
-pub struct BatchGet<'a> {
-    client: &'a Client,
-    keys: Vec<Key>,
-    cf: Option<ColumnFamily>,
-}
-
-impl<'a> BatchGet<'a> {
-    fn new(client: &'a Client, keys: Vec<Key>) -> Self {
-        BatchGet {
-            client,
-            keys,
-            cf: None,
+        loop {
+            if self.inner.is_some() {
+                let (client, inner) = self.inner.take().unwrap();
+                self.future = Some(inner.execute(client, self.cf.take()));
+            } else {
+                break self.future.as_mut().map(|x| x.poll()).unwrap();
+            }
         }
     }
+}
 
-    pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.cf = Some(cf.into());
-        self
+pub struct GetInner {
+    key: Key,
+}
+
+impl GetInner {
+    fn new(key: Key) -> Self {
+        GetInner { key }
     }
 }
 
-impl<'a> Future for BatchGet<'a> {
-    type Item = Vec<KvPair>;
-    type Error = ();
+impl RequestInner for GetInner {
+    type Resp = Value;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let _ = &self.client;
-        let _ = &self.keys;
-        let _ = &self.cf;
-        unimplemented!()
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+        Box::new(client.raw_get(self.key, cf))
     }
 }
 
-pub struct Put<'a> {
-    client: &'a Client,
+pub type Get = Request<GetInner>;
+
+pub struct BatchGetInner {
+    keys: Vec<Key>,
+}
+
+impl RequestInner for BatchGetInner {
+    type Resp = Vec<KvPair>;
+
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+        Box::new(client.raw_batch_get(self.keys, cf))
+    }
+}
+
+impl BatchGetInner {
+    fn new(keys: Vec<Key>) -> Self {
+        BatchGetInner { keys }
+    }
+}
+
+pub type BatchGet = Request<BatchGetInner>;
+
+pub struct PutInner {
     key: Key,
     value: Value,
-    cf: Option<ColumnFamily>,
 }
 
-impl<'a> Put<'a> {
-    fn new(client: &'a Client, key: Key, value: Value) -> Self {
-        Put {
-            client,
-            key,
-            value,
-            cf: None,
-        }
-    }
-
-    pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.cf = Some(cf.into());
-        self
+impl PutInner {
+    fn new(key: Key, value: Value) -> Self {
+        PutInner { key, value }
     }
 }
 
-impl<'a> Future for Put<'a> {
-    type Item = ();
-    type Error = ();
+impl RequestInner for PutInner {
+    type Resp = ();
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let _ = &self.client;
-        let _ = &self.key;
-        let _ = &self.value;
-        let _ = &self.cf;
-        unimplemented!()
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+        let (key, value) = (self.key, self.value);
+        Box::new(client.raw_put(key, value, cf))
     }
 }
 
-pub struct BatchPut<'a> {
-    client: &'a Client,
+pub type Put = Request<PutInner>;
+
+pub struct BatchPutInner {
     pairs: Vec<KvPair>,
-    cf: Option<ColumnFamily>,
 }
 
-impl<'a> BatchPut<'a> {
-    fn new(client: &'a Client, pairs: Vec<KvPair>) -> Self {
-        BatchPut {
-            client,
-            pairs,
-            cf: None,
-        }
-    }
-
-    pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.cf = Some(cf.into());
-        self
+impl BatchPutInner {
+    fn new(pairs: Vec<KvPair>) -> Self {
+        BatchPutInner { pairs }
     }
 }
 
-impl<'a> Future for BatchPut<'a> {
-    type Item = ();
-    type Error = ();
+impl RequestInner for BatchPutInner {
+    type Resp = ();
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let _ = &self.client;
-        let _ = &self.pairs;
-        let _ = &self.cf;
-        unimplemented!()
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+        Box::new(client.raw_batch_put(self.pairs, cf))
     }
 }
 
-pub struct Delete<'a> {
-    client: &'a Client,
+pub type BatchPut = Request<BatchPutInner>;
+
+pub struct DeleteInner {
     key: Key,
-    cf: Option<ColumnFamily>,
 }
 
-impl<'a> Delete<'a> {
-    fn new(client: &'a Client, key: Key) -> Self {
-        Delete {
-            client,
-            key,
-            cf: None,
-        }
-    }
-
-    pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.cf = Some(cf.into());
-        self
+impl DeleteInner {
+    fn new(key: Key) -> Self {
+        DeleteInner { key }
     }
 }
 
-impl<'a> Future for Delete<'a> {
-    type Item = ();
-    type Error = ();
+impl RequestInner for DeleteInner {
+    type Resp = ();
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let _ = &self.client;
-        let _ = &self.key;
-        let _ = &self.cf;
-        unimplemented!()
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+        Box::new(client.raw_delete(self.key, cf))
     }
 }
 
-pub struct BatchDelete<'a> {
-    client: &'a Client,
+pub type Delete = Request<DeleteInner>;
+
+pub struct BatchDeleteInner {
     keys: Vec<Key>,
-    cf: Option<ColumnFamily>,
 }
 
-impl<'a> BatchDelete<'a> {
-    fn new(client: &'a Client, keys: Vec<Key>) -> Self {
-        BatchDelete {
-            client,
-            keys,
-            cf: None,
-        }
-    }
-
-    pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.cf = Some(cf.into());
-        self
+impl BatchDeleteInner {
+    fn new(keys: Vec<Key>) -> Self {
+        BatchDeleteInner { keys }
     }
 }
 
-impl<'a> Future for BatchDelete<'a> {
-    type Item = ();
-    type Error = ();
+impl RequestInner for BatchDeleteInner {
+    type Resp = ();
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let _ = &self.client;
-        let _ = &self.keys;
-        let _ = &self.cf;
-        unimplemented!()
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+        Box::new(client.raw_batch_delete(self.keys, cf))
     }
 }
 
-pub struct Scan<'a> {
-    client: &'a Client,
-    range: (Key, Key),
+pub type BatchDelete = Request<BatchDeleteInner>;
+
+pub struct ScanInner {
+    range: Result<(Key, Option<Key>)>,
     limit: u32,
     key_only: bool,
-    cf: Option<ColumnFamily>,
-    reverse: bool,
 }
 
-impl<'a> Scan<'a> {
-    fn new(client: &'a Client, range: (Key, Key), limit: u32) -> Self {
-        Scan {
-            client,
+impl ScanInner {
+    fn new(range: Result<(Key, Option<Key>)>, limit: u32) -> Self {
+        ScanInner {
             range,
             limit,
             key_only: false,
-            cf: None,
-            reverse: false,
+        }
+    }
+}
+
+impl RequestInner for ScanInner {
+    type Resp = Vec<KvPair>;
+
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+        match self.range {
+            Ok(range) => Box::new(client.raw_scan(range, self.limit, self.key_only, cf)),
+            Err(e) => Box::new(future::err(e)),
+        }
+    }
+}
+
+pub struct Scan {
+    request: Request<ScanInner>,
+}
+
+impl Scan {
+    fn new(client: Arc<RpcClient>, inner: ScanInner) -> Self {
+        Scan {
+            request: Request::new(client, inner),
         }
     }
 
-    pub fn key_only(mut self) -> Self {
-        self.key_only = true;
-        self
-    }
-
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.cf = Some(cf.into());
+        self.request = self.request.cf(cf);
         self
     }
 
-    pub fn reverse(mut self) -> Self {
-        self.reverse = true;
+    pub fn key_only(mut self) -> Self {
+        self.request.inner = self.request.inner.map(|mut x| {
+            x.1.key_only = true;
+            x
+        });
         self
     }
 }
 
-impl<'a> Future for Scan<'a> {
+impl Future for Scan {
     type Item = Vec<KvPair>;
-    type Error = ();
+    type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let _ = &self.client;
-        let _ = &self.range;
-        let _ = &self.limit;
-        let _ = &self.key_only;
-        let _ = &self.cf;
-        unimplemented!()
+        self.request.poll()
     }
 }
 
-pub struct BatchScan<'a> {
-    client: &'a Client,
-    ranges: Vec<(Key, Key)>,
+pub struct BatchScanInner {
+    ranges: Vec<Result<(Key, Option<Key>)>>,
     each_limit: u32,
     key_only: bool,
-    cf: Option<ColumnFamily>,
-    reverse: bool,
 }
 
-impl<'a> BatchScan<'a> {
-    fn new(client: &'a Client, ranges: Vec<(Key, Key)>, each_limit: u32) -> Self {
-        BatchScan {
-            client,
+impl BatchScanInner {
+    fn new(ranges: Vec<Result<(Key, Option<Key>)>>, each_limit: u32) -> Self {
+        BatchScanInner {
             ranges,
             each_limit,
             key_only: false,
-            cf: None,
-            reverse: false,
         }
+    }
+}
+
+impl RequestInner for BatchScanInner {
+    type Resp = Vec<KvPair>;
+
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+        let (mut errors, ranges): (Vec<_>, Vec<_>) =
+            self.ranges.into_iter().partition(Result::is_err);
+        if !errors.is_empty() {
+            Box::new(future::err(errors.pop().unwrap().unwrap_err()))
+        } else {
+            Box::new(client.raw_batch_scan(
+                ranges.into_iter().map(Result::unwrap).collect(),
+                self.each_limit,
+                self.key_only,
+                cf,
+            ))
+        }
+    }
+}
+
+pub struct BatchScan {
+    request: Request<BatchScanInner>,
+}
+
+impl BatchScan {
+    fn new(client: Arc<RpcClient>, inner: BatchScanInner) -> Self {
+        BatchScan {
+            request: Request::new(client, inner),
+        }
+    }
+
+    pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
+        self.request = self.request.cf(cf);
+        self
     }
 
     pub fn key_only(mut self) -> Self {
-        self.key_only = true;
-        self
-    }
-
-    pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.cf = Some(cf.into());
-        self
-    }
-
-    pub fn reverse(mut self) -> Self {
-        self.reverse = true;
+        self.request.inner = self.request.inner.map(|mut x| {
+            x.1.key_only = true;
+            x
+        });
         self
     }
 }
 
-impl<'a> Future for BatchScan<'a> {
+impl Future for BatchScan {
     type Item = Vec<KvPair>;
-    type Error = ();
+    type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let _ = &self.client;
-        let _ = &self.ranges;
-        let _ = &self.each_limit;
-        let _ = &self.key_only;
-        let _ = &self.cf;
-        unimplemented!()
+        self.request.poll()
     }
 }
 
-pub struct DeleteRange<'a> {
-    client: &'a Client,
-    range: (Key, Key),
-    cf: Option<ColumnFamily>,
+pub struct DeleteRangeInner {
+    range: Result<(Key, Option<Key>)>,
 }
 
-impl<'a> DeleteRange<'a> {
-    fn new(client: &'a Client, range: (Key, Key)) -> Self {
-        DeleteRange {
-            client,
-            range,
-            cf: None,
+impl DeleteRangeInner {
+    fn new(range: Result<(Key, Option<Key>)>) -> Self {
+        DeleteRangeInner { range }
+    }
+}
+
+impl RequestInner for DeleteRangeInner {
+    type Resp = ();
+
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+        match self.range {
+            Ok(range) => Box::new(client.raw_delete_range(range, cf)),
+            Err(e) => Box::new(future::err(e)),
         }
     }
-
-    pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.cf = Some(cf.into());
-        self
-    }
 }
 
-impl<'a> Future for DeleteRange<'a> {
-    type Item = ();
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let _ = &self.client;
-        let _ = &self.range;
-        let _ = &self.cf;
-        unimplemented!()
-    }
-}
+pub type DeleteRange = Request<DeleteRangeInner>;
 
 pub struct Connect {
     config: Config,
@@ -378,12 +400,15 @@ impl Future for Connect {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let _config = &self.config;
-        unimplemented!()
+        let config = &self.config;
+        let rpc = Arc::new(RpcClient::connect(config)?);
+        Ok(Async::Ready(Client { rpc }))
     }
 }
 
-pub struct Client;
+pub struct Client {
+    rpc: Arc<RpcClient>,
+}
 
 impl Client {
     #![allow(clippy::new_ret_no_self)]
@@ -391,32 +416,43 @@ impl Client {
         Connect::new(config.clone())
     }
 
+    #[inline]
+    fn rpc(&self) -> Arc<RpcClient> {
+        Arc::clone(&self.rpc)
+    }
+
     pub fn get(&self, key: impl AsRef<Key>) -> Get {
-        Get::new(self, key.as_ref().clone())
+        Get::new(self.rpc(), GetInner::new(key.as_ref().clone()))
     }
 
     pub fn batch_get(&self, keys: impl AsRef<[Key]>) -> BatchGet {
-        BatchGet::new(self, keys.as_ref().to_vec())
+        BatchGet::new(self.rpc(), BatchGetInner::new(keys.as_ref().to_vec()))
     }
 
     pub fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Put {
-        Put::new(self, key.into(), value.into())
+        Put::new(self.rpc(), PutInner::new(key.into(), value.into()))
     }
 
     pub fn batch_put(&self, pairs: impl IntoIterator<Item = impl Into<KvPair>>) -> BatchPut {
-        BatchPut::new(self, pairs.into_iter().map(Into::into).collect())
+        BatchPut::new(
+            self.rpc(),
+            BatchPutInner::new(pairs.into_iter().map(Into::into).collect()),
+        )
     }
 
     pub fn delete(&self, key: impl AsRef<Key>) -> Delete {
-        Delete::new(self, key.as_ref().clone())
+        Delete::new(self.rpc(), DeleteInner::new(key.as_ref().clone()))
     }
 
     pub fn batch_delete(&self, keys: impl AsRef<[Key]>) -> BatchDelete {
-        BatchDelete::new(self, keys.as_ref().to_vec())
+        BatchDelete::new(self.rpc(), BatchDeleteInner::new(keys.as_ref().to_vec()))
     }
 
     pub fn scan(&self, range: impl RangeBounds<Key>, limit: u32) -> Scan {
-        Scan::new(self, Self::extract_range(&range), limit)
+        Scan::new(
+            self.rpc(),
+            ScanInner::new(Self::range_bounds(&range), limit),
+        )
     }
 
     pub fn batch_scan<Ranges, Bounds>(&self, ranges: Ranges, each_limit: u32) -> BatchScan
@@ -425,17 +461,40 @@ impl Client {
         Bounds: RangeBounds<Key>,
     {
         BatchScan::new(
-            self,
-            ranges.as_ref().iter().map(Self::extract_range).collect(),
-            each_limit,
+            self.rpc(),
+            BatchScanInner::new(
+                ranges.as_ref().iter().map(Self::range_bounds).collect(),
+                each_limit,
+            ),
         )
     }
 
     pub fn delete_range(&self, range: impl RangeBounds<Key>) -> DeleteRange {
-        DeleteRange::new(self, Self::extract_range(&range))
+        DeleteRange::new(
+            self.rpc(),
+            DeleteRangeInner::new(Self::range_bounds(&range)),
+        )
     }
 
-    fn extract_range(_range: &impl RangeBounds<Key>) -> (Key, Key) {
-        unimplemented!()
+    fn bound(bound: Bound<&Key>) -> Option<Key> {
+        match bound {
+            Bound::Included(k) => Some(k.clone()),
+            Bound::Excluded(k) => Some(k.clone()),
+            Bound::Unbounded => None,
+        }
+    }
+
+    fn range_bounds(range: &impl RangeBounds<Key>) -> Result<(Key, Option<Key>)> {
+        if let Bound::Included(_) = range.end_bound() {
+            return Err(Error::InvalidKeyRange);
+        }
+        if let Bound::Excluded(_) = range.start_bound() {
+            return Err(Error::InvalidKeyRange);
+        }
+
+        Ok((
+            Self::bound(range.start_bound()).unwrap_or_else(Key::default),
+            Self::bound(range.end_bound()),
+        ))
     }
 }
