@@ -15,7 +15,7 @@ use grpcio;
 use quick_error::quick_error;
 use std::{error, result};
 
-quick_error!{
+quick_error! {
     /// An error originating from the TiKV client or dependencies.
     ///
     /// This client currently uses [`quick_error`](https://docs.rs/quick-error/1.2.2/quick_error/)

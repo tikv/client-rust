@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{fmt, sync::Arc, time::Duration, ops::Bound};
+use std::{fmt, sync::Arc, time::Duration};
 
 use futures::Future;
 use grpcio::{CallOption, Environment};

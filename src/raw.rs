@@ -22,13 +22,16 @@ oracle, while the transactional interface does.
  */
 
 use crate::{rpc::RpcClient, Config, Error, Key, KeyRange, KvFuture, KvPair, Result, Value};
-use futures::{future, Future, Poll, Async};
-use std::{u32, sync::Arc, ops::{Bound, Deref, RangeBounds, DerefMut}};
-
+use futures::{future, Async, Future, Poll};
+use std::{
+    ops::{Bound, Deref, DerefMut},
+    sync::Arc,
+    u32,
+};
 
 /// The TiKV raw [`Client`](struct.Client.html) is used to issue requests to the TiKV server and PD cluster.
 pub struct Client {
-    rpc: Arc<RpcClient>
+    rpc: Arc<RpcClient>,
 }
 
 impl Client {
@@ -70,7 +73,7 @@ impl Client {
 
     /// Create a new [`BatchGet`](struct.BatchGet.html) request.
     ///
-    /// Once resolved this request will result in the fetching of the values associated with the 
+    /// Once resolved this request will result in the fetching of the values associated with the
     /// given keys.
     ///
     /// ```rust,no_run
@@ -83,7 +86,10 @@ impl Client {
     /// let result: Vec<KvPair> = req.wait().unwrap();
     /// ```
     pub fn batch_get(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> BatchGet {
-        BatchGet::new(self.rpc(), BatchGetInner::new(keys.into_iter().map(Into::into).collect()))
+        BatchGet::new(
+            self.rpc(),
+            BatchGetInner::new(keys.into_iter().map(Into::into).collect()),
+        )
     }
 
     /// Create a new [`Put`](struct.Put.html) request.
@@ -120,7 +126,10 @@ impl Client {
     /// let result: () = req.wait().unwrap();
     /// ```
     pub fn batch_put(&self, pairs: impl IntoIterator<Item = impl Into<KvPair>>) -> BatchPut {
-        BatchPut::new(self.rpc(), BatchPutInner::new(pairs.into_iter().map(Into::into).collect()))
+        BatchPut::new(
+            self.rpc(),
+            BatchPutInner::new(pairs.into_iter().map(Into::into).collect()),
+        )
     }
 
     /// Create a new [`Delete`](struct.Delete.html) request.
@@ -154,7 +163,10 @@ impl Client {
     /// let result: () = req.wait().unwrap();
     /// ```
     pub fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> BatchDelete {
-        BatchDelete::new(self.rpc(), BatchDeleteInner::new(keys.into_iter().map(Into::into).collect()))
+        BatchDelete::new(
+            self.rpc(),
+            BatchDeleteInner::new(keys.into_iter().map(Into::into).collect()),
+        )
     }
 
     /// Create a new [`Scan`](struct.Scan.html) request.
@@ -173,7 +185,10 @@ impl Client {
     /// let result: Vec<KvPair> = req.wait().unwrap();
     /// ```
     pub fn scan(&self, range: impl KeyRange, limit: impl Into<Option<u32>>) -> Scan {
-        Scan::new(self.rpc(), ScanInner::new(range.into_bounds(), limit.into().unwrap_or(u32::MAX)))
+        Scan::new(
+            self.rpc(),
+            ScanInner::new(range.into_bounds(), limit.into().unwrap_or(u32::MAX)),
+        )
     }
 
     /// Create a new [`BatchScan`](struct.BatchScan.html) request.
@@ -228,13 +243,13 @@ impl Client {
 }
 
 /// An unresolved [`Client`](struct.Client.html) connection to a TiKV cluster.
-/// 
+///
 /// Once resolved it will result in a connected [`Client`](struct.Client.html).
 ///
 /// ```rust,no_run
 /// use tikv_client::{Config, raw::{Client, Connect}};
 /// use futures::Future;
-/// 
+///
 /// let connect: Connect = Client::new(&Config::default());
 /// let client: Client = connect.wait().unwrap();
 /// ```
@@ -259,31 +274,30 @@ impl Future for Connect {
     }
 }
 
-
 /// A [`ColumnFamily`](struct.ColumnFamily.html) is an optional parameter for [`raw::Client`](struct.Client.html) requests.
-/// 
+///
 /// TiKV uses RocksDB's `ColumnFamily` support. You can learn more about RocksDB's `ColumnFamily`s [on their wiki](https://github.com/facebook/rocksdb/wiki/Column-Families).
-/// 
+///
 /// By default in TiKV data is stored in three different `ColumnFamily` values, configurable in the TiKV server's configuration:
-/// 
+///
 /// * Default: Where real user data is stored. Set by `[rocksdb.defaultcf]`.
 /// * Write: Where MVCC and index related data are stored. Set by `[rocksdb.writecf]`.
 /// * Lock: Where lock information is stored. Set by `[rocksdb.lockcf]`.
-/// 
+///
 /// Not providing a call a `ColumnFamily` means it will use the default value of `default`.
-/// 
+///
 /// The best (and only) way to create a [`ColumnFamily`](struct.ColumnFamily.html) is via the `From` implementation:
-/// 
+///
 /// ```rust
 /// # use tikv_client::raw::ColumnFamily;
-/// 
+///
 /// let cf = ColumnFamily::from("write");
 /// let cf = ColumnFamily::from(String::from("write"));
 /// let cf = ColumnFamily::from(&String::from("write"));
 /// ```
-/// 
+///
 /// This is a *wrapper type* that implements `Deref<Target=String>` so it can be used like one transparently.
-/// 
+///
 /// **But, you should not need to worry about all this:** Many functions which accept a
 /// `ColumnFamily` accept an `Into<ColumnFamily>`, which means all of the above types can be passed
 /// directly to those functions.
@@ -311,8 +325,6 @@ impl Deref for ColumnFamily {
         &self.0
     }
 }
-
-
 
 pub trait RequestInner: Sized {
     type Resp;
@@ -388,11 +400,28 @@ where
 }
 
 /// An unresolved [`Client::get`](struct.Client.html#method.get) request.
-/// 
+///
 /// Once resolved this request will result in the fetching of the value associated with the given
 /// key.
 pub struct Get {
     request: Request<GetInner>,
+}
+
+impl Get {
+    fn new(client: Arc<RpcClient>, inner: GetInner) -> Self {
+        Self {
+            request: Request::new(client, inner)
+        }
+    }
+}
+
+impl Future for Get {
+    type Item = Value;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.request.poll()
+    }
 }
 
 pub(crate) struct GetInner {
@@ -421,6 +450,23 @@ pub struct BatchGet {
     request: Request<BatchGetInner>,
 }
 
+impl BatchGet {
+    fn new(client: Arc<RpcClient>, inner: BatchGetInner) -> Self {
+        Self {
+            request: Request::new(client, inner)
+        }
+    }
+}
+
+impl Future for BatchGet {
+    type Item = Vec<KvPair>;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.request.poll()
+    }
+}
+
 pub(crate) struct BatchGetInner {
     keys: Vec<Key>,
 }
@@ -440,11 +486,28 @@ impl BatchGetInner {
 }
 
 /// An unresolved [`Client::put`](struct.Client.html#method.put) request.
-/// 
+///
 /// Once resolved this request will result in the putting of the value associated with the given
 /// key.
 pub struct Put {
     request: Request<PutInner>,
+}
+
+impl Put {
+    fn new(client: Arc<RpcClient>, inner: PutInner) -> Self {
+        Self {
+            request: Request::new(client, inner)
+        }
+    }
+}
+
+impl Future for Put {
+    type Item = ();
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.request.poll()
+    }
 }
 
 pub(crate) struct PutInner {
@@ -468,10 +531,27 @@ impl RequestInner for PutInner {
 }
 
 /// An unresolved [`Client::batch_put`](struct.Client.html#method.batch_put) request.
-/// 
+///
 /// Once resolved this request will result in the setting of the value associated with the given key.
 pub struct BatchPut {
     request: Request<BatchPutInner>,
+}
+
+impl BatchPut {
+    fn new(client: Arc<RpcClient>, inner: BatchPutInner) -> Self {
+        Self {
+            request: Request::new(client, inner)
+        }
+    }
+}
+
+impl Future for BatchPut {
+    type Item = ();
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.request.poll()
+    }
 }
 
 pub(crate) struct BatchPutInner {
@@ -499,6 +579,23 @@ pub struct Delete {
     request: Request<DeleteInner>,
 }
 
+impl Delete {
+    fn new(client: Arc<RpcClient>, inner: DeleteInner) -> Self {
+        Self {
+            request: Request::new(client, inner)
+        }
+    }
+}
+
+impl Future for Delete {
+    type Item = ();
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.request.poll()
+    }
+}
+
 pub(crate) struct DeleteInner {
     key: Key,
 }
@@ -524,6 +621,23 @@ pub struct BatchDelete {
     request: Request<BatchDeleteInner>,
 }
 
+impl BatchDelete {
+    fn new(client: Arc<RpcClient>, inner: BatchDeleteInner) -> Self {
+        Self {
+            request: Request::new(client, inner)
+        }
+    }
+}
+
+impl Future for BatchDelete {
+    type Item = ();
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.request.poll()
+    }
+}
+
 pub(crate) struct BatchDeleteInner {
     keys: Vec<Key>,
 }
@@ -541,7 +655,6 @@ impl RequestInner for BatchDeleteInner {
         Box::new(client.raw_batch_delete(self.keys, cf))
     }
 }
-
 
 pub(crate) struct ScanInner {
     range: (Bound<Key>, Bound<Key>),
@@ -688,6 +801,23 @@ impl Future for BatchScan {
 /// range.
 pub struct DeleteRange {
     request: Request<DeleteRangeInner>,
+}
+
+impl DeleteRange {
+    fn new(client: Arc<RpcClient>, inner: DeleteRangeInner) -> Self {
+        Self {
+            request: Request::new(client, inner)
+        }
+    }
+}
+
+impl Future for DeleteRange {
+    type Item = ();
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.request.poll()
+    }
 }
 
 pub(crate) struct DeleteRangeInner {
