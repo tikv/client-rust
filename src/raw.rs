@@ -387,7 +387,15 @@ where
     }
 }
 
-pub struct GetInner {
+/// An unresolved [`Client::get`](struct.Client.html#method.get) request.
+/// 
+/// Once resolved this request will result in the fetching of the value associated with the given
+/// key.
+pub struct Get {
+    request: Request<GetInner>,
+}
+
+pub(crate) struct GetInner {
     key: Key,
 }
 
@@ -405,13 +413,15 @@ impl RequestInner for GetInner {
     }
 }
 
-/// An unresolved [`Client::get`](struct.Client.html#method.get) request.
-/// 
-/// Once resolved this request will result in the fetching of the value associated with the given
-/// key.
-pub type Get = Request<GetInner>;
+/// An unresolved [`Client::batch_get`](struct.Client.html#method.batch_get) request.
+///
+/// Once resolved this request will result in the fetching of the values associated with the given
+/// keys.
+pub struct BatchGet {
+    request: Request<BatchGetInner>,
+}
 
-pub struct BatchGetInner {
+pub(crate) struct BatchGetInner {
     keys: Vec<Key>,
 }
 
@@ -429,15 +439,15 @@ impl BatchGetInner {
     }
 }
 
-/// An unresolved [`Client::batch_get`](struct.Client.html#method.batch_get) request.
-///
-/// Once resolved this request will result in the fetching of the values associated with the given
-/// keys.
-pub type BatchGet = Request<BatchGetInner>;
+/// An unresolved [`Client::put`](struct.Client.html#method.put) request.
+/// 
+/// Once resolved this request will result in the putting of the value associated with the given
+/// key.
+pub struct Put {
+    request: Request<PutInner>,
+}
 
-
-
-pub struct PutInner {
+pub(crate) struct PutInner {
     key: Key,
     value: Value,
 }
@@ -457,16 +467,14 @@ impl RequestInner for PutInner {
     }
 }
 
-/// An unresolved [`Client::put`](struct.Client.html#method.put) request.
-/// 
-/// Once resolved this request will result in the putting of the value associated with the given
-/// key.
-pub type Put = Request<PutInner>;
-
 /// An unresolved [`Client::batch_put`](struct.Client.html#method.batch_put) request.
 /// 
 /// Once resolved this request will result in the setting of the value associated with the given key.
-pub struct BatchPutInner {
+pub struct BatchPut {
+    request: Request<BatchPutInner>,
+}
+
+pub(crate) struct BatchPutInner {
     pairs: Vec<KvPair>,
 }
 
@@ -484,13 +492,14 @@ impl RequestInner for BatchPutInner {
     }
 }
 
+/// An unresolved [`Client::delete`](struct.Client.html#method.delete) request.
+///
+/// Once resolved this request will result in the deletion of the given key.
+pub struct Delete {
+    request: Request<DeleteInner>,
+}
 
-/// An unresolved [`Client::batch_put`](struct.Client.html#method.batch_put) request.
-/// 
-/// Once resolved this request will result in the setting of the value associated with the given key.
-pub type BatchPut = Request<BatchPutInner>;
-
-pub struct DeleteInner {
+pub(crate) struct DeleteInner {
     key: Key,
 }
 
@@ -508,12 +517,14 @@ impl RequestInner for DeleteInner {
     }
 }
 
-/// An unresolved [`Client::delete`](struct.Client.html#method.delete) request.
+/// An unresolved [`Client::batch_delete`](struct.Client.html#method.batch_delete) request.
 ///
-/// Once resolved this request will result in the deletion of the given key.
-pub type Delete = Request<DeleteInner>;
+/// Once resolved this request will result in the deletion of the given keys.
+pub struct BatchDelete {
+    request: Request<BatchDeleteInner>,
+}
 
-pub struct BatchDeleteInner {
+pub(crate) struct BatchDeleteInner {
     keys: Vec<Key>,
 }
 
@@ -531,9 +542,8 @@ impl RequestInner for BatchDeleteInner {
     }
 }
 
-pub type BatchDelete = Request<BatchDeleteInner>;
 
-pub struct ScanInner {
+pub(crate) struct ScanInner {
     range: (Bound<Key>, Bound<Key>),
     limit: u32,
     key_only: bool,
@@ -561,6 +571,9 @@ impl RequestInner for ScanInner {
     }
 }
 
+/// An unresolved [`Client::scan`](struct.Client.html#method.scan) request.
+///
+/// Once resolved this request will result in a scanner over the given range.
 pub struct Scan {
     request: Request<ScanInner>,
 }
@@ -596,7 +609,7 @@ impl Future for Scan {
     }
 }
 
-pub struct BatchScanInner {
+pub(crate) struct BatchScanInner {
     ranges: Vec<Result<(Key, Option<Key>)>>,
     each_limit: u32,
     key_only: bool,
@@ -631,6 +644,9 @@ impl RequestInner for BatchScanInner {
     }
 }
 
+/// An unresolved [`Client::batch_scan`](struct.Client.html#method.batch_scan) request.
+///
+/// Once resolved this request will result in a scanner over the given ranges.
 pub struct BatchScan {
     request: Request<BatchScanInner>,
 }
@@ -666,9 +682,15 @@ impl Future for BatchScan {
     }
 }
 
-pub type DeleteRange = Request<DeleteRangeInner>;
+/// An unresolved [`Client::delete_range`](struct.Client.html#method.delete_range) request.
+///
+/// Once resolved this request will result in the deletion of the values in the given
+/// range.
+pub struct DeleteRange {
+    request: Request<DeleteRangeInner>,
+}
 
-pub struct DeleteRangeInner {
+pub(crate) struct DeleteRangeInner {
     range: Result<(Key, Option<Key>)>,
 }
 
