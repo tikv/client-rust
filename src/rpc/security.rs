@@ -1,0 +1,170 @@
+// Copyright 2018 The TiKV Project Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use std::{
+    fs::File,
+    io::Read,
+    path::{Path, PathBuf},
+    ptr,
+    sync::Arc,
+    time::Duration,
+};
+
+use grpcio::{Channel, ChannelBuilder, ChannelCredentialsBuilder, Environment};
+use log::*;
+
+use crate::Result;
+
+fn check_pem_file(tag: &str, path: &Path) -> Result<Option<File>> {
+    match File::open(path) {
+        Err(e) => Err(internal_err!(
+            "failed to open {} to load {}: {:?}",
+            path.display(),
+            tag,
+            e
+        )),
+        Ok(f) => Ok(Some(f)),
+    }
+}
+
+fn load_pem(tag: &str, path: &Path) -> Result<Vec<u8>> {
+    let mut key = vec![];
+    let f = check_pem_file(tag, path)?;
+    match f {
+        None => return Ok(vec![]),
+        Some(mut f) => {
+            if let Err(e) = f.read_to_end(&mut key) {
+                return Err(internal_err!(
+                    "failed to load {} from path {}: {:?}",
+                    tag,
+                    path.display(),
+                    e
+                ));
+            }
+        }
+    }
+    Ok(key)
+}
+
+struct PrivateKey(Vec<u8>);
+
+impl PrivateKey {
+    fn load(path: &Path) -> Result<PrivateKey> {
+        let key = load_pem("private key", path)?;
+        Ok(PrivateKey(key))
+    }
+}
+
+impl Drop for PrivateKey {
+    fn drop(&mut self) {
+        unsafe {
+            for b in &mut self.0 {
+                ptr::write_volatile(b, 0);
+            }
+        }
+    }
+}
+
+impl PrivateKey {
+    fn get(&self) -> Vec<u8> {
+        self.0.clone()
+    }
+}
+
+#[derive(Default)]
+pub struct SecurityManager {
+    ca: Vec<u8>,
+    cert: Vec<u8>,
+    key: PathBuf,
+}
+
+impl SecurityManager {
+    pub fn load(
+        ca_path: impl AsRef<Path>,
+        cert_path: impl AsRef<Path>,
+        key_path: impl Into<PathBuf>,
+    ) -> Result<SecurityManager> {
+        let key_path = key_path.into();
+        let _ = PrivateKey::load(&key_path)?;
+        Ok(SecurityManager {
+            ca: load_pem("ca", ca_path.as_ref())?,
+            cert: load_pem("certificate", cert_path.as_ref())?,
+            key: key_path,
+        })
+    }
+
+    pub fn connect<Factory, Client>(
+        &self,
+        env: Arc<Environment>,
+        addr: &str,
+        factory: Factory,
+    ) -> Result<Client>
+    where
+        Factory: FnOnce(Channel) -> Client,
+    {
+        info!("connect to rpc server at endpoint: {:?}", addr);
+        let addr = addr
+            .trim_left_matches("http://")
+            .trim_left_matches("https://");
+        let cb = ChannelBuilder::new(env)
+            .keepalive_time(Duration::from_secs(10))
+            .keepalive_timeout(Duration::from_secs(3));
+
+        let channel = if self.ca.is_empty() {
+            cb.connect(addr)
+        } else {
+            let key = PrivateKey::load(&self.key)?;
+            let cred = ChannelCredentialsBuilder::new()
+                .root_cert(self.ca.clone())
+                .cert(self.cert.clone(), key.get())
+                .build();
+            cb.secure_connect(addr, cred)
+        };
+
+        Ok(factory(channel))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate tempdir;
+    use super::*;
+
+    use std::fs::File;
+    use std::io::Write;
+    use std::path::PathBuf;
+
+    use self::tempdir::TempDir;
+
+    #[test]
+    fn test_security() {
+        let temp = TempDir::new("test_cred").unwrap();
+        let example_ca = temp.path().join("ca");
+        let example_cert = temp.path().join("cert");
+        let example_pem = temp.path().join("key");
+        for (id, f) in (&[&example_ca, &example_cert, &example_pem])
+            .into_iter()
+            .enumerate()
+        {
+            File::create(f).unwrap().write_all(&[id as u8]).unwrap();
+        }
+        let cert_path: PathBuf = format!("{}", example_cert.display()).into();
+        let key_path: PathBuf = format!("{}", example_pem.display()).into();
+        let ca_path: PathBuf = format!("{}", example_ca.display()).into();
+        let mgr = SecurityManager::load(&ca_path, &cert_path, &key_path).unwrap();
+        assert_eq!(mgr.ca, vec![0]);
+        assert_eq!(mgr.cert, vec![1]);
+        let key = PrivateKey::load(&key_path).unwrap();
+        assert_eq!(key.get(), vec![2]);
+    }
+}

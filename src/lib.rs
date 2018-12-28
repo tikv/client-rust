@@ -11,16 +11,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![recursion_limit = "128"]
+#![type_length_limit = "2097152"]
+use std::{convert::AsRef, ops::Deref, path::PathBuf, time::Duration};
+
+use futures::Future;
 use serde_derive::*;
-use std::ops::Deref;
-use std::path::PathBuf;
+
+pub use crate::errors::{Error, Result};
 
 pub mod errors;
 pub mod raw;
+mod rpc;
 pub mod transaction;
-
-pub use crate::errors::Error;
-pub use crate::errors::Result;
 
 #[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub struct Key(Vec<u8>);
@@ -29,9 +32,15 @@ pub struct Value(Vec<u8>);
 #[derive(Default, Clone, Eq, PartialEq, Debug)]
 pub struct KvPair(Key, Value);
 
-impl Into<Key> for Vec<u8> {
-    fn into(self) -> Key {
-        Key(self)
+impl From<Vec<u8>> for Key {
+    fn from(vec: Vec<u8>) -> Key {
+        Key(vec)
+    }
+}
+
+impl<'a> From<&'a [u8]> for Key {
+    fn from(s: &'a [u8]) -> Key {
+        Key(s.to_vec())
     }
 }
 
@@ -41,25 +50,61 @@ impl AsRef<Key> for Key {
     }
 }
 
-impl Deref for Key {
-    type Target = Vec<u8>;
-
-    fn deref(&self) -> &Self::Target {
+impl AsRef<[u8]> for Key {
+    fn as_ref(&self) -> &[u8] {
         &self.0
     }
 }
 
-impl Into<Value> for Vec<u8> {
-    fn into(self) -> Value {
-        Value(self)
+impl Deref for Key {
+    type Target = [u8];
+
+    fn deref<'a>(&'a self) -> &'a Self::Target {
+        &self.0
+    }
+}
+
+impl Key {
+    fn into_inner(self) -> Vec<u8> {
+        self.0
+    }
+}
+
+impl From<Vec<u8>> for Value {
+    fn from(vec: Vec<u8>) -> Value {
+        Value(vec)
+    }
+}
+
+impl<'a> From<&'a [u8]> for Value {
+    fn from(s: &'a [u8]) -> Value {
+        Value(s.to_vec())
+    }
+}
+
+impl AsRef<Value> for Value {
+    fn as_ref(&self) -> &Self {
+        self
+    }
+}
+
+impl AsRef<[u8]> for Value {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
     }
 }
 
 impl Deref for Value {
-    type Target = Vec<u8>;
+    type Target = [u8];
 
-    fn deref(&self) -> &Self::Target {
+    fn deref<'a>(&'a self) -> &'a Self::Target {
         &self.0
+    }
+}
+
+impl Value {
+    fn into_inner(self) -> Vec<u8> {
+        self.0
     }
 }
 
@@ -75,11 +120,15 @@ impl KvPair {
     pub fn value(&self) -> &Value {
         &self.1
     }
+
+    pub fn into_inner(self) -> (Key, Value) {
+        (self.0, self.1)
+    }
 }
 
-impl Into<KvPair> for (Key, Value) {
-    fn into(self) -> KvPair {
-        KvPair(self.0, self.1)
+impl From<(Key, Value)> for KvPair {
+    fn from(pair: (Key, Value)) -> KvPair {
+        KvPair(pair.0, pair.1)
     }
 }
 
@@ -87,10 +136,11 @@ impl Into<KvPair> for (Key, Value) {
 #[serde(default)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
-    pub pd_endpoints: Vec<String>,
-    pub ca_path: Option<PathBuf>,
-    pub cert_path: Option<PathBuf>,
-    pub key_path: Option<PathBuf>,
+    pd_endpoints: Vec<String>,
+    ca_path: Option<PathBuf>,
+    cert_path: Option<PathBuf>,
+    key_path: Option<PathBuf>,
+    timeout: Duration,
 }
 
 impl Config {
@@ -100,6 +150,7 @@ impl Config {
             ca_path: None,
             cert_path: None,
             key_path: None,
+            timeout: Duration::from_secs(2),
         }
     }
 
@@ -114,4 +165,11 @@ impl Config {
         self.key_path = Some(key_path.into());
         self
     }
+
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
 }
+
+pub type KvFuture<Resp> = Box<Future<Item = Resp, Error = Error>>;
