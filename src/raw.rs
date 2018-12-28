@@ -44,7 +44,8 @@ impl Client {
 
     /// Create a new [`Get`](struct.Get.html) request.
     ///
-    /// Once resolved this request will result in the fetching of the value associated with the given key.
+    /// Once resolved this request will result in the fetching of the value associated with the
+    /// given key.
     ///
     /// ```rust,no_run
     /// # use tikv_client::{Value, Config, raw::Client};
@@ -61,7 +62,8 @@ impl Client {
 
     /// Create a new [`BatchGet`](struct.BatchGet.html) request.
     ///
-    /// Once resolved this request will result in the fetching of the values associated with the given keys.
+    /// Once resolved this request will result in the fetching of the values associated with the 
+    /// given keys.
     ///
     /// ```rust,no_run
     /// # use tikv_client::{KvPair, Config, raw::Client};
@@ -295,7 +297,8 @@ impl Deref for ColumnFamily {
 
 /// An unresolved [`Client::get`](struct.Client.html#method.get) request.
 /// 
-/// Once resolved this request will result in the fetching of the value associated with the given key.
+/// Once resolved this request will result in the fetching of the value associated with the given
+/// key.
 pub struct Get<'a> {
     client: &'a Client,
     key: Key,
@@ -332,7 +335,8 @@ impl<'a> Future for Get<'a> {
 
 /// An unresolved [`Client::batch_get`](struct.Client.html#method.batch_get) request.
 ///
-/// Once resolved this request will result in the fetching of the values associated with the given keys.
+/// Once resolved this request will result in the fetching of the values associated with the given
+/// keys.
 pub struct BatchGet<'a> {
     client: &'a Client,
     keys: Vec<Key>,
@@ -368,7 +372,8 @@ impl<'a> Future for BatchGet<'a> {
 
 /// An unresolved [`Client::put`](struct.Client.html#method.put) request.
 /// 
-/// Once resolved this request will result in the setting of the value associated with the given key.
+/// Once resolved this request will result in the setting of the value associated with the given
+/// key.
 pub struct Put<'a> {
     client: &'a Client,
     key: Key,
@@ -481,6 +486,8 @@ impl<'a> Future for Delete<'a> {
 }
 
 /// An unresolved [`Client::batch_delete`](struct.Client.html#method.batch_delete) request.
+///
+/// Once resolved this request will result in the deletion of the given keys.
 pub struct BatchDelete<'a> {
     client: &'a Client,
     keys: Vec<Key>,
@@ -516,7 +523,7 @@ impl<'a> Future for BatchDelete<'a> {
 }
 
 /// An unresolved [`Client::scan`](struct.Client.html#method.scan) request.
-/// 
+///
 /// Once resolved this request will result in a scanner over the given keys.
 pub struct Scan<'a> {
     client: &'a Client,
