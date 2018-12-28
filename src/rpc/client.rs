@@ -486,11 +486,11 @@ impl RegionContext {
     }
 
     fn start_key(&self) -> Key {
-        self.region.start_key().into()
+        self.region.start_key().to_vec().into()
     }
 
     fn end_key(&self) -> Key {
-        self.region.end_key().into()
+        self.region.end_key().to_vec().into()
     }
 
     fn range(&self) -> (Key, Key) {

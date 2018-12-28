@@ -32,7 +32,7 @@ fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
     txn.commit().wait().expect("Could not commit transaction");
 }
 
-fn get(client: &Client, key: &Key) -> Value {
+fn get(client: &Client, key: Key) -> Value {
     let txn = client.begin();
     txn.get(key).wait().expect("Could not get value")
 }
@@ -88,7 +88,7 @@ fn main() {
 
     // get
     let key1: Key = b"key1".to_vec().into();
-    let value1 = get(&txn, &key1);
+    let value1 = get(&txn, key1.clone());
     println!("{:?}", (key1, value1));
 
     // scan

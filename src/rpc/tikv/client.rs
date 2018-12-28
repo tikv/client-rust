@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{fmt, sync::Arc, time::Duration};
+use std::{fmt, sync::Arc, time::Duration, ops::Bound};
 
 use futures::Future;
 use grpcio::{CallOption, Environment};
@@ -662,7 +662,7 @@ impl KvClient {
 
     #[inline]
     fn convert_from_grpc_pair(mut pair: kvrpcpb::KvPair) -> KvPair {
-        KvPair::new(pair.take_key().into(), pair.take_value().into())
+        KvPair::new(Key::from(pair.take_key()), Value::from(pair.take_value()))
     }
 
     #[inline]
