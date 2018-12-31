@@ -413,6 +413,12 @@ impl Get {
             request: Request::new(client, inner)
         }
     }
+
+    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
+        self.request = self.request.cf(cf);
+        self
+    }
 }
 
 impl Future for Get {
@@ -456,6 +462,12 @@ impl BatchGet {
             request: Request::new(client, inner)
         }
     }
+
+    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
+        self.request = self.request.cf(cf);
+        self
+    }
 }
 
 impl Future for BatchGet {
@@ -498,6 +510,12 @@ impl Put {
         Self {
             request: Request::new(client, inner)
         }
+    }
+
+    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
+        self.request = self.request.cf(cf);
+        self
     }
 }
 
@@ -543,6 +561,12 @@ impl BatchPut {
             request: Request::new(client, inner)
         }
     }
+
+    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
+        self.request = self.request.cf(cf);
+        self
+    }
 }
 
 impl Future for BatchPut {
@@ -585,6 +609,12 @@ impl Delete {
             request: Request::new(client, inner)
         }
     }
+
+    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
+        self.request = self.request.cf(cf);
+        self
+    }
 }
 
 impl Future for Delete {
@@ -626,6 +656,12 @@ impl BatchDelete {
         Self {
             request: Request::new(client, inner)
         }
+    }
+
+    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
+        self.request = self.request.cf(cf);
+        self
     }
 }
 
@@ -808,6 +844,12 @@ impl DeleteRange {
         Self {
             request: Request::new(client, inner)
         }
+    }
+
+    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
+        self.request = self.request.cf(cf);
+        self
     }
 }
 

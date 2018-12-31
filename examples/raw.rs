@@ -43,7 +43,7 @@ fn main() -> Result<()> {
     //
     // Here we set the key `TiKV` to have the value `Rust` associated with it.
     let put_request = client.put(KEY, VALUE);
-    let put_result: () = put_request.wait()?; // Returns a `tikv_client::Error` on failure.
+    let _put_result: () = put_request.wait()?; // Returns a `tikv_client::Error` on failure.
     println!("Put key \"{}\", value \"{}\".", KEY, VALUE);
 
     //
@@ -62,7 +62,7 @@ fn main() -> Result<()> {
 
     // You can also set the `ColumnFamily` used by the request.
     // This is *advanced usage* and should have some special considerations.
-    let req = client
+    let _delete_result: () = client
         .delete(key.clone())
         .cf(CUSTOM_CF)
         .wait()
@@ -71,7 +71,7 @@ fn main() -> Result<()> {
 
     client
         .get(key)
-        .cf("test_cf")
+        .cf(CUSTOM_CF)
         .wait()
         .expect_err("Get returned value for not existing key");
 
@@ -79,7 +79,7 @@ fn main() -> Result<()> {
 
     let values = client
         .batch_get(keys.clone())
-        .cf("test_cf")
+        .cf(CUSTOM_CF)
         .wait()
         .expect("Could not get values");
     println!("Found values: {:?} for keys: {:?}", values, keys);
@@ -88,7 +88,7 @@ fn main() -> Result<()> {
     let end: Key = b"k2".to_vec().into();
     client
         .scan(start.clone()..end.clone(), 10)
-        .cf("test_cf")
+        .cf(CUSTOM_CF)
         .key_only()
         .wait()
         .expect("Could not scan");
@@ -96,7 +96,7 @@ fn main() -> Result<()> {
     let ranges = vec![start.clone()..end.clone(), start.clone()..end.clone()];
     client
         .batch_scan(ranges, 10)
-        .cf("test_cf")
+        .cf(CUSTOM_CF)
         .key_only()
         .wait()
         .expect("Could not batch scan");
