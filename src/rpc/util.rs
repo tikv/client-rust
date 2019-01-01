@@ -66,7 +66,7 @@ pub fn get_tag_from_thread_name() -> Option<String> {
 #[inline]
 pub fn duration_to_sec(d: Duration) -> f64 {
     let nanos = f64::from(d.subsec_nanos());
-    // Most of case, we can't have so large Duration, so here just panic if overflow now.
+    // In most cases, we can't have so large Duration, so here just panic if overflow now.
     d.as_secs() as f64 + (nanos / 1_000_000_000.0)
 }
 

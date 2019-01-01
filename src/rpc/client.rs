@@ -267,10 +267,10 @@ impl RpcClient {
     ) -> impl Future<Item = Vec<KvPair>, Error = Error> {
         let inner = self.inner();
         self.group_tasks_by_region(keys)
-            .and_then(move |gk| {
-                let gk = gk.into_inner();
-                let mut tasks = Vec::with_capacity(gk.len());
-                for (region, keys) in gk.into_iter() {
+            .and_then(move |task_groups| {
+                let task_groups = task_groups.into_inner();
+                let mut tasks = Vec::with_capacity(task_groups.len());
+                for (region, keys) in task_groups.into_iter() {
                     let inner = Arc::clone(&inner);
                     let cf = cf.clone();
                     let task = Self::region_context_by_id(inner, region.id)
@@ -312,10 +312,10 @@ impl RpcClient {
             let inner = self.inner();
             Either::B(
                 self.group_tasks_by_region(pairs)
-                    .and_then(move |gk| {
-                        let gk = gk.into_inner();
-                        let mut tasks = Vec::with_capacity(gk.len());
-                        for (region, pairs) in gk.into_iter() {
+                    .and_then(move |task_groups| {
+                        let task_groups = task_groups.into_inner();
+                        let mut tasks = Vec::with_capacity(task_groups.len());
+                        for (region, pairs) in task_groups.into_iter() {
                             let inner = Arc::clone(&inner);
                             let cf = cf.clone();
                             let task = Self::region_context_by_id(inner, region.id)
@@ -348,10 +348,10 @@ impl RpcClient {
     ) -> impl Future<Item = (), Error = Error> {
         let inner = self.inner();
         self.group_tasks_by_region(keys)
-            .and_then(move |gk| {
-                let gk = gk.into_inner();
-                let mut tasks = Vec::with_capacity(gk.len());
-                for (region, keys) in gk.into_iter() {
+            .and_then(move |task_groups| {
+                let task_groups = task_groups.into_inner();
+                let mut tasks = Vec::with_capacity(task_groups.len());
+                for (region, keys) in task_groups.into_iter() {
                     let inner = Arc::clone(&inner);
                     let cf = cf.clone();
                     let task = Self::region_context_by_id(inner, region.id)

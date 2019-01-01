@@ -302,6 +302,8 @@ pub struct Config {
     timeout: Duration,
 }
 
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+
 impl Config {
     /// Create a new [`Config`](struct.Config.html) which coordinates with the given PD endpoints.
     ///
@@ -317,7 +319,7 @@ impl Config {
             ca_path: None,
             cert_path: None,
             key_path: None,
-            timeout: Duration::from_secs(2),
+            timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
 

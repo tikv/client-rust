@@ -41,19 +41,23 @@ trait PdResponse {
     fn header(&self) -> &pdpb::ResponseHeader;
 }
 
-macro_rules! pd_response {
-    ($type:ty) => {
-        impl PdResponse for $type {
-            fn header(&self) -> &pdpb::ResponseHeader {
-                self.get_header()
-            }
-        }
-    };
+impl PdResponse for pdpb::GetStoreResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.get_header()
+    }
 }
 
-pd_response!(pdpb::GetStoreResponse);
-pd_response!(pdpb::GetRegionResponse);
-pd_response!(pdpb::GetAllStoresResponse);
+impl PdResponse for pdpb::GetRegionResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.get_header()
+    }
+}
+
+impl PdResponse for pdpb::GetAllStoresResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.get_header()
+    }
+}
 
 pub struct PdClient {
     cluster_id: u64,
@@ -213,6 +217,7 @@ impl fmt::Debug for PdClient {
         fmt.debug_struct("PdClient")
             .field("cluster_id", &self.cluster_id)
             .field("leader", &self.get_leader())
+            .field("timeout", &self.timeout)
             .finish()
     }
 }

@@ -22,7 +22,7 @@ quick_error! {
     /// for errors. *This may change in future versions.*
     #[derive(Debug)]
     pub enum Error {
-        /// Wraps a a `std::io::Error`.
+        /// Wraps a `std::io::Error`.
         Io(err: ::std::io::Error) {
             from()
             cause(err)
@@ -69,7 +69,7 @@ quick_error! {
             description("store not match")
             display("requesting store '{}' when actual store is '{}'. {}", request_store_id, actual_store_id, message)
         }
-        /// The given key is not eithin the given region.
+        /// The given key is not within the given region.
         KeyNotInRegion(key: Vec<u8>, region_id: u64, start_key: Vec<u8>, end_key: Vec<u8>) {
             description("region is not found")
             display("key {:?} is not in region {:?}: [{:?}, {:?})", key, region_id, start_key, end_key)

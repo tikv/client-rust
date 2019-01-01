@@ -106,7 +106,7 @@ impl PdReactor {
                     .unwrap(),
             )
         } else {
-            warn!("tso sender and receiver are stale, refreshing..");
+            warn!("tso sender and receiver are stale, refreshing...");
             let (tso_tx, tso_rx) = unbounded();
             self.tso_tx = tso_tx;
             self.tso_rx = Some(tso_rx);
@@ -162,7 +162,7 @@ impl PdReactor {
                 let tso_pending = reactor.tso_pending.take().unwrap();
                 reactor.schedule(PdTask::Response(tso_pending, resp));
                 if !reactor.tso_batch.is_empty() {
-                    /* schedule another tso_batch of request */
+                    // Schedule another tso_batch of request
                     reactor.schedule(PdTask::Request);
                 }
                 Ok(())
@@ -214,7 +214,7 @@ impl PdReactor {
         let (tx, rx) = oneshot::channel::<PdTimestamp>();
         self.tso_batch.push(tx);
         if self.tso_pending.is_none() {
-            /* schedule tso request to run */
+            // Schedule tso request to run.
             self.schedule(PdTask::Request);
         }
         rx.map_err(Error::Canceled).then(move |r| context.done(r))
@@ -267,7 +267,7 @@ impl LeaderClient {
 
     // Re-establish connection with PD leader in synchronized fashion.
     pub fn reconnect(leader: &Arc<RwLock<LeaderClient>>, interval: u64) -> Result<()> {
-        warn!("updating pd client, block the tokio core");
+        warn!("updating pd client, blocking the tokio core");
         let ((client, members), start) = {
             let leader = leader.rl();
             if leader.last_update.elapsed() < Duration::from_secs(interval) {

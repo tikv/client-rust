@@ -226,8 +226,6 @@ impl Client {
     ///
     /// Once resolved this request will result in the deletion of all keys over the given range.
     ///
-    /// If not passed a `limit` parameter, it will default to `u32::MAX`.
-    ///
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, raw::Client};
     /// # use futures::Future;
@@ -778,10 +776,11 @@ impl RequestInner for BatchScanInner {
     type Resp = Vec<KvPair>;
 
     fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
-        let (mut errors, ranges): (Vec<_>, Vec<_>) =
+        let (errors, ranges): (Vec<_>, Vec<_>) =
             self.ranges.into_iter().partition(Result::is_err);
         if !errors.is_empty() {
-            Box::new(future::err(errors.pop().unwrap().unwrap_err()))
+            // All errors must be InvalidKeyRange so we can simply return a new InvalidKeyRange
+            Box::new(future::err(Error::InvalidKeyRange))
         } else {
             Box::new(client.raw_batch_scan(
                 ranges.into_iter().map(Result::unwrap).collect(),

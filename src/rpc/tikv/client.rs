@@ -695,6 +695,7 @@ impl fmt::Debug for KvClient {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("KvClient")
             .field("address", &self.address)
+            .field("timeout", &self.timeout)
             .finish()
     }
 }
