@@ -19,7 +19,7 @@ use std::{
 
 use futures::{
     sync::{
-        mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
+        mpsc::{channel, unbounded, Receiver, Sender, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
     Future, Sink, Stream,
@@ -62,8 +62,8 @@ enum PdTask {
 
 struct PdReactor {
     task_tx: Option<UnboundedSender<Option<PdTask>>>,
-    tso_tx: UnboundedSender<pdpb::TsoRequest>,
-    tso_rx: Option<UnboundedReceiver<pdpb::TsoRequest>>,
+    tso_tx: Sender<pdpb::TsoRequest>,
+    tso_rx: Option<Receiver<pdpb::TsoRequest>>,
 
     handle: Option<JoinHandle<()>>,
     tso_pending: Option<Vec<TsoChannel>>,
@@ -81,7 +81,7 @@ impl Drop for PdReactor {
 
 impl PdReactor {
     fn new() -> Self {
-        let (tso_tx, tso_rx) = unbounded();
+        let (tso_tx, tso_rx) = channel(1);
         PdReactor {
             task_tx: None,
             tso_tx,
@@ -107,7 +107,7 @@ impl PdReactor {
             )
         } else {
             warn!("tso sender and receiver are stale, refreshing...");
-            let (tso_tx, tso_rx) = unbounded();
+            let (tso_tx, tso_rx) = channel(1);
             self.tso_tx = tso_tx;
             self.tso_rx = Some(tso_rx);
             self.schedule(PdTask::Init);
@@ -181,7 +181,10 @@ impl PdReactor {
         let batch_size = observe_tso_batch(tso_batch.len());
         request.set_count(batch_size);
         reactor.tso_pending = Some(tso_batch);
-        reactor.tso_tx.unbounded_send(request).unwrap();
+        reactor
+            .tso_tx
+            .try_send(request)
+            .expect("channel can never be full");
     }
 
     fn tso_response(
