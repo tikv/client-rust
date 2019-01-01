@@ -24,7 +24,7 @@ oracle, while the transactional interface does.
 use crate::{rpc::RpcClient, Config, Error, Key, KeyRange, KvFuture, KvPair, Result, Value};
 use futures::{future, Async, Future, Poll};
 use std::{
-    ops::{Bound, Deref, DerefMut},
+    ops::{Bound, Deref},
     sync::Arc,
     u32,
 };
@@ -330,69 +330,43 @@ pub trait RequestInner: Sized {
     fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp>;
 }
 
-pub struct Request<Inner>
+enum RequestState<Inner>
 where
     Inner: RequestInner,
 {
-    inner: Option<(Arc<RpcClient>, Inner)>,
-    future: Option<KvFuture<Inner::Resp>>,
-    cf: Option<ColumnFamily>,
+    Uninitiated(Option<(Arc<RpcClient>, Inner, Option<ColumnFamily>)>),
+    Initiated(KvFuture<Inner::Resp>),
 }
 
-impl<Inner> Request<Inner>
+impl<Inner> RequestState<Inner>
 where
     Inner: RequestInner,
 {
     fn new(client: Arc<RpcClient>, inner: Inner) -> Self {
-        Request {
-            inner: Some((client, inner)),
-            future: None,
-            cf: None,
+        RequestState::Uninitiated(Some((client, inner, None)))
+    }
+
+    fn cf(&mut self, new_cf: impl Into<ColumnFamily>) {
+        if let RequestState::Uninitiated(Some((_, _, ref mut cf))) = self {
+            cf.replace(new_cf.into());
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
-    pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.cf = Some(cf.into());
-        self
+    fn inner_mut(&mut self) -> Option<&mut Inner> {
+        match self {
+            RequestState::Uninitiated(Some((_, ref mut inner, _))) => Some(inner),
+            _ => None,
+        }
     }
-}
 
-impl<Inner> Deref for Request<Inner>
-where
-    Inner: RequestInner,
-{
-    type Target = Inner;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner.as_ref().unwrap().1
-    }
-}
-
-impl<Inner> DerefMut for Request<Inner>
-where
-    Inner: RequestInner,
-{
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner.as_mut().unwrap().1
-    }
-}
-
-impl<Inner> Future for Request<Inner>
-where
-    Inner: RequestInner,
-{
-    type Item = Inner::Resp;
-    type Error = Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        loop {
-            if self.inner.is_some() {
-                let (client, inner) = self.inner.take().unwrap();
-                self.future = Some(inner.execute(client, self.cf.take()));
-            } else {
-                break self.future.as_mut().map(|x| x.poll()).unwrap();
-            }
+    fn poll(&mut self) -> Poll<Inner::Resp, Error> {
+        if let RequestState::Uninitiated(state) = self {
+            let (client, inner, cf) = state.take().unwrap();
+            *self = RequestState::Initiated(inner.execute(client, cf));
+        }
+        match self {
+            RequestState::Initiated(ref mut future) => future.poll(),
+            _ => unreachable!(),
         }
     }
 }
@@ -402,19 +376,19 @@ where
 /// Once resolved this request will result in the fetching of the value associated with the given
 /// key.
 pub struct Get {
-    request: Request<GetInner>,
+    state: RequestState<GetInner>,
 }
 
 impl Get {
     fn new(client: Arc<RpcClient>, inner: GetInner) -> Self {
         Self {
-            request: Request::new(client, inner)
+            state: RequestState::new(client, inner),
         }
     }
 
     /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.request = self.request.cf(cf);
+        self.state.cf(cf);
         self
     }
 }
@@ -424,7 +398,7 @@ impl Future for Get {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.request.poll()
+        self.state.poll()
     }
 }
 
@@ -451,19 +425,19 @@ impl RequestInner for GetInner {
 /// Once resolved this request will result in the fetching of the values associated with the given
 /// keys.
 pub struct BatchGet {
-    request: Request<BatchGetInner>,
+    state: RequestState<BatchGetInner>,
 }
 
 impl BatchGet {
     fn new(client: Arc<RpcClient>, inner: BatchGetInner) -> Self {
         Self {
-            request: Request::new(client, inner)
+            state: RequestState::new(client, inner),
         }
     }
 
     /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.request = self.request.cf(cf);
+        self.state.cf(cf);
         self
     }
 }
@@ -473,7 +447,7 @@ impl Future for BatchGet {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.request.poll()
+        self.state.poll()
     }
 }
 
@@ -500,19 +474,19 @@ impl BatchGetInner {
 /// Once resolved this request will result in the putting of the value associated with the given
 /// key.
 pub struct Put {
-    request: Request<PutInner>,
+    state: RequestState<PutInner>,
 }
 
 impl Put {
     fn new(client: Arc<RpcClient>, inner: PutInner) -> Self {
         Self {
-            request: Request::new(client, inner)
+            state: RequestState::new(client, inner),
         }
     }
 
     /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.request = self.request.cf(cf);
+        self.state.cf(cf);
         self
     }
 }
@@ -522,7 +496,7 @@ impl Future for Put {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.request.poll()
+        self.state.poll()
     }
 }
 
@@ -550,19 +524,19 @@ impl RequestInner for PutInner {
 ///
 /// Once resolved this request will result in the setting of the value associated with the given key.
 pub struct BatchPut {
-    request: Request<BatchPutInner>,
+    state: RequestState<BatchPutInner>,
 }
 
 impl BatchPut {
     fn new(client: Arc<RpcClient>, inner: BatchPutInner) -> Self {
         Self {
-            request: Request::new(client, inner)
+            state: RequestState::new(client, inner),
         }
     }
 
     /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.request = self.request.cf(cf);
+        self.state.cf(cf);
         self
     }
 }
@@ -572,7 +546,7 @@ impl Future for BatchPut {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.request.poll()
+        self.state.poll()
     }
 }
 
@@ -598,19 +572,19 @@ impl RequestInner for BatchPutInner {
 ///
 /// Once resolved this request will result in the deletion of the given key.
 pub struct Delete {
-    request: Request<DeleteInner>,
+    state: RequestState<DeleteInner>,
 }
 
 impl Delete {
     fn new(client: Arc<RpcClient>, inner: DeleteInner) -> Self {
         Self {
-            request: Request::new(client, inner)
+            state: RequestState::new(client, inner),
         }
     }
 
     /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.request = self.request.cf(cf);
+        self.state.cf(cf);
         self
     }
 }
@@ -620,7 +594,7 @@ impl Future for Delete {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.request.poll()
+        self.state.poll()
     }
 }
 
@@ -646,19 +620,19 @@ impl RequestInner for DeleteInner {
 ///
 /// Once resolved this request will result in the deletion of the given keys.
 pub struct BatchDelete {
-    request: Request<BatchDeleteInner>,
+    state: RequestState<BatchDeleteInner>,
 }
 
 impl BatchDelete {
     fn new(client: Arc<RpcClient>, inner: BatchDeleteInner) -> Self {
         Self {
-            request: Request::new(client, inner)
+            state: RequestState::new(client, inner),
         }
     }
 
     /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.request = self.request.cf(cf);
+        self.state.cf(cf);
         self
     }
 }
@@ -668,7 +642,7 @@ impl Future for BatchDelete {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.request.poll()
+        self.state.poll()
     }
 }
 
@@ -722,25 +696,25 @@ impl RequestInner for ScanInner {
 ///
 /// Once resolved this request will result in a scanner over the given range.
 pub struct Scan {
-    request: Request<ScanInner>,
+    state: RequestState<ScanInner>,
 }
 
 impl Scan {
     fn new(client: Arc<RpcClient>, inner: ScanInner) -> Self {
         Scan {
-            request: Request::new(client, inner),
+            state: RequestState::new(client, inner),
         }
     }
 
     /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.request = self.request.cf(cf);
+        self.state.cf(cf);
         self
     }
 
     pub fn key_only(mut self) -> Self {
-        self.request.inner = self.request.inner.map(|mut x| {
-            x.1.key_only = true;
+        self.state.inner_mut().map(|mut x| {
+            x.key_only = true;
             x
         });
         self
@@ -752,7 +726,7 @@ impl Future for Scan {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.request.poll()
+        self.state.poll()
     }
 }
 
@@ -776,8 +750,7 @@ impl RequestInner for BatchScanInner {
     type Resp = Vec<KvPair>;
 
     fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
-        let (errors, ranges): (Vec<_>, Vec<_>) =
-            self.ranges.into_iter().partition(Result::is_err);
+        let (errors, ranges): (Vec<_>, Vec<_>) = self.ranges.into_iter().partition(Result::is_err);
         if !errors.is_empty() {
             // All errors must be InvalidKeyRange so we can simply return a new InvalidKeyRange
             Box::new(future::err(Error::InvalidKeyRange))
@@ -796,25 +769,25 @@ impl RequestInner for BatchScanInner {
 ///
 /// Once resolved this request will result in a scanner over the given ranges.
 pub struct BatchScan {
-    request: Request<BatchScanInner>,
+    state: RequestState<BatchScanInner>,
 }
 
 impl BatchScan {
     fn new(client: Arc<RpcClient>, inner: BatchScanInner) -> Self {
         BatchScan {
-            request: Request::new(client, inner),
+            state: RequestState::new(client, inner),
         }
     }
 
     /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.request = self.request.cf(cf);
+        self.state.cf(cf);
         self
     }
 
     pub fn key_only(mut self) -> Self {
-        self.request.inner = self.request.inner.map(|mut x| {
-            x.1.key_only = true;
+        self.state.inner_mut().map(|mut x| {
+            x.key_only = true;
             x
         });
         self
@@ -826,7 +799,7 @@ impl Future for BatchScan {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.request.poll()
+        self.state.poll()
     }
 }
 
@@ -835,19 +808,19 @@ impl Future for BatchScan {
 /// Once resolved this request will result in the deletion of the values in the given
 /// range.
 pub struct DeleteRange {
-    request: Request<DeleteRangeInner>,
+    state: RequestState<DeleteRangeInner>,
 }
 
 impl DeleteRange {
     fn new(client: Arc<RpcClient>, inner: DeleteRangeInner) -> Self {
         Self {
-            request: Request::new(client, inner)
+            state: RequestState::new(client, inner),
         }
     }
 
     /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
-        self.request = self.request.cf(cf);
+        self.state.cf(cf);
         self
     }
 }
@@ -857,7 +830,7 @@ impl Future for DeleteRange {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.request.poll()
+        self.state.poll()
     }
 }
 
