@@ -11,16 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/*! Raw related functionality.
-
-Using the [`raw::Client`](struct.Client.html) you can utilize TiKV's raw interface.
-
-This interface offers optimal performance as it does not require coordination with a timestamp
-oracle, while the transactional interface does.
-
-**Warning:** It is not advisible to use the both raw and transactional functionality in the same keyspace.
- */
-
+/// Raw related functionality.
+///
+/// Using the [`raw::Client`](struct.Client.html) you can utilize TiKV's raw interface.
+///
+/// This interface offers optimal performance as it does not require coordination with a timestamp
+/// oracle, while the transactional interface does.
+///
+/// **Warning:** It is not advisible to use the both raw and transactional functionality in the same keyspace.
+///
 use crate::{rpc::RpcClient, Config, Error, Key, KeyRange, KvFuture, KvPair, Result, Value};
 use futures::{future, Async, Future, Poll};
 use std::{
@@ -28,6 +27,8 @@ use std::{
     sync::Arc,
     u32,
 };
+
+const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
 /// The TiKV raw [`Client`](struct.Client.html) is used to issue requests to the TiKV server and PD cluster.
 pub struct Client {
@@ -173,8 +174,6 @@ impl Client {
     ///
     /// Once resolved this request will result in a scanner over the given keys.
     ///
-    /// If not passed a `limit` parameter, it will default to `u32::MAX`.
-    ///
     /// ```rust,no_run
     /// # use tikv_client::{KvPair, Config, raw::Client};
     /// # use futures::Future;
@@ -184,18 +183,13 @@ impl Client {
     /// let req = connected_client.scan(inclusive_range, 2);
     /// let result: Vec<KvPair> = req.wait().unwrap();
     /// ```
-    pub fn scan(&self, range: impl KeyRange, limit: impl Into<Option<u32>>) -> Scan {
-        Scan::new(
-            self.rpc(),
-            ScanInner::new(range.into_bounds(), limit.into().unwrap_or(u32::MAX)),
-        )
+    pub fn scan(&self, range: impl KeyRange, limit: u32) -> Scan {
+        Scan::new(self.rpc(), ScanInner::new(range.into_bounds(), limit))
     }
 
     /// Create a new [`BatchScan`](struct.BatchScan.html) request.
     ///
     /// Once resolved this request will result in a set of scanners over the given keys.
-    ///
-    /// If not passed a `limit` parameter, it will default to `u32::MAX`.
     ///
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, raw::Client};
@@ -211,13 +205,13 @@ impl Client {
     pub fn batch_scan(
         &self,
         ranges: impl IntoIterator<Item = impl KeyRange>,
-        each_limit: impl Into<Option<u32>>,
+        each_limit: u32,
     ) -> BatchScan {
         BatchScan::new(
             self.rpc(),
             BatchScanInner::new(
                 ranges.into_iter().map(KeyRange::into_keys).collect(),
-                each_limit.into().unwrap_or(u32::MAX),
+                each_limit,
             ),
         )
     }
@@ -684,11 +678,18 @@ impl RequestInner for ScanInner {
     type Resp = Vec<KvPair>;
 
     fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
-        let keys = match self.range.into_keys() {
-            Err(e) => return Box::new(future::err(e)),
-            Ok(v) => v,
-        };
-        Box::new(client.raw_scan(keys, self.limit, self.key_only, cf))
+        if self.limit > MAX_RAW_KV_SCAN_LIMIT {
+            Box::new(future::err(Error::MaxScanLimitExceeded(
+                self.limit,
+                MAX_RAW_KV_SCAN_LIMIT,
+            )))
+        } else {
+            let keys = match self.range.into_keys() {
+                Err(e) => return Box::new(future::err(e)),
+                Ok(v) => v,
+            };
+            Box::new(client.raw_scan(keys, self.limit, self.key_only, cf))
+        }
     }
 }
 
@@ -713,10 +714,9 @@ impl Scan {
     }
 
     pub fn key_only(mut self) -> Self {
-        self.state.inner_mut().map(|mut x| {
+        if let Some(x) = self.state.inner_mut() {
             x.key_only = true;
-            x
-        });
+        };
         self
     }
 }
@@ -750,13 +750,17 @@ impl RequestInner for BatchScanInner {
     type Resp = Vec<KvPair>;
 
     fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
-        let (errors, ranges): (Vec<_>, Vec<_>) = self.ranges.into_iter().partition(Result::is_err);
-        if !errors.is_empty() {
+        if self.each_limit > MAX_RAW_KV_SCAN_LIMIT {
+            Box::new(future::err(Error::MaxScanLimitExceeded(
+                self.each_limit,
+                MAX_RAW_KV_SCAN_LIMIT,
+            )))
+        } else if self.ranges.iter().any(Result::is_err) {
             // All errors must be InvalidKeyRange so we can simply return a new InvalidKeyRange
             Box::new(future::err(Error::InvalidKeyRange))
         } else {
             Box::new(client.raw_batch_scan(
-                ranges.into_iter().map(Result::unwrap).collect(),
+                self.ranges.into_iter().map(Result::unwrap).collect(),
                 self.each_limit,
                 self.key_only,
                 cf,
@@ -786,10 +790,9 @@ impl BatchScan {
     }
 
     pub fn key_only(mut self) -> Self {
-        self.state.inner_mut().map(|mut x| {
+        if let Some(x) = self.state.inner_mut() {
             x.key_only = true;
-            x
-        });
+        };
         self
     }
 }

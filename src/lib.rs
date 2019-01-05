@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #![recursion_limit = "128"]
-#![type_length_limit = "2097152"]
+#![type_length_limit = "1572864"]
 
 use futures::Future;
 use serde_derive::*;
@@ -22,6 +22,7 @@ use std::{
     },
     path::PathBuf,
     time::Duration,
+    u8::{MAX as U8_MAX, MIN as U8_MIN},
 };
 
 mod errors;
@@ -36,12 +37,14 @@ pub use crate::errors::Result;
 
 /// The key part of a key/value pair.
 ///
-/// In TiKV, keys are an ordered sequence of bytes. This has an advantage over choosing `String` as valid `UTF-8` is not required. This means that the user is permitted to store any data they wish,
+/// In TiKV, keys are an ordered sequence of bytes. This has an advantage over choosing `String` as
+/// valid `UTF-8` is not required. This means that the user is permitted to store any data they wish,
 /// as long as it can be represented by bytes. (Which is to say, pretty much anything!)
 ///
-/// This is a *wrapper type* that implements `Deref<Target=Vec<u8>>` so it can be used like one transparently.
+/// This is a *wrapper type* that implements `Deref<Target=[u8]>` so it can be used like one transparently.
 ///
-/// This type also implements `From` for many types. With one exception, these are all done without reallocation. Using a `&'static str`, like many examples do for simplicity, has an internal
+/// This type also implements `From` for many types. With one exception, these are all done without
+/// reallocation. Using a `&'static str`, like many examples do for simplicity, has an internal
 /// allocation cost.
 ///
 /// This type wraps around an owned value, so it should be treated it like `String` or `Vec<u8>`
@@ -79,6 +82,14 @@ impl Key {
 
     fn into_inner(self) -> Vec<u8> {
         self.0
+    }
+
+    fn push(&mut self, v: u8) {
+        self.0.push(v)
+    }
+
+    fn pop(&mut self) {
+        self.0.pop();
     }
 }
 
@@ -130,12 +141,14 @@ impl DerefMut for Key {
 
 /// The value part of a key/value pair.
 ///
-/// In TiKV, values are an ordered sequence of bytes. This has an advantage over choosing `String` as valid `UTF-8` is not required. This means that the user is permitted to store any data they wish,
+/// In TiKV, values are an ordered sequence of bytes. This has an advantage over choosing `String`
+/// as valid `UTF-8` is not required. This means that the user is permitted to store any data they wish,
 /// as long as it can be represented by bytes. (Which is to say, pretty much anything!)
 ///
-/// This is a *wrapper type* that implements `Deref<Target=Vec<u8>>` so it can be used like one transparently.
+/// This is a *wrapper type* that implements `Deref<Target=[u8]>` so it can be used like one transparently.
 ///
-/// This type also implements `From` for many types. With one exception, these are all done without reallocation. Using a `&'static str`, like many examples do for simplicity, has an internal
+/// This type also implements `From` for many types. With one exception, these are all done without
+/// reallocation. Using a `&'static str`, like many examples do for simplicity, has an internal
 /// allocation cost.
 ///
 /// This type wraps around an owned value, so it should be treated it like `String` or `Vec<u8>`
@@ -286,7 +299,8 @@ where
 /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for PD
 /// must be provided, **not** the TiKV nodes.
 ///
-/// It's important to **include more than one PD endpoint** (include all, if possible!) This helps avoid having a *single point of failure*.
+/// It's important to **include more than one PD endpoint** (include all, if possible!)
+/// This helps avoid having a *single point of failure*.
 ///
 /// By default, this client will use an insecure connection over encryption-on-the-wire. Your
 /// deployment may have chosen to rely on security measures such as a private network, or a VPN
@@ -307,7 +321,8 @@ const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 impl Config {
     /// Create a new [`Config`](struct.Config.html) which coordinates with the given PD endpoints.
     ///
-    /// It's important to **include more than one PD endpoint** (include all, if possible!) This helps avoid having a *single point of failure*.
+    /// It's important to **include more than one PD endpoint** (include all, if possible!)
+    /// This helps avoid having a *single point of failure*.
     ///
     /// ```rust
     /// # use tikv_client::Config;
@@ -325,7 +340,7 @@ impl Config {
 
     /// Set the certificate authority, certificate, and key locations for the [`Config`](struct.Config.html).
     ///
-    /// By default, TiKV connections do not have utilize transport layer security. Enable it by setting these values.
+    /// By default, TiKV connections do not utilize transport layer security. Enable it by setting these values.
     ///
     /// ```rust
     /// # use tikv_client::Config;
@@ -420,12 +435,9 @@ fn range_to_keys(range: (Bound<Key>, Bound<Key>)) -> Result<(Key, Option<Key>)> 
     let start = match range.0 {
         Bound::Included(v) => v,
         Bound::Excluded(mut v) => {
-            let len = v.len();
-            if len > 0 {
-                v.deref_mut().get_mut(len - 1).map(|v| {
-                    *v += 1;
-                    v
-                });
+            match v.last_mut() {
+                None | Some(&mut U8_MAX) => v.push(0),
+                Some(v) => *v += 1,
             }
             v
         }
@@ -434,12 +446,10 @@ fn range_to_keys(range: (Bound<Key>, Bound<Key>)) -> Result<(Key, Option<Key>)> 
     let end = match range.1 {
         Bound::Included(v) => Some(v),
         Bound::Excluded(mut v) => Some({
-            let len = v.len();
-            if len > 0 {
-                v.deref_mut().get_mut(len - 1).map(|v| {
-                    *v -= 1;
-                    v
-                });
+            match v.last_mut() {
+                None => (),
+                Some(&mut U8_MIN) => v.pop(),
+                Some(v) => *v -= 1,
             }
             v
         }),
@@ -490,11 +500,11 @@ impl<T: Into<Key>> KeyRange for RangeToInclusive<T> {
 
 impl<T: Into<Key>> KeyRange for (Bound<T>, Bound<T>) {
     fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
-        (transmute_bound(self.0), transmute_bound(self.1))
+        (convert_to_bound_key(self.0), convert_to_bound_key(self.1))
     }
 }
 
-fn transmute_bound<K>(b: Bound<K>) -> Bound<Key>
+fn convert_to_bound_key<K>(b: Bound<K>) -> Bound<Key>
 where
     K: Into<Key>,
 {

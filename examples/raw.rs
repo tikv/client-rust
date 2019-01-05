@@ -13,7 +13,7 @@
 
 use futures::future::Future;
 use std::path::PathBuf;
-use tikv_client::{raw::Client, Config, Key, Result, Value};
+use tikv_client::{raw::Client, Config, Key, KvPair, Result, Value};
 
 const KEY: &str = "TiKV";
 const VALUE: &str = "Rust";
@@ -43,12 +43,13 @@ fn main() -> Result<()> {
     //
     // Here we set the key `TiKV` to have the value `Rust` associated with it.
     let put_request = client.put(KEY, VALUE);
-    let _put_result: () = put_request.wait()?; // Returns a `tikv_client::Error` on failure.
+    put_request.wait()?; // Returns a `tikv_client::Error` on failure.
     println!("Put key \"{}\", value \"{}\".", KEY, VALUE);
 
     //
     // Unlike a standard Rust HashMap all calls take owned values. This is because under the hood
-    // protobufs must take ownership of the data. If we only took a borrow we'd need to internally // clone it. This is against Rust API guidelines, so you must manage this yourself.
+    // protobufs must take ownership of the data. If we only took a borrow we'd need to internally
+    // clone it. This is against Rust API guidelines, so you must manage this yourself.
     //
     // Above, you saw we can use a `&'static str`, this is primarily for making examples short.
     // This type is practical to use for real things, and usage forces an internal copy.
@@ -62,7 +63,7 @@ fn main() -> Result<()> {
 
     // You can also set the `ColumnFamily` used by the request.
     // This is *advanced usage* and should have some special considerations.
-    let _delete_result: () = client
+    client
         .delete(key.clone())
         .cf(CUSTOM_CF)
         .wait()
@@ -74,6 +75,14 @@ fn main() -> Result<()> {
         .cf(CUSTOM_CF)
         .wait()
         .expect_err("Get returned value for not existing key");
+
+    let pairs: Vec<KvPair> = (1..3)
+        .map(|i| KvPair::from((Key::from(format!("k{}", i)), Value::from(format!("v{}", i)))))
+        .collect();
+    client
+        .batch_put(pairs.clone())
+        .wait()
+        .expect("Could not put pairs");
 
     let keys = vec![Key::from(b"k1".to_vec()), Key::from(b"k2".to_vec())];
 

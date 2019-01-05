@@ -423,10 +423,9 @@ pub fn try_connect_leader(
     if let Some(resp) = resp {
         let leader = resp.get_leader().clone();
         for ep in leader.get_client_urls() {
-            if let Ok((client, r)) =
-                try_connect(&env, security_mgr, ep.as_str(), cluster_id, timeout)
-            {
-                return Ok((client, r));
+            let r = try_connect(&env, security_mgr, ep.as_str(), cluster_id, timeout);
+            if r.is_ok() {
+                return r;
             }
         }
     }

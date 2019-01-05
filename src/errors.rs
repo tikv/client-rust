@@ -125,6 +125,10 @@ quick_error! {
             description("ranges can not be overlapping")
             display("Ranges can not be overlapping")
         }
+        MaxScanLimitExceeded(limit: u32, max_limit: u32) {
+            description("limit exceeds max scan limit")
+            display("Limit {} excceds max scan limit {}", limit, max_limit)
+        }
     }
 }
 
