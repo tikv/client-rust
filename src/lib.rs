@@ -76,18 +76,21 @@ pub use crate::errors::Result;
 pub struct Key(Vec<u8>);
 
 impl Key {
+    #[inline]
     pub fn new(value: Vec<u8>) -> Self {
         Key(value)
     }
-
+    #[inline]
     fn into_inner(self) -> Vec<u8> {
         self.0
     }
 
+    #[inline]
     fn push(&mut self, v: u8) {
         self.0.push(v)
     }
 
+    #[inline]
     fn pop(&mut self) {
         self.0.pop();
     }
@@ -180,10 +183,12 @@ impl DerefMut for Key {
 pub struct Value(Vec<u8>);
 
 impl Value {
+    #[inline]
     pub fn new(value: Vec<u8>) -> Self {
         Value(value)
     }
 
+    #[inline]
     fn into_inner(self) -> Vec<u8> {
         self.0
     }
@@ -236,48 +241,58 @@ pub struct KvPair(Key, Value);
 
 impl KvPair {
     /// Create a new `KvPair`.
+    #[inline]
     pub fn new(key: impl Into<Key>, value: impl Into<Value>) -> Self {
         KvPair(key.into(), value.into())
     }
 
     /// Immutably borrow the `Key` part of the `KvPair`.
+    #[inline]
     pub fn key(&self) -> &Key {
         &self.0
     }
 
     /// Immutably borrow the `Value` part of the `KvPair`.
+    #[inline]
     pub fn value(&self) -> &Value {
         &self.1
     }
 
+    #[inline]
     pub fn into_inner(self) -> (Key, Value) {
         (self.0, self.1)
     }
 
+    #[inline]
     pub fn into_key(self) -> Key {
         self.0
     }
 
+    #[inline]
     pub fn into_value(self) -> Value {
         self.1
     }
 
     /// Mutably borrow the `Key` part of the `KvPair`.
+    #[inline]
     pub fn key_mut(&mut self) -> &mut Key {
         &mut self.0
     }
 
     /// Mutably borrow the `Value` part of the `KvPair`.
+    #[inline]
     pub fn value_mut(&mut self) -> &mut Value {
         &mut self.1
     }
 
     /// Set the `Key` part of the `KvPair`.
+    #[inline]
     pub fn set_key(&mut self, k: impl Into<Key>) {
         self.0 = k.into();
     }
 
     /// Set the `Value` part of the `KvPair`.
+    #[inline]
     pub fn set_value(&mut self, v: impl Into<Value>) {
         self.1 = v.into();
     }
