@@ -316,9 +316,14 @@ where
 /// It's important to **include more than one PD endpoint** (include all, if possible!)
 /// This helps avoid having a *single point of failure*.
 ///
-/// By default, this client will use an insecure connection over encryption-on-the-wire. Your
-/// deployment may have chosen to rely on security measures such as a private network, or a VPN
-/// layer providing secure transmission. TiKV does not currently offer encryption-at-rest.
+/// By default, this client will use an insecure connection over instead of one protected by 
+/// Transport Layer Security (TLS). Your deployment may have chosen to rely on security measures
+/// such as a private network, or a VPN layer to provid secure transmission.
+/// 
+/// To use a TLS secured connection, use the `with_security` function to set the required
+/// parameters.
+/// 
+/// TiKV does not currently offer encrypted storage (or encryption-at-rest).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 #[serde(rename_all = "kebab-case")]
@@ -352,9 +357,11 @@ impl Config {
         }
     }
 
-    /// Set the certificate authority, certificate, and key locations for the [`Config`](struct.Config.html).
+    /// Set the certificate authority, certificate, and key locations for the
+    /// [`Config`](struct.Config.html).
     ///
-    /// By default, TiKV connections do not utilize transport layer security. Enable it by setting these values.
+    /// By default, TiKV connections do not utilize transport layer security. Enable it by setting
+    /// these values.
     ///
     /// ```rust
     /// # use tikv_client::Config;
