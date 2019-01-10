@@ -23,8 +23,9 @@ fn main() -> Result<()> {
     // Create a configuration to use for the example.
     // Optionally encrypt the traffic.
     let config = Config::new(vec![
-        "192.168.0.101:3379", // Avoid a single point of failure,
-        "192.168.0.100:3379", // use at least two PD endpoints.
+        "192.168.0.100:3379", // Avoid a single point of failure,
+        "192.168.0.101:3379", // use more than one PD endpoint.
+        "192.168.0.102:3379",
     ])
     .with_security(
         PathBuf::from("/path/to/ca.pem"),
