@@ -233,9 +233,8 @@ impl Deref for Value {
 /// assert_eq!(constructed, from_tuple);
 /// ```
 ///
-/// **But, you should not need to worry about all this:** Many functions which accept a `KvPair`
-/// accept an `Into<KvPair>`, which means all of the above types can be passed directly to those
-/// functions.
+/// Many functions which accept a `KvPair` accept an `Into<KvPair>`, which means all of the above
+/// types (Like a `(Key, Value)`) can be passed directly to those functions.
 #[derive(Default, Clone, Eq, PartialEq, Debug)]
 pub struct KvPair(Key, Value);
 
