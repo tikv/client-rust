@@ -316,13 +316,13 @@ where
 /// It's important to **include more than one PD endpoint** (include all, if possible!)
 /// This helps avoid having a *single point of failure*.
 ///
-/// By default, this client will use an insecure connection over instead of one protected by 
+/// By default, this client will use an insecure connection over instead of one protected by
 /// Transport Layer Security (TLS). Your deployment may have chosen to rely on security measures
 /// such as a private network, or a VPN layer to provid secure transmission.
-/// 
+///
 /// To use a TLS secured connection, use the `with_security` function to set the required
 /// parameters.
-/// 
+///
 /// TiKV does not currently offer encrypted storage (or encryption-at-rest).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
