@@ -213,7 +213,7 @@ impl Transaction {
     }
 
     /// Rollback the actions of the transaction.
-    /// 
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Config, transaction::Client};
     /// # use futures::Future;
@@ -229,7 +229,7 @@ impl Transaction {
     }
 
     /// Lock the given keys.
-    /// 
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Config, transaction::Client};
     /// # use futures::Future;
@@ -315,7 +315,7 @@ impl Transaction {
 
     /// Create a new [`BatchGet`](struct.BatchGet.html) request.
     ///
-    /// Once resolved this request will result in the fetching of the values associated with the 
+    /// Once resolved this request will result in the fetching of the values associated with the
     /// given keys.
     ///
     /// ```rust,no_run

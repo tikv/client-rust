@@ -13,7 +13,7 @@
 
 use futures::future::Future;
 use std::path::PathBuf;
-use tikv_client::{Result, Config, raw::Client, Key, Value};
+use tikv_client::{raw::Client, Config, Key, Result, Value};
 
 const KEY: &str = "TiKV";
 const VALUE: &str = "Rust";
@@ -25,7 +25,8 @@ fn main() -> Result<()> {
     let config = Config::new(vec![
         "192.168.0.101:3379", // Avoid a single point of failure,
         "192.168.0.100:3379", // use at least two PD endpoints.
-    ]).with_security(
+    ])
+    .with_security(
         PathBuf::from("/path/to/ca.pem"),
         PathBuf::from("/path/to/client.pem"),
         PathBuf::from("/path/to/client-key.pem"),
@@ -36,7 +37,7 @@ fn main() -> Result<()> {
     let unconnnected_client = Client::new(&config);
     let client = unconnnected_client.wait()?;
 
-    // Requests are created from the connected client. These calls return structures which 
+    // Requests are created from the connected client. These calls return structures which
     // implement `Future`. This means the `Future` must be resolved before the action ever takes
     // place.
     //
@@ -45,7 +46,7 @@ fn main() -> Result<()> {
     let put_result: () = put_request.wait()?; // Returns a `tikv_client::Error` on failure.
     println!("Put key \"{}\", value \"{}\".", KEY, VALUE);
 
-    // 
+    //
     // Unlike a standard Rust HashMap all calls take owned values. This is because under the hood
     // protobufs must take ownership of the data. If we only took a borrow we'd need to internally // clone it. This is against Rust API guidelines, so you must manage this yourself.
     //
@@ -61,13 +62,15 @@ fn main() -> Result<()> {
 
     // You can also set the `ColumnFamily` used by the request.
     // This is *advanced usage* and should have some special considerations.
-    let req = client.delete(key.clone())
+    let req = client
+        .delete(key.clone())
         .cf(CUSTOM_CF)
         .wait()
         .expect("Could not delete value");
     println!("Key: {:?} deleted", key);
 
-    client.get(key)
+    client
+        .get(key)
         .cf("test_cf")
         .wait()
         .expect_err("Get returned value for not existing key");
@@ -83,14 +86,16 @@ fn main() -> Result<()> {
 
     let start: Key = b"k1".to_vec().into();
     let end: Key = b"k2".to_vec().into();
-    client.scan(start.clone()..end.clone(), 10)
+    client
+        .scan(start.clone()..end.clone(), 10)
         .cf("test_cf")
         .key_only()
         .wait()
         .expect("Could not scan");
 
     let ranges = vec![start.clone()..end.clone(), start.clone()..end.clone()];
-    client.batch_scan(ranges, 10)
+    client
+        .batch_scan(ranges, 10)
         .cf("test_cf")
         .key_only()
         .wait()
