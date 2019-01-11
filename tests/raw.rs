@@ -28,7 +28,7 @@ fn wipe_all(client: &Client) {
     let test_key_start = generate_key(0);
     let test_key_end = generate_key(NUM_TEST_KEYS as i32 - 1);
     client
-        .delete_range(&test_key_start..&test_key_end)
+        .delete_range(test_key_start..test_key_end)
         .wait()
         .expect("Could not delete test keys");
 }
@@ -46,7 +46,7 @@ fn test_empty(client: &Client) {
     let test_key_end = generate_key(NUM_TEST_KEYS as i32 - 1);
 
     assert!(client
-        .scan(&test_key_start..&test_key_end, NUM_TEST_KEYS)
+        .scan(test_key_start..test_key_end, NUM_TEST_KEYS)
         .wait()
         .expect("Could not scan")
         .is_empty());
@@ -56,14 +56,15 @@ fn test_existence(client: &Client, existing_pairs: Vec<KvPair>, not_existing_key
     let test_key_start = generate_key(0);
     let test_key_end = generate_key(NUM_TEST_KEYS as i32 - 1);
 
-    for pair in existing_pairs.iter() {
+    for pair in existing_pairs.clone().into_iter() {
+        let (key, value) = pair.into_inner();
         assert_eq!(
-            client.get(pair.key()).wait().expect("Could not get value"),
-            pair.value().clone(),
+            client.get(key).wait().expect("Could not get value"),
+            value.clone(),
         );
     }
 
-    for key in not_existing_keys.iter() {
+    for key in not_existing_keys.clone().into_iter() {
         let r = client.get(key).wait();
         assert!(r.is_err());
     }
@@ -81,7 +82,7 @@ fn test_existence(client: &Client, existing_pairs: Vec<KvPair>, not_existing_key
 
     assert_eq!(
         client
-            .batch_get(&all_keys)
+            .batch_get(all_keys)
             .wait()
             .expect("Could not get value in batch"),
         existing_pairs,
@@ -89,7 +90,7 @@ fn test_existence(client: &Client, existing_pairs: Vec<KvPair>, not_existing_key
 
     assert_eq!(
         client
-            .batch_get(&not_existing_keys)
+            .batch_get(not_existing_keys)
             .wait()
             .expect("Could not get value in batch"),
         Vec::new(),
@@ -97,7 +98,7 @@ fn test_existence(client: &Client, existing_pairs: Vec<KvPair>, not_existing_key
 
     assert_eq!(
         client
-            .scan(&test_key_start..&test_key_end, NUM_TEST_KEYS)
+            .scan(test_key_start.clone()..test_key_end.clone(), NUM_TEST_KEYS)
             .wait()
             .expect("Could not scan"),
         existing_pairs,
@@ -105,7 +106,7 @@ fn test_existence(client: &Client, existing_pairs: Vec<KvPair>, not_existing_key
 
     assert_eq!(
         client
-            .scan(&test_key_start..&test_key_end, NUM_TEST_KEYS)
+            .scan(test_key_start.clone()..test_key_end.clone(), NUM_TEST_KEYS)
             .key_only()
             .wait()
             .expect("Could not scan"),
@@ -129,7 +130,7 @@ fn basic_raw_test() {
         vec![generate_key(1), generate_key(2)],
     );
 
-    assert!(client.delete(&generate_key(0)).wait().is_ok());
+    assert!(client.delete(generate_key(0)).wait().is_ok());
     test_existence(
         &client,
         Vec::new(),
@@ -147,7 +148,7 @@ fn basic_raw_test() {
     );
 
     let keys: Vec<Key> = vec![generate_key(8), generate_key(9)];
-    assert!(client.batch_delete(&keys).wait().is_ok());
+    assert!(client.batch_delete(keys).wait().is_ok());
     let mut pairs = pairs;
     pairs.truncate(8);
     test_existence(
