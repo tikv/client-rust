@@ -17,7 +17,7 @@ use tikv_client::{raw::Client, Config, Key, KvPair, Result, Value};
 
 const KEY: &str = "TiKV";
 const VALUE: &str = "Rust";
-const CUSTOM_CF: &str = "custom_cf";
+const CUSTOM_CF: &str = "default";
 
 fn main() -> Result<()> {
     // Create a configuration to use for the example.
