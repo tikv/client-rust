@@ -11,6 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use clap::{crate_version, App, Arg};
 use futures::{future, Future, Stream};
 use std::ops::RangeBounds;
 use std::path::PathBuf;
@@ -70,11 +71,16 @@ fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {
 }
 
 fn main() {
-    let config = Config::new(vec!["127.0.0.1:2379"]).with_security(
-        PathBuf::from("/path/to/ca.pem"),
-        PathBuf::from("/path/to/client.pem"),
-        PathBuf::from("/path/to/client-key.pem"),
-    );
+    let (pd, security) = parse_args();
+
+    // Create a configuration to use for the example.
+    // Optionally encrypt the traffic.
+    let config = if let Some((ca, cert, key)) = security {
+        Config::new(pd).with_security(ca, cert, key)
+    } else {
+        Config::new(pd)
+    };
+
     let txn = Client::new(&config)
         .wait()
         .expect("Could not connect to tikv");
@@ -99,4 +105,65 @@ fn main() {
     let key1: Key = b"key1".to_vec().into();
     let key2: Key = b"key2".to_vec().into();
     dels(&txn, vec![key1, key2]);
+}
+
+fn parse_args() -> (Vec<String>, Option<(PathBuf, PathBuf, PathBuf)>) {
+    let matches = App::new("Raw API Example of the Rust Client for TiKV")
+        .version(crate_version!())
+        .author("The TiKV Project Authors")
+        .arg(
+            Arg::with_name("pd")
+                .long("pd")
+                .aliases(&["pd-endpoint", "pd-endpoints"])
+                .value_name("PD_URL")
+                .help("Sets PD endpoints")
+                .long_help("Sets PD endpoints. Uses `,` to separate multiple PDs")
+                .takes_value(true)
+                .multiple(true)
+                .value_delimiter(",")
+                .required(true),
+        )
+        // A cyclic dependency between CA, cert and key is made
+        // to ensure that no security options are missing.
+        .arg(
+            Arg::with_name("ca")
+                .long("ca")
+                .value_name("CA_PATH")
+                .help("Sets the CA")
+                .long_help("Sets the CA. Must be used with --cert and --key")
+                .takes_value(true)
+                .requires("cert"),
+        )
+        .arg(
+            Arg::with_name("cert")
+                .long("cert")
+                .value_name("CERT_PATH")
+                .help("Sets the certificate")
+                .long_help("Sets the certificate. Must be used with --ca and --key")
+                .takes_value(true)
+                .requires("key"),
+        )
+        .arg(
+            Arg::with_name("key")
+                .long("key")
+                .alias("private-key")
+                .value_name("KEY_PATH")
+                .help("Sets the private key")
+                .long_help("Sets the private key. Must be used with --ca and --cert")
+                .takes_value(true)
+                .requires("ca"),
+        )
+        .get_matches();
+
+    let pd: Vec<_> = matches.values_of("pd").unwrap().map(String::from).collect();
+    let security = if let (Some(ca), Some(cert), Some(key)) = (
+        matches.value_of("ca"),
+        matches.value_of("cert"),
+        matches.value_of("key"),
+    ) {
+        Some((PathBuf::from(ca), PathBuf::from(cert), PathBuf::from(key)))
+    } else {
+        None
+    };
+    (pd, security)
 }
