@@ -15,7 +15,6 @@ use std::{
     fs::File,
     io::Read,
     path::{Path, PathBuf},
-    ptr,
     sync::Arc,
     time::Duration,
 };
@@ -25,60 +24,24 @@ use log::*;
 
 use crate::Result;
 
-fn check_pem_file(tag: &str, path: &Path) -> Result<Option<File>> {
-    match File::open(path) {
-        Err(e) => Err(internal_err!(
-            "failed to open {} to load {}: {:?}",
-            path.display(),
-            tag,
-            e
-        )),
-        Ok(f) => Ok(Some(f)),
-    }
+fn check_pem_file(tag: &str, path: &Path) -> Result<File> {
+    File::open(path)
+        .map_err(|e| internal_err!("failed to open {} to load {}: {:?}", path.display(), tag, e))
 }
 
-fn load_pem(tag: &str, path: &Path) -> Result<Vec<u8>> {
+fn load_pem_file(tag: &str, path: &Path) -> Result<Vec<u8>> {
+    let mut file = check_pem_file(tag, path)?;
     let mut key = vec![];
-    let f = check_pem_file(tag, path)?;
-    match f {
-        None => return Ok(vec![]),
-        Some(mut f) => {
-            if let Err(e) = f.read_to_end(&mut key) {
-                return Err(internal_err!(
-                    "failed to load {} from path {}: {:?}",
-                    tag,
-                    path.display(),
-                    e
-                ));
-            }
-        }
-    }
-    Ok(key)
-}
-
-struct PrivateKey(Vec<u8>);
-
-impl PrivateKey {
-    fn load(path: &Path) -> Result<PrivateKey> {
-        let key = load_pem("private key", path)?;
-        Ok(PrivateKey(key))
-    }
-}
-
-impl Drop for PrivateKey {
-    fn drop(&mut self) {
-        unsafe {
-            for b in &mut self.0 {
-                ptr::write_volatile(b, 0);
-            }
-        }
-    }
-}
-
-impl PrivateKey {
-    fn get(&self) -> Vec<u8> {
-        self.0.clone()
-    }
+    file.read_to_end(&mut key)
+        .map_err(|e| {
+            internal_err!(
+                "failed to load {} from path {}: {:?}",
+                tag,
+                path.display(),
+                e
+            )
+        })
+        .map(|_| key)
 }
 
 #[derive(Default)]
@@ -95,10 +58,10 @@ impl SecurityManager {
         key_path: impl Into<PathBuf>,
     ) -> Result<SecurityManager> {
         let key_path = key_path.into();
-        let _ = PrivateKey::load(&key_path)?;
+        check_pem_file("private key", &key_path)?;
         Ok(SecurityManager {
-            ca: load_pem("ca", ca_path.as_ref())?,
-            cert: load_pem("certificate", cert_path.as_ref())?,
+            ca: load_pem_file("ca", ca_path.as_ref())?,
+            cert: load_pem_file("certificate", cert_path.as_ref())?,
             key: key_path,
         })
     }
@@ -123,10 +86,9 @@ impl SecurityManager {
         let channel = if self.ca.is_empty() {
             cb.connect(addr)
         } else {
-            let key = PrivateKey::load(&self.key)?;
             let cred = ChannelCredentialsBuilder::new()
                 .root_cert(self.ca.clone())
-                .cert(self.cert.clone(), key.get())
+                .cert(self.cert.clone(), load_pem_file("private key", &self.key)?)
                 .build();
             cb.secure_connect(addr, cred)
         };
@@ -164,7 +126,7 @@ mod tests {
         let mgr = SecurityManager::load(&ca_path, &cert_path, &key_path).unwrap();
         assert_eq!(mgr.ca, vec![0]);
         assert_eq!(mgr.cert, vec![1]);
-        let key = PrivateKey::load(&key_path).unwrap();
-        assert_eq!(key.get(), vec![2]);
+        let key = load_pem_file("private key", &key_path).unwrap();
+        assert_eq!(key, vec![2]);
     }
 }

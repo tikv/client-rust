@@ -52,11 +52,11 @@ fn test_empty(client: &Client) {
         .is_empty());
 }
 
-fn test_existence(client: &Client, existing_pairs: Vec<KvPair>, not_existing_keys: Vec<Key>) {
+fn test_existence(client: &Client, existing_pairs: &[KvPair], not_existing_keys: Vec<Key>) {
     let test_key_start = generate_key(0);
     let test_key_end = generate_key(NUM_TEST_KEYS as i32 - 1);
 
-    for pair in existing_pairs.clone().into_iter() {
+    for pair in existing_pairs.iter().map(Clone::clone) {
         let (key, value) = pair.into_inner();
         assert_eq!(
             client.get(key).wait().expect("Could not get value"),
@@ -126,14 +126,15 @@ fn basic_raw_test() {
         .is_ok());
     test_existence(
         &client,
-        vec![KvPair::new(generate_key(0), generate_value(0))],
+        &[KvPair::new(generate_key(0), generate_value(0))],
         vec![generate_key(1), generate_key(2)],
     );
 
+    let empty_pairs = Vec::new();
     assert!(client.delete(generate_key(0)).wait().is_ok());
     test_existence(
         &client,
-        Vec::new(),
+        &empty_pairs,
         vec![generate_key(0), generate_key(1), generate_key(2)],
     );
 
@@ -143,7 +144,7 @@ fn basic_raw_test() {
     assert!(client.batch_put(pairs.clone()).wait().is_ok());
     test_existence(
         &client,
-        pairs.clone(),
+        &pairs,
         vec![generate_key(10), generate_key(11), generate_key(12)],
     );
 
@@ -153,14 +154,14 @@ fn basic_raw_test() {
     pairs.truncate(8);
     test_existence(
         &client,
-        pairs.clone(),
+        &pairs,
         vec![generate_key(8), generate_key(9), generate_key(10)],
     );
 
     wipe_all(&client);
     test_existence(
         &client,
-        Vec::new(),
+        &empty_pairs,
         pairs.into_iter().map(|x| x.into_inner().0).collect(),
     );
 }
