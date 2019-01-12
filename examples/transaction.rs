@@ -108,7 +108,7 @@ fn main() {
 }
 
 fn parse_args() -> (Vec<String>, Option<(PathBuf, PathBuf, PathBuf)>) {
-    let matches = App::new("Raw API Example of the Rust Client for TiKV")
+    let matches = App::new("Transactional API Example of the Rust Client for TiKV")
         .version(crate_version!())
         .author("The TiKV Project Authors")
         .arg(
