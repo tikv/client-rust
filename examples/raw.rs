@@ -11,9 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use clap::{crate_version, App, Arg};
+mod common;
+
+use crate::common::parse_args;
 use futures::future::Future;
-use std::path::PathBuf;
 use tikv_client::{raw::Client, Config, Key, KvPair, Result, Value};
 
 const KEY: &str = "TiKV";
@@ -21,14 +22,16 @@ const VALUE: &str = "Rust";
 const CUSTOM_CF: &str = "default";
 
 fn main() -> Result<()> {
-    let (pd, security) = parse_args();
+    // You can try running this example by passing your pd endpoints
+    // (and SSL options if necessary) through command line arguments.
+    let args = parse_args("raw");
 
     // Create a configuration to use for the example.
     // Optionally encrypt the traffic.
-    let config = if let Some((ca, cert, key)) = security {
-        Config::new(pd).with_security(ca, cert, key)
+    let config = if let (Some(ca), Some(cert), Some(key)) = (args.ca, args.cert, args.key) {
+        Config::new(args.pd).with_security(ca, cert, key)
     } else {
-        Config::new(pd)
+        Config::new(args.pd)
     };
 
     // When we first create a client we recieve a `Connect` structure which must be resolved before
@@ -111,65 +114,4 @@ fn main() -> Result<()> {
 
     // Cleanly exit.
     Ok(())
-}
-
-fn parse_args() -> (Vec<String>, Option<(PathBuf, PathBuf, PathBuf)>) {
-    let matches = App::new("Raw API Example of the Rust Client for TiKV")
-        .version(crate_version!())
-        .author("The TiKV Project Authors")
-        .arg(
-            Arg::with_name("pd")
-                .long("pd")
-                .aliases(&["pd-endpoint", "pd-endpoints"])
-                .value_name("PD_URL")
-                .help("Sets PD endpoints")
-                .long_help("Sets PD endpoints. Uses `,` to separate multiple PDs")
-                .takes_value(true)
-                .multiple(true)
-                .value_delimiter(",")
-                .required(true),
-        )
-        // A cyclic dependency between CA, cert and key is made
-        // to ensure that no security options are missing.
-        .arg(
-            Arg::with_name("ca")
-                .long("ca")
-                .value_name("CA_PATH")
-                .help("Sets the CA")
-                .long_help("Sets the CA. Must be used with --cert and --key")
-                .takes_value(true)
-                .requires("cert"),
-        )
-        .arg(
-            Arg::with_name("cert")
-                .long("cert")
-                .value_name("CERT_PATH")
-                .help("Sets the certificate")
-                .long_help("Sets the certificate. Must be used with --ca and --key")
-                .takes_value(true)
-                .requires("key"),
-        )
-        .arg(
-            Arg::with_name("key")
-                .long("key")
-                .alias("private-key")
-                .value_name("KEY_PATH")
-                .help("Sets the private key")
-                .long_help("Sets the private key. Must be used with --ca and --cert")
-                .takes_value(true)
-                .requires("ca"),
-        )
-        .get_matches();
-
-    let pd: Vec<_> = matches.values_of("pd").unwrap().map(String::from).collect();
-    let security = if let (Some(ca), Some(cert), Some(key)) = (
-        matches.value_of("ca"),
-        matches.value_of("cert"),
-        matches.value_of("key"),
-    ) {
-        Some((PathBuf::from(ca), PathBuf::from(cert), PathBuf::from(key)))
-    } else {
-        None
-    };
-    (pd, security)
 }
