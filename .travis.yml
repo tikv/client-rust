@@ -16,6 +16,10 @@ env:
 cache: cargo
 
 rust:
+os:
+  - linux
+  - windows
+  - osx
 
 matrix:
   include:
@@ -33,6 +37,8 @@ matrix:
 
 
 script:
+  - docker run -d --net=host --name pd --rm pingcap/pd --name "pd" --data-dir "pd" --client-urls "http://127.0.0.1:2379" --advertise-client-urls "http://127.0.0.1:2379"
+  - docker run -d --net=host --name kv --rm pingcap/tikv --pd-endpoints "127.0.0.1:2379" --addr "127.0.0.1:2378" --data-dir "kv"
   - cargo test --all -- --nocapture
   # Validate benches still work.
   - cargo bench --all -- --test

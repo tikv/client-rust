@@ -32,7 +32,7 @@ fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
     txn.commit().wait().expect("Could not commit transaction");
 }
 
-fn get(client: &Client, key: &Key) -> Value {
+fn get(client: &Client, key: Key) -> Value {
     let txn = client.begin();
     txn.get(key).wait().expect("Could not get value")
 }
@@ -70,7 +70,7 @@ fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {
 }
 
 fn main() {
-    let config = Config::new(vec!["127.0.0.1:3379"]).with_security(
+    let config = Config::new(vec!["127.0.0.1:2379"]).with_security(
         PathBuf::from("/path/to/ca.pem"),
         PathBuf::from("/path/to/client.pem"),
         PathBuf::from("/path/to/client-key.pem"),
@@ -88,7 +88,7 @@ fn main() {
 
     // get
     let key1: Key = b"key1".to_vec().into();
-    let value1 = get(&txn, &key1);
+    let value1 = get(&txn, key1.clone());
     println!("{:?}", (key1, value1));
 
     // scan
