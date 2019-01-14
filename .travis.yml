@@ -1,44 +1,37 @@
-branches:
-  only:
-    # This is where pull requests from "bors r+" are built.
-    - staging
-    # This is where pull requests from "bors try" are built.
-    - trying
-    # Enable building pull requests.
-    - master
+sudo: false
 
 language: rust
-sudo: false
-env:
-  global:
-    - RUST_BACKTRACE=1
-    - RUSTFLAGS="-D warnings"
-cache: cargo
-
-rust:
 os:
   - linux
   - windows
   - osx
+rust:
+  - stable
+  - nightly
+cache: cargo
+env:
+  global:
+    - RUST_BACKTRACE=1
+    - RUSTFLAGS="-D warnings"
+    - PD_ADDR="127.0.0.1:2379"
+    - TIKV_ADDR="127.0.0.1:2378"
 
-matrix:
-  include:
-  # This build uses stable and checks rustfmt and clippy.
-  # We don't check them on nightly since their lints and formatting may differ.
-  - rust: stable
-    install:
-      - rustup component add rustfmt-preview
-      - rustup component add clippy-preview
-    before_script:
-      - cargo fmt --all -- --check
-      - cargo clippy --all -- -D clippy
-  # Since many users will use nightlies, also test that.
-  - rust: nightly
+install:
+  - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS == "linux" ]]; then rustup component add rustfmt; fi
+  - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS == "linux" ]]; then rustup component add clippy; fi
+  - if [[ $TRAVIS_OS == "windows" ]]; then choco install golang; fi
+  - if [[ $TRAVIS_OS == "windows" ]]; then choco install cmake; fi
 
+
+before_script:
+  - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS == "linux" ]]; then cargo fmt; fi
+  - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS == "linux" ]]; then cargo clippy; fi
 
 script:
-  - docker run -d --net=host --name pd --rm pingcap/pd --name "pd" --data-dir "pd" --client-urls "http://127.0.0.1:2379" --advertise-client-urls "http://127.0.0.1:2379"
-  - docker run -d --net=host --name kv --rm pingcap/tikv --pd-endpoints "127.0.0.1:2379" --addr "127.0.0.1:2378" --data-dir "kv"
-  - cargo test --all -- --nocapture
-  # Validate benches still work.
-  - cargo bench --all -- --test
+  - cargo test
+  # We need to switch the daemon of Windows to use Linux docker containers.
+  - if [[ $TRAVIS_OS == "windows" ]]; then docker -switchDaemon; fi
+  # OS X can't do docker on travis. :(
+  - if [[ $TRAVIS_OS != "osx" ]]; then docker run -d --net=host --name pd --rm pingcap/pd --name "pd" --data-dir "pd" --client-urls $PD_ADDR --advertise-client-urls $PD_ADDR; fi
+  - if [[ $TRAVIS_OS != "osx" ]]; then docker run -d --net=host --name kv --rm --ulimit nofile=90000:90000 pingcap/tikv --pd-endpoints $PD_ADDR --addr $TIKV_ADDR --data-dir "kv"; fi
+  - if [[ $TRAVIS_OS != "osx" ]]; then cargo test --features integration-tests; fi

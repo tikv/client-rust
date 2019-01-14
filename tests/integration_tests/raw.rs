@@ -1,4 +1,4 @@
-// Copyright 2018 The TiKV Project Authors
+// Copyright 2019 The TiKV Project Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@ use futures::future::Future;
 
 const NUM_TEST_KEYS: u32 = 100;
 use tikv_client::{raw::Client, Config, Key, KvPair, Value};
+use crate::integration_tests::pd_addr;
 
 fn generate_key(id: i32) -> Key {
     format!("testkey_{}", id).into_bytes().into()
@@ -34,7 +35,7 @@ fn wipe_all(client: &Client) {
 }
 
 fn connect() -> Client {
-    let client = Client::new(&Config::new(vec!["127.0.0.1:2379"]))
+    let client = Client::new(&Config::new(pd_addr()))
         .wait()
         .expect("Could not connect to tikv");
     wipe_all(&client);

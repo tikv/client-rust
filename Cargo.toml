@@ -8,6 +8,12 @@ repository = "https://github.com/tikv/client-rust"
 description = "The rust language implementation of TiKV client."
 edition = "2018"
 
+[features]
+default = []
+# Enable integration tests with a running TiKV and PD instance.
+# Use $PD_ADDRS, comma separated, to set the addresses the tests use. 
+integration-tests = []
+
 [lib]
 name = "tikv_client"
 
