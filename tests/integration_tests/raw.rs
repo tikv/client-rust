@@ -14,8 +14,8 @@
 use futures::future::Future;
 
 const NUM_TEST_KEYS: u32 = 100;
-use tikv_client::{raw::Client, Config, Key, KvPair, Value};
 use crate::integration_tests::pd_addr;
+use tikv_client::{raw::Client, Config, Key, KvPair, Value};
 
 fn generate_key(id: i32) -> Key {
     format!("testkey_{}", id).into_bytes().into()
