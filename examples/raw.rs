@@ -11,26 +11,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod common;
+
+use crate::common::parse_args;
 use futures::future::Future;
-use std::path::PathBuf;
 use tikv_client::{raw::Client, Config, Key, KvPair, Result, Value};
 
 const KEY: &str = "TiKV";
 const VALUE: &str = "Rust";
 
 fn main() -> Result<()> {
+    // You can try running this example by passing your pd endpoints
+    // (and SSL options if necessary) through command line arguments.
+    let args = parse_args("raw");
+
     // Create a configuration to use for the example.
     // Optionally encrypt the traffic.
-    let config = Config::new(vec![
-        "192.168.0.100:3379", // Avoid a single point of failure,
-        "192.168.0.101:3379", // use more than one PD endpoint.
-        "192.168.0.102:3379",
-    ])
-    .with_security(
-        PathBuf::from("/path/to/ca.pem"),
-        PathBuf::from("/path/to/client.pem"),
-        PathBuf::from("/path/to/client-key.pem"),
-    );
+    let config = if let (Some(ca), Some(cert), Some(key)) = (args.ca, args.cert, args.key) {
+        Config::new(args.pd).with_security(ca, cert, key)
+    } else {
+        Config::new(args.pd)
+    };
 
     // When we first create a client we recieve a `Connect` structure which must be resolved before
     // the client is actually connected and usable.

@@ -34,3 +34,4 @@ features = ["push", "process"]
 
 [dev-dependencies]
 tempdir = "0.3"
+clap = "2.32"

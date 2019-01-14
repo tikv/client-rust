@@ -11,9 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod common;
+
+use crate::common::parse_args;
 use futures::{future, Future, Stream};
 use std::ops::RangeBounds;
-use std::path::PathBuf;
 use tikv_client::{
     transaction::{Client, IsolationLevel},
     Config, Key, KvPair, Value,
@@ -70,11 +72,18 @@ fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {
 }
 
 fn main() {
-    let config = Config::new(vec!["127.0.0.1:2379"]).with_security(
-        PathBuf::from("/path/to/ca.pem"),
-        PathBuf::from("/path/to/client.pem"),
-        PathBuf::from("/path/to/client-key.pem"),
-    );
+    // You can try running this example by passing your pd endpoints
+    // (and SSL options if necessary) through command line arguments.
+    let args = parse_args("txn");
+
+    // Create a configuration to use for the example.
+    // Optionally encrypt the traffic.
+    let config = if let (Some(ca), Some(cert), Some(key)) = (args.ca, args.cert, args.key) {
+        Config::new(args.pd).with_security(ca, cert, key)
+    } else {
+        Config::new(args.pd)
+    };
+
     let txn = Client::new(&config)
         .wait()
         .expect("Could not connect to tikv");
