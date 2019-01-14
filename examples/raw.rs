@@ -19,7 +19,6 @@ use tikv_client::{raw::Client, Config, Key, KvPair, Result, Value};
 
 const KEY: &str = "TiKV";
 const VALUE: &str = "Rust";
-const CUSTOM_CF: &str = "default";
 
 fn main() -> Result<()> {
     // You can try running this example by passing your pd endpoints
@@ -67,14 +66,12 @@ fn main() -> Result<()> {
     // This is *advanced usage* and should have some special considerations.
     client
         .delete(key.clone())
-        .cf(CUSTOM_CF)
         .wait()
         .expect("Could not delete value");
     println!("Key: {:?} deleted", key);
 
     client
         .get(key)
-        .cf(CUSTOM_CF)
         .wait()
         .expect_err("Get returned value for not existing key");
 
@@ -90,7 +87,6 @@ fn main() -> Result<()> {
 
     let values = client
         .batch_get(keys.clone())
-        .cf(CUSTOM_CF)
         .wait()
         .expect("Could not get values");
     println!("Found values: {:?} for keys: {:?}", values, keys);
@@ -99,18 +95,9 @@ fn main() -> Result<()> {
     let end: Key = b"k2".to_vec().into();
     client
         .scan(start.clone()..end.clone(), 10)
-        .cf(CUSTOM_CF)
         .key_only()
         .wait()
         .expect("Could not scan");
-
-    let ranges = vec![start.clone()..end.clone(), start.clone()..end.clone()];
-    client
-        .batch_scan(ranges, 10)
-        .cf(CUSTOM_CF)
-        .key_only()
-        .wait()
-        .expect("Could not batch scan");
 
     // Cleanly exit.
     Ok(())
