@@ -27,12 +27,12 @@ install:
 before_script:
   - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then cargo fmt -- --check; fi
   # Currently some crates have lint errors if clippy checks them.
-  - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then cargo build && cargo clippy -- -D clippy::all; fi
+  - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then cargo clippy -- -D clippy::all; fi
 
 script:
   - cargo test
   # We need to switch the daemon of Windows to use Linux docker containers.
-  - if [[ $TRAVIS_OS_NAME == "windows" ]]; then docker -switchDaemon; fi
+  - if [[ $TRAVIS_OS_NAME == "windows" ]]; then "/c/Program Files/Docker/Docker/DockerCli.exe" -SwitchDaemon .; fi
   # OS X can't do docker on travis. :(
   - if [[ $TRAVIS_OS_NAME != "osx" ]]; then docker run -d --net=host --name pd --rm pingcap/pd --name "pd" --data-dir "pd" --client-urls "http://127.0.0.1:2379" --advertise-client-urls "http://127.0.0.1:2379"; fi
   - if [[ $TRAVIS_OS_NAME != "osx" ]]; then docker run -d --net=host --name kv --rm --ulimit nofile=90000:90000 pingcap/tikv --pd-endpoints "127.0.0.1:2379" --addr "127.0.0.1:2378" --data-dir "kv"; fi
