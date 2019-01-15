@@ -30,7 +30,7 @@ before_script:
   - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then cargo clippy -- -D clippy::all; fi
 
 script:
-  - cargo test
+  - cargo test --all -- --nocapture
   # We need to switch the daemon of Windows to use Linux docker containers.
   - if [[ $TRAVIS_OS_NAME == "windows" ]]; then "/c/Program Files/Docker/Docker/DockerCli.exe" -SwitchDaemon .; fi
   # OS X can't do docker on travis. :(
@@ -39,4 +39,4 @@ script:
   - if [[ $TRAVIS_OS_NAME != "osx" ]]; then docker ps; fi
   - if [[ $TRAVIS_OS_NAME != "osx" ]]; then docker logs pd; fi
   - if [[ $TRAVIS_OS_NAME != "osx" ]]; then docker logs kv; fi
-  - if [[ $TRAVIS_OS_NAME != "osx" ]]; then cargo test --features integration-tests; fi
+  - if [[ $TRAVIS_OS_NAME != "osx" ]]; then cargo test --all --features integration-tests -- --nocapture; fi
