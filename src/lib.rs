@@ -10,8 +10,9 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#![recursion_limit = "128"]
-#![type_length_limit = "1572864"]
+
+// Long and nested future chains can quickly result in large generic types.
+#![type_length_limit = "16777216"]
 
 use futures::Future;
 use serde_derive::*;
@@ -32,6 +33,8 @@ pub mod transaction;
 
 #[doc(inline)]
 pub use crate::errors::Error;
+#[doc(inline)]
+pub use crate::errors::ErrorKind;
 #[doc(inline)]
 pub use crate::errors::Result;
 
@@ -462,7 +465,7 @@ fn range_to_keys(range: (Bound<Key>, Bound<Key>)) -> Result<(Key, Option<Key>)> 
             }
             v
         }
-        Bound::Unbounded => return Err(Error::InvalidKeyRange),
+        Bound::Unbounded => Err(ErrorKind::InvalidKeyRange)?,
     };
     let end = match range.1 {
         Bound::Included(v) => Some(v),

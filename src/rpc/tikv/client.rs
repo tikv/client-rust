@@ -25,7 +25,7 @@ use crate::{
         tikv::context::{request_context, RequestContext},
     },
     transaction::{Mutation, TxnInfo},
-    Error, Key, KvPair, Result, Value,
+    Error, ErrorKind, Key, KvPair, Result, Value,
 };
 
 trait HasRegionError {
@@ -39,42 +39,59 @@ trait HasError {
 impl From<errorpb::Error> for Error {
     fn from(mut e: errorpb::Error) -> Error {
         let message = e.take_message();
-        if e.has_not_leader() {
+        let kind = if e.has_not_leader() {
             let e = e.get_not_leader();
-            Error::NotLeader(
-                e.get_region_id(),
-                Some(format!("{}. Leader: {:?}", message, e.get_leader())),
-            )
+            ErrorKind::NotLeader {
+                region_id: e.get_region_id(),
+                message: format!("{}. Leader: {:?}", message, e.get_leader()),
+            }
         } else if e.has_region_not_found() {
-            Error::RegionNotFound(e.get_region_not_found().get_region_id(), Some(message))
+            ErrorKind::RegionNotFound {
+                region_id: e.get_region_not_found().get_region_id(),
+                message,
+            }
         } else if e.has_key_not_in_region() {
             let mut e = e.take_key_not_in_region();
-            Error::KeyNotInRegion(
-                e.take_key(),
-                e.get_region_id(),
-                e.take_start_key(),
-                e.take_end_key(),
-            )
+            ErrorKind::KeyNotInRegion {
+                key: e.take_key(),
+                region_id: e.get_region_id(),
+                start_key: e.take_start_key(),
+                end_key: e.take_end_key(),
+            }
         } else if e.has_stale_epoch() {
-            Error::StaleEpoch(Some(format!(
-                "{}. New epoch: {:?}",
-                message,
-                e.get_stale_epoch().get_new_regions()
-            )))
+            ErrorKind::StaleEpoch {
+                message: format!(
+                    "{}. New epoch: {:?}",
+                    message,
+                    e.get_stale_epoch().get_new_regions()
+                ),
+            }
         } else if e.has_server_is_busy() {
             let mut e = e.take_server_is_busy();
-            Error::ServerIsBusy(e.take_reason(), e.get_backoff_ms())
+            ErrorKind::ServerIsBusy {
+                reason: e.take_reason(),
+                backoff_ms: e.get_backoff_ms(),
+            }
         } else if e.has_stale_command() {
-            Error::StaleCommand(message)
+            ErrorKind::StaleCommand { message }
         } else if e.has_store_not_match() {
             let e = e.get_store_not_match();
-            Error::StoreNotMatch(e.get_request_store_id(), e.get_actual_store_id(), message)
+            ErrorKind::StoreNotMatch {
+                request_store_id: e.get_request_store_id(),
+                actual_store_id: e.get_actual_store_id(),
+                message,
+            }
         } else if e.has_raft_entry_too_large() {
             let e = e.get_raft_entry_too_large();
-            Error::RaftEntryTooLarge(e.get_region_id(), e.get_entry_size(), message)
+            ErrorKind::RaftEntryTooLarge {
+                region_id: e.get_region_id(),
+                entry_size: e.get_entry_size(),
+                message,
+            }
         } else {
-            Error::InternalError(message)
-        }
+            ErrorKind::InternalError { message }
+        };
+        kind.into()
     }
 }
 
@@ -114,18 +131,12 @@ has_region_error!(kvrpcpb::RawDeleteRangeResponse);
 has_region_error!(kvrpcpb::RawScanResponse);
 has_region_error!(kvrpcpb::RawBatchScanResponse);
 
-impl From<kvrpcpb::KeyError> for Error {
-    fn from(e: kvrpcpb::KeyError) -> Error {
-        Error::KeyError(format!("{:?}", e))
-    }
-}
-
 macro_rules! has_key_error {
     ($type:ty) => {
         impl HasError for $type {
             fn error(&mut self) -> Option<Error> {
                 if self.has_error() {
-                    Some(self.take_error().into())
+                    Some(ErrorKind::KeyError(self.take_error()).into())
                 } else {
                     None
                 }
@@ -149,7 +160,12 @@ macro_rules! has_str_error {
                 if self.get_error().is_empty() {
                     None
                 } else {
-                    Some(Error::KVError(self.take_error()))
+                    Some(
+                        ErrorKind::KvError {
+                            message: self.take_error(),
+                        }
+                        .into(),
+                    )
                 }
             }
         }
@@ -632,7 +648,7 @@ impl KvClient {
         )
         .unwrap()
         .then(|r| match r {
-            Err(e) => Err(Error::Grpc(e)),
+            Err(e) => Err(ErrorKind::Grpc(e))?,
             Ok(mut r) => {
                 if let Some(e) = r.region_error() {
                     Err(e)
