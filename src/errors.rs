@@ -79,10 +79,10 @@ pub enum ErrorKind {
     /// Reconstructed `kvproto::errorpb::ServerIsBusy`
     #[fail(display = "Server is busy: {}. Backoff {} ms", reason, backoff_ms)]
     ServerIsBusy { reason: String, backoff_ms: u64 },
-    /// Reconstructed `kvproto::errorpb::StaleCommand`
+    /// Represents `kvproto::errorpb::StaleCommand` with additional error message
     #[fail(display = "Stale command. {}", message)]
     StaleCommand { message: String },
-    /// Reconstructed `kvproto::errorpb::StoreNotMatch`
+    /// Represents `kvproto::errorpb::StoreNotMatch` with additional error message
     #[fail(
         display = "Requesting store {} when actual store is {}. {}",
         request_store_id, actual_store_id, message
@@ -92,7 +92,7 @@ pub enum ErrorKind {
         actual_store_id: u64,
         message: String,
     },
-    /// Reconstructed `kvproto::errorpb::RaftEntryTooLarge`
+    /// Represents `kvproto::errorpb::RaftEntryTooLarge` with additional error message
     #[fail(
         display = "{} bytes raft entry of region {} is too large. {}",
         entry_size, region_id, message
@@ -126,6 +126,97 @@ impl Error {
     pub fn kind(&self) -> &ErrorKind {
         self.inner.get_context()
     }
+
+    pub(crate) fn unimplemented() -> Self {
+        Error::from(ErrorKind::Unimplemented)
+    }
+
+    pub(crate) fn region_for_key_not_found(key: Vec<u8>) -> Self {
+        Error::from(ErrorKind::RegionForKeyNotFound { key })
+    }
+
+    pub(crate) fn not_leader(region_id: u64, message: Option<String>) -> Self {
+        Error::from(ErrorKind::NotLeader {
+            region_id,
+            message: message.unwrap_or_default(),
+        })
+    }
+
+    pub(crate) fn stale_epoch(message: Option<String>) -> Self {
+        Error::from(ErrorKind::StaleEpoch {
+            message: message.unwrap_or_default(),
+        })
+    }
+
+    pub(crate) fn region_not_found(region_id: u64, message: Option<String>) -> Self {
+        Error::from(ErrorKind::RegionNotFound {
+            region_id,
+            message: message.unwrap_or_default(),
+        })
+    }
+
+    pub(crate) fn invalid_key_range() -> Self {
+        Error::from(ErrorKind::InvalidKeyRange)
+    }
+
+    pub(crate) fn no_such_key() -> Self {
+        Error::from(ErrorKind::NoSuchKey)
+    }
+
+    pub(crate) fn empty_value() -> Self {
+        Error::from(ErrorKind::EmptyValue)
+    }
+
+    pub(crate) fn max_scan_limit_exceeded(limit: u32, max_limit: u32) -> Self {
+        Error::from(ErrorKind::MaxScanLimitExceeded { limit, max_limit })
+    }
+
+    pub(crate) fn kv_error(message: String) -> Self {
+        Error::from(ErrorKind::KvError { message })
+    }
+
+    pub(crate) fn key_not_in_region(mut e: kvproto::errorpb::KeyNotInRegion) -> Self {
+        Error::from(ErrorKind::KeyNotInRegion {
+            key: e.take_key(),
+            region_id: e.get_region_id(),
+            start_key: e.take_start_key(),
+            end_key: e.take_end_key(),
+        })
+    }
+
+    pub(crate) fn server_is_busy(mut e: kvproto::errorpb::ServerIsBusy) -> Self {
+        Error::from(ErrorKind::ServerIsBusy {
+            reason: e.take_reason(),
+            backoff_ms: e.get_backoff_ms(),
+        })
+    }
+
+    pub(crate) fn stale_command(message: String) -> Self {
+        Error::from(ErrorKind::StaleCommand { message })
+    }
+
+    pub(crate) fn store_not_match(e: kvproto::errorpb::StoreNotMatch, message: String) -> Self {
+        Error::from(ErrorKind::StoreNotMatch {
+            request_store_id: e.get_request_store_id(),
+            actual_store_id: e.get_actual_store_id(),
+            message,
+        })
+    }
+
+    pub(crate) fn raft_entry_too_large(
+        e: kvproto::errorpb::RaftEntryTooLarge,
+        message: String,
+    ) -> Self {
+        Error::from(ErrorKind::RaftEntryTooLarge {
+            region_id: e.get_region_id(),
+            entry_size: e.get_entry_size(),
+            message,
+        })
+    }
+
+    pub(crate) fn internal_error(message: String) -> Self {
+        Error::from(ErrorKind::InternalError { message })
+    }
 }
 
 impl From<ErrorKind> for Error {
@@ -139,6 +230,30 @@ impl From<ErrorKind> for Error {
 impl From<Context<ErrorKind>> for Error {
     fn from(inner: Context<ErrorKind>) -> Error {
         Error { inner }
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Error::from(ErrorKind::Io(err))
+    }
+}
+
+impl From<grpcio::Error> for Error {
+    fn from(err: grpcio::Error) -> Self {
+        Error::from(ErrorKind::Grpc(err))
+    }
+}
+
+impl From<futures::sync::oneshot::Canceled> for Error {
+    fn from(err: futures::sync::oneshot::Canceled) -> Self {
+        Error::from(ErrorKind::Canceled(err))
+    }
+}
+
+impl From<kvproto::kvrpcpb::KeyError> for Error {
+    fn from(err: kvproto::kvrpcpb::KeyError) -> Self {
+        Error::from(ErrorKind::KeyError(err))
     }
 }
 

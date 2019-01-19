@@ -39,7 +39,7 @@ use crate::{
         security::SecurityManager,
         util::HandyRwLock,
     },
-    Error, ErrorKind, Result,
+    Error, Result,
 };
 
 macro_rules! pd_request {
@@ -139,7 +139,7 @@ impl PdReactor {
         let (tx, rx) = client.wl().client.tso().unwrap();
         let tso_rx = client.wl().reactor.tso_rx.take().unwrap();
         handle.spawn(
-            tx.sink_map_err(|e| ErrorKind::Grpc(e).into())
+            tx.sink_map_err(Into::into)
                 .send_all(tso_rx.then(|r| match r {
                     Ok(r) => Ok((r, WriteFlags::default())),
                     Err(()) => Err(internal_err!("failed to recv tso requests")),
@@ -220,8 +220,7 @@ impl PdReactor {
             // Schedule tso request to run.
             self.schedule(PdTask::Request);
         }
-        rx.map_err(|e| ErrorKind::Canceled(e).into())
-            .then(move |r| context.done(r))
+        rx.map_err(Into::into).then(move |r| context.done(r))
     }
 }
 
@@ -365,7 +364,7 @@ fn connect(
     let option = CallOption::default().timeout(timeout);
     let resp = client
         .get_members_opt(&pdpb::GetMembersRequest::new(), option)
-        .map_err(ErrorKind::Grpc)?;
+        .map_err(Error::from)?;
     Ok((client, resp))
 }
 

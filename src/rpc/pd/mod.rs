@@ -16,7 +16,7 @@ use std::ops::{Deref, DerefMut};
 use kvproto::{kvrpcpb, metapb};
 
 pub use crate::rpc::pd::client::PdClient;
-use crate::{ErrorKind, Key, Result};
+use crate::{Error, Key, Result};
 
 #[macro_use]
 mod leader;
@@ -76,13 +76,7 @@ impl Region {
     pub fn context(&self) -> Result<kvrpcpb::Context> {
         self.leader
             .as_ref()
-            .ok_or_else(|| {
-                ErrorKind::NotLeader {
-                    region_id: self.region.get_id(),
-                    message: String::default(),
-                }
-                .into()
-            })
+            .ok_or_else(|| Error::not_leader(self.region.get_id(), None))
             .map(|l| {
                 let mut ctx = kvrpcpb::Context::default();
                 ctx.set_region_id(self.region.get_id());
@@ -119,12 +113,7 @@ impl Region {
             .as_ref()
             .map(Clone::clone)
             .map(Into::into)
-            .ok_or_else(|| {
-                ErrorKind::StaleEpoch {
-                    message: String::default(),
-                }
-                .into()
-            })
+            .ok_or_else(|| Error::stale_epoch(None))
     }
 
     pub fn meta(&self) -> metapb::Region {

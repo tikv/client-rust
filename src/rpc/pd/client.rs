@@ -32,7 +32,7 @@ use crate::{
         security::SecurityManager,
         util::HandyRwLock,
     },
-    Error, ErrorKind, Result,
+    Error, Result,
 };
 
 const LEADER_CHANGE_RETRY: usize = 10;
@@ -102,7 +102,7 @@ impl PdClient {
             let region = if resp.has_region() {
                 resp.take_region()
             } else {
-                Err(ErrorKind::RegionForKeyNotFound { key })?
+                Err(Error::region_for_key_not_found(key))?
             };
             let leader = if resp.has_leader() {
                 Some(resp.take_leader())
@@ -128,10 +128,7 @@ impl PdClient {
             let region = if resp.has_region() {
                 resp.take_region()
             } else {
-                Err(ErrorKind::RegionNotFound {
-                    region_id,
-                    message: String::default(),
-                })?
+                Err(Error::region_not_found(region_id, None))?
             };
             let leader = if resp.has_leader() {
                 Some(resp.take_leader())
@@ -158,7 +155,7 @@ impl PdClient {
             let cli = &cli.rl().client;
             executor(cli, option)
                 .unwrap()
-                .map_err(|e| ErrorKind::Grpc(e).into())
+                .map_err(Into::into)
                 .and_then(|r| {
                     {
                         let header = r.header();

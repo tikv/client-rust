@@ -465,7 +465,7 @@ fn range_to_keys(range: (Bound<Key>, Bound<Key>)) -> Result<(Key, Option<Key>)> 
             }
             v
         }
-        Bound::Unbounded => Err(ErrorKind::InvalidKeyRange)?,
+        Bound::Unbounded => Err(Error::invalid_key_range())?,
     };
     let end = match range.1 {
         Bound::Included(v) => Some(v),

@@ -21,7 +21,7 @@
 /// **Warning:** It is not advisible to use the both raw and transactional functionality in the same keyspace.
 ///
 use crate::{
-    rpc::RpcClient, Config, Error, ErrorKind, Key, KeyRange, KvFuture, KvPair, Result, Value,
+    rpc::RpcClient, Config, Error, Key, KeyRange, KvFuture, KvPair, Result, Value,
 };
 use futures::{future, Async, Future, Poll};
 use std::{
@@ -681,13 +681,10 @@ impl RequestInner for ScanInner {
 
     fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
         if self.limit > MAX_RAW_KV_SCAN_LIMIT {
-            Box::new(future::err(
-                ErrorKind::MaxScanLimitExceeded {
-                    limit: self.limit,
-                    max_limit: MAX_RAW_KV_SCAN_LIMIT,
-                }
-                .into(),
-            ))
+            Box::new(future::err(Error::max_scan_limit_exceeded(
+                self.limit,
+                MAX_RAW_KV_SCAN_LIMIT,
+            )))
         } else {
             let keys = match self.range.into_keys() {
                 Err(e) => return Box::new(future::err(e)),
@@ -756,16 +753,13 @@ impl RequestInner for BatchScanInner {
 
     fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
         if self.each_limit > MAX_RAW_KV_SCAN_LIMIT {
-            Box::new(future::err(
-                ErrorKind::MaxScanLimitExceeded {
-                    limit: self.each_limit,
-                    max_limit: MAX_RAW_KV_SCAN_LIMIT,
-                }
-                .into(),
-            ))
+            Box::new(future::err(Error::max_scan_limit_exceeded(
+                self.each_limit,
+                MAX_RAW_KV_SCAN_LIMIT,
+            )))
         } else if self.ranges.iter().any(Result::is_err) {
             // All errors must be InvalidKeyRange so we can simply return a new InvalidKeyRange
-            Box::new(future::err(ErrorKind::InvalidKeyRange.into()))
+            Box::new(future::err(Error::invalid_key_range()))
         } else {
             Box::new(client.raw_batch_scan(
                 self.ranges.into_iter().map(Result::unwrap).collect(),

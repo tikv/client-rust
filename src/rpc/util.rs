@@ -22,9 +22,9 @@ use tokio_timer::{self, timer::Handle};
 
 macro_rules! internal_err {
     ($e:expr) => ({
-        let kind = $crate::ErrorKind::InternalError {
-            message: format!("[{}:{}]: {}", file!(), line!(),  $e)
-        };
+        let kind = $crate::Error::internal_error(
+            format!("[{}:{}]: {}", file!(), line!(),  $e)
+        );
         $crate::Error::from(kind)
     });
     ($f:tt, $($arg:expr),+) => ({

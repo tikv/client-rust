@@ -35,7 +35,7 @@ use crate::{
         tikv::KvClient,
         util::HandyRwLock,
     },
-    Config, Error, ErrorKind, Key, KvPair, Result, Value,
+    Config, Error, Key, KvPair, Result, Value,
 };
 
 const CQ_COUNT: usize = 1;
@@ -253,7 +253,7 @@ impl RpcClient {
             .and_then(move |context| context.client().raw_get(context, key))
             .and_then(move |value| {
                 if value.is_empty() {
-                    Err(ErrorKind::NoSuchKey)?
+                    Err(Error::no_such_key())?
                 } else {
                     Ok(value)
                 }
@@ -292,7 +292,7 @@ impl RpcClient {
         cf: Option<ColumnFamily>,
     ) -> impl Future<Item = (), Error = Error> {
         if value.is_empty() {
-            Either::A(future::err(ErrorKind::EmptyValue.into()))
+            Either::A(future::err(Error::empty_value()))
         } else {
             Either::B(
                 Self::raw(self.inner(), &key, cf)
@@ -307,7 +307,7 @@ impl RpcClient {
         cf: Option<ColumnFamily>,
     ) -> impl Future<Item = (), Error = Error> {
         if pairs.iter().any(|p| p.value().is_empty()) {
-            Either::A(future::err(ErrorKind::EmptyValue.into()))
+            Either::A(future::err(Error::empty_value()))
         } else {
             let inner = self.inner();
             Either::B(
@@ -427,7 +427,7 @@ impl RpcClient {
     ) -> impl Future<Item = Vec<KvPair>, Error = Error> {
         drop(ranges);
         drop(cf);
-        future::err(ErrorKind::Unimplemented.into())
+        future::err(Error::unimplemented())
     }
 
     pub fn raw_delete_range(

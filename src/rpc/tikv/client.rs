@@ -39,59 +39,32 @@ trait HasError {
 impl From<errorpb::Error> for Error {
     fn from(mut e: errorpb::Error) -> Error {
         let message = e.take_message();
-        let kind = if e.has_not_leader() {
+        if e.has_not_leader() {
             let e = e.get_not_leader();
-            ErrorKind::NotLeader {
-                region_id: e.get_region_id(),
-                message: format!("{}. Leader: {:?}", message, e.get_leader()),
-            }
+            let message = format!("{}. Leader: {:?}", message, e.get_leader());
+            Error::not_leader(e.get_region_id(), Some(message))
         } else if e.has_region_not_found() {
-            ErrorKind::RegionNotFound {
-                region_id: e.get_region_not_found().get_region_id(),
-                message,
-            }
+            Error::region_not_found(e.get_region_not_found().get_region_id(), Some(message))
         } else if e.has_key_not_in_region() {
-            let mut e = e.take_key_not_in_region();
-            ErrorKind::KeyNotInRegion {
-                key: e.take_key(),
-                region_id: e.get_region_id(),
-                start_key: e.take_start_key(),
-                end_key: e.take_end_key(),
-            }
+            Error::key_not_in_region(e.take_key_not_in_region())
         } else if e.has_stale_epoch() {
-            ErrorKind::StaleEpoch {
-                message: format!(
-                    "{}. New epoch: {:?}",
-                    message,
-                    e.get_stale_epoch().get_new_regions()
-                ),
-            }
+            let message = format!(
+                "{}. New epoch: {:?}",
+                message,
+                e.get_stale_epoch().get_new_regions()
+            );
+            Error::stale_epoch(Some(message))
         } else if e.has_server_is_busy() {
-            let mut e = e.take_server_is_busy();
-            ErrorKind::ServerIsBusy {
-                reason: e.take_reason(),
-                backoff_ms: e.get_backoff_ms(),
-            }
+            Error::server_is_busy(e.take_server_is_busy())
         } else if e.has_stale_command() {
-            ErrorKind::StaleCommand { message }
+            Error::stale_command(message)
         } else if e.has_store_not_match() {
-            let e = e.get_store_not_match();
-            ErrorKind::StoreNotMatch {
-                request_store_id: e.get_request_store_id(),
-                actual_store_id: e.get_actual_store_id(),
-                message,
-            }
+            Error::store_not_match(e.take_store_not_match(), message)
         } else if e.has_raft_entry_too_large() {
-            let e = e.get_raft_entry_too_large();
-            ErrorKind::RaftEntryTooLarge {
-                region_id: e.get_region_id(),
-                entry_size: e.get_entry_size(),
-                message,
-            }
+            Error::raft_entry_too_large(e.take_raft_entry_too_large(), message)
         } else {
-            ErrorKind::InternalError { message }
-        };
-        kind.into()
+            Error::internal_error(message)
+        }
     }
 }
 
@@ -136,7 +109,7 @@ macro_rules! has_key_error {
         impl HasError for $type {
             fn error(&mut self) -> Option<Error> {
                 if self.has_error() {
-                    Some(ErrorKind::KeyError(self.take_error()).into())
+                    Some(self.take_error().into())
                 } else {
                     None
                 }
@@ -160,12 +133,7 @@ macro_rules! has_str_error {
                 if self.get_error().is_empty() {
                     None
                 } else {
-                    Some(
-                        ErrorKind::KvError {
-                            message: self.take_error(),
-                        }
-                        .into(),
-                    )
+                    Some(Error::kv_error(self.take_error())                    )
                 }
             }
         }
