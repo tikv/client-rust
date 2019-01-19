@@ -58,7 +58,7 @@ fn main() -> Result<()> {
     // It is best to pass a `Vec<u8>` in terms of explictness and speed. `String`s and a few other
     // types are supported  as well, but it all ends up as `Vec<u8>` in the end.
     let key: String = String::from(KEY);
-    let value: Value = client.get(key.clone()).wait()?;
+    let value: Value = client.get(key.clone()).wait()?.expect("value must exist");
     assert_eq!(value.as_ref(), VALUE.as_bytes());
     println!("Get key \"{:?}\" returned value \"{:?}\".", value, KEY);
 
