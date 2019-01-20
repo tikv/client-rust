@@ -108,11 +108,9 @@ impl From<String> for Key {
     }
 }
 
-impl<'a> From<&'static str> for Key {
-    fn from(v: &'static str) -> Key {
-        let mut vec = Vec::new();
-        vec.extend_from_slice(v.as_bytes());
-        Key(vec)
+impl From<&str> for Key {
+    fn from(v: &str) -> Key {
+        Key(v.as_bytes().to_vec())
     }
 }
 
@@ -206,11 +204,9 @@ impl From<String> for Value {
     }
 }
 
-impl From<&'static str> for Value {
-    fn from(v: &'static str) -> Value {
-        let mut vec = Vec::new();
-        vec.extend_from_slice(v.as_bytes());
-        Value(vec)
+impl From<&str> for Value {
+    fn from(v: &str) -> Value {
+        Value(v.as_bytes().to_vec())
     }
 }
 
