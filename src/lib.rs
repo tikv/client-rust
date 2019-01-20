@@ -80,6 +80,7 @@ impl Key {
     pub fn new(value: Vec<u8>) -> Self {
         Key(value)
     }
+
     #[inline]
     fn into_inner(self) -> Vec<u8> {
         self.0

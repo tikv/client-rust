@@ -566,10 +566,15 @@ impl KvClient {
         key_only: bool,
     ) -> impl Future<Item = Vec<KvPair>, Error = Error> {
         let mut req = raw_request!(context, kvrpcpb::RawScanRequest);
-        start_key
-            .map(|k| req.set_start_key(k.into_inner()))
-            .unwrap();
-        end_key.map(|k| req.set_end_key(k.into_inner())).unwrap();
+
+        if let Some(k) = start_key {
+            req.set_start_key(k.into_inner())
+        }
+
+        if let Some(k) = end_key {
+            req.set_end_key(k.into_inner())
+        }
+
         req.set_limit(limit);
         req.set_key_only(key_only);
 
@@ -678,8 +683,15 @@ impl KvClient {
     fn convert_to_grpc_range(range: (Option<Key>, Option<Key>)) -> kvrpcpb::KeyRange {
         let (start, end) = range;
         let mut range = kvrpcpb::KeyRange::new();
-        start.map(|k| range.set_start_key(k.into_inner())).unwrap();
-        end.map(|k| range.set_end_key(k.into_inner())).unwrap();
+
+        if let Some(k) = start {
+            range.set_start_key(k.into_inner())
+        }
+
+        if let Some(k) = end {
+            range.set_end_key(k.into_inner())
+        }
+
         range
     }
 
