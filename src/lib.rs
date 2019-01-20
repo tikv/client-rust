@@ -115,7 +115,13 @@ impl From<&str> for Key {
 }
 
 impl AsRef<Key> for Key {
-    fn as_ref(&self) -> &Self {
+    fn as_ref(&self) -> &Key {
+        self
+    }
+}
+
+impl AsMut<Key> for Key {
+    fn as_mut(&mut self) -> &mut Key {
         self
     }
 }
@@ -123,6 +129,12 @@ impl AsRef<Key> for Key {
 impl AsRef<[u8]> for Key {
     fn as_ref(&self) -> &[u8] {
         &self.0
+    }
+}
+
+impl AsMut<[u8]> for Key {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.0
     }
 }
 
@@ -214,6 +226,12 @@ impl Deref for Value {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<[u8]> for Value {
+    fn as_ref(&self) -> &[u8] {
         &self.0
     }
 }
