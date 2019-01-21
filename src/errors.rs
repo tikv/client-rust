@@ -50,9 +50,6 @@ pub enum ErrorKind {
     /// Invalid key range to scan. Only left bounded intervals are supported.
     #[fail(display = "Only left bounded intervals are supported")]
     InvalidKeyRange,
-    /// No such key
-    #[fail(display = "Key does not exist")]
-    NoSuchKey,
     /// Cannot set an empty value
     #[fail(display = "Cannot set an empty value")]
     EmptyValue,
@@ -157,10 +154,6 @@ impl Error {
 
     pub(crate) fn invalid_key_range() -> Self {
         Error::from(ErrorKind::InvalidKeyRange)
-    }
-
-    pub(crate) fn no_such_key() -> Self {
-        Error::from(ErrorKind::NoSuchKey)
     }
 
     pub(crate) fn empty_value() -> Self {
