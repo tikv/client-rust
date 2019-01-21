@@ -13,8 +13,6 @@ env:
   global:
     - RUST_BACKTRACE=1
     - RUSTFLAGS="-D warnings"
-    - PD_ADDR="127.0.0.1:2379"
-    - TIKV_ADDR="127.0.0.1:2378"
 
 install:
   - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then rustup component add rustfmt; fi
@@ -23,20 +21,16 @@ install:
   - if [[ $TRAVIS_OS_NAME == "windows" ]]; then choco install cmake; fi
   - if [[ $TRAVIS_OS_NAME == "windows" ]]; then export PATH="$PATH:/c/Go/bin/:/c/Program Files/CMake/bin"; fi
 
-
-before_script:
-  - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then cargo fmt -- --check; fi
-  # Currently some crates have lint errors if clippy checks them.
-  - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then cargo clippy -- -D clippy::all; fi
-
 script:
+  - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then cargo fmt -- --check; fi
+  - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then cargo clippy -- -D clippy::all; fi
   - cargo test --all -- --nocapture
-  # We need to switch the daemon of Windows to use Linux docker containers.
-  - if [[ $TRAVIS_OS_NAME == "windows" ]]; then "/c/Program Files/Docker/Docker/DockerCli.exe" -SwitchDaemon .; fi
-  # OS X can't do docker on travis. :(
-  - if [[ $TRAVIS_OS_NAME != "osx" ]]; then docker run -d --net=host --name pd --rm pingcap/pd --name "pd" --data-dir "pd" --client-urls "http://127.0.0.1:2379" --advertise-client-urls "http://127.0.0.1:2379"; fi
-  - if [[ $TRAVIS_OS_NAME != "osx" ]]; then docker run -d --net=host --name kv --rm --ulimit nofile=90000:90000 pingcap/tikv --pd-endpoints "127.0.0.1:2379" --addr "127.0.0.1:2378" --data-dir "kv"; fi
-  - if [[ $TRAVIS_OS_NAME != "osx" ]]; then docker ps; fi
-  - if [[ $TRAVIS_OS_NAME != "osx" ]]; then docker logs pd; fi
-  - if [[ $TRAVIS_OS_NAME != "osx" ]]; then docker logs kv; fi
-  - if [[ $TRAVIS_OS_NAME != "osx" ]]; then cargo test --all --features integration-tests -- --nocapture; fi
+  # For now we only run full integration tests on Linux. Here's why:
+  # * Docker on OS X is not supported by Travis.
+  # * Docker on Windows seems to not have the correct binary at `"/c/Program Files/Docker/Docker/DockerCli.exe" to switch it to Linux containers.
+  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then docker run -d --net=host --name pd --rm pingcap/pd --name "pd" --data-dir "pd" --client-urls "http://127.0.0.1:2379" --advertise-client-urls "http://127.0.0.1:2379"; fi
+  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then docker run -d --net=host --name kv --rm --ulimit nofile=90000:90000 pingcap/tikv --pd-endpoints "127.0.0.1:2379" --addr "127.0.0.1:2378" --data-dir "kv"; fi
+  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then docker ps; fi
+  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then docker logs pd; fi
+  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then docker logs kv; fi
+  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then PD_ADDR="127.0.0.1:2379" cargo test --all --features integration-tests -- --nocapture; fi
