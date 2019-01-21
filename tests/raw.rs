@@ -59,14 +59,18 @@ fn test_existence(client: &Client, existing_pairs: &[KvPair], not_existing_keys:
     for pair in existing_pairs.iter().map(Clone::clone) {
         let (key, value) = pair.into_inner();
         assert_eq!(
-            client.get(key).wait().expect("Could not get value"),
+            client
+                .get(key)
+                .wait()
+                .expect("Could not get value")
+                .expect("key doesn't exist"),
             value.clone(),
         );
     }
 
     for key in not_existing_keys.clone().into_iter() {
-        let r = client.get(key).wait();
-        assert!(r.is_err());
+        let r = client.get(key).wait().expect("Cound not get value");
+        assert!(r.is_none());
     }
 
     let mut existing_keys = Vec::with_capacity(existing_pairs.len());

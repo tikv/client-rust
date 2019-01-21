@@ -231,12 +231,11 @@ impl RpcClient {
         key: &Key,
         cf: Option<ColumnFamily>,
     ) -> impl Future<Item = RawContext, Error = Error> {
-        Self::region_context(inner, key)
-            .map(move |(region, client)| RawContext::new(region, client, cf))
+        Self::region_context(inner, key).map(|(region, client)| RawContext::new(region, client, cf))
     }
 
     fn txn(inner: Arc<RpcClientInner>, key: &Key) -> impl Future<Item = TxnContext, Error = Error> {
-        Self::region_context(inner, key).map(move |(region, _client)| TxnContext::new(region))
+        Self::region_context(inner, key).map(|(region, _client)| TxnContext::new(region))
     }
 
     #[inline]
@@ -248,16 +247,10 @@ impl RpcClient {
         &self,
         key: Key,
         cf: Option<ColumnFamily>,
-    ) -> impl Future<Item = Value, Error = Error> {
+    ) -> impl Future<Item = Option<Value>, Error = Error> {
         Self::raw(self.inner(), &key, cf)
-            .and_then(move |context| context.client().raw_get(context, key))
-            .and_then(move |value| {
-                if value.is_empty() {
-                    Err(Error::no_such_key())?
-                } else {
-                    Ok(value)
-                }
-            })
+            .and_then(|context| context.client().raw_get(context, key))
+            .map(|value| if value.is_empty() { None } else { Some(value) })
     }
 
     pub fn raw_batch_get(
@@ -274,8 +267,8 @@ impl RpcClient {
                     let inner = Arc::clone(&inner);
                     let cf = cf.clone();
                     let task = Self::region_context_by_id(inner, region.id)
-                        .map(move |(region, client)| RawContext::new(region, client, cf))
-                        .and_then(move |context| {
+                        .map(|(region, client)| RawContext::new(region, client, cf))
+                        .and_then(|context| {
                             context.client().raw_batch_get(context, keys.into_iter())
                         });
                     tasks.push(task);
@@ -292,11 +285,11 @@ impl RpcClient {
         cf: Option<ColumnFamily>,
     ) -> impl Future<Item = (), Error = Error> {
         if value.is_empty() {
-            Either::A(future::err(Error::empty_value()))
+            Either::A(future::err(Error::EmptyValue))
         } else {
             Either::B(
                 Self::raw(self.inner(), &key, cf)
-                    .and_then(move |context| context.client().raw_put(context, key, value)),
+                    .and_then(|context| context.client().raw_put(context, key, value)),
             )
         }
     }
@@ -307,7 +300,7 @@ impl RpcClient {
         cf: Option<ColumnFamily>,
     ) -> impl Future<Item = (), Error = Error> {
         if pairs.iter().any(|p| p.value().is_empty()) {
-            Either::A(future::err(Error::empty_value()))
+            Either::A(future::err(Error::EmptyValue))
         } else {
             let inner = self.inner();
             Either::B(
@@ -319,10 +312,8 @@ impl RpcClient {
                             let inner = Arc::clone(&inner);
                             let cf = cf.clone();
                             let task = Self::region_context_by_id(inner, region.id)
-                                .map(move |(region, client)| RawContext::new(region, client, cf))
-                                .and_then(move |context| {
-                                    context.client().raw_batch_put(context, pairs)
-                                });
+                                .map(|(region, client)| RawContext::new(region, client, cf))
+                                .and_then(|context| context.client().raw_batch_put(context, pairs));
                             tasks.push(task);
                         }
                         future::join_all(tasks)
@@ -338,7 +329,7 @@ impl RpcClient {
         cf: Option<ColumnFamily>,
     ) -> impl Future<Item = (), Error = Error> {
         Self::raw(self.inner(), &key, cf)
-            .and_then(move |context| context.client().raw_delete(context, key))
+            .and_then(|context| context.client().raw_delete(context, key))
     }
 
     pub fn raw_batch_delete(
@@ -355,8 +346,8 @@ impl RpcClient {
                     let inner = Arc::clone(&inner);
                     let cf = cf.clone();
                     let task = Self::region_context_by_id(inner, region.id)
-                        .map(move |(region, client)| RawContext::new(region, client, cf))
-                        .and_then(move |context| context.client().raw_batch_delete(context, keys));
+                        .map(|(region, client)| RawContext::new(region, client, cf))
+                        .and_then(|context| context.client().raw_batch_delete(context, keys));
                     tasks.push(task);
                 }
                 future::join_all(tasks)
@@ -386,35 +377,33 @@ impl RpcClient {
         );
         let inner = Arc::clone(&self.inner);
         loop_fn((inner, scan), |(inner, scan)| {
-            inner
-                .locate_key(scan.start_key())
-                .and_then(move |location| {
-                    let region = location.into_inner();
-                    let cf = scan.cf.clone();
-                    Self::region_context_by_id(Arc::clone(&inner), region.id)
-                        .map(move |(region, client)| {
-                            (scan, region.range(), RawContext::new(region, client, cf))
-                        })
-                        .and_then(move |(mut scan, region_range, context)| {
-                            let (start_key, end_key) = scan.range();
-                            context
-                                .client()
-                                .raw_scan(context, start_key, end_key, scan.limit, scan.key_only)
-                                .map(move |pairs| (scan, region_range, pairs))
-                        })
-                        .map(move |(mut scan, region_range, mut pairs)| {
-                            let limit = scan.limit;
-                            scan.result_mut().append(&mut pairs);
-                            if scan.result().len() as u32 >= limit {
-                                Loop::Break(scan.into_inner())
-                            } else {
-                                match scan.next(region_range) {
-                                    ScanRegionsStatus::Continue => Loop::Continue((inner, scan)),
-                                    ScanRegionsStatus::Break => Loop::Break(scan.into_inner()),
-                                }
+            inner.locate_key(scan.start_key()).and_then(|location| {
+                let region = location.into_inner();
+                let cf = scan.cf.clone();
+                Self::region_context_by_id(Arc::clone(&inner), region.id)
+                    .map(|(region, client)| {
+                        (scan, region.range(), RawContext::new(region, client, cf))
+                    })
+                    .and_then(|(mut scan, region_range, context)| {
+                        let (start_key, end_key) = scan.range();
+                        context
+                            .client()
+                            .raw_scan(context, start_key, end_key, scan.limit, scan.key_only)
+                            .map(|pairs| (scan, region_range, pairs))
+                    })
+                    .map(|(mut scan, region_range, mut pairs)| {
+                        let limit = scan.limit;
+                        scan.result_mut().append(&mut pairs);
+                        if scan.result().len() as u32 >= limit {
+                            Loop::Break(scan.into_inner())
+                        } else {
+                            match scan.next(region_range) {
+                                ScanRegionsStatus::Continue => Loop::Continue((inner, scan)),
+                                ScanRegionsStatus::Break => Loop::Break(scan.into_inner()),
                             }
-                        })
-                })
+                        }
+                    })
+            })
         })
     }
 
@@ -427,7 +416,7 @@ impl RpcClient {
     ) -> impl Future<Item = Vec<KvPair>, Error = Error> {
         drop(ranges);
         drop(cf);
-        future::err(Error::unimplemented())
+        future::err(Error::Unimplemented)
     }
 
     pub fn raw_delete_range(
@@ -438,31 +427,27 @@ impl RpcClient {
         let scan: ScanRegionsContext<(), Option<ColumnFamily>> = ScanRegionsContext::new(range, cf);
         let inner = Arc::clone(&self.inner);
         loop_fn((inner, scan), |(inner, scan)| {
-            inner
-                .locate_key(scan.start_key())
-                .and_then(move |location| {
-                    let region = location.into_inner();
-                    let cf = scan.clone();
-                    Self::region_context_by_id(Arc::clone(&inner), region.id)
-                        .map(move |(region, client)| {
-                            (scan, region.range(), RawContext::new(region, client, cf))
-                        })
-                        .and_then(move |(mut scan, region_range, context)| {
-                            let (start_key, end_key) = scan.range();
-                            let start_key = start_key.expect("start key must be specified");
-                            let end_key = end_key.expect("end key must be specified");
-                            context
-                                .client()
-                                .raw_delete_range(context, start_key, end_key)
-                                .map(move |_| (scan, region_range))
-                        })
-                        .map(
-                            move |(mut scan, region_range)| match scan.next(region_range) {
-                                ScanRegionsStatus::Continue => Loop::Continue((inner, scan)),
-                                ScanRegionsStatus::Break => Loop::Break(()),
-                            },
-                        )
-                })
+            inner.locate_key(scan.start_key()).and_then(|location| {
+                let region = location.into_inner();
+                let cf = scan.clone();
+                Self::region_context_by_id(Arc::clone(&inner), region.id)
+                    .map(|(region, client)| {
+                        (scan, region.range(), RawContext::new(region, client, cf))
+                    })
+                    .and_then(|(mut scan, region_range, context)| {
+                        let (start_key, end_key) = scan.range();
+                        let start_key = start_key.expect("start key must be specified");
+                        let end_key = end_key.expect("end key must be specified");
+                        context
+                            .client()
+                            .raw_delete_range(context, start_key, end_key)
+                            .map(|_| (scan, region_range))
+                    })
+                    .map(|(mut scan, region_range)| match scan.next(region_range) {
+                        ScanRegionsStatus::Continue => Loop::Continue((inner, scan)),
+                        ScanRegionsStatus::Break => Loop::Break(()),
+                    })
+            })
         })
     }
 }
