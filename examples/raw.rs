@@ -33,7 +33,7 @@ fn main() -> Result<()> {
         Config::new(args.pd)
     };
 
-    // When we first create a client we recieve a `Connect` structure which must be resolved before
+    // When we first create a client we receive a `Connect` structure which must be resolved before
     // the client is actually connected and usable.
     let unconnnected_client = Client::new(&config);
     let client = unconnnected_client.wait()?;
@@ -45,9 +45,8 @@ fn main() -> Result<()> {
     // Here we set the key `TiKV` to have the value `Rust` associated with it.
     let put_request = client.put(KEY, VALUE);
     put_request.wait()?; // Returns a `tikv_client::Error` on failure.
-    println!("Put key \"{}\", value \"{}\".", KEY, VALUE);
+    println!("Put key {:?}, value {:?}.", KEY, VALUE);
 
-    //
     // Unlike a standard Rust HashMap all calls take owned values. This is because under the hood
     // protobufs must take ownership of the data. If we only took a borrow we'd need to internally
     // clone it. This is against Rust API guidelines, so you must manage this yourself.
@@ -56,48 +55,59 @@ fn main() -> Result<()> {
     // This type is practical to use for real things, and usage forces an internal copy.
     //
     // It is best to pass a `Vec<u8>` in terms of explictness and speed. `String`s and a few other
-    // types are supported  as well, but it all ends up as `Vec<u8>` in the end.
-    let key: String = String::from(KEY);
-    let value: Value = client.get(key.clone()).wait()?.expect("value must exist");
-    assert_eq!(value.as_ref(), VALUE.as_bytes());
-    println!("Get key \"{:?}\" returned value \"{:?}\".", value, KEY);
+    // types are supported as well, but it all ends up as `Vec<u8>` in the end.
+    let value: Option<Value> = client.get(KEY).wait()?;
+    assert_eq!(value, Some(Value::from(VALUE)));
+    println!("Get key {:?} returned value {:?}.", Key::from(KEY), value);
 
     // You can also set the `ColumnFamily` used by the request.
     // This is *advanced usage* and should have some special considerations.
     client
-        .delete(key.clone())
+        .delete(KEY)
         .wait()
         .expect("Could not delete value");
-    println!("Key: {:?} deleted", key);
+    println!("Key: {:?} deleted", Key::from(KEY));
 
-    client
-        .get(key)
+    // Here we check if the key has been deleted from the key-value store.
+    let value: Option<Value> = client
+        .get(KEY)
         .wait()
-        .expect_err("Get returned value for not existing key");
+        .expect("Could not get just deleted entry");
+    assert!(value.is_none());
 
-    let pairs: Vec<KvPair> = (1..3)
-        .map(|i| KvPair::from((Key::from(format!("k{}", i)), Value::from(format!("v{}", i)))))
-        .collect();
+    // You can ask to write multiple key-values at the same time, it is much more
+    // performant because it is passed in one request to the key-value store.
+    let pairs = vec![
+        KvPair::from(("k1", "v1")),
+        KvPair::from(("k2", "v2")),
+        KvPair::from(("k3", "v3")),
+    ];
     client
-        .batch_put(pairs.clone())
+        .batch_put(pairs)
         .wait()
         .expect("Could not put pairs");
 
-    let keys = vec![Key::from(b"k1".to_vec()), Key::from(b"k2".to_vec())];
-
+    // Same thing when you want to retrieve multiple values.
+    let keys = vec![Key::from("k1"), Key::from("k2")];
     let values = client
         .batch_get(keys.clone())
         .wait()
         .expect("Could not get values");
     println!("Found values: {:?} for keys: {:?}", values, keys);
 
-    let start: Key = b"k1".to_vec().into();
-    let end: Key = b"k2".to_vec().into();
-    client
-        .scan(start.clone()..end.clone(), 10)
+    // Scanning a range of keys is also possible giving it two bounds
+    // it will returns all entries between these two.
+    let start = "k1";
+    let end = "k2";
+    let pairs = client
+        .scan(start..=end, 10)
         .key_only()
         .wait()
         .expect("Could not scan");
+
+    let keys: Vec<_> = pairs.into_iter().map(|p| p.key().clone()).collect();
+    assert_eq!(&keys, &[Key::from("k1"), Key::from("k2")]);
+    println!("Scaning from {:?} to {:?} gives: {:?}", start, end, keys);
 
     // Cleanly exit.
     Ok(())
