@@ -16,6 +16,7 @@
 use futures::Future;
 use serde_derive::*;
 use std::{
+    fmt,
     ops::{
         Bound, Deref, DerefMut, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo,
         RangeToInclusive,
@@ -34,6 +35,17 @@ pub mod transaction;
 pub use crate::errors::Error;
 #[doc(inline)]
 pub use crate::errors::Result;
+
+struct HexRepr<'a>(pub &'a [u8]);
+
+impl<'a> fmt::Display for HexRepr<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for byte in self.0 {
+            write!(f, "{:02X}", byte)?;
+        }
+        Ok(())
+    }
+}
 
 /// The key part of a key/value pair.
 ///
