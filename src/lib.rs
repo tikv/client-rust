@@ -263,7 +263,7 @@ impl fmt::Debug for Value {
 ///
 /// Many functions which accept a `KvPair` accept an `Into<KvPair>`, which means all of the above
 /// types (Like a `(Key, Value)`) can be passed directly to those functions.
-#[derive(Default, Clone, Eq, PartialEq, Debug)]
+#[derive(Default, Clone, Eq, PartialEq)]
 pub struct KvPair(Key, Value);
 
 impl KvPair {
@@ -332,6 +332,16 @@ where
 {
     fn from((k, v): (K, V)) -> Self {
         KvPair(k.into(), v.into())
+    }
+}
+
+impl fmt::Debug for KvPair {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let KvPair(key, value) = self;
+        match str::from_utf8(&value) {
+            Ok(s) => write!(f, "KvPair({}, {:?})", HexRepr(&key), s),
+            Err(_) => write!(f, "KvPair({}, {})", HexRepr(&key), HexRepr(&value)),
+        }
     }
 }
 
