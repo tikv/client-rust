@@ -22,6 +22,7 @@ use std::{
         RangeToInclusive,
     },
     path::PathBuf,
+    str,
     time::Duration,
     u8::{MAX as U8_MAX, MIN as U8_MIN},
 };
@@ -197,7 +198,7 @@ impl fmt::Debug for Key {
 /// **But, you should not need to worry about all this:** Many functions which accept a `Value`
 /// accept an `Into<Value>`, which means all of the above types can be passed directly to those
 /// functions.
-#[derive(Default, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Default, Clone, Eq, PartialEq, Hash)]
 pub struct Value(Vec<u8>);
 
 impl Value {
@@ -237,6 +238,15 @@ impl Deref for Value {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl fmt::Debug for Value {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match str::from_utf8(&self.0) {
+            Ok(s) => write!(f, "Value({:?})", s),
+            Err(_) => write!(f, "Value({})", HexRepr(&self.0)),
+        }
     }
 }
 
