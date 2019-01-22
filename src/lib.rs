@@ -84,7 +84,7 @@ impl<'a> fmt::Display for HexRepr<'a> {
 /// **But, you should not need to worry about all this:** Many functions which accept a `Key`
 /// accept an `Into<Key>`, which means all of the above types can be passed directly to those
 /// functions.
-#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
+#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Key(Vec<u8>);
 
 impl Key {
@@ -151,6 +151,12 @@ impl Deref for Key {
 impl DerefMut for Key {
     fn deref_mut(&mut self) -> &mut [u8] {
         &mut self.0
+    }
+}
+
+impl fmt::Debug for Key {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Key({})", HexRepr(&self.0))
     }
 }
 
