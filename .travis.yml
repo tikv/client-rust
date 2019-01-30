@@ -8,7 +8,6 @@ os:
 rust:
   - stable
   - nightly
-cache: cargo
 env:
   global:
     - RUST_BACKTRACE=1
