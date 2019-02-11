@@ -55,11 +55,11 @@ impl From<errorpb::Error> for Error {
                 e.take_start_key(),
                 e.take_end_key(),
             )
-        } else if e.has_stale_epoch() {
+        } else if e.has_epoch_not_match() {
             Error::StaleEpoch(Some(format!(
                 "{}. New epoch: {:?}",
                 message,
-                e.get_stale_epoch().get_new_regions()
+                e.get_epoch_not_match().get_current_regions()
             )))
         } else if e.has_server_is_busy() {
             let mut e = e.take_server_is_busy();

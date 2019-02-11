@@ -26,6 +26,7 @@ log = "0.3.9"
 
 [dependencies.kvproto]
 git = "https://github.com/pingcap/kvproto.git"
+rev  = "f9b9e7d362c7cc2c90202fc7c300b2e466cbfbf2"
 
 [dependencies.prometheus]
 version = "0.4.2"
