@@ -17,11 +17,13 @@
 use futures::Future;
 use serde_derive::*;
 use std::{
+    fmt,
     ops::{
         Bound, Deref, DerefMut, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo,
         RangeToInclusive,
     },
     path::PathBuf,
+    str,
     time::Duration,
     u8::{MAX as U8_MAX, MIN as U8_MIN},
 };
@@ -37,6 +39,17 @@ pub use crate::errors::Error;
 pub use crate::errors::ErrorKind;
 #[doc(inline)]
 pub use crate::errors::Result;
+
+struct HexRepr<'a>(pub &'a [u8]);
+
+impl<'a> fmt::Display for HexRepr<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for byte in self.0 {
+            write!(f, "{:02X}", byte)?;
+        }
+        Ok(())
+    }
+}
 
 /// The key part of a key/value pair.
 ///
@@ -75,7 +88,7 @@ pub use crate::errors::Result;
 /// **But, you should not need to worry about all this:** Many functions which accept a `Key`
 /// accept an `Into<Key>`, which means all of the above types can be passed directly to those
 /// functions.
-#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
+#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Key(Vec<u8>);
 
 impl Key {
@@ -145,6 +158,12 @@ impl DerefMut for Key {
     }
 }
 
+impl fmt::Debug for Key {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Key({})", HexRepr(&self.0))
+    }
+}
+
 /// The value part of a key/value pair.
 ///
 /// In TiKV, values are an ordered sequence of bytes. This has an advantage over choosing `String`
@@ -182,7 +201,7 @@ impl DerefMut for Key {
 /// **But, you should not need to worry about all this:** Many functions which accept a `Value`
 /// accept an `Into<Value>`, which means all of the above types can be passed directly to those
 /// functions.
-#[derive(Default, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Default, Clone, Eq, PartialEq, Hash)]
 pub struct Value(Vec<u8>);
 
 impl Value {
@@ -225,6 +244,15 @@ impl Deref for Value {
     }
 }
 
+impl fmt::Debug for Value {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match str::from_utf8(&self.0) {
+            Ok(s) => write!(f, "Value({:?})", s),
+            Err(_) => write!(f, "Value({})", HexRepr(&self.0)),
+        }
+    }
+}
+
 /// A key/value pair.
 ///
 /// ```rust
@@ -238,7 +266,7 @@ impl Deref for Value {
 ///
 /// Many functions which accept a `KvPair` accept an `Into<KvPair>`, which means all of the above
 /// types (Like a `(Key, Value)`) can be passed directly to those functions.
-#[derive(Default, Clone, Eq, PartialEq, Debug)]
+#[derive(Default, Clone, Eq, PartialEq)]
 pub struct KvPair(Key, Value);
 
 impl KvPair {
@@ -307,6 +335,16 @@ where
 {
     fn from((k, v): (K, V)) -> Self {
         KvPair(k.into(), v.into())
+    }
+}
+
+impl fmt::Debug for KvPair {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let KvPair(key, value) = self;
+        match str::from_utf8(&value) {
+            Ok(s) => write!(f, "KvPair({}, {:?})", HexRepr(&key), s),
+            Err(_) => write!(f, "KvPair({}, {})", HexRepr(&key), HexRepr(&value)),
+        }
     }
 }
 
