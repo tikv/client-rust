@@ -66,7 +66,7 @@ impl Client {
     /// # let connected_client = connecting_client.wait().unwrap();
     /// let key = "TiKV";
     /// let req = connected_client.get(key);
-    /// let result: Value = req.wait().unwrap();
+    /// let result: Option<Value> = req.wait().unwrap();
     /// ```
     pub fn get(&self, key: impl Into<Key>) -> Get {
         Get::new(self.rpc(), GetInner::new(key.into()))
@@ -388,7 +388,7 @@ impl Get {
 }
 
 impl Future for Get {
-    type Item = Value;
+    type Item = Option<Value>;
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -407,7 +407,7 @@ impl GetInner {
 }
 
 impl RequestInner for GetInner {
-    type Resp = Value;
+    type Resp = Option<Value>;
 
     fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
         Box::new(client.raw_get(self.key, cf))
