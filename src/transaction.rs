@@ -17,7 +17,7 @@
 //!
 //! This interface offers SQL-like transactions on top of the raw interface.
 //!
-//! **Warning:** It is not advisible to use the both raw and transactional functionality in the same keyspace.
+//! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 //!
 
 use crate::{Config, Error, Key, KvPair, Value};

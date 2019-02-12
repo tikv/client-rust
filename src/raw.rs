@@ -18,7 +18,7 @@
 //! This interface offers optimal performance as it does not require coordination with a timestamp
 //! oracle, while the transactional interface does.
 //!
-//! **Warning:** It is not advisible to use the both raw and transactional functionality in the same keyspace.
+//! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 //!
 use crate::{rpc::RpcClient, Config, Error, Key, KeyRange, KvFuture, KvPair, Result, Value};
 use futures::{future, Async, Future, Poll};

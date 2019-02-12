@@ -34,7 +34,7 @@
 //! There are no special requirements to use this. It is a Rust 2018 edition crate supporting
 //! stable and nightly.
 //!
-//! To use this crate in your project, depend on it in the `Cargo.toml` of your Rust project:
+//! To use this crate in your project, add it as a dependency in the `Cargo.toml` of your Rust project:
 //!
 //! ```toml
 //! [dependencies]
@@ -43,7 +43,7 @@
 //! futures = "0.1" # You'll need this later.
 //! ```
 //!
-//! Then give a `cargo build --package tikv-client` to test building the crate.
+//! Then run a `cargo build --package tikv-client` command to test building the crate.
 //!
 //! Next, you need to choose the API appropriate for your needs.
 //!
