@@ -19,8 +19,8 @@
 //! > in active development. You're encouraged to use this library for testing and help us find
 //! > problems!
 //!
-//! This crate provides Rust bindings to [TiKV](https://github.com/tikv/tikv), a distributed
-//! transactional Key-Value database written in Rust.
+//! This crate provides a clean, ready to use client for [TiKV](https://github.com/tikv/tikv), a
+//! distributed transactional Key-Value database written in Rust.
 //!
 //! With this crate you can easily connect to any TiKV deployment, interact with it, and mutate the
 //! data it contains.
@@ -52,8 +52,8 @@
 //! This crate offers both [**raw**](raw/index.html) and
 //! [**transactional**](transaction/index.html) APIs. You should choose just one for your system.
 //!
-//! The *consequence* of supporting transactions is increased overhead of coordination with `pd`
-//! for timestamp acquisition. This is approximately 1 RTT.
+//! The *consequence* of supporting transactions is increased overhead of coordination with the
+//! placement driver for timestamp acquisition. This is approximately 1 RTT.
 //!
 //! *While it is possible to use both APIs at the same time, doing so is unsafe and unsupported.*
 //!
@@ -62,7 +62,7 @@
 //!
 //! ### Transactional
 //!
-//! The [transactional](transaction/index.html) API supports **transactions** via Multi-View
+//! The [transactional](transaction/index.html) API supports **transactions** via Multi-Version
 //! Concurrency Control (MVCC).
 //!
 //! **Best when you mostly do** complex sets of actions, actions which may require a rollback,
@@ -78,7 +78,7 @@
 //! transactional abilities.
 //!
 //! **Best when you mostly do** single row changes, and have very limited cross-row (eg. foreign
-//! key) requirements.
+//! key) requirements. You will not be able to use transactions with this API.
 //!
 //! ```rust
 //! use tikv_client::{*, raw::*};
