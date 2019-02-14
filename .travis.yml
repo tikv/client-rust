@@ -15,8 +15,11 @@ env:
 
 addons:
   apt:
+    update: true
+    sources:
+      - sourceline: 'ppa:maarten-fonville/protobuf'
     packages:
-      - protobuf-compiler
+      - protobuf
 
 install:
   - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then rustup component add rustfmt; fi
