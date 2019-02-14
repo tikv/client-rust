@@ -3,7 +3,7 @@ sudo: false
 language: rust
 os:
   - linux
-  - windows
+  # - windows
   - osx
 rust:
   - stable
@@ -13,12 +13,15 @@ env:
     - RUST_BACKTRACE=1
     - RUSTFLAGS="-D warnings"
 
+addons:
+  apt:
+    packages:
+      - protobuf-compiler
+
 install:
   - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then rustup component add rustfmt; fi
   - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then rustup component add clippy; fi
-  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then apt-get install protobuf-compiler; fi
   - if [[ $TRAVIS_OS_NAME == "windows" ]]; then choco install golang cmake strawberryperl protoc; fi
-  - if [[ $TRAVIS_OS_NAME == "windows" ]]; then refreshenv; fi
   - if [[ $TRAVIS_OS_NAME == "windows" ]]; then export PATH="$PATH:/c/Go/bin/:/c/Program Files/CMake/bin"; fi
 
 script:
