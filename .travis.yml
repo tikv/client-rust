@@ -20,6 +20,11 @@ addons:
       - sourceline: 'ppa:maarten-fonville/protobuf'
     packages:
       - protobuf-compiler
+  homebrew:
+    packages:
+      - protobuf
+      - cmake
+      - go
 
 install:
   - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then rustup component add rustfmt; fi
