@@ -11,18 +11,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// Raw related functionality.
-///
-/// Using the [`raw::Client`](struct.Client.html) you can utilize TiKV's raw interface.
-///
-/// This interface offers optimal performance as it does not require coordination with a timestamp
-/// oracle, while the transactional interface does.
-///
-/// **Warning:** It is not advisible to use the both raw and transactional functionality in the same keyspace.
-///
-use crate::{
-    rpc::RpcClient, Config, Error, Key, KeyRange, KvFuture, KvPair, Result, Value,
-};
+//! Raw related functionality.
+//!
+//! Using the [`raw::Client`](struct.Client.html) you can utilize TiKV's raw interface.
+//!
+//! This interface offers optimal performance as it does not require coordination with a timestamp
+//! oracle, while the transactional interface does.
+//!
+//! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
+//!
+use crate::{rpc::RpcClient, Config, Error, Key, KeyRange, KvFuture, KvPair, Result, Value};
 use futures::{future, Async, Future, Poll};
 use std::{
     ops::{Bound, Deref},
@@ -320,7 +318,7 @@ impl Deref for ColumnFamily {
     }
 }
 
-pub trait RequestInner: Sized {
+trait RequestInner: Sized {
     type Resp;
 
     fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp>;
