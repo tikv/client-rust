@@ -285,7 +285,7 @@ impl RpcClient {
         cf: Option<ColumnFamily>,
     ) -> impl Future<Item = (), Error = Error> {
         if value.is_empty() {
-            Either::A(future::err(Error::EmptyValue))
+            Either::A(future::err(Error::empty_value()))
         } else {
             Either::B(
                 Self::raw(self.inner(), &key, cf)
@@ -300,7 +300,7 @@ impl RpcClient {
         cf: Option<ColumnFamily>,
     ) -> impl Future<Item = (), Error = Error> {
         if pairs.iter().any(|p| p.value().is_empty()) {
-            Either::A(future::err(Error::EmptyValue))
+            Either::A(future::err(Error::empty_value()))
         } else {
             let inner = self.inner();
             Either::B(
@@ -416,7 +416,7 @@ impl RpcClient {
     ) -> impl Future<Item = Vec<KvPair>, Error = Error> {
         drop(ranges);
         drop(cf);
-        future::err(Error::Unimplemented)
+        future::err(Error::unimplemented())
     }
 
     pub fn raw_delete_range(

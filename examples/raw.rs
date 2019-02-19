@@ -70,10 +70,8 @@ fn main() -> Result<()> {
         .expect("Could not delete value");
     println!("Key: {:?} deleted", key);
 
-    client
-        .get(key)
-        .wait()
-        .expect_err("Get returned value for not existing key");
+    // Get returns None for non-existing key
+    assert!(client.get(key).wait()?.is_none());
 
     let pairs: Vec<KvPair> = (1..3)
         .map(|i| KvPair::from((Key::from(format!("k{}", i)), Value::from(format!("v{}", i)))))

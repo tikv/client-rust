@@ -139,12 +139,12 @@ impl PdReactor {
         let (tx, rx) = client.wl().client.tso().unwrap();
         let tso_rx = client.wl().reactor.tso_rx.take().unwrap();
         handle.spawn(
-            tx.sink_map_err(Error::Grpc)
+            tx.sink_map_err(Into::into)
                 .send_all(tso_rx.then(|r| match r {
                     Ok(r) => Ok((r, WriteFlags::default())),
                     Err(()) => Err(internal_err!("failed to recv tso requests")),
                 }))
-                .then(|r| match r {
+                .then(|r: Result<_>| match r {
                     Ok((mut sender, _)) => {
                         sender.get_mut().cancel();
                         Ok(())
@@ -220,7 +220,7 @@ impl PdReactor {
             // Schedule tso request to run.
             self.schedule(PdTask::Request);
         }
-        rx.map_err(Error::Canceled).then(move |r| context.done(r))
+        rx.map_err(Into::into).then(move |r| context.done(r))
     }
 }
 
@@ -362,10 +362,10 @@ fn connect(
 ) -> Result<(pdpb_grpc::PdClient, pdpb::GetMembersResponse)> {
     let client = security_mgr.connect(env, addr, pdpb_grpc::PdClient::new)?;
     let option = CallOption::default().timeout(timeout);
-    match client.get_members_opt(&pdpb::GetMembersRequest::new(), option) {
-        Ok(resp) => Ok((client, resp)),
-        Err(e) => Err(Error::Grpc(e)),
-    }
+    let resp = client
+        .get_members_opt(&pdpb::GetMembersRequest::new(), option)
+        .map_err(Error::from)?;
+    Ok((client, resp))
 }
 
 fn try_connect(
