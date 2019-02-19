@@ -220,8 +220,8 @@ impl From<String> for Key {
     }
 }
 
-impl From<&str> for Key {
-    fn from(v: &str) -> Key {
+impl From<&'static str> for Key {
+    fn from(v: &'static str) -> Key {
         Key(v.as_bytes().to_vec())
     }
 }
@@ -334,8 +334,8 @@ impl From<String> for Value {
     }
 }
 
-impl From<&str> for Value {
-    fn from(v: &str) -> Value {
+impl From<&'static str> for Value {
+    fn from(v: &'static str) -> Value {
         Value(v.as_bytes().to_vec())
     }
 }
