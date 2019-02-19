@@ -679,7 +679,7 @@ impl RequestInner for ScanInner {
 
     fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
         if self.limit > MAX_RAW_KV_SCAN_LIMIT {
-            Box::new(future::err(Error::MaxScanLimitExceeded(
+            Box::new(future::err(Error::max_scan_limit_exceeded(
                 self.limit,
                 MAX_RAW_KV_SCAN_LIMIT,
             )))
@@ -751,13 +751,13 @@ impl RequestInner for BatchScanInner {
 
     fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
         if self.each_limit > MAX_RAW_KV_SCAN_LIMIT {
-            Box::new(future::err(Error::MaxScanLimitExceeded(
+            Box::new(future::err(Error::max_scan_limit_exceeded(
                 self.each_limit,
                 MAX_RAW_KV_SCAN_LIMIT,
             )))
         } else if self.ranges.iter().any(Result::is_err) {
             // All errors must be InvalidKeyRange so we can simply return a new InvalidKeyRange
-            Box::new(future::err(Error::InvalidKeyRange))
+            Box::new(future::err(Error::invalid_key_range()))
         } else {
             Box::new(client.raw_batch_scan(
                 self.ranges.into_iter().map(Result::unwrap).collect(),

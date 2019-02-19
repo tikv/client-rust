@@ -102,7 +102,7 @@ impl PdClient {
             let region = if resp.has_region() {
                 resp.take_region()
             } else {
-                return Err(Error::RegionForKeyNotFound(key));
+                Err(Error::region_for_key_not_found(key))?
             };
             let leader = if resp.has_leader() {
                 Some(resp.take_leader())
@@ -128,7 +128,7 @@ impl PdClient {
             let region = if resp.has_region() {
                 resp.take_region()
             } else {
-                return Err(Error::RegionNotFound(region_id, None));
+                Err(Error::region_not_found(region_id, None))?
             };
             let leader = if resp.has_leader() {
                 Some(resp.take_leader())
@@ -155,7 +155,7 @@ impl PdClient {
             let cli = &cli.rl().client;
             executor(cli, option)
                 .unwrap()
-                .map_err(Error::Grpc)
+                .map_err(Into::into)
                 .and_then(|r| {
                     {
                         let header = r.header();
