@@ -11,14 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/*! Transactional related functionality.
+//! Transactional related functionality.
+//!
+//! Using the [`transaction::Client`](struct.Client.html) you can utilize TiKV's transactional interface.
+//!
+//! This interface offers SQL-like transactions on top of the raw interface.
+//!
+//! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
+//!
 
-Using the [`transaction::Client`](struct.Client.html) you can utilize TiKV's transactional interface.
-
-This interface offers SQL-like transactions on top of the raw interface.
-
-**Warning:** It is not advisible to use the both raw and transactional functionality in the same keyspace.
- */
 use crate::{Config, Error, Key, KvPair, Value};
 use futures::{Future, Poll, Stream};
 use std::ops::RangeBounds;
