@@ -11,15 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// Raw related functionality.
-///
-/// Using the [`raw::Client`](struct.Client.html) you can utilize TiKV's raw interface.
-///
-/// This interface offers optimal performance as it does not require coordination with a timestamp
-/// oracle, while the transactional interface does.
-///
-/// **Warning:** It is not advisible to use the both raw and transactional functionality in the same keyspace.
-///
+//! Raw related functionality.
+//!
+//! Using the [`raw::Client`](struct.Client.html) you can utilize TiKV's raw interface.
+//!
+//! This interface offers optimal performance as it does not require coordination with a timestamp
+//! oracle, while the transactional interface does.
+//!
+//! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
+//!
 use crate::{rpc::RpcClient, Config, Error, Key, KeyRange, KvFuture, KvPair, Result, Value};
 use futures::{future, Async, Future, Poll};
 use std::{
@@ -318,7 +318,7 @@ impl Deref for ColumnFamily {
     }
 }
 
-pub trait RequestInner: Sized {
+trait RequestInner: Sized {
     type Resp;
 
     fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp>;
@@ -679,7 +679,7 @@ impl RequestInner for ScanInner {
 
     fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
         if self.limit > MAX_RAW_KV_SCAN_LIMIT {
-            Box::new(future::err(Error::MaxScanLimitExceeded(
+            Box::new(future::err(Error::max_scan_limit_exceeded(
                 self.limit,
                 MAX_RAW_KV_SCAN_LIMIT,
             )))
@@ -751,13 +751,13 @@ impl RequestInner for BatchScanInner {
 
     fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
         if self.each_limit > MAX_RAW_KV_SCAN_LIMIT {
-            Box::new(future::err(Error::MaxScanLimitExceeded(
+            Box::new(future::err(Error::max_scan_limit_exceeded(
                 self.each_limit,
                 MAX_RAW_KV_SCAN_LIMIT,
             )))
         } else if self.ranges.iter().any(Result::is_err) {
             // All errors must be InvalidKeyRange so we can simply return a new InvalidKeyRange
-            Box::new(future::err(Error::InvalidKeyRange))
+            Box::new(future::err(Error::invalid_key_range()))
         } else {
             Box::new(client.raw_batch_scan(
                 self.ranges.into_iter().map(Result::unwrap).collect(),
