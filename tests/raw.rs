@@ -34,7 +34,7 @@ fn wipe_all(client: &Client) {
 }
 
 fn connect() -> Client {
-    let client = Client::new(&Config::new(vec!["127.0.0.1:2379"]))
+    let client = Client::new(Config::new(vec!["127.0.0.1:2379"]))
         .wait()
         .expect("Could not connect to tikv");
     wipe_all(&client);

@@ -35,7 +35,7 @@ fn main() -> Result<()> {
 
     // When we first create a client we recieve a `Connect` structure which must be resolved before
     // the client is actually connected and usable.
-    let unconnnected_client = Client::new(&config);
+    let unconnnected_client = Client::new(config);
     let client = unconnnected_client.wait()?;
 
     // Requests are created from the connected client. These calls return structures which

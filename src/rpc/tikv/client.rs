@@ -133,7 +133,7 @@ macro_rules! has_str_error {
                 if self.get_error().is_empty() {
                     None
                 } else {
-                    Some(Error::kv_error(self.take_error())                    )
+                    Some(Error::kv_error(self.take_error()))
                 }
             }
         }
