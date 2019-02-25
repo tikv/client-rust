@@ -1,44 +1,47 @@
-branches:
-  only:
-    # This is where pull requests from "bors r+" are built.
-    - staging
-    # This is where pull requests from "bors try" are built.
-    - trying
-    # Enable building pull requests.
-    - master
+sudo: false
 
 language: rust
-sudo: false
+os:
+  - linux
+  # - windows # TODO: https://github.com/pingcap/kvproto/issues/355
+  - osx
+rust:
+  - stable
+  - nightly
 env:
   global:
     - RUST_BACKTRACE=1
     - RUSTFLAGS="-D warnings"
-cache: cargo
 
-rust:
-os:
-  - linux
-  - windows
-  - osx
+addons:
+  apt:
+    update: true
+    sources:
+      - sourceline: 'ppa:maarten-fonville/protobuf'
+    packages:
+      - protobuf-compiler
+  homebrew:
+    packages:
+      - protobuf
+      - cmake
+      - go
 
-matrix:
-  include:
-  # This build uses stable and checks rustfmt and clippy.
-  # We don't check them on nightly since their lints and formatting may differ.
-  - rust: stable
-    install:
-      - rustup component add rustfmt-preview
-      - rustup component add clippy-preview
-    before_script:
-      - cargo fmt --all -- --check
-      - cargo clippy --all -- -D clippy
-  # Since many users will use nightlies, also test that.
-  - rust: nightly
-
+install:
+  - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then rustup component add rustfmt; fi
+  - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then rustup component add clippy; fi
+  - if [[ $TRAVIS_OS_NAME == "windows" ]]; then choco install golang cmake strawberryperl protoc; fi
+  - if [[ $TRAVIS_OS_NAME == "windows" ]]; then export PATH="$PATH:/c/Go/bin/:/c/Program Files/CMake/bin"; fi
 
 script:
-  - docker run -d --net=host --name pd --rm pingcap/pd --name "pd" --data-dir "pd" --client-urls "http://127.0.0.1:2379" --advertise-client-urls "http://127.0.0.1:2379"
-  - docker run -d --net=host --name kv --rm pingcap/tikv --pd-endpoints "127.0.0.1:2379" --addr "127.0.0.1:2378" --data-dir "kv"
+  - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then cargo fmt -- --check; fi
+  - if [[ $TRAVIS_RUST_VERSION == "stable" && $TRAVIS_OS_NAME == "linux" ]]; then cargo clippy -- -D clippy::all; fi
   - cargo test --all -- --nocapture
-  # Validate benches still work.
-  - cargo bench --all -- --test
+  # For now we only run full integration tests on Linux. Here's why:
+  # * Docker on OS X is not supported by Travis.
+  # * Docker on Windows seems to not have the correct binary at `"/c/Program Files/Docker/Docker/DockerCli.exe" to switch it to Linux containers.
+  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then docker run -d --net=host --name pd --rm pingcap/pd --name "pd" --data-dir "pd" --client-urls "http://127.0.0.1:2379" --advertise-client-urls "http://127.0.0.1:2379"; fi
+  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then docker run -d --net=host --name kv --rm --ulimit nofile=90000:90000 pingcap/tikv --pd-endpoints "127.0.0.1:2379" --addr "127.0.0.1:2378" --data-dir "kv"; fi
+  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then docker ps; fi
+  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then docker logs pd; fi
+  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then docker logs kv; fi
+  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then PD_ADDR="127.0.0.1:2379" cargo test --all --features integration-tests -- --nocapture; fi

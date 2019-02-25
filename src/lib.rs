@@ -360,7 +360,6 @@ impl fmt::Debug for Value {
             Ok(s) => write!(f, "Value({:?})", s),
             Err(_) => write!(f, "Value({})", HexRepr(&self.0)),
         }
-
     }
 }
 

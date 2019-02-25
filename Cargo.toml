@@ -8,6 +8,12 @@ repository = "https://github.com/tikv/client-rust"
 description = "The rust language implementation of TiKV client."
 edition = "2018"
 
+[features]
+default = []
+# Enable integration tests with a running TiKV and PD instance.
+# Use $PD_ADDRS, comma separated, to set the addresses the tests use. 
+integration-tests = []
+
 [lib]
 name = "tikv_client"
 
@@ -26,7 +32,7 @@ failure = "0.1"
 
 [dependencies.kvproto]
 git = "https://github.com/pingcap/kvproto.git"
-rev  = "f9b9e7d362c7cc2c90202fc7c300b2e466cbfbf2"
+branch  = "raft-0.5.0"
 
 [dependencies.prometheus]
 version = "0.4.2"

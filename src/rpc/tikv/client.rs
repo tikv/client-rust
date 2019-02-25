@@ -11,6 +11,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// TODO: Remove this when txn is done.
+#![allow(dead_code)]
+
 use std::{fmt, sync::Arc, time::Duration};
 
 use futures::Future;
@@ -46,7 +49,7 @@ impl From<errorpb::Error> for Error {
         } else if e.has_region_not_found() {
             Error::region_not_found(e.get_region_not_found().get_region_id(), Some(message))
         } else if e.has_key_not_in_region() {
-            let mut e = e.take_key_not_in_region();
+            let e = e.take_key_not_in_region();
             Error::key_not_in_region(e)
         } else if e.has_epoch_not_match() {
             Error::stale_epoch(Some(format!(
@@ -133,7 +136,7 @@ macro_rules! has_str_error {
                 if self.get_error().is_empty() {
                     None
                 } else {
-                    Some(Error::kv_error(self.take_error())                    )
+                    Some(Error::kv_error(self.take_error()))
                 }
             }
         }
