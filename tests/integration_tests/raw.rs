@@ -35,7 +35,7 @@ fn wipe_all(client: &Client) {
 }
 
 fn connect() -> Client {
-    let client = Client::new(&Config::new(pd_addr()))
+    let client = Client::new(Config::new(pd_addr()))
         .wait()
         .expect("Could not connect to tikv");
     wipe_all(&client);
