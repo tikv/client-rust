@@ -62,10 +62,7 @@ fn main() -> Result<()> {
 
     // You can also set the `ColumnFamily` used by the request.
     // This is *advanced usage* and should have some special considerations.
-    client
-        .delete(KEY)
-        .wait()
-        .expect("Could not delete value");
+    client.delete(KEY).wait().expect("Could not delete value");
     println!("Key: {:?} deleted", Key::from(KEY));
 
     // Here we check if the key has been deleted from the key-value store.
@@ -82,10 +79,7 @@ fn main() -> Result<()> {
         KvPair::from(("k2", "v2")),
         KvPair::from(("k3", "v3")),
     ];
-    client
-        .batch_put(pairs)
-        .wait()
-        .expect("Could not put pairs");
+    client.batch_put(pairs).wait().expect("Could not put pairs");
 
     // Same thing when you want to retrieve multiple values.
     let keys = vec![Key::from("k1"), Key::from("k2")];
