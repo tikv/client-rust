@@ -46,7 +46,7 @@ impl From<errorpb::Error> for Error {
         } else if e.has_region_not_found() {
             Error::region_not_found(e.get_region_not_found().get_region_id(), Some(message))
         } else if e.has_key_not_in_region() {
-            let mut e = e.take_key_not_in_region();
+            let e = e.take_key_not_in_region();
             Error::key_not_in_region(e)
         } else if e.has_epoch_not_match() {
             Error::stale_epoch(Some(format!(
