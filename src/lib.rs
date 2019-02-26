@@ -101,7 +101,7 @@
 //! ]).with_security("root.ca", "internal.cert", "internal.key");
 //!
 //! // Get an unresolved connection.
-//! let connect = Client::new(&config);
+//! let connect = Client::new(config);
 //!
 //! // Resolve the connection into a client.
 //! let client = connect.wait();

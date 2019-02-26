@@ -33,12 +33,12 @@ impl Client {
     /// ```rust,no_run
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::Future;
-    /// let connect = Client::new(&Config::default());
+    /// let connect = Client::new(Config::default());
     /// let client = connect.wait();
     /// ```
     #[cfg_attr(feature = "cargo-clippy", allow(clippy::new_ret_no_self))]
-    pub fn new(config: &Config) -> Connect {
-        Connect::new(config.clone())
+    pub fn new(config: Config) -> Connect {
+        Connect::new(config)
     }
 
     /// Create a new [`Transaction`](struct.Transaction.html) using the timestamp from [`current_timestamp`](struct.Client.html#method.current_timestamp).
@@ -48,7 +48,7 @@ impl Client {
     /// ```rust,no_run
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::Future;
-    /// let connect = Client::new(&Config::default());
+    /// let connect = Client::new(Config::default());
     /// let client = connect.wait().unwrap();
     /// let transaction = client.begin();
     /// // ... Issue some commands.
@@ -64,7 +64,7 @@ impl Client {
     /// ```rust,no_run
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::Future;
-    /// let connect = Client::new(&Config::default());
+    /// let connect = Client::new(Config::default());
     /// let client = connect.wait().unwrap();
     /// let timestamp = client.current_timestamp();
     /// let transaction = client.begin_with_timestamp(timestamp);
@@ -81,7 +81,7 @@ impl Client {
     /// ```rust,no_run
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::Future;
-    /// let connect = Client::new(&Config::default());
+    /// let connect = Client::new(Config::default());
     /// let client = connect.wait().unwrap();
     /// let snapshot = client.snapshot();
     /// // ... Issue some commands.
@@ -95,7 +95,7 @@ impl Client {
     /// ```rust,no_run
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::Future;
-    /// let connect = Client::new(&Config::default());
+    /// let connect = Client::new(Config::default());
     /// let client = connect.wait().unwrap();
     /// let timestamp = client.current_timestamp();
     /// ```
@@ -112,7 +112,7 @@ impl Client {
 /// use tikv_client::{Config, transaction::{Client, Connect}};
 /// use futures::Future;
 ///
-/// let connect: Connect = Client::new(&Config::default());
+/// let connect: Connect = Client::new(Config::default());
 /// let client: Client = connect.wait().unwrap();
 /// ```
 pub struct Connect {
@@ -187,7 +187,7 @@ impl Transaction {
     /// ```rust,no_run
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::Future;
-    /// let connect = Client::new(&Config::default());
+    /// let connect = Client::new(Config::default());
     /// let client = connect.wait().unwrap();
     /// let txn = client.begin();
     /// ```
@@ -202,7 +202,7 @@ impl Transaction {
     /// ```rust,no_run
     /// # use tikv_client::{Config, transaction::Client};
     /// # use futures::Future;
-    /// # let connect = Client::new(&Config::default());
+    /// # let connect = Client::new(Config::default());
     /// # let connected_client = connect.wait().unwrap();
     /// let txn = connected_client.begin();
     /// // ... Do some actions.
@@ -218,7 +218,7 @@ impl Transaction {
     /// ```rust,no_run
     /// # use tikv_client::{Config, transaction::Client};
     /// # use futures::Future;
-    /// # let connect = Client::new(&Config::default());
+    /// # let connect = Client::new(Config::default());
     /// # let connected_client = connect.wait().unwrap();
     /// let txn = connected_client.begin();
     /// // ... Do some actions.
@@ -234,7 +234,7 @@ impl Transaction {
     /// ```rust,no_run
     /// # use tikv_client::{Config, transaction::Client};
     /// # use futures::Future;
-    /// # let connect = Client::new(&Config::default());
+    /// # let connect = Client::new(Config::default());
     /// # let connected_client = connect.wait().unwrap();
     /// let mut txn = connected_client.begin();
     /// // ... Do some actions.
@@ -254,7 +254,7 @@ impl Transaction {
     /// ```rust,no_run
     /// # use tikv_client::{Config, transaction::{Client, Timestamp}};
     /// # use futures::Future;
-    /// # let connect = Client::new(&Config::default());
+    /// # let connect = Client::new(Config::default());
     /// # let connected_client = connect.wait().unwrap();
     /// let txn = connected_client.begin();
     /// // ... Do some actions.
@@ -269,7 +269,7 @@ impl Transaction {
     /// ```rust,no_run
     /// # use tikv_client::{Config, transaction::{Client, Snapshot}};
     /// # use futures::Future;
-    /// # let connect = Client::new(&Config::default());
+    /// # let connect = Client::new(Config::default());
     /// # let connected_client = connect.wait().unwrap();
     /// let txn = connected_client.begin();
     /// // ... Do some actions.
@@ -284,7 +284,7 @@ impl Transaction {
     /// ```rust,no_run
     /// # use tikv_client::{Config, transaction::{Client, IsolationLevel}};
     /// # use futures::Future;
-    /// # let connect = Client::new(&Config::default());
+    /// # let connect = Client::new(Config::default());
     /// # let connected_client = connect.wait().unwrap();
     /// let mut txn = connected_client.begin();
     /// txn.set_isolation_level(IsolationLevel::SnapshotIsolation);
@@ -301,7 +301,7 @@ impl Transaction {
     /// ```rust,no_run
     /// # use tikv_client::{Value, Config, transaction::Client};
     /// # use futures::Future;
-    /// # let connecting_client = Client::new(&Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.wait().unwrap();
     /// let mut txn = connected_client.begin();
     /// let key = "TiKV";
@@ -322,7 +322,7 @@ impl Transaction {
     /// ```rust,no_run
     /// # use tikv_client::{KvPair, Config, transaction::Client};
     /// # use futures::Future;
-    /// # let connecting_client = Client::new(&Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.wait().unwrap();
     /// let mut txn = connected_client.begin();
     /// let keys = vec!["TiKV", "TiDB"];
@@ -350,7 +350,7 @@ impl Transaction {
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, transaction::Client};
     /// # use futures::Future;
-    /// # let connecting_client = Client::new(&Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.wait().unwrap();
     /// let mut txn = connected_client.begin();
     /// let key = "TiKV";
@@ -371,7 +371,7 @@ impl Transaction {
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, transaction::Client};
     /// # use futures::Future;
-    /// # let connecting_client = Client::new(&Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.wait().unwrap();
     /// let mut txn = connected_client.begin();
     /// let key = "TiKV";
