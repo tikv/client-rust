@@ -3,8 +3,7 @@
 use std::ops::{
     Bound, Deref, DerefMut, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
 };
-use std::u8::{MAX as U8_MAX, MIN as U8_MIN};
-use std::{fmt, str};
+use std::{fmt, str, u8};
 
 use crate::{Error, Result};
 
@@ -400,7 +399,7 @@ fn range_to_keys(range: (Bound<Key>, Bound<Key>)) -> Result<(Key, Option<Key>)> 
         Bound::Included(v) => v,
         Bound::Excluded(mut v) => {
             match v.last_mut() {
-                None | Some(&mut U8_MAX) => v.push(0),
+                None | Some(&mut u8::MAX) => v.push(0),
                 Some(v) => *v += 1,
             }
             v
@@ -412,7 +411,7 @@ fn range_to_keys(range: (Bound<Key>, Bound<Key>)) -> Result<(Key, Option<Key>)> 
         Bound::Excluded(mut v) => Some({
             match v.last_mut() {
                 None => (),
-                Some(&mut U8_MIN) => v.pop(),
+                Some(&mut u8::MIN) => v.pop(),
                 Some(v) => *v -= 1,
             }
             v
@@ -468,14 +467,10 @@ impl<T: Into<Key>> KeyRange for (Bound<T>, Bound<T>) {
     }
 }
 
-fn convert_to_bound_key<K>(b: Bound<K>) -> Bound<Key>
-where
-    K: Into<Key>,
-{
-    use std::ops::Bound::*;
+fn convert_to_bound_key(b: Bound<impl Into<Key>>) -> Bound<Key> {
     match b {
-        Included(k) => Included(k.into()),
-        Excluded(k) => Excluded(k.into()),
-        Unbounded => Unbounded,
+        Bound::Included(k) => Bound::Included(k.into()),
+        Bound::Excluded(k) => Bound::Excluded(k.into()),
+        Bound::Unbounded => Bound::Unbounded,
     }
 }

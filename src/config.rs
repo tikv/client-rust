@@ -1,6 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use serde_derive::*;
+use serde_derive::{Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
 
 /// The configuration for either a [`raw::Client`](raw/struct.Client.html) or a
