@@ -31,7 +31,7 @@
 //! [dependencies]
 //! # ...Your other dependencies...
 //! tikv-client = "~0.1"
-//! futures = "0.1" # You'll need this later.
+//! futures-preview = "0.3.0-alpha.15" # You'll need this later.
 //! ```
 //!
 //! Then run a `cargo build --package tikv-client` command to test building the crate.
@@ -81,9 +81,11 @@
 //! ([raw](raw/struct.Client.html), [transactional](transaction/struct.Client.html)).
 //!
 //! ```rust
+//! # #![feature(async_await, await_macro)]
 //! # use tikv_client::{*, raw::*};
-//! use futures::Future;
+//! # use futures::prelude::*;
 //!
+//! # futures::executor::block_on(async {
 //! // Configure endpoints and optional TLS.
 //! let config = Config::new(vec![ // A list of PD endpoints.
 //!     "192.168.0.100:2379",
@@ -94,13 +96,13 @@
 //! let connect = Client::new(config);
 //!
 //! // Resolve the connection into a client.
-//! let client = connect.wait();
+//! let client = await!(connect.into_future());
+//! # });
 //! ```
 //!
 //! At this point, you should seek the documentation in the related API modules.
 
-use futures::Future;
-
+mod compat;
 mod config;
 mod errors;
 mod kv;
@@ -118,5 +120,3 @@ pub use crate::errors::ErrorKind;
 pub use crate::errors::Result;
 #[doc(inline)]
 pub use crate::kv::{Key, KeyRange, KvPair, Value};
-
-pub type KvFuture<Resp> = Box<dyn Future<Item = Resp, Error = Error> + Send>;

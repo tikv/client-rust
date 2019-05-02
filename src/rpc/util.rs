@@ -84,7 +84,7 @@ fn start_global_timer() -> Handle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::Future;
+    use futures::compat::Compat01As03;
     use std::*;
 
     #[test]
@@ -130,7 +130,7 @@ mod tests {
         let delay =
             handle.delay(::std::time::Instant::now() + ::std::time::Duration::from_millis(100));
         let timer = ::std::time::Instant::now();
-        delay.wait().unwrap();
+        futures::executor::block_on(Compat01As03::new(delay)).unwrap();
         assert!(timer.elapsed() >= ::std::time::Duration::from_millis(100));
     }
 }

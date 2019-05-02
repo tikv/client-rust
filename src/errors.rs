@@ -22,7 +22,7 @@ pub enum ErrorKind {
     Grpc(#[fail(cause)] grpcio::Error),
     /// Represents that a futures oneshot channel was cancelled.
     #[fail(display = "A futures oneshot channel was canceled. {}", _0)]
-    Canceled(#[fail(cause)] futures::sync::oneshot::Canceled),
+    Canceled(#[fail(cause)] futures::channel::oneshot::Canceled),
     /// Feature is not implemented.
     #[fail(display = "Unimplemented feature")]
     Unimplemented,
@@ -229,8 +229,8 @@ impl From<grpcio::Error> for Error {
     }
 }
 
-impl From<futures::sync::oneshot::Canceled> for Error {
-    fn from(err: futures::sync::oneshot::Canceled) -> Self {
+impl From<futures::channel::oneshot::Canceled> for Error {
+    fn from(err: futures::channel::oneshot::Canceled) -> Self {
         Error::from(ErrorKind::Canceled(err))
     }
 }

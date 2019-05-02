@@ -19,7 +19,7 @@ name = "tikv_client"
 
 [dependencies]
 failure = "0.1"
-futures = "0.1"
+futures-preview = { version = "0.3.0-alpha.15", features = ["compat"] }
 fxhash = "0.2"
 grpcio = { version = "0.5.0-alpha", features = [ "secure", "prost-codec" ], default-features = false }
 lazy_static = "0.2.1"
@@ -40,3 +40,5 @@ features = ["push", "process"]
 [dev-dependencies]
 clap = "2.32"
 tempdir = "0.3"
+runtime = "0.3.0-alpha.3"
+runtime-tokio = "0.3.0-alpha.3"
