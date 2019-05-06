@@ -14,11 +14,10 @@ use kvproto::{metapb, pdpb, pdpb::PdClient as RpcClient};
 
 use crate::{
     rpc::{
+        context::RequestContext,
         pd::{
-            context::{request_context, PdRequestContext},
-            leader::LeaderClient,
-            request::Request,
-            PdTimestamp, Region, RegionId, Store, StoreId,
+            context::request_context, leader::LeaderClient, request::Request, PdTimestamp, Region,
+            RegionId, Store, StoreId,
         },
         security::SecurityManager,
     },
@@ -136,7 +135,7 @@ impl PdClient {
 
     fn execute<Executor, Resp, RpcFuture>(
         &self,
-        mut context: PdRequestContext<Executor>,
+        mut context: RequestContext<Executor>,
     ) -> impl Future<Output = Result<Resp>>
     where
         Executor: FnMut(&RpcClient, CallOption) -> ::grpcio::Result<RpcFuture> + Send + 'static,
