@@ -31,7 +31,6 @@ use crate::{
             PdTimestamp,
         },
         security::SecurityManager,
-        util::HandyRwLock,
     },
     Error, Result,
 };
@@ -131,10 +130,10 @@ impl PdReactor {
 
     fn init(client: &Arc<RwLock<LeaderClient>>, handle: &OtherHandle) {
         let client = Arc::clone(client);
-        let (tx, rx) = client.wl().client.tso().unwrap();
+        let (tx, rx) = client.write().unwrap().client.tso().unwrap();
         let tx = Compat01As03Sink::new(tx);
         let rx = Compat01As03::new(rx);
-        let tso_rx = client.wl().reactor.tso_rx.take().unwrap(); // Receiver<TsoRequest>: Stream
+        let tso_rx = client.write().unwrap().reactor.tso_rx.take().unwrap(); // Receiver<TsoRequest>: Stream
 
         handle.spawn(
             tx.sink_map_err(Into::into)
@@ -158,7 +157,7 @@ impl PdReactor {
 
         handle.spawn(
             rx.try_for_each(move |resp| {
-                let mut client = client.wl();
+                let mut client = client.write().unwrap();
                 let reactor = &mut client.reactor;
                 let tso_pending = reactor.tso_pending.take().unwrap();
                 reactor.schedule(PdTask::Response(tso_pending, resp));
@@ -174,7 +173,7 @@ impl PdReactor {
     }
 
     fn tso_request(client: &Arc<RwLock<LeaderClient>>) {
-        let mut client = client.wl();
+        let mut client = client.write().unwrap();
         let cluster_id = client.cluster_id;
         let reactor = &mut client.reactor;
         let mut tso_batch = reactor.tso_buffer.take().unwrap();
@@ -203,7 +202,7 @@ impl PdReactor {
                 })
                 .unwrap();
         }
-        client.wl().reactor.tso_buffer = Some(requests);
+        client.write().unwrap().reactor.tso_buffer = Some(requests);
     }
 
     fn dispatch(client: &Arc<RwLock<LeaderClient>>, task: PdTask, handle: &OtherHandle) {
@@ -264,7 +263,7 @@ impl LeaderClient {
             timeout,
         }));
 
-        client.wl().reactor.start(Arc::clone(&client));
+        client.write().unwrap().reactor.start(Arc::clone(&client));
         Ok(client)
     }
 
@@ -276,7 +275,7 @@ impl LeaderClient {
     pub fn reconnect(leader: &Arc<RwLock<LeaderClient>>, interval: u64) -> Result<()> {
         warn!("updating pd client, blocking the tokio core");
         let ((client, members), start) = {
-            let leader = leader.rl();
+            let leader = leader.read().unwrap();
             if leader.last_update.elapsed() < Duration::from_secs(interval) {
                 // Avoid unnecessary updating.
                 return Ok(());
@@ -292,7 +291,7 @@ impl LeaderClient {
 
         {
             let leader_clone = Arc::clone(leader);
-            let mut leader = leader.wl();
+            let mut leader = leader.write().unwrap();
             leader.client = client;
             leader.members = members;
             leader.last_update = Instant::now();

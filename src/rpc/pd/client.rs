@@ -21,7 +21,6 @@ use crate::{
             PdTimestamp, Region, RegionId, Store, StoreId,
         },
         security::SecurityManager,
-        util::HandyRwLock,
     },
     Error, ErrorKind, Result,
 };
@@ -64,7 +63,7 @@ impl PdClient {
         timeout: Duration,
     ) -> Result<PdClient> {
         let leader = LeaderClient::connect(env, endpoints, security_mgr, timeout)?;
-        let cluster_id = leader.rl().cluster_id();
+        let cluster_id = leader.read().unwrap().cluster_id();
 
         Ok(PdClient {
             cluster_id,
@@ -74,7 +73,7 @@ impl PdClient {
     }
 
     fn get_leader(&self) -> pdpb::Member {
-        self.leader.rl().members.get_leader().clone()
+        self.leader.read().unwrap().members.get_leader().clone()
     }
 
     fn get_region_and_leader(
@@ -148,7 +147,7 @@ impl PdClient {
         let mut executor = context.executor();
         let wrapper = move |cli: &RwLock<LeaderClient>| {
             let option = CallOption::default().timeout(timeout);
-            let cli = &cli.rl().client;
+            let cli = &cli.read().unwrap().client;
             executor(cli, option).unwrap().map(|r| match r {
                 Err(e) => Err(ErrorKind::Grpc(e))?,
                 Ok(r) => {
@@ -209,7 +208,7 @@ impl PdClient {
     }
 
     pub fn get_ts(&self) -> impl Future<Output = Result<PdTimestamp>> {
-        self.leader.wl().get_ts()
+        self.leader.write().unwrap().get_ts()
     }
 }
 
