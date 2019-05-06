@@ -9,14 +9,9 @@
 //!
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 //!
-use crate::{rpc::RpcClient, Config, Error, Key, KeyRange, KvPair, Result, Value};
+use crate::{rpc::RpcClient, Config, Error, ErrorKind, Key, KeyRange, KvPair, Result, Value};
 use futures::{future, task::Context, Future, Poll};
-use std::{
-    ops::{Bound, Deref},
-    pin::Pin,
-    sync::Arc,
-    u32,
-};
+use std::{convert::TryFrom, fmt, ops::Bound, pin::Pin, sync::Arc, u32};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
@@ -292,7 +287,7 @@ impl Future for Connect {
 ///
 /// TiKV uses RocksDB's `ColumnFamily` support. You can learn more about RocksDB's `ColumnFamily`s [on their wiki](https://github.com/facebook/rocksdb/wiki/Column-Families).
 ///
-/// By default in TiKV data is stored in three different `ColumnFamily` values, configurable in the TiKV server's configuration:
+/// TiKV data is stored in three different `ColumnFamily` values, configurable in the TiKV server's configuration:
 ///
 /// * Default: Where real user data is stored. Set by `[rocksdb.defaultcf]`.
 /// * Write: Where MVCC and index related data are stored. Set by `[rocksdb.writecf]`.
@@ -300,44 +295,54 @@ impl Future for Connect {
 ///
 /// Not providing a call a `ColumnFamily` means it will use the default value of `default`.
 ///
-/// The best (and only) way to create a [`ColumnFamily`](ColumnFamily) is via the `From` implementation:
-///
-/// ```rust
-/// # use tikv_client::raw::ColumnFamily;
-///
-/// let cf = ColumnFamily::from("write");
-/// let cf = ColumnFamily::from(String::from("write"));
-/// let cf = ColumnFamily::from(&String::from("write"));
-/// ```
-///
-/// This is a *wrapper type* that implements `Deref<Target=String>` so it can be used like one transparently.
-///
 /// **But, you should not need to worry about all this:** Many functions which accept a
 /// `ColumnFamily` accept an `Into<ColumnFamily>`, which means all of the above types can be passed
 /// directly to those functions.
-#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
-pub struct ColumnFamily(String);
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
+pub enum ColumnFamily {
+    Default,
+    Write,
+    Lock,
+}
 
-impl<T> From<T> for ColumnFamily
-where
-    T: ToString,
-{
-    fn from(i: T) -> ColumnFamily {
-        ColumnFamily(i.to_string())
+impl Default for ColumnFamily {
+    fn default() -> ColumnFamily {
+        ColumnFamily::Default
     }
 }
 
-impl ColumnFamily {
-    pub fn into_inner(self) -> String {
-        self.0
+impl<'a> TryFrom<&'a str> for ColumnFamily {
+    type Error = Error;
+
+    fn try_from(s: &'a str) -> Result<ColumnFamily> {
+        match s {
+            "" | "default" => Ok(ColumnFamily::Default),
+            "write" => Ok(ColumnFamily::Write),
+            "lock" => Ok(ColumnFamily::Lock),
+            s => Err(Error::from(ErrorKind::InvalidColumnFamily {
+                supplied: s.to_owned(),
+            })),
+        }
     }
 }
 
-impl Deref for ColumnFamily {
-    type Target = String;
-    fn deref(&self) -> &Self::Target {
-        &self.0
+impl fmt::Display for ColumnFamily {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                ColumnFamily::Default => "default",
+                ColumnFamily::Write => "write",
+                ColumnFamily::Lock => "lock",
+            }
+        )
     }
+}
+
+#[test]
+fn test_cf() {
+    assert!(ColumnFamily::try_from("write").unwrap() == ColumnFamily::Write);
 }
 
 type BoxTryFuture<Resp> = Box<dyn Future<Output = Result<Resp>> + Send>;

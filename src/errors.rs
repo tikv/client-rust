@@ -70,6 +70,9 @@ pub enum ErrorKind {
     /// Represents `kvproto::errorpb::StaleCommand` with additional error message
     #[fail(display = "Stale command. {}", message)]
     StaleCommand { message: String },
+    /// Represents `kvproto::errorpb::StaleCommand` with additional error message
+    #[fail(display = "Invalid value for column family: {}", supplied)]
+    InvalidColumnFamily { supplied: String },
     /// Represents `kvproto::errorpb::StoreNotMatch` with additional error message
     #[fail(
         display = "Requesting store {} when actual store is {}. {}",
