@@ -13,6 +13,7 @@
 
 // Long and nested future chains can quickly result in large generic types.
 #![type_length_limit = "16777216"]
+#![allow(clippy::redundant_closure)]
 
 //! TiKV Client for Rust.
 //!

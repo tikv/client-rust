@@ -18,17 +18,17 @@ integration-tests = []
 name = "tikv_client"
 
 [dependencies]
+failure = "0.1"
 futures = "0.1"
-serde = "1.0"
-serde_derive = "1.0"
-grpcio = { version = "0.4", features = [ "secure" ] }
-protobuf = "~2.0"
-tokio-core = "0.1"
-tokio-timer = "0.2"
 fxhash = "0.2"
+grpcio = { version = "0.4", features = [ "secure" ] }
 lazy_static = "0.2.1"
 log = "0.3.9"
-failure = "0.1"
+protobuf = "~2.0"
+serde = "1.0"
+serde_derive = "1.0"
+tokio-core = "0.1"
+tokio-timer = "0.2"
 
 [dependencies.kvproto]
 git = "https://github.com/pingcap/kvproto.git"
@@ -40,5 +40,5 @@ default-features = false
 features = ["push", "process"]
 
 [dev-dependencies]
-tempdir = "0.3"
 clap = "2.32"
+tempdir = "0.3"
