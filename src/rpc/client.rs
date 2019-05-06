@@ -372,7 +372,7 @@ impl RpcClient {
             inner.locate_key(scan.start_key()).and_then(|location| {
                 let region = location;
                 let cf = scan.state.cf.clone();
-                Self::region_context_by_id(Arc::clone(&inner), region.id)
+                Self::region_context_by_id(Arc::clone(&inner), region.id())
                     .map_ok(|(region, client)| {
                         (scan, region.range(), RawContext::new(region, client, cf))
                     })
@@ -428,7 +428,7 @@ impl RpcClient {
             inner.locate_key(scan.start_key()).and_then(|location| {
                 let region = location;
                 let cf = scan.state.clone();
-                Self::region_context_by_id(Arc::clone(&inner), region.id)
+                Self::region_context_by_id(Arc::clone(&inner), region.id())
                     .map_ok(|(region, client)| {
                         (scan, region.range(), RawContext::new(region, client, cf))
                     })
@@ -484,9 +484,9 @@ impl RegionContext {
 impl From<RegionContext> for kvrpcpb::Context {
     fn from(mut ctx: RegionContext) -> kvrpcpb::Context {
         let mut kvctx = kvrpcpb::Context::default();
-        kvctx.set_region_id(ctx.region.id);
-        kvctx.set_region_epoch(ctx.region.take_region_epoch());
-        kvctx.set_peer(ctx.region.peer().expect("leader must exist").into_inner());
+        kvctx.set_region_id(ctx.region.id());
+        kvctx.set_region_epoch(ctx.region.region.take_region_epoch());
+        kvctx.set_peer(ctx.region.peer().expect("leader must exist"));
         kvctx
     }
 }

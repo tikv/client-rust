@@ -195,7 +195,7 @@ impl PdClient {
                 cli.get_store_async_opt(&req, opt).map(Compat01As03::new)
             },
         ))
-        .map_ok(|mut resp| resp.take_store().into())
+        .map_ok(|mut resp| resp.take_store())
     }
 
     pub fn get_region(&self, key: &[u8]) -> impl Future<Output = Result<Region>> {
