@@ -50,7 +50,7 @@
 //! ## Connect
 //!
 //! Regardless of which API you choose, you'll need to connect your client
-//! ([raw](raw/struct.Client.html), [transactional](transaction/struct.Client.html)).
+//! ([raw](raw::Client), [transactional](transaction::Client)).
 //!
 //! ```rust
 //! # #![feature(async_await)]

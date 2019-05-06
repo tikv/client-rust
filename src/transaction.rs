@@ -2,7 +2,7 @@
 
 //! Transactional related functionality.
 //!
-//! Using the [`transaction::Client`](struct.Client.html) you can utilize TiKV's transactional interface.
+//! Using the [`transaction::Client`](transaction::Client) you can utilize TiKV's transactional interface.
 //!
 //! This interface offers SQL-like transactions on top of the raw interface.
 //!
@@ -14,11 +14,11 @@ use futures::{task::Context, Future, Poll, Stream};
 use std::ops::RangeBounds;
 use std::pin::Pin;
 
-/// The TiKV transactional [`Client`](struct.Client.html) is used to issue requests to the TiKV server and PD cluster.
+/// The TiKV transactional `Client` is used to issue requests to the TiKV server and PD cluster.
 pub struct Client;
 
 impl Client {
-    /// Create a new [`Client`](struct.Client.html) once the [`Connect`](struct.Connect.html) resolves.
+    /// Create a new [`Client`](Client) once the [`Connect`](Connect) resolves.
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
@@ -34,9 +34,9 @@ impl Client {
         Connect::new(config)
     }
 
-    /// Create a new [`Transaction`](struct.Transaction.html) using the timestamp from [`current_timestamp`](struct.Client.html#method.current_timestamp).
+    /// Create a new [`Transaction`](Transaction) using the timestamp from [`current_timestamp`](Client::current_timestamp).
     ///
-    /// Using the transaction you can issue commands like [`get`](struct.Transaction.html#method.get) or [`set`](file:///home/hoverbear/git/client-rust/target/doc/tikv_client/transaction/struct.Transaction.html#method.set).
+    /// Using the transaction you can issue commands like [`get`](Transaction::get) or [`set`](Transaction::set).
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
@@ -55,7 +55,7 @@ impl Client {
         unimplemented!()
     }
 
-    /// Create a new [`Transaction`](struct.Transaction.html) at the provded timestamp.
+    /// Create a new [`Transaction`](Transaction) at the provded timestamp.
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
@@ -75,7 +75,7 @@ impl Client {
         unimplemented!()
     }
 
-    /// Get a [`Snapshot`](struct.Snapshot.html) using the timestamp from [`current_timestamp`](struct.Client.html#method.current_timestamp).
+    /// Get a [`Snapshot`](Snapshot) using the timestamp from [`current_timestamp`](Client::current_timestamp).
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
@@ -92,7 +92,7 @@ impl Client {
         unimplemented!()
     }
 
-    /// Retrieve the current [`Timestamp`](struct.Timestamp.html).
+    /// Retrieve the current [`Timestamp`](Timestamp).
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
@@ -109,9 +109,9 @@ impl Client {
     }
 }
 
-/// An unresolved [`Client`](struct.Client.html) connection to a TiKV cluster.
+/// An unresolved [`Client`](Client) connection to a TiKV cluster.
 ///
-/// Once resolved it will result in a connected [`Client`](struct.Client.html).
+/// Once resolved it will result in a connected [`Client`](Client).
 ///
 /// ```rust,no_run
 /// # #![feature(async_await)]
@@ -321,7 +321,7 @@ impl Transaction {
         unimplemented!()
     }
 
-    /// Create a new [`Get`](struct.Get.html) request.
+    /// Create a new [`Get`](Get) request.
     ///
     /// Once resolved this request will result in the fetching of the value associated with the
     /// given key.
@@ -345,7 +345,7 @@ impl Transaction {
         self.snapshot.get(key.into())
     }
 
-    /// Create a new [`BatchGet`](struct.BatchGet.html) request.
+    /// Create a new [`BatchGet`](BatchGet) request.
     ///
     /// Once resolved this request will result in the fetching of the values associated with the
     /// given keys.
@@ -377,7 +377,7 @@ impl Transaction {
         self.snapshot.scan_reverse(range)
     }
 
-    /// Create a new [`Set`](struct.Set.html) request.
+    /// Create a new [`Set`](Set) request.
     ///
     /// Once resolved this request will result in the setting of the value associated with the given key.
     ///
@@ -401,7 +401,7 @@ impl Transaction {
         Set::new(key.into(), value.into())
     }
 
-    /// Create a new [`Delete`](struct.Delete.html) request.
+    /// Create a new [`Delete`](Delete) request.
     ///
     /// Once resolved this request will result in the deletion of the given key.
     ///
@@ -448,7 +448,7 @@ impl Snapshot {
     }
 }
 
-/// An unresolved [`Transaction::scan`](struct.Transaction.html#method.scan) request.
+/// An unresolved [`Transaction::scan`](Transaction::scan) request.
 ///
 /// Once resolved this request will result in a scanner over the given keys.
 pub struct Scanner;
@@ -492,7 +492,7 @@ pub enum IsolationLevel {
     ReadCommitted,
 }
 
-/// An unresolved [`Transaction::get`](struct.Transaction.html#method.get) request.
+/// An unresolved [`Transaction::get`](Transaction::get) request.
 ///
 /// Once resolved this request will result in the fetching of the value associated with the given
 /// key.
@@ -515,7 +515,7 @@ impl Future for Get {
     }
 }
 
-/// An unresolved [`Transaction::batch_get`](struct.Transaction.html#method.batch_get) request.
+/// An unresolved [`Transaction::batch_get`](Transaction::batch_get) request.
 ///
 /// Once resolved this request will result in the fetching of the values associated with the given
 /// keys.
@@ -538,7 +538,7 @@ impl Future for BatchGet {
     }
 }
 
-/// An unresolved [`Transaction::commit`](struct.Transaction.html#method.commit) request.
+/// An unresolved [`Transaction::commit`](Transaction::commit) request.
 ///
 /// Once resolved this request will result in the committing of the transaction.
 pub struct Commit {
@@ -560,7 +560,7 @@ impl Future for Commit {
     }
 }
 
-/// An unresolved [`Transaction::rollback`](struct.Transaction.html#method.rollback) request.
+/// An unresolved [`Transaction::rollback`](Transaction::rollback) request.
 ///
 /// Once resolved this request will result in the rolling back of the transaction.
 pub struct Rollback {
@@ -582,7 +582,7 @@ impl Future for Rollback {
     }
 }
 
-/// An unresolved [`Transaction::lock_keys`](struct.Transaction.html#method.lock_keys) request.
+/// An unresolved [`Transaction::lock_keys`](Transaction::lock_keys) request.
 ///
 /// Once resolved this request will result in the locking of the given keys.
 pub struct LockKeys {
@@ -604,7 +604,7 @@ impl Future for LockKeys {
     }
 }
 
-/// An unresolved [`Transaction::set`](struct.Transaction.html#method.set) request.
+/// An unresolved [`Transaction::set`](Transaction::set) request.
 ///
 /// Once resolved this request will result in the setting of the value associated with the given
 /// key.
@@ -629,7 +629,7 @@ impl Future for Set {
     }
 }
 
-/// An unresolved [`Transaction::delete`](struct.Transaction.html#method.delete) request.
+/// An unresolved [`Transaction::delete`](Transaction::delete) request.
 ///
 /// Once resolved this request will result in the deletion of the given key.
 pub struct Delete {
