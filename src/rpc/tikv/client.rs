@@ -8,7 +8,6 @@ use std::{fmt, sync::Arc, time::Duration};
 use futures::Future;
 use grpcio::{CallOption, Environment};
 use kvproto::{errorpb, kvrpcpb, tikvpb::TikvClient};
-use protobuf::{self, Message};
 
 use crate::{
     rpc::{
@@ -160,7 +159,7 @@ has_no_error!(kvrpcpb::RawBatchScanResponse);
 
 macro_rules! raw_request {
     ($context:expr, $type:ty) => {{
-        let mut req = <$type>::new();
+        let mut req = <$type>::default();
         let (region, cf) = $context.into_inner();
         req.set_context(region.into());
         if let Some(cf) = cf {
@@ -172,7 +171,7 @@ macro_rules! raw_request {
 
 macro_rules! txn_request {
     ($context:expr, $type:ty) => {{
-        let mut req = <$type>::new();
+        let mut req = <$type>::default();
         req.set_context($context.into_inner().into());
         req
     }};
@@ -180,7 +179,7 @@ macro_rules! txn_request {
 
 impl From<Mutation> for kvrpcpb::Mutation {
     fn from(mutation: Mutation) -> kvrpcpb::Mutation {
-        let mut pb = kvrpcpb::Mutation::new();
+        let mut pb = kvrpcpb::Mutation::default();
         match mutation {
             Mutation::Put(k, v) => {
                 pb.set_op(kvrpcpb::Op::Put);
@@ -206,7 +205,7 @@ impl From<Mutation> for kvrpcpb::Mutation {
 
 impl From<TxnInfo> for kvrpcpb::TxnInfo {
     fn from(txn_info: TxnInfo) -> kvrpcpb::TxnInfo {
-        let mut pb = kvrpcpb::TxnInfo::new();
+        let mut pb = kvrpcpb::TxnInfo::default();
         pb.set_txn(txn_info.txn);
         pb.set_status(txn_info.status);
         pb
@@ -317,7 +316,7 @@ impl KvClient {
         mutations: impl Iterator<Item = Mutation>,
         commit_version: u64,
     ) -> impl Future<Item = kvrpcpb::ImportResponse, Error = Error> {
-        let mut req = kvrpcpb::ImportRequest::new();
+        let mut req = kvrpcpb::ImportRequest::default();
         req.set_mutations(mutations.map(Into::into).collect());
         req.set_commit_version(commit_version);
 
@@ -624,7 +623,7 @@ impl KvClient {
 
     #[inline]
     fn convert_to_grpc_pair(pair: KvPair) -> kvrpcpb::KvPair {
-        let mut result = kvrpcpb::KvPair::new();
+        let mut result = kvrpcpb::KvPair::default();
         let (key, value) = pair.into_inner();
         result.set_key(key.into_inner());
         result.set_value(value.into_inner());
@@ -652,7 +651,7 @@ impl KvClient {
     #[inline]
     fn convert_to_grpc_range(range: (Option<Key>, Option<Key>)) -> kvrpcpb::KeyRange {
         let (start, end) = range;
-        let mut range = kvrpcpb::KeyRange::new();
+        let mut range = kvrpcpb::KeyRange::default();
         start.map(|k| range.set_start_key(k.into_inner())).unwrap();
         end.map(|k| range.set_end_key(k.into_inner())).unwrap();
         range
