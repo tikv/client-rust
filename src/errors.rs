@@ -47,9 +47,6 @@ pub enum ErrorKind {
     /// No region is found for the given id.
     #[fail(display = "Region {} is not found. {}", region_id, message)]
     RegionNotFound { region_id: u64, message: String },
-    /// Invalid key range to scan. Only left bounded intervals are supported.
-    #[fail(display = "Only left bounded intervals are supported")]
-    InvalidKeyRange,
     /// Cannot set an empty value
     #[fail(display = "Cannot set an empty value")]
     EmptyValue,
@@ -150,10 +147,6 @@ impl Error {
             region_id,
             message: message.unwrap_or_default(),
         })
-    }
-
-    pub(crate) fn invalid_key_range() -> Self {
-        Error::from(ErrorKind::InvalidKeyRange)
     }
 
     pub(crate) fn empty_value() -> Self {

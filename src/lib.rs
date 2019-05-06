@@ -607,6 +607,7 @@ pub trait KeyRange: Sized {
 fn range_to_keys(range: (Bound<Key>, Bound<Key>)) -> Result<(Key, Option<Key>)> {
     let start = match range.0 {
         Bound::Included(v) => v,
+        // TODO: Is this even possible?
         Bound::Excluded(mut v) => {
             match v.last_mut() {
                 None | Some(&mut U8_MAX) => v.push(0),
@@ -614,7 +615,7 @@ fn range_to_keys(range: (Bound<Key>, Bound<Key>)) -> Result<(Key, Option<Key>)> 
             }
             v
         }
-        Bound::Unbounded => Err(Error::invalid_key_range())?,
+        Bound::Unbounded => Key::from(vec![0]), // from the beginning
     };
     let end = match range.1 {
         Bound::Included(v) => Some(v),
@@ -640,16 +641,43 @@ impl<T: Into<Key>> KeyRange for Range<T> {
     }
 }
 
+#[test]
+fn test_range() -> Result<()> {
+    let input = vec![0]..vec![10];
+    let output = input.into_keys()?;
+    let expected = (Key::from(vec![0]), Some(Key::from(vec![9])));
+    assert_eq!(output, expected);
+    Ok(())
+}
+
 impl<T: Into<Key>> KeyRange for RangeFrom<T> {
     fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
         (Bound::Included(self.start.into()), Bound::Unbounded)
     }
 }
 
+#[test]
+fn test_range_from() -> Result<()> {
+    let input = vec![0]..;
+    let output = input.into_keys()?;
+    let expected = (Key::from(vec![0]), None);
+    assert_eq!(output, expected);
+    Ok(())
+}
+
 impl KeyRange for RangeFull {
     fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
         (Bound::Unbounded, Bound::Unbounded)
     }
+}
+
+#[test]
+fn test_range_full() -> Result<()> {
+    let input = ..;
+    let output = input.into_keys()?;
+    let expected = (Key::from(vec![0]), None);
+    assert_eq!(output, expected);
+    Ok(())
 }
 
 impl<T: Into<Key>> KeyRange for RangeInclusive<T> {
@@ -659,10 +687,28 @@ impl<T: Into<Key>> KeyRange for RangeInclusive<T> {
     }
 }
 
+#[test]
+fn test_range_inclusive() -> Result<()> {
+    let input = vec![0]..=vec![10];
+    let output = input.into_keys()?;
+    let expected = (Key::from(vec![0]), Some(Key::from(vec![10])));
+    assert_eq!(output, expected);
+    Ok(())
+}
+
 impl<T: Into<Key>> KeyRange for RangeTo<T> {
     fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
         (Bound::Unbounded, Bound::Excluded(self.end.into()))
     }
+}
+
+#[test]
+fn test_range_to() -> Result<()> {
+    let input = ..vec![10];
+    let output = input.into_keys()?;
+    let expected = (Key::from(vec![0]), Some(Key::from(vec![9])));
+    assert_eq!(output, expected);
+    Ok(())
 }
 
 impl<T: Into<Key>> KeyRange for RangeToInclusive<T> {
@@ -671,10 +717,28 @@ impl<T: Into<Key>> KeyRange for RangeToInclusive<T> {
     }
 }
 
+#[test]
+fn test_range_to_inclusive() -> Result<()> {
+    let input = ..=vec![10];
+    let output = input.into_keys()?;
+    let expected = (Key::from(vec![0]), Some(Key::from(vec![10])));
+    assert_eq!(output, expected);
+    Ok(())
+}
+
 impl<T: Into<Key>> KeyRange for (Bound<T>, Bound<T>) {
     fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
         (convert_to_bound_key(self.0), convert_to_bound_key(self.1))
     }
+}
+
+#[test]
+fn test_bound_bound() -> Result<()> {
+    let input = (Bound::Included(vec![0]), Bound::Included(vec![10]));
+    let output = input.into_keys()?;
+    let expected = (Key::from(vec![0]), Some(Key::from(vec![10])));
+    assert_eq!(output, expected);
+    Ok(())
 }
 
 fn convert_to_bound_key<K>(b: Bound<K>) -> Bound<Key>

@@ -755,9 +755,6 @@ impl RequestInner for BatchScanInner {
                 self.each_limit,
                 MAX_RAW_KV_SCAN_LIMIT,
             )))
-        } else if self.ranges.iter().any(Result::is_err) {
-            // All errors must be InvalidKeyRange so we can simply return a new InvalidKeyRange
-            Box::new(future::err(Error::invalid_key_range()))
         } else {
             Box::new(client.raw_batch_scan(
                 self.ranges.into_iter().map(Result::unwrap).collect(),
