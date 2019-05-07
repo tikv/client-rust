@@ -7,21 +7,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures::prelude::{FutureExt, SinkExt, StreamExt, TryFutureExt};
-use futures::{
-    channel::{
-        mpsc::{channel, unbounded, Receiver, Sender, UnboundedReceiver, UnboundedSender},
-        oneshot,
-    },
-    compat::{Compat01As03, Compat01As03Sink},
-    future::ready,
-    stream::TryStreamExt,
-    Future,
+use futures::channel::{
+    mpsc::{channel, unbounded, Receiver, Sender, UnboundedReceiver, UnboundedSender},
+    oneshot,
 };
+use futures::compat::{Compat01As03, Compat01As03Sink};
+use futures::prelude::*;
 use grpcio::{CallOption, Environment, WriteFlags};
 use kvproto::pdpb;
 use log::*;
-use tokio_core::reactor::{Core, Handle as OtherHandle};
+use tokio_core::reactor::{Core, Handle as TokioHandle};
 
 use crate::{
     compat::SinkCompat,
@@ -119,15 +114,15 @@ impl PdReactor {
         let mut core = Core::new().unwrap();
         let handle = core.handle();
         {
-            let f = rx.take_while(|t| ready(t.is_some())).for_each(|t| {
+            let f = rx.take_while(|t| future::ready(t.is_some())).for_each(|t| {
                 Self::dispatch(&client, t.unwrap(), &handle);
-                ready(())
+                future::ready(())
             });
             core.run(TryFutureExt::compat(f.unit_error())).unwrap();
         }
     }
 
-    fn init(client: &Arc<RwLock<LeaderClient>>, handle: &OtherHandle) {
+    fn init(client: &Arc<RwLock<LeaderClient>>, handle: &TokioHandle) {
         let client = Arc::clone(client);
         let (tx, rx) = client.write().unwrap().client.tso().unwrap();
         let tx = Compat01As03Sink::new(tx);
@@ -164,7 +159,7 @@ impl PdReactor {
                     // Schedule another tso_batch of request
                     reactor.schedule(PdTask::Request);
                 }
-                ready(Ok(()))
+                future::ready(Ok(()))
             })
             .map_err(|e| panic!("unexpected error: {:?}", e))
             .compat(),
@@ -204,7 +199,7 @@ impl PdReactor {
         client.write().unwrap().reactor.tso_buffer = Some(requests);
     }
 
-    fn dispatch(client: &Arc<RwLock<LeaderClient>>, task: PdTask, handle: &OtherHandle) {
+    fn dispatch(client: &Arc<RwLock<LeaderClient>>, task: PdTask, handle: &TokioHandle) {
         match task {
             PdTask::Request => Self::tso_request(client),
             PdTask::Response(requests, response) => Self::tso_response(client, requests, &response),

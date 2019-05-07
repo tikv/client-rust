@@ -10,7 +10,8 @@
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 //!
 use crate::{rpc::RpcClient, Config, Error, Key, KeyRange, KvPair, Result, Value};
-use futures::{future, task::Context, Future, Poll};
+use futures::prelude::*;
+use futures::task::{Context, Poll};
 use std::{fmt, ops::Bound, pin::Pin, sync::Arc, u32};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
