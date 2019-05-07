@@ -84,7 +84,7 @@ fn main() {
         Config::new(args.pd)
     };
 
-    let txn = Client::new(&config)
+    let txn = Client::new(config)
         .wait()
         .expect("Could not connect to tikv");
 

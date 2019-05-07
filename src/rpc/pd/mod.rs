@@ -11,6 +11,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// TODO: Remove this when txn is done.
+#![allow(dead_code)]
+
 use std::ops::{Deref, DerefMut};
 
 use kvproto::{kvrpcpb, metapb};

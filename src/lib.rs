@@ -13,6 +13,7 @@
 
 // Long and nested future chains can quickly result in large generic types.
 #![type_length_limit = "16777216"]
+#![allow(clippy::redundant_closure)]
 
 //! TiKV Client for Rust.
 //!
@@ -101,7 +102,7 @@
 //! ]).with_security("root.ca", "internal.cert", "internal.key");
 //!
 //! // Get an unresolved connection.
-//! let connect = Client::new(&config);
+//! let connect = Client::new(config);
 //!
 //! // Resolve the connection into a client.
 //! let client = connect.wait();
@@ -360,7 +361,6 @@ impl fmt::Debug for Value {
             Ok(s) => write!(f, "Value({:?})", s),
             Err(_) => write!(f, "Value({})", HexRepr(&self.0)),
         }
-
     }
 }
 
