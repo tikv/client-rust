@@ -28,12 +28,11 @@ impl Client {
     /// # use tikv_client::{Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = Client::new(Config::default());
+    /// let connect = Client::connect(Config::default());
     /// let client = connect.await.unwrap();
     /// # });
     /// ```
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new(config: Config) -> Connect {
+    pub fn connect(config: Config) -> Connect {
         Connect::new(config)
     }
 
@@ -52,7 +51,7 @@ impl Client {
     /// # use tikv_client::{Value, Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let key = "TiKV";
     /// let req = connected_client.get(key);
@@ -73,7 +72,7 @@ impl Client {
     /// # use tikv_client::{KvPair, Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let keys = vec!["TiKV", "TiDB"];
     /// let req = connected_client.batch_get(keys);
@@ -96,7 +95,7 @@ impl Client {
     /// # use tikv_client::{Key, Value, Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let key = "TiKV";
     /// let val = "TiKV";
@@ -117,7 +116,7 @@ impl Client {
     /// # use tikv_client::{Error, Result, KvPair, Key, Value, Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let kvpair1 = ("PD", "Go");
     /// let kvpair2 = ("TiKV", "Rust");
@@ -142,7 +141,7 @@ impl Client {
     /// # use tikv_client::{Key, Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let key = "TiKV";
     /// let req = connected_client.delete(key);
@@ -162,7 +161,7 @@ impl Client {
     /// # use tikv_client::{Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let keys = vec!["TiKV", "TiDB"];
     /// let req = connected_client.batch_delete(keys);
@@ -185,7 +184,7 @@ impl Client {
     /// # use tikv_client::{KvPair, Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = connected_client.scan(inclusive_range, 2);
@@ -205,7 +204,7 @@ impl Client {
     /// # use tikv_client::{Key, Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let inclusive_range1 = "TiDB"..="TiKV";
     /// let inclusive_range2 = "TiKV"..="TiSpark";
@@ -237,7 +236,7 @@ impl Client {
     /// # use tikv_client::{Key, Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = connected_client.delete_range(inclusive_range);
@@ -259,7 +258,7 @@ impl Client {
 /// use futures::prelude::*;
 ///
 /// # futures::executor::block_on(async {
-/// let connect: Connect = Client::new(Config::default());
+/// let connect: Connect = Client::connect(Config::default());
 /// let client: Client = connect.await.unwrap();
 /// # });
 /// ```
