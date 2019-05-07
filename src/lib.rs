@@ -599,6 +599,16 @@ pub type KvFuture<Resp> = Box<dyn Future<Item = Resp, Error = Error>>;
 /// which means all of the above types can be passed directly to those functions.
 pub trait KeyRange: Sized {
     fn into_bounds(self) -> (Bound<Key>, Bound<Key>);
+    /// Return the keys that match the given bounds, inclusively.
+    ///
+    /// ```rust
+    /// use tikv_client::{KeyRange, Key};
+    /// let range = vec![0]..vec![100];
+    /// assert_eq!(
+    ///     range.into_keys().unwrap(),
+    ///     (Key::from(vec![0]), Some(Key::from(vec![99])))
+    /// );
+    // ```
     fn into_keys(self) -> Result<(Key, Option<Key>)> {
         range_to_keys(self.into_bounds())
     }
