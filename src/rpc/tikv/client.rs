@@ -557,19 +557,7 @@ impl KvClient {
             .map(|k| req.set_start_key(k.into_inner()))
             .unwrap();
         end_key
-            .map(|k| {
-                // Scan in TiKV has a particularity to it.
-                //
-                // The **start** of a scan is inclusive, unless appended with an '\0', then it is
-                // exclusive. The **end** of a scan is exclusive, unless appended with an '\0',
-                // then it is inclusive.
-                //
-                // Because of `KeyRange::into_keys()` we *know* the keys we have are inclusive
-                // (KeyRange calculates it).
-                let mut end_key = k.into_inner();
-                end_key.append(&mut vec![0]);
-                req.set_end_key(end_key);
-            })
+            .map(|k| req.set_end_key(k.into_inner()))
             .unwrap();
         req.set_limit(limit);
         req.set_key_only(key_only);

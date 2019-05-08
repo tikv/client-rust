@@ -122,7 +122,6 @@ use std::{
     path::PathBuf,
     str,
     time::Duration,
-    u8::{MAX as U8_MAX, MIN as U8_MIN},
 };
 
 mod errors;
@@ -196,16 +195,6 @@ impl Key {
     #[inline]
     fn into_inner(self) -> Vec<u8> {
         self.0
-    }
-
-    #[inline]
-    fn push(&mut self, v: u8) {
-        self.0.push(v)
-    }
-
-    #[inline]
-    fn pop(&mut self) {
-        self.0.pop();
     }
 }
 
@@ -599,14 +588,31 @@ pub type KvFuture<Resp> = Box<dyn Future<Item = Resp, Error = Error>>;
 /// which means all of the above types can be passed directly to those functions.
 pub trait KeyRange: Sized {
     fn into_bounds(self) -> (Bound<Key>, Bound<Key>);
-    /// Return the keys that match the given bounds, inclusively.
+    /// Ranges used in scanning TiKV have a particularity to them.
+    ///
+    /// The **start** of a scan is inclusive, unless appended with an '\0', then it is exclusive.
+    /// 
+    /// The **end** of a scan is exclusive, unless appended with an '\0', then it is inclusive.
     ///
     /// ```rust
     /// use tikv_client::{KeyRange, Key};
-    /// let range = vec![0]..vec![100];
+    /// // Exclusive
+    /// let range = "a".."z";
     /// assert_eq!(
     ///     range.into_keys().unwrap(),
-    ///     (Key::from(vec![0]), Some(Key::from(vec![99])))
+    ///     (Key::from("a"), Some(Key::from("z")))
+    /// );
+    /// // Inclusive
+    /// let range = "a"..="z";
+    /// assert_eq!(
+    ///     range.into_keys().unwrap(),
+    ///     (Key::from("a"), Some(Key::from("z\0")))
+    /// );
+    /// // Open
+    /// let range = "a"..;
+    /// assert_eq!(
+    ///     range.into_keys().unwrap(),
+    ///     (Key::from("a"), None)
     /// );
     // ```
     fn into_keys(self) -> Result<(Key, Option<Key>)> {
@@ -618,24 +624,19 @@ fn range_to_keys(range: (Bound<Key>, Bound<Key>)) -> Result<(Key, Option<Key>)> 
     let start = match range.0 {
         Bound::Included(v) => v,
         Bound::Excluded(mut v) => {
-            match v.last_mut() {
-                None | Some(&mut U8_MAX) => v.push(0),
-                Some(v) => *v += 1,
-            }
-            v
-        }
+            let mut buf = b"\0".to_vec();
+            buf.append(&mut v.0);
+            Key(buf)
+        },
         Bound::Unbounded => Err(Error::invalid_key_range())?,
     };
     let end = match range.1 {
-        Bound::Included(v) => Some(v),
-        Bound::Excluded(mut v) => Some({
-            match v.last_mut() {
-                None => (),
-                Some(&mut U8_MIN) => v.pop(),
-                Some(v) => *v -= 1,
-            }
-            v
-        }),
+        Bound::Included(mut v) => {
+            let mut buf = b"\0".to_vec();
+            v.0.append(&mut buf);
+            Some(v)
+        },
+        Bound::Excluded(v) => Some(v),
         Bound::Unbounded => None,
     };
     Ok((start, end))
