@@ -538,7 +538,7 @@ impl Config {
     }
 }
 
-pub type KvFuture<Resp> = Box<dyn Future<Item = Resp, Error = Error>>;
+pub type KvFuture<Resp> = Box<dyn Future<Item = Resp, Error = Error> + Send>;
 
 /// A convenience trait for expressing ranges.
 ///
