@@ -556,9 +556,7 @@ impl KvClient {
         start_key
             .map(|k| req.set_start_key(k.into_inner()))
             .unwrap();
-        end_key
-            .map(|k| req.set_end_key(k.into_inner()))
-            .unwrap();
+        end_key.map(|k| req.set_end_key(k.into_inner())).unwrap();
         req.set_limit(limit);
         req.set_key_only(key_only);
 

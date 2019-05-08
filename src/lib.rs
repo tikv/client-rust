@@ -591,7 +591,7 @@ pub trait KeyRange: Sized {
     /// Ranges used in scanning TiKV have a particularity to them.
     ///
     /// The **start** of a scan is inclusive, unless appended with an '\0', then it is exclusive.
-    /// 
+    ///
     /// The **end** of a scan is exclusive, unless appended with an '\0', then it is inclusive.
     ///
     /// ```rust
@@ -627,7 +627,7 @@ fn range_to_keys(range: (Bound<Key>, Bound<Key>)) -> Result<(Key, Option<Key>)> 
             let mut buf = b"\0".to_vec();
             buf.append(&mut v.0);
             Key(buf)
-        },
+        }
         Bound::Unbounded => Err(Error::invalid_key_range())?,
     };
     let end = match range.1 {
@@ -635,7 +635,7 @@ fn range_to_keys(range: (Bound<Key>, Bound<Key>)) -> Result<(Key, Option<Key>)> 
             let mut buf = b"\0".to_vec();
             v.0.append(&mut buf);
             Some(v)
-        },
+        }
         Bound::Excluded(v) => Some(v),
         Bound::Unbounded => None,
     };
