@@ -18,27 +18,28 @@ use tikv_client::{
 
 async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
     let mut txn = client.begin();
-    await!(future::join_all(
+    future::join_all(
         pairs
             .into_iter()
             .map(Into::into)
-            .map(|p| txn.set(p.key().clone(), p.value().clone()))
-    ))
+            .map(|p| txn.set(p.key().clone(), p.value().clone())),
+    )
+    .await
     .into_iter()
     .collect::<Result<Vec<()>, _>>()
     .expect("Could not set key value pairs");
-    await!(txn.commit()).expect("Could not commit transaction");
+    txn.commit().await.expect("Could not commit transaction");
 }
 
 async fn get(client: &Client, key: Key) -> Value {
     let txn = client.begin();
-    await!(txn.get(key)).expect("Could not get value")
+    txn.get(key).await.expect("Could not get value")
 }
 
 // Ignore a spurious warning from rustc (https://github.com/rust-lang/rust/issues/60566).
 #[allow(unused_mut)]
 async fn scan(client: &Client, range: impl RangeBounds<Key>, mut limit: usize) {
-    await!(client
+    client
         .begin()
         .scan(range)
         .into_stream()
@@ -51,18 +52,21 @@ async fn scan(client: &Client, range: impl RangeBounds<Key>, mut limit: usize) {
                 true
             })
         })
-        .for_each(|pair| { future::ready(println!("{:?}", pair)) }));
+        .for_each(|pair| future::ready(println!("{:?}", pair)))
+        .await;
 }
 
 async fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {
     let mut txn = client.begin();
     txn.set_isolation_level(IsolationLevel::ReadCommitted);
-    let _: Vec<()> = await!(stream::iter(keys.into_iter())
-        .then(|p| txn
-            .delete(p)
-            .unwrap_or_else(|e| panic!("error in delete: {:?}", e)))
-        .collect());
-    await!(txn.commit()).expect("Could not commit transaction");
+    let _: Vec<()> = stream::iter(keys.into_iter())
+        .then(|p| {
+            txn.delete(p)
+                .unwrap_or_else(|e| panic!("error in delete: {:?}", e))
+        })
+        .collect()
+        .await;
+    txn.commit().await.expect("Could not commit transaction");
 }
 
 #[runtime::main(runtime_tokio::Tokio)]
@@ -79,26 +83,28 @@ async fn main() {
         Config::new(args.pd)
     };
 
-    let txn = await!(Client::new(config)).expect("Could not connect to tikv");
+    let txn = Client::new(config)
+        .await
+        .expect("Could not connect to tikv");
 
     // set
     let key1: Key = b"key1".to_vec().into();
     let value1: Value = b"value1".to_vec().into();
     let key2: Key = b"key2".to_vec().into();
     let value2: Value = b"value2".to_vec().into();
-    await!(puts(&txn, vec![(key1, value1), (key2, value2)]));
+    puts(&txn, vec![(key1, value1), (key2, value2)]).await;
 
     // get
     let key1: Key = b"key1".to_vec().into();
-    let value1 = await!(get(&txn, key1.clone()));
+    let value1 = get(&txn, key1.clone()).await;
     println!("{:?}", (key1, value1));
 
     // scan
     let key1: Key = b"key1".to_vec().into();
-    await!(scan(&txn, key1.., 10));
+    scan(&txn, key1.., 10).await;
 
     // delete
     let key1: Key = b"key1".to_vec().into();
     let key2: Key = b"key2".to_vec().into();
-    await!(dels(&txn, vec![key1, key2]));
+    dels(&txn, vec![key1, key2]).await;
 }

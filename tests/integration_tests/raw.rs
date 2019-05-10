@@ -15,12 +15,17 @@ fn generate_value(id: i32) -> Value {
 async fn wipe_all(client: &Client) {
     let test_key_start = generate_key(0);
     let test_key_end = generate_key(NUM_TEST_KEYS as i32 - 1);
-    await!(client.delete_range(test_key_start..test_key_end)).expect("Could not delete test keys");
+    client
+        .delete_range(test_key_start..test_key_end)
+        .await
+        .expect("Could not delete test keys");
 }
 
 async fn connect() -> Client {
-    let client = await!(Client::new(Config::new(pd_addr()))).expect("Could not connect to tikv");
-    await!(wipe_all(&client));
+    let client = Client::new(Config::new(pd_addr()))
+        .await
+        .expect("Could not connect to tikv");
+    wipe_all(&client).await;
     client
 }
 
@@ -28,11 +33,11 @@ async fn test_empty(client: &Client) {
     let test_key_start = generate_key(0);
     let test_key_end = generate_key(NUM_TEST_KEYS as i32 - 1);
 
-    assert!(
-        await!(client.scan(test_key_start..test_key_end, NUM_TEST_KEYS))
-            .expect("Could not scan")
-            .is_empty()
-    );
+    assert!(client
+        .scan(test_key_start..test_key_end, NUM_TEST_KEYS)
+        .await
+        .expect("Could not scan")
+        .is_empty());
 }
 
 async fn test_existence<'a>(
@@ -46,7 +51,9 @@ async fn test_existence<'a>(
     for pair in existing_pairs.iter().map(Clone::clone) {
         let (key, value) = pair.into_inner();
         assert_eq!(
-            await!(client.get(key))
+            client
+                .get(key)
+                .await
                 .expect("Could not get value")
                 .expect("key doesn't exist"),
             value.clone(),
@@ -54,7 +61,7 @@ async fn test_existence<'a>(
     }
 
     for key in not_existing_keys.clone().into_iter() {
-        let r = await!(client.get(key)).expect("Cound not get value");
+        let r = client.get(key).await.expect("Cound not get value");
         assert!(r.is_none());
     }
 
@@ -70,76 +77,85 @@ async fn test_existence<'a>(
     all_keys.extend_from_slice(&not_existing_keys);
 
     assert_eq!(
-        await!(client.batch_get(all_keys)).expect("Could not get value in batch"),
+        client
+            .batch_get(all_keys)
+            .await
+            .expect("Could not get value in batch"),
         existing_pairs,
     );
 
     assert_eq!(
-        await!(client.batch_get(not_existing_keys)).expect("Could not get value in batch"),
+        client
+            .batch_get(not_existing_keys)
+            .await
+            .expect("Could not get value in batch"),
         Vec::new(),
     );
 
     assert_eq!(
-        await!(client.scan(test_key_start.clone()..test_key_end.clone(), NUM_TEST_KEYS))
+        client
+            .scan(test_key_start.clone()..test_key_end.clone(), NUM_TEST_KEYS)
+            .await
             .expect("Could not scan"),
         existing_pairs,
     );
 
     assert_eq!(
-        await!(client
+        client
             .scan(test_key_start.clone()..test_key_end.clone(), NUM_TEST_KEYS)
-            .key_only())
-        .expect("Could not scan"),
+            .key_only()
+            .await
+            .expect("Could not scan"),
         existing_key_only_pairs,
     );
 }
 
 #[runtime::test(runtime_tokio::Tokio)]
 async fn basic_raw_test() {
-    let client = await!(connect());
+    let client = connect().await;
 
-    await!(test_empty(&client));
+    test_empty(&client).await;
 
-    assert!(await!(client.put(generate_key(0), generate_value(0))).is_ok());
+    assert!(client.put(generate_key(0), generate_value(0)).await.is_ok());
     let existing = &[KvPair::new(generate_key(0), generate_value(0))];
-    await!(test_existence(
-        &client,
-        existing,
-        vec![generate_key(1), generate_key(2)],
-    ));
+    test_existence(&client, existing, vec![generate_key(1), generate_key(2)]).await;
 
     let empty_pairs = Vec::new();
-    assert!(await!(client.delete(generate_key(0))).is_ok());
-    await!(test_existence(
+    assert!(client.delete(generate_key(0)).await.is_ok());
+    test_existence(
         &client,
         &empty_pairs,
         vec![generate_key(0), generate_key(1), generate_key(2)],
-    ));
+    )
+    .await;
 
     let pairs: Vec<KvPair> = (0..10)
         .map(|i| KvPair::new(generate_key(i), generate_value(i)))
         .collect();
-    assert!(await!(client.batch_put(pairs.clone())).is_ok());
-    await!(test_existence(
+    assert!(client.batch_put(pairs.clone()).await.is_ok());
+    test_existence(
         &client,
         &pairs,
         vec![generate_key(10), generate_key(11), generate_key(12)],
-    ));
+    )
+    .await;
 
     let keys: Vec<Key> = vec![generate_key(8), generate_key(9)];
-    assert!(await!(client.batch_delete(keys)).is_ok());
+    assert!(client.batch_delete(keys).await.is_ok());
     let mut pairs = pairs;
     pairs.truncate(8);
-    await!(test_existence(
+    test_existence(
         &client,
         &pairs,
         vec![generate_key(8), generate_key(9), generate_key(10)],
-    ));
+    )
+    .await;
 
-    await!(wipe_all(&client));
-    await!(test_existence(
+    wipe_all(&client).await;
+    test_existence(
         &client,
         &empty_pairs,
         pairs.into_iter().map(|x| x.into_inner().0).collect(),
-    ));
+    )
+    .await;
 }

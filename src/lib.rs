@@ -81,7 +81,7 @@
 //! ([raw](raw/struct.Client.html), [transactional](transaction/struct.Client.html)).
 //!
 //! ```rust
-//! # #![feature(async_await, await_macro)]
+//! # #![feature(async_await)]
 //! # use tikv_client::{*, raw::*};
 //! # use futures::prelude::*;
 //!
@@ -96,7 +96,7 @@
 //! let connect = Client::new(config);
 //!
 //! // Resolve the connection into a client.
-//! let client = await!(connect.into_future());
+//! let client = connect.into_future().await;
 //! # });
 //! ```
 //!

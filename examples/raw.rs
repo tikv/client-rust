@@ -27,14 +27,14 @@ async fn main() -> Result<()> {
     // When we first create a client we receive a `Connect` structure which must be resolved before
     // the client is actually connected and usable.
     let unconnnected_client = Client::new(config);
-    let client = await!(unconnnected_client)?;
+    let client = unconnnected_client.await?;
 
     // Requests are created from the connected client. These calls return structures which
     // implement `Future`. This means the `Future` must be resolved before the action ever takes
     // place.
     //
     // Here we set the key `TiKV` to have the value `Rust` associated with it.
-    await!(client.put(KEY, VALUE)).unwrap(); // Returns a `tikv_client::Error` on failure.
+    client.put(KEY, VALUE).await.unwrap(); // Returns a `tikv_client::Error` on failure.
     println!("Put key {:?}, value {:?}.", KEY, VALUE);
 
     // Unlike a standard Rust HashMap all calls take owned values. This is because under the hood
@@ -46,17 +46,20 @@ async fn main() -> Result<()> {
     //
     // It is best to pass a `Vec<u8>` in terms of explictness and speed. `String`s and a few other
     // types are supported as well, but it all ends up as `Vec<u8>` in the end.
-    let value: Option<Value> = await!(client.get(KEY))?;
+    let value: Option<Value> = client.get(KEY).await?;
     assert_eq!(value, Some(Value::from(VALUE)));
     println!("Get key {:?} returned value {:?}.", Key::from(KEY), value);
 
     // You can also set the `ColumnFamily` used by the request.
     // This is *advanced usage* and should have some special considerations.
-    await!(client.delete(KEY)).expect("Could not delete value");
+    client.delete(KEY).await.expect("Could not delete value");
     println!("Key: {:?} deleted", Key::from(KEY));
 
     // Here we check if the key has been deleted from the key-value store.
-    let value: Option<Value> = await!(client.get(KEY)).expect("Could not get just deleted entry");
+    let value: Option<Value> = client
+        .get(KEY)
+        .await
+        .expect("Could not get just deleted entry");
     assert!(value.is_none());
 
     // You can ask to write multiple key-values at the same time, it is much more
@@ -66,18 +69,25 @@ async fn main() -> Result<()> {
         KvPair::from(("k2", "v2")),
         KvPair::from(("k3", "v3")),
     ];
-    await!(client.batch_put(pairs)).expect("Could not put pairs");
+    client.batch_put(pairs).await.expect("Could not put pairs");
 
     // Same thing when you want to retrieve multiple values.
     let keys = vec![Key::from("k1"), Key::from("k2")];
-    let values = await!(client.batch_get(keys.clone())).expect("Could not get values");
+    let values = client
+        .batch_get(keys.clone())
+        .await
+        .expect("Could not get values");
     println!("Found values: {:?} for keys: {:?}", values, keys);
 
     // Scanning a range of keys is also possible giving it two bounds
     // it will returns all entries between these two.
     let start = "k1";
     let end = "k2";
-    let pairs = await!(client.scan(start..=end, 10).key_only()).expect("Could not scan");
+    let pairs = client
+        .scan(start..=end, 10)
+        .key_only()
+        .await
+        .expect("Could not scan");
 
     let keys: Vec<_> = pairs.into_iter().map(|p| p.key().clone()).collect();
     assert_eq!(&keys, &[Key::from("k1"), Key::from("k2")]);

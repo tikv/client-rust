@@ -29,12 +29,12 @@ impl Client {
     /// Create a new [`Client`](struct.Client.html) once the [`Connect`](struct.Connect.html) resolves.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// let connect = Client::new(Config::default());
-    /// let client = await!(connect).unwrap();
+    /// let client = connect.await.unwrap();
     /// # });
     /// ```
     #[cfg_attr(feature = "cargo-clippy", allow(clippy::new_ret_no_self))]
@@ -53,15 +53,15 @@ impl Client {
     /// given key.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Value, Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = await!(connecting_client).unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let key = "TiKV";
     /// let req = connected_client.get(key);
-    /// let result: Option<Value> = await!(req).unwrap();
+    /// let result: Option<Value> = req.await.unwrap();
     /// # });
     /// ```
     pub fn get(&self, key: impl Into<Key>) -> Get {
@@ -74,15 +74,15 @@ impl Client {
     /// given keys.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{KvPair, Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = await!(connecting_client).unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let keys = vec!["TiKV", "TiDB"];
     /// let req = connected_client.batch_get(keys);
-    /// let result: Vec<KvPair> = await!(req).unwrap();
+    /// let result: Vec<KvPair> = req.await.unwrap();
     /// # });
     /// ```
     pub fn batch_get(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> BatchGet {
@@ -97,16 +97,16 @@ impl Client {
     /// Once resolved this request will result in the setting of the value associated with the given key.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Value, Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = await!(connecting_client).unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let key = "TiKV";
     /// let val = "TiKV";
     /// let req = connected_client.put(key, val);
-    /// let result: () = await!(req).unwrap();
+    /// let result: () = req.await.unwrap();
     /// # });
     /// ```
     pub fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Put {
@@ -118,17 +118,17 @@ impl Client {
     /// Once resolved this request will result in the setting of the value associated with the given key.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Error, Result, KvPair, Key, Value, Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = await!(connecting_client).unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let kvpair1 = ("PD", "Go");
     /// let kvpair2 = ("TiKV", "Rust");
     /// let iterable = vec![kvpair1, kvpair2];
     /// let req = connected_client.batch_put(iterable);
-    /// let result: () = await!(req).unwrap();
+    /// let result: () = req.await.unwrap();
     /// # });
     /// ```
     pub fn batch_put(&self, pairs: impl IntoIterator<Item = impl Into<KvPair>>) -> BatchPut {
@@ -143,15 +143,15 @@ impl Client {
     /// Once resolved this request will result in the deletion of the given key.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = await!(connecting_client).unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let key = "TiKV";
     /// let req = connected_client.delete(key);
-    /// let result: () = await!(req).unwrap();
+    /// let result: () = req.await.unwrap();
     /// # });
     /// ```
     pub fn delete(&self, key: impl Into<Key>) -> Delete {
@@ -163,15 +163,15 @@ impl Client {
     /// Once resolved this request will result in the deletion of the given keys.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = await!(connecting_client).unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let keys = vec!["TiKV", "TiDB"];
     /// let req = connected_client.batch_delete(keys);
-    /// let result: () = await!(req).unwrap();
+    /// let result: () = req.await.unwrap();
     /// # });
     /// ```
     pub fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> BatchDelete {
@@ -186,15 +186,15 @@ impl Client {
     /// Once resolved this request will result in a scanner over the given keys.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{KvPair, Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = await!(connecting_client).unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = connected_client.scan(inclusive_range, 2);
-    /// let result: Vec<KvPair> = await!(req).unwrap();
+    /// let result: Vec<KvPair> = req.await.unwrap();
     /// # });
     /// ```
     pub fn scan(&self, range: impl KeyRange, limit: u32) -> Scan {
@@ -206,17 +206,17 @@ impl Client {
     /// Once resolved this request will result in a set of scanners over the given keys.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = await!(connecting_client).unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let inclusive_range1 = "TiDB"..="TiKV";
     /// let inclusive_range2 = "TiKV"..="TiSpark";
     /// let iterable = vec![inclusive_range1, inclusive_range2];
     /// let req = connected_client.batch_scan(iterable, 2);
-    /// let result = await!(req);
+    /// let result = req.await;
     /// # });
     /// ```
     pub fn batch_scan(
@@ -238,15 +238,15 @@ impl Client {
     /// Once resolved this request will result in the deletion of all keys over the given range.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Config, raw::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = await!(connecting_client).unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = connected_client.delete_range(inclusive_range);
-    /// let result: () = await!(req).unwrap();
+    /// let result: () = req.await.unwrap();
     /// # });
     /// ```
     pub fn delete_range(&self, range: impl KeyRange) -> DeleteRange {
@@ -259,13 +259,13 @@ impl Client {
 /// Once resolved it will result in a connected [`Client`](struct.Client.html).
 ///
 /// ```rust,no_run
-/// # #![feature(async_await, await_macro)]
+/// # #![feature(async_await)]
 /// use tikv_client::{Config, raw::{Client, Connect}};
 /// use futures::prelude::*;
 ///
 /// # futures::executor::block_on(async {
 /// let connect: Connect = Client::new(Config::default());
-/// let client: Client = await!(connect).unwrap();
+/// let client: Client = connect.await.unwrap();
 /// # });
 /// ```
 pub struct Connect {

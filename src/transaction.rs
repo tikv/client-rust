@@ -21,12 +21,12 @@ impl Client {
     /// Create a new [`Client`](struct.Client.html) once the [`Connect`](struct.Connect.html) resolves.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// let connect = Client::new(Config::default());
-    /// let client = await!(connect).unwrap();
+    /// let client = connect.await.unwrap();
     /// # });
     /// ```
     #[cfg_attr(feature = "cargo-clippy", allow(clippy::new_ret_no_self))]
@@ -39,16 +39,16 @@ impl Client {
     /// Using the transaction you can issue commands like [`get`](struct.Transaction.html#method.get) or [`set`](file:///home/hoverbear/git/client-rust/target/doc/tikv_client/transaction/struct.Transaction.html#method.set).
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// let connect = Client::new(Config::default());
-    /// let client = await!(connect).unwrap();
+    /// let client = connect.await.unwrap();
     /// let transaction = client.begin();
     /// // ... Issue some commands.
     /// let commit = transaction.commit();
-    /// let result: () = await!(commit).unwrap();
+    /// let result: () = commit.await.unwrap();
     /// # });
     /// ```
     pub fn begin(&self) -> Transaction {
@@ -58,17 +58,17 @@ impl Client {
     /// Create a new [`Transaction`](struct.Transaction.html) at the provded timestamp.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// let connect = Client::new(Config::default());
-    /// let client = await!(connect).unwrap();
+    /// let client = connect.await.unwrap();
     /// let timestamp = client.current_timestamp();
     /// let transaction = client.begin_with_timestamp(timestamp);
     /// // ... Issue some commands.
     /// let commit = transaction.commit();
-    /// let result: () = await!(commit).unwrap();
+    /// let result: () = commit.await.unwrap();
     /// # });
     /// ```
     pub fn begin_with_timestamp(&self, _timestamp: Timestamp) -> Transaction {
@@ -78,12 +78,12 @@ impl Client {
     /// Get a [`Snapshot`](struct.Snapshot.html) using the timestamp from [`current_timestamp`](struct.Client.html#method.current_timestamp).
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// let connect = Client::new(Config::default());
-    /// let client = await!(connect).unwrap();
+    /// let client = connect.await.unwrap();
     /// let snapshot = client.snapshot();
     /// // ... Issue some commands.
     /// # });
@@ -95,12 +95,12 @@ impl Client {
     /// Retrieve the current [`Timestamp`](struct.Timestamp.html).
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// let connect = Client::new(Config::default());
-    /// let client = await!(connect).unwrap();
+    /// let client = connect.await.unwrap();
     /// let timestamp = client.current_timestamp();
     /// # });
     /// ```
@@ -114,13 +114,13 @@ impl Client {
 /// Once resolved it will result in a connected [`Client`](struct.Client.html).
 ///
 /// ```rust,no_run
-/// # #![feature(async_await, await_macro)]
+/// # #![feature(async_await)]
 /// use tikv_client::{Config, transaction::{Client, Connect}};
 /// use futures::prelude::*;
 ///
 /// # futures::executor::block_on(async {
 /// let connect: Connect = Client::new(Config::default());
-/// let client: Client = await!(connect).unwrap();
+/// let client: Client = connect.await.unwrap();
 /// # });
 /// ```
 pub struct Connect {
@@ -192,12 +192,12 @@ impl Transaction {
     /// Create a new transaction operating on the given snapshot.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// let connect = Client::new(Config::default());
-    /// let client = await!(connect).unwrap();
+    /// let client = connect.await.unwrap();
     /// let txn = client.begin();
     /// # });
     /// ```
@@ -210,16 +210,16 @@ impl Transaction {
     /// Once committed, it is no longer possible to `rollback` the actions in the transaction.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connect = Client::new(Config::default());
-    /// # let connected_client = await!(connect).unwrap();
+    /// # let connected_client = connect.await.unwrap();
     /// let txn = connected_client.begin();
     /// // ... Do some actions.
     /// let req = txn.commit();
-    /// let result: () = await!(req).unwrap();
+    /// let result: () = req.await.unwrap();
     /// # });
     /// ```
     pub fn commit(self) -> Commit {
@@ -229,16 +229,16 @@ impl Transaction {
     /// Rollback the actions of the transaction.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connect = Client::new(Config::default());
-    /// # let connected_client = await!(connect).unwrap();
+    /// # let connected_client = connect.await.unwrap();
     /// let txn = connected_client.begin();
     /// // ... Do some actions.
     /// let req = txn.rollback();
-    /// let result: () = await!(req).unwrap();
+    /// let result: () = req.await.unwrap();
     /// # });
     /// ```
     pub fn rollback(self) -> Rollback {
@@ -248,16 +248,16 @@ impl Transaction {
     /// Lock the given keys.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connect = Client::new(Config::default());
-    /// # let connected_client = await!(connect).unwrap();
+    /// # let connected_client = connect.await.unwrap();
     /// let mut txn = connected_client.begin();
     /// // ... Do some actions.
     /// let req = txn.lock_keys(vec!["TiKV", "Rust"]);
-    /// let result: () = await!(req).unwrap();
+    /// let result: () = req.await.unwrap();
     /// # });
     /// ```
     pub fn lock_keys(&mut self, keys: impl IntoIterator<Item = impl Into<Key>>) -> LockKeys {
@@ -271,12 +271,12 @@ impl Transaction {
     /// Returns the timestamp which the transaction started at.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Config, transaction::{Client, Timestamp}};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connect = Client::new(Config::default());
-    /// # let connected_client = await!(connect).unwrap();
+    /// # let connected_client = connect.await.unwrap();
     /// let txn = connected_client.begin();
     /// // ... Do some actions.
     /// let ts: Timestamp = txn.start_ts();
@@ -289,12 +289,12 @@ impl Transaction {
     /// Get the `Snapshot` the transaction is operating on.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Config, transaction::{Client, Snapshot}};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connect = Client::new(Config::default());
-    /// # let connected_client = await!(connect).unwrap();
+    /// # let connected_client = connect.await.unwrap();
     /// let txn = connected_client.begin();
     /// // ... Do some actions.
     /// let snap: Snapshot = txn.snapshot();
@@ -307,12 +307,12 @@ impl Transaction {
     /// Set the isolation level of the transaction.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Config, transaction::{Client, IsolationLevel}};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connect = Client::new(Config::default());
-    /// # let connected_client = await!(connect).unwrap();
+    /// # let connected_client = connect.await.unwrap();
     /// let mut txn = connected_client.begin();
     /// txn.set_isolation_level(IsolationLevel::SnapshotIsolation);
     /// # });
@@ -327,18 +327,18 @@ impl Transaction {
     /// given key.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Value, Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = await!(connecting_client).unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let mut txn = connected_client.begin();
     /// let key = "TiKV";
     /// let req = txn.get(key);
-    /// let result: Value = await!(req).unwrap();
+    /// let result: Value = req.await.unwrap();
     /// // Finish the transaction...
-    /// await!(txn.commit()).unwrap();
+    /// txn.commit().await.unwrap();
     /// # });
     /// ```
     pub fn get(&self, key: impl Into<Key>) -> Get {
@@ -351,18 +351,18 @@ impl Transaction {
     /// given keys.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{KvPair, Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = await!(connecting_client).unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let mut txn = connected_client.begin();
     /// let keys = vec!["TiKV", "TiDB"];
     /// let req = txn.batch_get(keys);
-    /// let result: Vec<KvPair> = await!(req).unwrap();
+    /// let result: Vec<KvPair> = req.await.unwrap();
     /// // Finish the transaction...
-    /// await!(txn.commit()).unwrap();
+    /// txn.commit().await.unwrap();
     /// # });
     /// ```
     pub fn batch_get(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> BatchGet {
@@ -382,19 +382,19 @@ impl Transaction {
     /// Once resolved this request will result in the setting of the value associated with the given key.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Value, Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = await!(connecting_client).unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let mut txn = connected_client.begin();
     /// let key = "TiKV";
     /// let val = "TiKV";
     /// let req = txn.set(key, val);
-    /// let result: () = await!(req).unwrap();
+    /// let result: () = req.await.unwrap();
     /// // Finish the transaction...
-    /// await!(txn.commit()).unwrap();
+    /// txn.commit().await.unwrap();
     /// # });
     /// ```
     pub fn set(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Set {
@@ -406,18 +406,18 @@ impl Transaction {
     /// Once resolved this request will result in the deletion of the given key.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await, await_macro)]
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = await!(connecting_client).unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let mut txn = connected_client.begin();
     /// let key = "TiKV";
     /// let req = txn.delete(key);
-    /// let result: () = await!(req).unwrap();
+    /// let result: () = req.await.unwrap();
     /// // Finish the transaction...
-    /// await!(txn.commit()).unwrap();
+    /// txn.commit().await.unwrap();
     /// # });
     /// ```
     pub fn delete(&mut self, key: impl Into<Key>) -> Delete {
