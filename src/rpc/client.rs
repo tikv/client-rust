@@ -537,13 +537,6 @@ impl KeyLocation {
         KeyLocation(region)
     }
 
-    fn contains(&self, key: &Key) -> bool {
-        let start = self.start_key();
-        let end = self.end_key();
-        let key: &[u8] = key.as_ref();
-        start <= key && (end < key || end.is_empty())
-    }
-
     fn into_inner(self) -> Region {
         self.0
     }
