@@ -624,16 +624,14 @@ fn range_to_keys(range: (Bound<Key>, Bound<Key>)) -> Result<(Key, Option<Key>)> 
     let start = match range.0 {
         Bound::Included(v) => v,
         Bound::Excluded(mut v) => {
-            let mut buf = b"\0".to_vec();
-            buf.append(&mut v.0);
-            Key(buf)
+            v.0.push(b"\0"[0]);
+            v
         }
         Bound::Unbounded => Err(Error::invalid_key_range())?,
     };
     let end = match range.1 {
         Bound::Included(mut v) => {
-            let mut buf = b"\0".to_vec();
-            v.0.append(&mut buf);
+            v.0.push(b"\0"[0]);
             Some(v)
         }
         Bound::Excluded(v) => Some(v),
