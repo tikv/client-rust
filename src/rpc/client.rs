@@ -28,6 +28,7 @@ use futures::{
 };
 use grpcio::{EnvBuilder, Environment};
 use kvproto::kvrpcpb;
+use protobuf::Message;
 use log::*;
 
 use crate::{
