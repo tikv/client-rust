@@ -27,8 +27,8 @@ use futures::{
 use fxhash::FxHashSet as HashSet;
 use grpcio::{CallOption, Environment, WriteFlags};
 use kvproto::pdpb;
-use protobuf::Message;
 use log::*;
+use protobuf::Message;
 use tokio_core::reactor::{Core, Handle as OtherHandle};
 
 use crate::{
