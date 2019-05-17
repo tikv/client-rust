@@ -15,8 +15,9 @@ use futures::{
 };
 use fxhash::FxHashSet as HashSet;
 use grpcio::{CallOption, Environment, WriteFlags};
-use kvproto::{pdpb, pdpb_grpc};
+use kvproto::pdpb;
 use log::*;
+use protobuf::Message;
 use tokio_core::reactor::{Core, Handle as OtherHandle};
 
 use crate::{
@@ -33,6 +34,7 @@ use crate::{
 
 macro_rules! pd_request {
     ($cluster_id:expr, $type:ty) => {{
+        use ::protobuf::Message;
         let mut request = <$type>::new();
         let mut header = ::kvproto::pdpb::RequestHeader::new();
         header.set_cluster_id($cluster_id);
@@ -214,7 +216,7 @@ impl PdReactor {
 }
 
 pub struct LeaderClient {
-    pub client: pdpb_grpc::PdClient,
+    pub client: pdpb::PdClient,
     pub members: pdpb::GetMembersResponse,
 
     env: Arc<Environment>,
@@ -293,7 +295,7 @@ pub fn validate_endpoints(
     endpoints: &[String],
     security_mgr: &SecurityManager,
     timeout: Duration,
-) -> Result<(pdpb_grpc::PdClient, pdpb::GetMembersResponse)> {
+) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
     let len = endpoints.len();
     let mut endpoints_set = HashSet::with_capacity_and_hasher(len, Default::default());
 
@@ -348,8 +350,8 @@ fn connect(
     security_mgr: &SecurityManager,
     addr: &str,
     timeout: Duration,
-) -> Result<(pdpb_grpc::PdClient, pdpb::GetMembersResponse)> {
-    let client = security_mgr.connect(env, addr, pdpb_grpc::PdClient::new)?;
+) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
+    let client = security_mgr.connect(env, addr, pdpb::PdClient::new)?;
     let option = CallOption::default().timeout(timeout);
     let resp = client
         .get_members_opt(&pdpb::GetMembersRequest::new(), option)
@@ -363,7 +365,7 @@ fn try_connect(
     addr: &str,
     cluster_id: u64,
     timeout: Duration,
-) -> Result<(pdpb_grpc::PdClient, pdpb::GetMembersResponse)> {
+) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
     let (client, r) = connect(Arc::clone(&env), security_mgr, addr, timeout)?;
     let new_cluster_id = r.get_header().get_cluster_id();
     if new_cluster_id != cluster_id {
@@ -383,7 +385,7 @@ pub fn try_connect_leader(
     security_mgr: &SecurityManager,
     previous: &pdpb::GetMembersResponse,
     timeout: Duration,
-) -> Result<(pdpb_grpc::PdClient, pdpb::GetMembersResponse)> {
+) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
     let previous_leader = previous.get_leader();
     let members = previous.get_members();
     let cluster_id = previous.get_header().get_cluster_id();

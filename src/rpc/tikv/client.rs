@@ -7,8 +7,8 @@ use std::{fmt, sync::Arc, time::Duration};
 
 use futures::Future;
 use grpcio::{CallOption, Environment};
-use kvproto::{errorpb, kvrpcpb, tikvpb_grpc::TikvClient};
-use protobuf;
+use kvproto::{errorpb, kvrpcpb, tikvpb::TikvClient};
+use protobuf::{self, Message};
 
 use crate::{
     rpc::{
@@ -84,7 +84,7 @@ has_region_error!(kvrpcpb::CleanupResponse);
 has_region_error!(kvrpcpb::BatchGetResponse);
 has_region_error!(kvrpcpb::ScanLockResponse);
 has_region_error!(kvrpcpb::ResolveLockResponse);
-has_region_error!(kvrpcpb::GCResponse);
+has_region_error!(kvrpcpb::GcResponse);
 has_region_error!(kvrpcpb::RawGetResponse);
 has_region_error!(kvrpcpb::RawBatchGetResponse);
 has_region_error!(kvrpcpb::RawPutResponse);
@@ -116,7 +116,7 @@ has_key_error!(kvrpcpb::BatchRollbackResponse);
 has_key_error!(kvrpcpb::CleanupResponse);
 has_key_error!(kvrpcpb::ScanLockResponse);
 has_key_error!(kvrpcpb::ResolveLockResponse);
-has_key_error!(kvrpcpb::GCResponse);
+has_key_error!(kvrpcpb::GcResponse);
 
 macro_rules! has_str_error {
     ($type:ty) => {
@@ -415,8 +415,8 @@ impl KvClient {
         &self,
         context: TxnContext,
         safe_point: u64,
-    ) -> impl Future<Item = kvrpcpb::GCResponse, Error = Error> {
-        let mut req = txn_request!(context, kvrpcpb::GCRequest);
+    ) -> impl Future<Item = kvrpcpb::GcResponse, Error = Error> {
+        let mut req = txn_request!(context, kvrpcpb::GcRequest);
         req.set_safe_point(safe_point);
 
         self.execute(request_context(
@@ -632,7 +632,7 @@ impl KvClient {
     }
 
     #[inline]
-    fn convert_to_grpc_pairs(pairs: Vec<KvPair>) -> protobuf::RepeatedField<kvrpcpb::KvPair> {
+    fn convert_to_grpc_pairs(pairs: Vec<KvPair>) -> Vec<kvrpcpb::KvPair> {
         pairs.into_iter().map(Self::convert_to_grpc_pair).collect()
     }
 
@@ -642,9 +642,8 @@ impl KvClient {
     }
 
     #[inline]
-    fn convert_from_grpc_pairs(pairs: protobuf::RepeatedField<kvrpcpb::KvPair>) -> Vec<KvPair> {
+    fn convert_from_grpc_pairs(pairs: Vec<kvrpcpb::KvPair>) -> Vec<KvPair> {
         pairs
-            .into_vec()
             .into_iter()
             .map(Self::convert_from_grpc_pair)
             .collect()
@@ -662,7 +661,7 @@ impl KvClient {
     #[inline]
     fn convert_to_grpc_ranges(
         ranges: impl Iterator<Item = (Option<Key>, Option<Key>)>,
-    ) -> protobuf::RepeatedField<kvrpcpb::KeyRange> {
+    ) -> Vec<kvrpcpb::KeyRange> {
         ranges.map(Self::convert_to_grpc_range).collect()
     }
 }
