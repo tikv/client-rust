@@ -29,6 +29,7 @@ use futures::{
 use grpcio::{EnvBuilder, Environment};
 use kvproto::kvrpcpb;
 use log::*;
+use protobuf::Message;
 
 use crate::{
     raw::ColumnFamily,

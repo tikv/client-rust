@@ -19,7 +19,7 @@ use std::{
 
 use futures::Future;
 use grpcio::{CallOption, Environment};
-use kvproto::{metapb, pdpb, pdpb_grpc::PdClient as RpcClient};
+use kvproto::{metapb, pdpb, pdpb::PdClient as RpcClient};
 
 use crate::{
     rpc::{
@@ -117,7 +117,7 @@ impl PdClient {
         &self,
         region_id: u64,
     ) -> impl Future<Item = (metapb::Region, Option<metapb::Peer>), Error = Error> {
-        let mut req = pd_request!(self.cluster_id, pdpb::GetRegionByIDRequest);
+        let mut req = pd_request!(self.cluster_id, pdpb::GetRegionByIdRequest);
         req.set_region_id(region_id);
 
         self.execute(request_context(
