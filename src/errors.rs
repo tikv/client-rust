@@ -22,6 +22,7 @@ pub struct Error {
 
 /// An error originating from the TiKV client or dependencies.
 #[derive(Debug, Fail)]
+#[allow(clippy::large_enum_variant)]
 pub enum ErrorKind {
     /// Wraps a `std::io::Error`.
     #[fail(display = "IO error: {}", _0)]
