@@ -18,7 +18,6 @@ use futures::{
 use grpcio::{EnvBuilder, Environment};
 use kvproto::kvrpcpb;
 use log::*;
-use protobuf::Message;
 
 use crate::{
     raw::ColumnFamily,
@@ -478,7 +477,7 @@ impl RegionContext {
 
 impl From<RegionContext> for kvrpcpb::Context {
     fn from(mut ctx: RegionContext) -> kvrpcpb::Context {
-        let mut kvctx = kvrpcpb::Context::new();
+        let mut kvctx = kvrpcpb::Context::default();
         kvctx.set_region_id(ctx.region.id);
         kvctx.set_region_epoch(ctx.region.take_region_epoch());
         kvctx.set_peer(ctx.region.peer().expect("leader must exist").into_inner());
