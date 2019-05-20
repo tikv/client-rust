@@ -12,17 +12,23 @@ With this crate you can easily connect to any TiKV deployment, interact with it,
 
 This is an open source (Apache 2) project hosted by the Cloud Native Computing Foundation (CNCF) and maintained by the TiKV Authors. *We'd love it if you joined us in improving this project.*
 
-## Install
+## Using the client
 
-There are no special requirements to use this. It is a Rust 2018 edition crate supporting stable and nightly.
+The TiKV client is a Rust library (crate). It requires version 1.36 of the compiler and standard libraries (which will be stable from the 4th July 2019, see below for ensuring compatibility).
 
-To use this crate in your project, add it as a dependency in the `Cargo.toml` of your Rust project:
+To use this crate in your project, add it as a dependency in your `Cargo.toml`:
 
 ```toml
 [dependencies]
 # ...Your other dependencies...
-tikv-client = "~0.1"
+tikv-client = { git = "https://github.com/tikv/client-rust.git" }
 ```
+
+The client requires a Git dependency until we can [publish it](https://github.com/tikv/client-rust/issues/32).
+
+There are [examples](examples) which show how to use the client in a Rust program.
+
+The examples and documentation use async/await syntax. This is a new feature in Rust and is currently unstable. To use async/await you'll need to add the feature flag `#![async_await]` to your crate and use a nightly compiler (see below).
 
 ## Access the documentation
 
@@ -37,3 +43,31 @@ You can access the documentation on your machine by running the following in any
 cargo doc --package tikv-client --open
 # If it didn't work, browse file URL it tried to open with your browser.
 ```
+
+## Toolchain versions
+
+To check what version of Rust you are using, run
+
+```bash
+rustc --version
+```
+
+You'll see something like `rustc 1.36.0-nightly (a784a8022 2019-05-09)` where the `1.36.0` is the toolchain version, and `nightly` is the channel (stable/beta/nightly). To install another toolchain use
+
+```bash
+rustup toolchain install nightly
+```
+
+Where `nightly` here is the channel to add. To update your toolchains, run
+
+```bash
+rustup update
+```
+
+To build your project using a specified toolchain, use something like
+
+```bash
+cargo +nightly build
+```
+
+Where `nightly` names the toolchain (by specifying the channel, in this case).

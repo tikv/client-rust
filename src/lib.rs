@@ -4,39 +4,11 @@
 #![type_length_limit = "16777216"]
 #![allow(clippy::redundant_closure)]
 
-//! TiKV Client for Rust.
-//!
-//! > Currently this crate is experimental and some portions (eg the Transactional API) are still
-//! > in active development. You're encouraged to use this library for testing and help us find
-//! > problems!
-//!
 //! This crate provides a clean, ready to use client for [TiKV](https://github.com/tikv/tikv), a
 //! distributed transactional Key-Value database written in Rust.
 //!
 //! With this crate you can easily connect to any TiKV deployment, interact with it, and mutate the
 //! data it contains.
-//!
-//! This is an open source (Apache 2) project hosted by the Cloud Native Computing Foundation
-//! (CNCF) and maintained by the TiKV Authors. *We'd love it if you joined us in improving this
-//! project.*
-//!
-//! ## Install
-//!
-//! There are no special requirements to use this. It is a Rust 2018 edition crate supporting
-//! stable and nightly.
-//!
-//! To use this crate in your project, add it as a dependency in the `Cargo.toml` of your Rust project:
-//!
-//! ```toml
-//! [dependencies]
-//! # ...Your other dependencies...
-//! tikv-client = "~0.1"
-//! futures-preview = "0.3.0-alpha.15" # You'll need this later.
-//! ```
-//!
-//! Then run a `cargo build --package tikv-client` command to test building the crate.
-//!
-//! Next, you need to choose the API appropriate for your needs.
 //!
 //! ## Choosing an API
 //!
