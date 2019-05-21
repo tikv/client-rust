@@ -1,15 +1,4 @@
-// Copyright 2018 The TiKV Project Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 // TODO: Remove this when txn is done.
 #![allow(dead_code)]
@@ -29,7 +18,6 @@ use futures::{
 use grpcio::{EnvBuilder, Environment};
 use kvproto::kvrpcpb;
 use log::*;
-use protobuf::Message;
 
 use crate::{
     raw::ColumnFamily,
@@ -489,7 +477,7 @@ impl RegionContext {
 
 impl From<RegionContext> for kvrpcpb::Context {
     fn from(mut ctx: RegionContext) -> kvrpcpb::Context {
-        let mut kvctx = kvrpcpb::Context::new();
+        let mut kvctx = kvrpcpb::Context::default();
         kvctx.set_region_id(ctx.region.id);
         kvctx.set_region_epoch(ctx.region.take_region_epoch());
         kvctx.set_peer(ctx.region.peer().expect("leader must exist").into_inner());

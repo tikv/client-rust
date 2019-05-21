@@ -24,7 +24,6 @@ fxhash = "0.2"
 grpcio = { version = "0.5.0-alpha", features = [ "secure", "prost-codec" ], default-features = false }
 lazy_static = "0.2.1"
 log = "0.3.9"
-protobuf = "2"
 serde = "1.0"
 serde_derive = "1.0"
 tokio-core = "0.1"
@@ -32,7 +31,6 @@ tokio-timer = "0.2"
 
 [dependencies.kvproto]
 git = "https://github.com/pingcap/kvproto.git"
-branch  = "raft-0.5.0"
 
 [dependencies.prometheus]
 version = "0.4.2"
