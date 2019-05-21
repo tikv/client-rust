@@ -1,15 +1,4 @@
-// Copyright 2018 The TiKV Project Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::{
     sync::{Arc, RwLock},
@@ -28,7 +17,6 @@ use fxhash::FxHashSet as HashSet;
 use grpcio::{CallOption, Environment, WriteFlags};
 use kvproto::pdpb;
 use log::*;
-use protobuf::Message;
 use tokio_core::reactor::{Core, Handle as OtherHandle};
 
 use crate::{
@@ -45,9 +33,8 @@ use crate::{
 
 macro_rules! pd_request {
     ($cluster_id:expr, $type:ty) => {{
-        use ::protobuf::Message;
-        let mut request = <$type>::new();
-        let mut header = ::kvproto::pdpb::RequestHeader::new();
+        let mut request = <$type>::default();
+        let mut header = ::kvproto::pdpb::RequestHeader::default();
         header.set_cluster_id($cluster_id);
         request.set_header(header);
         request
@@ -365,7 +352,7 @@ fn connect(
     let client = security_mgr.connect(env, addr, pdpb::PdClient::new)?;
     let option = CallOption::default().timeout(timeout);
     let resp = client
-        .get_members_opt(&pdpb::GetMembersRequest::new(), option)
+        .get_members_opt(&pdpb::GetMembersRequest::default(), option)
         .map_err(Error::from)?;
     Ok((client, resp))
 }
