@@ -6,12 +6,20 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
+    borrow::Borrow,
 };
 
 use grpcio::{Channel, ChannelBuilder, ChannelCredentialsBuilder, Environment};
 use log::*;
+use lazy_static::*;
+use regex::Regex;
 
 use crate::Result;
+
+lazy_static! {
+    static ref SCHEME_REG: Regex = Regex::new(r"^\s*(https?://)").unwrap();
+}
+
 
 fn check_pem_file(tag: &str, path: &Path) -> Result<File> {
     File::open(path)
@@ -65,9 +73,10 @@ impl SecurityManager {
         Factory: FnOnce(Channel) -> Client,
     {
         info!("connect to rpc server at endpoint: {:?}", addr);
-        let addr = addr
-            .trim_start_matches("http://")
-            .trim_start_matches("https://");
+
+        let cow_addr = SCHEME_REG.replace(addr, "");
+        let addr: &str = cow_addr.borrow();
+
         let cb = ChannelBuilder::new(env)
             .keepalive_time(Duration::from_secs(10))
             .keepalive_timeout(Duration::from_secs(3));
