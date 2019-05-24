@@ -1,17 +1,17 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::{
+    borrow::Borrow,
     fs::File,
     io::Read,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
-    borrow::Borrow,
 };
 
 use grpcio::{Channel, ChannelBuilder, ChannelCredentialsBuilder, Environment};
-use log::*;
 use lazy_static::*;
+use log::*;
 use regex::Regex;
 
 use crate::Result;
@@ -19,7 +19,6 @@ use crate::Result;
 lazy_static! {
     static ref SCHEME_REG: Regex = Regex::new(r"^\s*(https?://)").unwrap();
 }
-
 
 fn check_pem_file(tag: &str, path: &Path) -> Result<File> {
     File::open(path)
