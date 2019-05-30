@@ -6,7 +6,9 @@ use std::{
     time::Duration,
 };
 
-use futures::Future;
+use futures::compat::Compat01As03;
+use futures::future::{ready, Future};
+use futures::prelude::{FutureExt, TryFutureExt};
 use grpcio::{CallOption, Environment};
 use kvproto::{metapb, pdpb, pdpb::PdClient as RpcClient};
 
@@ -21,7 +23,7 @@ use crate::{
         security::SecurityManager,
         util::HandyRwLock,
     },
-    Error, Result,
+    Error, ErrorKind, Result,
 };
 
 const LEADER_CHANGE_RETRY: usize = 10;
@@ -78,74 +80,78 @@ impl PdClient {
     fn get_region_and_leader(
         &self,
         key: &[u8],
-    ) -> impl Future<Item = (metapb::Region, Option<metapb::Peer>), Error = Error> {
+    ) -> impl Future<Output = Result<(metapb::Region, Option<metapb::Peer>)>> {
         let mut req = pd_request!(self.cluster_id, pdpb::GetRegionRequest);
         req.set_region_key(key.to_owned());
         let key = req.get_region_key().to_owned();
 
         self.execute(request_context(
             "get_region",
-            move |cli: &RpcClient, opt: _| cli.get_region_async_opt(&req, opt),
+            move |cli: &RpcClient, opt: _| {
+                cli.get_region_async_opt(&req, opt).map(Compat01As03::new)
+            },
         ))
         .and_then(move |mut resp| {
             let region = if resp.has_region() {
                 resp.take_region()
             } else {
-                Err(Error::region_for_key_not_found(key))?
+                return ready(Err(Error::region_for_key_not_found(key)));
             };
             let leader = if resp.has_leader() {
                 Some(resp.take_leader())
             } else {
                 None
             };
-            Ok((region, leader))
+            ready(Ok((region, leader)))
         })
     }
 
     fn get_region_and_leader_by_id(
         &self,
         region_id: u64,
-    ) -> impl Future<Item = (metapb::Region, Option<metapb::Peer>), Error = Error> {
+    ) -> impl Future<Output = Result<(metapb::Region, Option<metapb::Peer>)>> {
         let mut req = pd_request!(self.cluster_id, pdpb::GetRegionByIdRequest);
         req.set_region_id(region_id);
 
         self.execute(request_context(
             "get_region_by_id",
-            move |cli: &RpcClient, opt: _| cli.get_region_by_id_async_opt(&req, opt),
+            move |cli: &RpcClient, opt: _| {
+                cli.get_region_by_id_async_opt(&req, opt)
+                    .map(Compat01As03::new)
+            },
         ))
         .and_then(move |mut resp| {
             let region = if resp.has_region() {
                 resp.take_region()
             } else {
-                Err(Error::region_not_found(region_id, None))?
+                return ready(Err(Error::region_not_found(region_id, None)));
             };
             let leader = if resp.has_leader() {
                 Some(resp.take_leader())
             } else {
                 None
             };
-            Ok((region, leader))
+            ready(Ok((region, leader)))
         })
     }
 
-    fn execute<Resp, Executor, RpcFuture>(
+    fn execute<Executor, Resp, RpcFuture>(
         &self,
         mut context: PdRequestContext<Executor>,
-    ) -> impl Future<Item = Resp, Error = Error>
+    ) -> impl Future<Output = Result<Resp>>
     where
-        Resp: PdResponse + Send + fmt::Debug + 'static,
-        RpcFuture: Future<Item = Resp, Error = ::grpcio::Error> + Send + 'static,
         Executor: FnMut(&RpcClient, CallOption) -> ::grpcio::Result<RpcFuture> + Send + 'static,
+        RpcFuture: Future<Output = std::result::Result<Resp, ::grpcio::Error>> + Send + 'static,
+        Resp: PdResponse + Send + fmt::Debug + 'static,
     {
         let timeout = self.timeout;
         let mut executor = context.executor();
         let wrapper = move |cli: &RwLock<LeaderClient>| {
             let option = CallOption::default().timeout(timeout);
             let cli = &cli.rl().client;
-            executor(cli, option)
-                .unwrap()
-                .map_err(Into::into)
-                .and_then(|r| {
+            executor(cli, option).unwrap().map(|r| match r {
+                Err(e) => Err(ErrorKind::Grpc(e))?,
+                Ok(r) => {
                     {
                         let header = r.header();
                         if header.has_error() {
@@ -153,7 +159,8 @@ impl PdClient {
                         }
                     }
                     Ok(r)
-                })
+                }
+            })
         };
         Request::new(
             wrapper,
@@ -162,41 +169,46 @@ impl PdClient {
             LEADER_CHANGE_RETRY,
         )
         .execute()
-        .then(move |r| context.done(r))
+        .map(move |r| context.done(r))
     }
 
-    pub fn get_all_stores(&self) -> impl Future<Item = Vec<Store>, Error = Error> {
+    pub fn get_all_stores(&self) -> impl Future<Output = Result<Vec<Store>>> {
         let req = pd_request!(self.cluster_id, pdpb::GetAllStoresRequest);
 
         self.execute(request_context(
             "get_all_stores",
-            move |cli: &RpcClient, opt: _| cli.get_all_stores_async_opt(&req, opt),
+            move |cli: &RpcClient, opt: _| {
+                cli.get_all_stores_async_opt(&req, opt)
+                    .map(Compat01As03::new)
+            },
         ))
-        .map(|mut resp| resp.take_stores().into_iter().map(Into::into).collect())
+        .map_ok(|mut resp| resp.take_stores().into_iter().map(Into::into).collect())
     }
 
-    pub fn get_store(&self, store_id: StoreId) -> impl Future<Item = Store, Error = Error> {
+    pub fn get_store(&self, store_id: StoreId) -> impl Future<Output = Result<Store>> {
         let mut req = pd_request!(self.cluster_id, pdpb::GetStoreRequest);
         req.set_store_id(store_id);
 
         self.execute(request_context(
             "get_store",
-            move |cli: &RpcClient, opt: _| cli.get_store_async_opt(&req, opt),
+            move |cli: &RpcClient, opt: _| {
+                cli.get_store_async_opt(&req, opt).map(Compat01As03::new)
+            },
         ))
-        .map(|mut resp| resp.take_store().into())
+        .map_ok(|mut resp| resp.take_store().into())
     }
 
-    pub fn get_region(&self, key: &[u8]) -> impl Future<Item = Region, Error = Error> {
+    pub fn get_region(&self, key: &[u8]) -> impl Future<Output = Result<Region>> {
         self.get_region_and_leader(key)
-            .map(|x| Region::new(x.0, x.1))
+            .map_ok(|x| Region::new(x.0, x.1))
     }
 
-    pub fn get_region_by_id(&self, id: RegionId) -> impl Future<Item = Region, Error = Error> {
+    pub fn get_region_by_id(&self, id: RegionId) -> impl Future<Output = Result<Region>> {
         self.get_region_and_leader_by_id(id)
-            .map(|x| Region::new(x.0, x.1))
+            .map_ok(|x| Region::new(x.0, x.1))
     }
 
-    pub fn get_ts(&self) -> impl Future<Item = PdTimestamp, Error = Error> {
+    pub fn get_ts(&self) -> impl Future<Output = Result<PdTimestamp>> {
         self.leader.wl().get_ts()
     }
 }
