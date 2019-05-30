@@ -68,16 +68,6 @@ impl Key {
     pub(crate) fn into_inner(self) -> Vec<u8> {
         self.0
     }
-
-    #[inline]
-    pub(crate) fn push(&mut self, v: u8) {
-        self.0.push(v)
-    }
-
-    #[inline]
-    pub(crate) fn pop(&mut self) {
-        self.0.pop();
-    }
 }
 
 impl From<Vec<u8>> for Key {
@@ -389,6 +379,33 @@ impl fmt::Debug for KvPair {
 /// which means all of the above types can be passed directly to those functions.
 pub trait KeyRange: Sized {
     fn into_bounds(self) -> (Bound<Key>, Bound<Key>);
+    /// Ranges used in scanning TiKV have a particularity to them.
+    ///
+    /// The **start** of a scan is inclusive, unless appended with an '\0', then it is exclusive.
+    ///
+    /// The **end** of a scan is exclusive, unless appended with an '\0', then it is inclusive.
+    ///
+    /// ```rust
+    /// use tikv_client::{KeyRange, Key};
+    /// // Exclusive
+    /// let range = "a".."z";
+    /// assert_eq!(
+    ///     range.into_keys().unwrap(),
+    ///     (Key::from("a"), Some(Key::from("z")))
+    /// );
+    /// // Inclusive
+    /// let range = "a"..="z";
+    /// assert_eq!(
+    ///     range.into_keys().unwrap(),
+    ///     (Key::from("a"), Some(Key::from("z\0")))
+    /// );
+    /// // Open
+    /// let range = "a"..;
+    /// assert_eq!(
+    ///     range.into_keys().unwrap(),
+    ///     (Key::from("a"), None)
+    /// );
+    // ```
     fn into_keys(self) -> Result<(Key, Option<Key>)> {
         range_to_keys(self.into_bounds())
     }
@@ -398,24 +415,17 @@ fn range_to_keys(range: (Bound<Key>, Bound<Key>)) -> Result<(Key, Option<Key>)> 
     let start = match range.0 {
         Bound::Included(v) => v,
         Bound::Excluded(mut v) => {
-            match v.last_mut() {
-                None | Some(&mut u8::MAX) => v.push(0),
-                Some(v) => *v += 1,
-            }
+            v.0.push(b"\0"[0]);
             v
         }
         Bound::Unbounded => Err(Error::invalid_key_range())?,
     };
     let end = match range.1 {
-        Bound::Included(v) => Some(v),
-        Bound::Excluded(mut v) => Some({
-            match v.last_mut() {
-                None => (),
-                Some(&mut u8::MIN) => v.pop(),
-                Some(v) => *v -= 1,
-            }
-            v
-        }),
+        Bound::Included(mut v) => {
+            v.0.push(b"\0"[0]);
+            Some(v)
+        }
+        Bound::Excluded(v) => Some(v),
         Bound::Unbounded => None,
     };
     Ok((start, end))
@@ -467,10 +477,14 @@ impl<T: Into<Key>> KeyRange for (Bound<T>, Bound<T>) {
     }
 }
 
-fn convert_to_bound_key(b: Bound<impl Into<Key>>) -> Bound<Key> {
+fn convert_to_bound_key<K>(b: Bound<K>) -> Bound<Key>
+where
+    K: Into<Key>,
+{
+    use std::ops::Bound::*;
     match b {
-        Bound::Included(k) => Bound::Included(k.into()),
-        Bound::Excluded(k) => Bound::Excluded(k.into()),
-        Bound::Unbounded => Bound::Unbounded,
+        Included(k) => Included(k.into()),
+        Excluded(k) => Excluded(k.into()),
+        Unbounded => Unbounded,
     }
 }
