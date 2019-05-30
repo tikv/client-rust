@@ -1,6 +1,7 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::{
+    collections::HashSet,
     sync::{Arc, RwLock},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -17,7 +18,6 @@ use futures::{
     stream::TryStreamExt,
     Future,
 };
-use fxhash::FxHashSet as HashSet;
 use grpcio::{CallOption, Environment, WriteFlags};
 use kvproto::pdpb;
 use log::*;
@@ -309,8 +309,7 @@ pub fn validate_endpoints(
     security_mgr: &SecurityManager,
     timeout: Duration,
 ) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
-    let len = endpoints.len();
-    let mut endpoints_set = HashSet::with_capacity_and_hasher(len, Default::default());
+    let mut endpoints_set = HashSet::with_capacity(endpoints.len());
 
     let mut members = None;
     let mut cluster_id = None;

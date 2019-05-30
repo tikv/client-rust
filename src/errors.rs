@@ -241,5 +241,5 @@ impl From<kvproto::kvrpcpb::KeyError> for Error {
     }
 }
 
-/// A result holding an [`Error`](enum.Error.html).
+/// A result holding an [`Error`](Error).
 pub type Result<T> = result::Result<T, Error>;

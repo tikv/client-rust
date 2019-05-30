@@ -2,7 +2,7 @@
 
 //! Raw related functionality.
 //!
-//! Using the [`raw::Client`](struct.Client.html) you can utilize TiKV's raw interface.
+//! Using the [`raw::Client`](raw::Client) you can utilize TiKV's raw interface.
 //!
 //! This interface offers optimal performance as it does not require coordination with a timestamp
 //! oracle, while the transactional interface does.
@@ -20,13 +20,13 @@ use std::{
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
-/// The TiKV raw [`Client`](struct.Client.html) is used to issue requests to the TiKV server and PD cluster.
+/// The TiKV raw [`Client`](Client) is used to issue requests to the TiKV server and PD cluster.
 pub struct Client {
     rpc: Arc<RpcClient>,
 }
 
 impl Client {
-    /// Create a new [`Client`](struct.Client.html) once the [`Connect`](struct.Connect.html) resolves.
+    /// Create a new [`Client`](Client) once the [`Connect`](Connect) resolves.
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
@@ -37,7 +37,7 @@ impl Client {
     /// let client = connect.await.unwrap();
     /// # });
     /// ```
-    #[cfg_attr(feature = "cargo-clippy", allow(clippy::new_ret_no_self))]
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(config: Config) -> Connect {
         Connect::new(config)
     }
@@ -47,7 +47,7 @@ impl Client {
         Arc::clone(&self.rpc)
     }
 
-    /// Create a new [`Get`](struct.Get.html) request.
+    /// Create a new [`Get`](Get) request.
     ///
     /// Once resolved this request will result in the fetching of the value associated with the
     /// given key.
@@ -68,7 +68,7 @@ impl Client {
         Get::new(self.rpc(), GetInner::new(key.into()))
     }
 
-    /// Create a new [`BatchGet`](struct.BatchGet.html) request.
+    /// Create a new [`BatchGet`](BatchGet) request.
     ///
     /// Once resolved this request will result in the fetching of the values associated with the
     /// given keys.
@@ -92,7 +92,7 @@ impl Client {
         )
     }
 
-    /// Create a new [`Put`](struct.Put.html) request.
+    /// Create a new [`Put`](Put) request.
     ///
     /// Once resolved this request will result in the setting of the value associated with the given key.
     ///
@@ -113,7 +113,7 @@ impl Client {
         Put::new(self.rpc(), PutInner::new(key.into(), value.into()))
     }
 
-    /// Create a new [`BatchPut`](struct.BatchPut.html) request.
+    /// Create a new [`BatchPut`](BatchPut) request.
     ///
     /// Once resolved this request will result in the setting of the value associated with the given key.
     ///
@@ -138,7 +138,7 @@ impl Client {
         )
     }
 
-    /// Create a new [`Delete`](struct.Delete.html) request.
+    /// Create a new [`Delete`](Delete) request.
     ///
     /// Once resolved this request will result in the deletion of the given key.
     ///
@@ -158,7 +158,7 @@ impl Client {
         Delete::new(self.rpc(), DeleteInner::new(key.into()))
     }
 
-    /// Create a new [`BatchDelete`](struct.BatchDelete.html) request.
+    /// Create a new [`BatchDelete`](BatchDelete) request.
     ///
     /// Once resolved this request will result in the deletion of the given keys.
     ///
@@ -181,7 +181,7 @@ impl Client {
         )
     }
 
-    /// Create a new [`Scan`](struct.Scan.html) request.
+    /// Create a new [`Scan`](Scan) request.
     ///
     /// Once resolved this request will result in a scanner over the given keys.
     ///
@@ -201,7 +201,7 @@ impl Client {
         Scan::new(self.rpc(), ScanInner::new(range.into_bounds(), limit))
     }
 
-    /// Create a new [`BatchScan`](struct.BatchScan.html) request.
+    /// Create a new [`BatchScan`](BatchScan) request.
     ///
     /// Once resolved this request will result in a set of scanners over the given keys.
     ///
@@ -233,7 +233,7 @@ impl Client {
         )
     }
 
-    /// Create a new [`DeleteRange`](struct.DeleteRange.html) request.
+    /// Create a new [`DeleteRange`](DeleteRange) request.
     ///
     /// Once resolved this request will result in the deletion of all keys over the given range.
     ///
@@ -254,9 +254,9 @@ impl Client {
     }
 }
 
-/// An unresolved [`Client`](struct.Client.html) connection to a TiKV cluster.
+/// An unresolved [`Client`](Client) connection to a TiKV cluster.
 ///
-/// Once resolved it will result in a connected [`Client`](struct.Client.html).
+/// Once resolved it will result in a connected [`Client`](Client).
 ///
 /// ```rust,no_run
 /// # #![feature(async_await)]
@@ -288,7 +288,7 @@ impl Future for Connect {
     }
 }
 
-/// A [`ColumnFamily`](struct.ColumnFamily.html) is an optional parameter for [`raw::Client`](struct.Client.html) requests.
+/// A [`ColumnFamily`](ColumnFamily) is an optional parameter for [`raw::Client`](Client) requests.
 ///
 /// TiKV uses RocksDB's `ColumnFamily` support. You can learn more about RocksDB's `ColumnFamily`s [on their wiki](https://github.com/facebook/rocksdb/wiki/Column-Families).
 ///
@@ -300,7 +300,7 @@ impl Future for Connect {
 ///
 /// Not providing a call a `ColumnFamily` means it will use the default value of `default`.
 ///
-/// The best (and only) way to create a [`ColumnFamily`](struct.ColumnFamily.html) is via the `From` implementation:
+/// The best (and only) way to create a [`ColumnFamily`](ColumnFamily) is via the `From` implementation:
 ///
 /// ```rust
 /// # use tikv_client::raw::ColumnFamily;
@@ -405,7 +405,7 @@ where
     }
 }
 
-/// An unresolved [`Client::get`](struct.Client.html#method.get) request.
+/// An unresolved [`Client::get`](Client::get) request.
 ///
 /// Once resolved this request will result in the fetching of the value associated with the given
 /// key.
@@ -420,7 +420,7 @@ impl Get {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -457,7 +457,7 @@ impl RequestInner for GetInner {
     }
 }
 
-/// An unresolved [`Client::batch_get`](struct.Client.html#method.batch_get) request.
+/// An unresolved [`Client::batch_get`](Client::batch_get) request.
 ///
 /// Once resolved this request will result in the fetching of the values associated with the given
 /// keys.
@@ -472,7 +472,7 @@ impl BatchGet {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -509,7 +509,7 @@ impl BatchGetInner {
     }
 }
 
-/// An unresolved [`Client::put`](struct.Client.html#method.put) request.
+/// An unresolved [`Client::put`](Client::put) request.
 ///
 /// Once resolved this request will result in the putting of the value associated with the given
 /// key.
@@ -524,7 +524,7 @@ impl Put {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -559,7 +559,7 @@ impl RequestInner for PutInner {
     }
 }
 
-/// An unresolved [`Client::batch_put`](struct.Client.html#method.batch_put) request.
+/// An unresolved [`Client::batch_put`](Client::batch_put) request.
 ///
 /// Once resolved this request will result in the setting of the value associated with the given key.
 pub struct BatchPut {
@@ -573,7 +573,7 @@ impl BatchPut {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -606,7 +606,7 @@ impl RequestInner for BatchPutInner {
     }
 }
 
-/// An unresolved [`Client::delete`](struct.Client.html#method.delete) request.
+/// An unresolved [`Client::delete`](Client::delete) request.
 ///
 /// Once resolved this request will result in the deletion of the given key.
 pub struct Delete {
@@ -620,7 +620,7 @@ impl Delete {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -653,7 +653,7 @@ impl RequestInner for DeleteInner {
     }
 }
 
-/// An unresolved [`Client::batch_delete`](struct.Client.html#method.batch_delete) request.
+/// An unresolved [`Client::batch_delete`](Client::batch_delete) request.
 ///
 /// Once resolved this request will result in the deletion of the given keys.
 pub struct BatchDelete {
@@ -667,7 +667,7 @@ impl BatchDelete {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -739,7 +739,7 @@ impl RequestInner for ScanInner {
     }
 }
 
-/// An unresolved [`Client::scan`](struct.Client.html#method.scan) request.
+/// An unresolved [`Client::scan`](Client::scan) request.
 ///
 /// Once resolved this request will result in a scanner over the given range.
 pub struct Scan {
@@ -753,7 +753,7 @@ impl Scan {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -818,7 +818,7 @@ impl RequestInner for BatchScanInner {
     }
 }
 
-/// An unresolved [`Client::batch_scan`](struct.Client.html#method.batch_scan) request.
+/// An unresolved [`Client::batch_scan`](Client::batch_scan) request.
 ///
 /// Once resolved this request will result in a scanner over the given ranges.
 pub struct BatchScan {
@@ -832,7 +832,7 @@ impl BatchScan {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -854,7 +854,7 @@ impl Future for BatchScan {
     }
 }
 
-/// An unresolved [`Client::delete_range`](struct.Client.html#method.delete_range) request.
+/// An unresolved [`Client::delete_range`](Client::delete_range) request.
 ///
 /// Once resolved this request will result in the deletion of the values in the given
 /// range.
@@ -869,7 +869,7 @@ impl DeleteRange {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
