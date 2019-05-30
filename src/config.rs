@@ -3,8 +3,8 @@
 use serde_derive::{Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
 
-/// The configuration for either a [`raw::Client`](raw/struct.Client.html) or a
-/// [`transaction::Client`](transaction/struct.Client.html).
+/// The configuration for either a [`raw::Client`](super::raw::Client) or a
+/// [`transaction::Client`](super::transaction::Client).
 ///
 /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for PD
 /// must be provided, **not** the TiKV nodes.
@@ -34,7 +34,7 @@ pub struct Config {
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl Config {
-    /// Create a new [`Config`](struct.Config.html) which coordinates with the given PD endpoints.
+    /// Create a new [`Config`](Config) which coordinates with the given PD endpoints.
     ///
     /// It's important to **include more than one PD endpoint** (include all, if possible!)
     /// This helps avoid having a *single point of failure*.
@@ -54,7 +54,7 @@ impl Config {
     }
 
     /// Set the certificate authority, certificate, and key locations for the
-    /// [`Config`](struct.Config.html).
+    /// [`Config`](Config).
     ///
     /// By default, TiKV connections do not utilize transport layer security. Enable it by setting
     /// these values.

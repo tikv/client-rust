@@ -6,11 +6,17 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures::future::{loop_fn, ok, Either, Future, Loop};
+use futures::compat::Compat01As03;
+use futures::future::{ok, ready, Either, Future, TryFutureExt};
+use futures::prelude::FutureExt;
 use log::*;
 use tokio_timer::timer::Handle;
 
-use crate::{rpc::util::GLOBAL_TIMER_HANDLE, Error, Result};
+use crate::{
+    compat::{loop_fn, Loop},
+    rpc::util::GLOBAL_TIMER_HANDLE,
+    Result,
+};
 
 pub const RECONNECT_INTERVAL_SEC: u64 = 1; // 1s
 
@@ -35,7 +41,7 @@ where
     Func: FnMut(&RwLock<Cli>) -> RespFuture + Send + 'static,
     Cli: Send + Sync + 'static,
     Reconnect: FnMut(&Arc<RwLock<Cli>>, u64) -> Result<()> + Send + 'static,
-    RespFuture: Future<Item = Resp, Error = Error> + Send + 'static,
+    RespFuture: Future<Output = Result<Resp>> + Send + 'static,
 {
     pub fn new(func: Func, client: Arc<RwLock<Cli>>, reconnect: Reconnect, retry: usize) -> Self {
         Request {
@@ -49,11 +55,13 @@ where
         }
     }
 
-    fn reconnect_if_needed(mut self) -> impl Future<Item = Self, Error = Self> + Send {
+    fn reconnect_if_needed(
+        mut self,
+    ) -> impl Future<Output = std::result::Result<Self, Self>> + Send {
         debug!("reconnect remains: {}", self.reconnect_count);
 
         if self.request_sent < MAX_REQUEST_COUNT {
-            return Either::A(ok(self));
+            return Either::Left(ok(self));
         }
 
         // Updating client.
@@ -63,29 +71,31 @@ where
         match (self.reconnect)(&self.client, RECONNECT_INTERVAL_SEC) {
             Ok(_) => {
                 self.request_sent = 0;
-                Either::A(ok(self))
+                Either::Left(ok(self))
             }
-            Err(_) => Either::B(
-                self.timer
-                    .delay(Instant::now() + Duration::from_secs(RECONNECT_INTERVAL_SEC))
-                    .then(|_| Err(self)),
+            Err(_) => Either::Right(
+                Compat01As03::new(
+                    self.timer
+                        .delay(Instant::now() + Duration::from_secs(RECONNECT_INTERVAL_SEC)),
+                )
+                .map(|_| Err(self)),
             ),
         }
     }
 
-    fn send_and_receive(mut self) -> impl Future<Item = Self, Error = Self> + Send {
+    fn send_and_receive(mut self) -> impl Future<Output = std::result::Result<Self, Self>> + Send {
         self.request_sent += 1;
         debug!("request sent: {}", self.request_sent);
 
         ok(self).and_then(|mut ctx| {
             let req = (ctx.func)(&ctx.client);
-            req.then(|resp| match resp {
+            req.map(|resp| match resp {
                 Ok(resp) => {
                     ctx.resp = Some(Ok(resp));
                     Ok(ctx)
                 }
-                Err(err) => {
-                    error!("request failed: {:?}", err);
+                Err(e) => {
+                    error!("request failed: {:?}", e);
                     Err(ctx)
                 }
             })
@@ -104,22 +114,20 @@ where
         }
     }
 
-    fn post_loop(ctx: Result<Self>) -> Result<Resp> {
-        let ctx = ctx.expect("end loop with Ok(_)");
-        ctx.resp
+    fn post_loop(self) -> Result<Resp> {
+        self.resp
             .unwrap_or_else(|| Err(internal_err!("fail to request")))
     }
 
     /// Returns a Future, it is resolves once a future returned by the closure
     /// is resolved successfully, otherwise it repeats `retry` times.
-    pub fn execute(self) -> impl Future<Item = Resp, Error = Error> {
+    pub fn execute(self) -> impl Future<Output = Result<Resp>> {
         let ctx = self;
         loop_fn(ctx, |ctx| {
             ctx.reconnect_if_needed()
                 .and_then(Self::send_and_receive)
-                .then(Self::break_or_continue)
+                .map(Self::break_or_continue)
         })
-        .then(Self::post_loop)
-        .map_err(|e| e)
+        .and_then(|r| ready(r.post_loop()))
     }
 }

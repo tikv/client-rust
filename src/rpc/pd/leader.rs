@@ -1,25 +1,30 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::{
+    collections::HashSet,
     sync::{Arc, RwLock},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
+use futures::prelude::{FutureExt, SinkExt, StreamExt, TryFutureExt};
 use futures::{
-    sync::{
+    channel::{
         mpsc::{channel, unbounded, Receiver, Sender, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
-    Future, Sink, Stream,
+    compat::{Compat01As03, Compat01As03Sink},
+    future::ready,
+    stream::TryStreamExt,
+    Future,
 };
-use fxhash::FxHashSet as HashSet;
 use grpcio::{CallOption, Environment, WriteFlags};
 use kvproto::pdpb;
 use log::*;
 use tokio_core::reactor::{Core, Handle as OtherHandle};
 
 use crate::{
+    compat::SinkCompat,
     rpc::{
         pd::{
             context::{observe_tso_batch, request_context},
@@ -115,37 +120,44 @@ impl PdReactor {
         let mut core = Core::new().unwrap();
         let handle = core.handle();
         {
-            let f = rx.take_while(|t| Ok(t.is_some())).for_each(|t| {
+            let f = rx.take_while(|t| ready(t.is_some())).then(|t| {
                 Self::dispatch(&client, t.unwrap(), &handle);
-                Ok(())
+                ready(())
             });
-            core.run(f).unwrap();
+            core.run(TryFutureExt::compat(f.into_future().unit_error()))
+                .unwrap();
         }
     }
 
     fn init(client: &Arc<RwLock<LeaderClient>>, handle: &OtherHandle) {
         let client = Arc::clone(client);
         let (tx, rx) = client.wl().client.tso().unwrap();
-        let tso_rx = client.wl().reactor.tso_rx.take().unwrap();
+        let tx = Compat01As03Sink::new(tx);
+        let rx = Compat01As03::new(rx);
+        let tso_rx = client.wl().reactor.tso_rx.take().unwrap(); // Receiver<TsoRequest>: Stream
+
         handle.spawn(
             tx.sink_map_err(Into::into)
-                .send_all(tso_rx.then(|r| match r {
-                    Ok(r) => Ok((r, WriteFlags::default())),
-                    Err(()) => Err(internal_err!("failed to recv tso requests")),
-                }))
-                .then(|r: Result<_>| match r {
-                    Ok((mut sender, _)) => {
-                        sender.get_mut().cancel();
+                .send_all_compat(tso_rx.map(|r| (r, WriteFlags::default())))
+                .map(|r: Result<_>| match r {
+                    Ok((_sender, _)) => {
+                        // FIXME(#54) the previous code doesn't work because we can't get mutable
+                        // access to the underlying StreamingCallSink to call `cancel`. But I think
+                        // that is OK because it will be canceled when it is dropped.
+                        //
+                        // _sender.get_mut().get_ref().cancel();
                         Ok(())
                     }
                     Err(e) => {
                         error!("failed to send tso requests: {:?}", e);
                         Err(())
                     }
-                }),
+                })
+                .compat(),
         );
+
         handle.spawn(
-            rx.for_each(move |resp| {
+            rx.try_for_each(move |resp| {
                 let mut client = client.wl();
                 let reactor = &mut client.reactor;
                 let tso_pending = reactor.tso_pending.take().unwrap();
@@ -154,9 +166,10 @@ impl PdReactor {
                     // Schedule another tso_batch of request
                     reactor.schedule(PdTask::Request);
                 }
-                Ok(())
+                ready(Ok(()))
             })
-            .map_err(|e| panic!("unexpected error: {:?}", e)),
+            .map_err(|e| panic!("unexpected error: {:?}", e))
+            .compat(),
         );
     }
 
@@ -201,7 +214,7 @@ impl PdReactor {
         }
     }
 
-    fn get_ts(&mut self) -> impl Future<Item = PdTimestamp, Error = Error> {
+    fn get_ts(&mut self) -> impl Future<Output = Result<PdTimestamp>> {
         let context = request_context("get_ts", ());
         let (tx, rx) = oneshot::channel::<PdTimestamp>();
         self.tso_batch.push(tx);
@@ -209,7 +222,9 @@ impl PdReactor {
             // Schedule tso request to run.
             self.schedule(PdTask::Request);
         }
-        rx.map_err(Into::into).then(move |r| context.done(r))
+        rx.map_err(Into::into)
+            .into_future()
+            .map(move |r| context.done(r))
     }
 }
 
@@ -253,7 +268,7 @@ impl LeaderClient {
         Ok(client)
     }
 
-    pub fn get_ts(&mut self) -> impl Future<Item = PdTimestamp, Error = Error> {
+    pub fn get_ts(&mut self) -> impl Future<Output = Result<PdTimestamp>> {
         self.reactor.get_ts()
     }
 
@@ -294,8 +309,7 @@ pub fn validate_endpoints(
     security_mgr: &SecurityManager,
     timeout: Duration,
 ) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
-    let len = endpoints.len();
-    let mut endpoints_set = HashSet::with_capacity_and_hasher(len, Default::default());
+    let mut endpoints_set = HashSet::with_capacity(endpoints.len());
 
     let mut members = None;
     let mut cluster_id = None;
