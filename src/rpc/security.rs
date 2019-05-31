@@ -1,7 +1,6 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::{
-    borrow::Borrow,
     fs::File,
     io::Read,
     path::{Path, PathBuf},
@@ -73,21 +72,20 @@ impl SecurityManager {
     {
         info!("connect to rpc server at endpoint: {:?}", addr);
 
-        let cow_addr = SCHEME_REG.replace(addr, "");
-        let addr: &str = cow_addr.borrow();
+        let addr = SCHEME_REG.replace(addr, "");
 
         let cb = ChannelBuilder::new(env)
             .keepalive_time(Duration::from_secs(10))
             .keepalive_timeout(Duration::from_secs(3));
 
         let channel = if self.ca.is_empty() {
-            cb.connect(addr)
+            cb.connect(&addr)
         } else {
             let cred = ChannelCredentialsBuilder::new()
                 .root_cert(self.ca.clone())
                 .cert(self.cert.clone(), load_pem_file("private key", &self.key)?)
                 .build();
-            cb.secure_connect(addr, cred)
+            cb.secure_connect(&addr, cred)
         };
 
         Ok(factory(channel))
