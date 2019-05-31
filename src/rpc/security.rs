@@ -9,9 +9,15 @@ use std::{
 };
 
 use grpcio::{Channel, ChannelBuilder, ChannelCredentialsBuilder, Environment};
+use lazy_static::*;
 use log::*;
+use regex::Regex;
 
 use crate::Result;
+
+lazy_static! {
+    static ref SCHEME_REG: Regex = Regex::new(r"^\s*(https?://)").unwrap();
+}
 
 fn check_pem_file(tag: &str, path: &Path) -> Result<File> {
     File::open(path)
@@ -65,21 +71,21 @@ impl SecurityManager {
         Factory: FnOnce(Channel) -> Client,
     {
         info!("connect to rpc server at endpoint: {:?}", addr);
-        let addr = addr
-            .trim_start_matches("http://")
-            .trim_start_matches("https://");
+
+        let addr = SCHEME_REG.replace(addr, "");
+
         let cb = ChannelBuilder::new(env)
             .keepalive_time(Duration::from_secs(10))
             .keepalive_timeout(Duration::from_secs(3));
 
         let channel = if self.ca.is_empty() {
-            cb.connect(addr)
+            cb.connect(&addr)
         } else {
             let cred = ChannelCredentialsBuilder::new()
                 .root_cert(self.ca.clone())
                 .cert(self.cert.clone(), load_pem_file("private key", &self.key)?)
                 .build();
-            cb.secure_connect(addr, cred)
+            cb.secure_connect(&addr, cred)
         };
 
         Ok(factory(channel))
