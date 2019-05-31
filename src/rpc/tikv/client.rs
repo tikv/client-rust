@@ -5,7 +5,9 @@
 
 use std::{fmt, sync::Arc, time::Duration};
 
-use futures::Future;
+use futures::compat::Compat01As03;
+use futures::future::Future;
+use futures::prelude::{FutureExt, TryFutureExt};
 use grpcio::{CallOption, Environment};
 use kvproto::{errorpb, kvrpcpb, tikvpb::TikvClient};
 
@@ -238,14 +240,16 @@ impl KvClient {
         context: TxnContext,
         version: u64,
         key: Key,
-    ) -> impl Future<Item = kvrpcpb::GetResponse, Error = Error> {
+    ) -> impl Future<Output = Result<kvrpcpb::GetResponse>> {
         let mut req = txn_request!(context, kvrpcpb::GetRequest);
         req.set_key(key.into_inner());
         req.set_version(version);
 
         self.execute(request_context(
             "kv_get",
-            move |cli: Arc<TikvClient>, opt: _| cli.kv_get_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.kv_get_async_opt(&req, opt).map(Compat01As03::new)
+            },
         ))
     }
 
@@ -257,7 +261,7 @@ impl KvClient {
         end_key: Key,
         limit: u32,
         key_only: bool,
-    ) -> impl Future<Item = kvrpcpb::ScanResponse, Error = Error> {
+    ) -> impl Future<Output = Result<kvrpcpb::ScanResponse>> {
         let mut req = txn_request!(context, kvrpcpb::ScanRequest);
         req.set_start_key(start_key.into_inner());
         req.set_end_key(end_key.into_inner());
@@ -267,7 +271,9 @@ impl KvClient {
 
         self.execute(request_context(
             "kv_scan",
-            move |cli: Arc<TikvClient>, opt: _| cli.kv_scan_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.kv_scan_async_opt(&req, opt).map(Compat01As03::new)
+            },
         ))
     }
 
@@ -279,7 +285,7 @@ impl KvClient {
         start_version: u64,
         lock_ttl: u64,
         skip_constraint_check: bool,
-    ) -> impl Future<Item = kvrpcpb::PrewriteResponse, Error = Error> {
+    ) -> impl Future<Output = Result<kvrpcpb::PrewriteResponse>> {
         let mut req = txn_request!(context, kvrpcpb::PrewriteRequest);
         req.set_mutations(mutations.map(Into::into).collect());
         req.set_primary_lock(primary_lock.into_inner());
@@ -289,7 +295,9 @@ impl KvClient {
 
         self.execute(request_context(
             "kv_prewrite",
-            move |cli: Arc<TikvClient>, opt: _| cli.kv_prewrite_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.kv_prewrite_async_opt(&req, opt).map(Compat01As03::new)
+            },
         ))
     }
 
@@ -299,7 +307,7 @@ impl KvClient {
         keys: impl Iterator<Item = Key>,
         start_version: u64,
         commit_version: u64,
-    ) -> impl Future<Item = kvrpcpb::CommitResponse, Error = Error> {
+    ) -> impl Future<Output = Result<kvrpcpb::CommitResponse>> {
         let mut req = txn_request!(context, kvrpcpb::CommitRequest);
         req.set_keys(keys.map(|x| x.into_inner()).collect());
         req.set_start_version(start_version);
@@ -307,7 +315,9 @@ impl KvClient {
 
         self.execute(request_context(
             "kv_commit",
-            move |cli: Arc<TikvClient>, opt: _| cli.kv_commit_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.kv_commit_async_opt(&req, opt).map(Compat01As03::new)
+            },
         ))
     }
 
@@ -315,14 +325,16 @@ impl KvClient {
         &self,
         mutations: impl Iterator<Item = Mutation>,
         commit_version: u64,
-    ) -> impl Future<Item = kvrpcpb::ImportResponse, Error = Error> {
+    ) -> impl Future<Output = Result<kvrpcpb::ImportResponse>> {
         let mut req = kvrpcpb::ImportRequest::default();
         req.set_mutations(mutations.map(Into::into).collect());
         req.set_commit_version(commit_version);
 
         self.execute(request_context(
             "kv_import",
-            move |cli: Arc<TikvClient>, opt: _| cli.kv_import_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.kv_import_async_opt(&req, opt).map(Compat01As03::new)
+            },
         ))
     }
 
@@ -331,14 +343,16 @@ impl KvClient {
         context: TxnContext,
         key: Key,
         start_version: u64,
-    ) -> impl Future<Item = kvrpcpb::CleanupResponse, Error = Error> {
+    ) -> impl Future<Output = Result<kvrpcpb::CleanupResponse>> {
         let mut req = txn_request!(context, kvrpcpb::CleanupRequest);
         req.set_key(key.into_inner());
         req.set_start_version(start_version);
 
         self.execute(request_context(
             "kv_cleanup",
-            move |cli: Arc<TikvClient>, opt: _| cli.kv_cleanup_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.kv_cleanup_async_opt(&req, opt).map(Compat01As03::new)
+            },
         ))
     }
 
@@ -347,14 +361,16 @@ impl KvClient {
         context: TxnContext,
         keys: impl Iterator<Item = Key>,
         version: u64,
-    ) -> impl Future<Item = kvrpcpb::BatchGetResponse, Error = Error> {
+    ) -> impl Future<Output = Result<kvrpcpb::BatchGetResponse>> {
         let mut req = txn_request!(context, kvrpcpb::BatchGetRequest);
         req.set_keys(keys.map(|x| x.into_inner()).collect());
         req.set_version(version);
 
         self.execute(request_context(
             "kv_batch_get",
-            move |cli: Arc<TikvClient>, opt: _| cli.kv_batch_get_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.kv_batch_get_async_opt(&req, opt).map(Compat01As03::new)
+            },
         ))
     }
 
@@ -363,14 +379,17 @@ impl KvClient {
         context: TxnContext,
         keys: impl Iterator<Item = Key>,
         start_version: u64,
-    ) -> impl Future<Item = kvrpcpb::BatchRollbackResponse, Error = Error> {
+    ) -> impl Future<Output = Result<kvrpcpb::BatchRollbackResponse>> {
         let mut req = txn_request!(context, kvrpcpb::BatchRollbackRequest);
         req.set_keys(keys.map(|x| x.into_inner()).collect());
         req.set_start_version(start_version);
 
         self.execute(request_context(
             "kv_batch_rollback",
-            move |cli: Arc<TikvClient>, opt: _| cli.kv_batch_rollback_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.kv_batch_rollback_async_opt(&req, opt)
+                    .map(Compat01As03::new)
+            },
         ))
     }
 
@@ -380,7 +399,7 @@ impl KvClient {
         start_key: Key,
         max_version: u64,
         limit: u32,
-    ) -> impl Future<Item = kvrpcpb::ScanLockResponse, Error = Error> {
+    ) -> impl Future<Output = Result<kvrpcpb::ScanLockResponse>> {
         let mut req = txn_request!(context, kvrpcpb::ScanLockRequest);
         req.set_start_key(start_key.into_inner());
         req.set_max_version(max_version);
@@ -388,7 +407,9 @@ impl KvClient {
 
         self.execute(request_context(
             "kv_scan_lock",
-            move |cli: Arc<TikvClient>, opt: _| cli.kv_scan_lock_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.kv_scan_lock_async_opt(&req, opt).map(Compat01As03::new)
+            },
         ))
     }
 
@@ -398,7 +419,7 @@ impl KvClient {
         txn_infos: impl Iterator<Item = TxnInfo>,
         start_version: u64,
         commit_version: u64,
-    ) -> impl Future<Item = kvrpcpb::ResolveLockResponse, Error = Error> {
+    ) -> impl Future<Output = Result<kvrpcpb::ResolveLockResponse>> {
         let mut req = txn_request!(context, kvrpcpb::ResolveLockRequest);
         req.set_start_version(start_version);
         req.set_commit_version(commit_version);
@@ -406,7 +427,10 @@ impl KvClient {
 
         self.execute(request_context(
             "kv_resolve_lock",
-            move |cli: Arc<TikvClient>, opt: _| cli.kv_resolve_lock_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.kv_resolve_lock_async_opt(&req, opt)
+                    .map(Compat01As03::new)
+            },
         ))
     }
 
@@ -414,13 +438,15 @@ impl KvClient {
         &self,
         context: TxnContext,
         safe_point: u64,
-    ) -> impl Future<Item = kvrpcpb::GcResponse, Error = Error> {
+    ) -> impl Future<Output = Result<kvrpcpb::GcResponse>> {
         let mut req = txn_request!(context, kvrpcpb::GcRequest);
         req.set_safe_point(safe_point);
 
         self.execute(request_context(
             "kv_gc",
-            move |cli: Arc<TikvClient>, opt: _| cli.kv_gc_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.kv_gc_async_opt(&req, opt).map(Compat01As03::new)
+            },
         ))
     }
 
@@ -429,45 +455,49 @@ impl KvClient {
         context: TxnContext,
         start_key: Key,
         end_key: Key,
-    ) -> impl Future<Item = kvrpcpb::DeleteRangeResponse, Error = Error> {
+    ) -> impl Future<Output = Result<kvrpcpb::DeleteRangeResponse>> {
         let mut req = txn_request!(context, kvrpcpb::DeleteRangeRequest);
         req.set_start_key(start_key.into_inner());
         req.set_end_key(end_key.into_inner());
 
         self.execute(request_context(
             "kv_delete_range",
-            move |cli: Arc<TikvClient>, opt: _| cli.kv_delete_range_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.kv_delete_range_async_opt(&req, opt)
+                    .map(Compat01As03::new)
+            },
         ))
     }
 
-    pub fn raw_get(
-        &self,
-        context: RawContext,
-        key: Key,
-    ) -> impl Future<Item = Value, Error = Error> {
+    pub fn raw_get(&self, context: RawContext, key: Key) -> impl Future<Output = Result<Value>> {
         let mut req = raw_request!(context, kvrpcpb::RawGetRequest);
         req.set_key(key.into_inner());
 
         self.execute(request_context(
             "raw_get",
-            move |cli: Arc<TikvClient>, opt: _| cli.raw_get_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.raw_get_async_opt(&req, opt).map(Compat01As03::new)
+            },
         ))
-        .map(|mut resp| resp.take_value().into())
+        .map_ok(|mut resp| resp.take_value().into())
     }
 
     pub fn raw_batch_get(
         &self,
         context: RawContext,
         keys: impl Iterator<Item = Key>,
-    ) -> impl Future<Item = Vec<KvPair>, Error = Error> {
+    ) -> impl Future<Output = Result<Vec<KvPair>>> {
         let mut req = raw_request!(context, kvrpcpb::RawBatchGetRequest);
         req.set_keys(keys.map(|x| x.into_inner()).collect());
 
         self.execute(request_context(
             "raw_batch_get",
-            move |cli: Arc<TikvClient>, opt: _| cli.raw_batch_get_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.raw_batch_get_async_opt(&req, opt)
+                    .map(Compat01As03::new)
+            },
         ))
-        .map(|mut resp| Self::convert_from_grpc_pairs(resp.take_pairs()))
+        .map_ok(|mut resp| Self::convert_from_grpc_pairs(resp.take_pairs()))
     }
 
     pub fn raw_put(
@@ -475,61 +505,67 @@ impl KvClient {
         context: RawContext,
         key: Key,
         value: Value,
-    ) -> impl Future<Item = (), Error = Error> {
+    ) -> impl Future<Output = Result<()>> {
         let mut req = raw_request!(context, kvrpcpb::RawPutRequest);
         req.set_key(key.into_inner());
         req.set_value(value.into_inner());
 
         self.execute(request_context(
             "raw_put",
-            move |cli: Arc<TikvClient>, opt: _| cli.raw_put_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.raw_put_async_opt(&req, opt).map(Compat01As03::new)
+            },
         ))
-        .map(|_| ())
+        .map_ok(|_| ())
     }
 
     pub fn raw_batch_put(
         &self,
         context: RawContext,
         pairs: Vec<KvPair>,
-    ) -> impl Future<Item = (), Error = Error> {
+    ) -> impl Future<Output = Result<()>> {
         let mut req = raw_request!(context, kvrpcpb::RawBatchPutRequest);
         req.set_pairs(Self::convert_to_grpc_pairs(pairs));
 
         self.execute(request_context(
             "raw_batch_put",
-            move |cli: Arc<TikvClient>, opt: _| cli.raw_batch_put_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.raw_batch_put_async_opt(&req, opt)
+                    .map(Compat01As03::new)
+            },
         ))
-        .map(|_| ())
+        .map_ok(|_| ())
     }
 
-    pub fn raw_delete(
-        &self,
-        context: RawContext,
-        key: Key,
-    ) -> impl Future<Item = (), Error = Error> {
+    pub fn raw_delete(&self, context: RawContext, key: Key) -> impl Future<Output = Result<()>> {
         let mut req = raw_request!(context, kvrpcpb::RawDeleteRequest);
         req.set_key(key.into_inner());
 
         self.execute(request_context(
             "raw_delete",
-            move |cli: Arc<TikvClient>, opt: _| cli.raw_delete_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.raw_delete_async_opt(&req, opt).map(Compat01As03::new)
+            },
         ))
-        .map(|_| ())
+        .map_ok(|_| ())
     }
 
     pub fn raw_batch_delete(
         &self,
         context: RawContext,
         keys: Vec<Key>,
-    ) -> impl Future<Item = (), Error = Error> {
+    ) -> impl Future<Output = Result<()>> {
         let mut req = raw_request!(context, kvrpcpb::RawBatchDeleteRequest);
         req.set_keys(keys.into_iter().map(|x| x.into_inner()).collect());
 
         self.execute(request_context(
             "raw_batch_delete",
-            move |cli: Arc<TikvClient>, opt: _| cli.raw_batch_delete_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.raw_batch_delete_async_opt(&req, opt)
+                    .map(Compat01As03::new)
+            },
         ))
-        .map(|_| ())
+        .map_ok(|_| ())
     }
 
     pub fn raw_scan(
@@ -539,7 +575,7 @@ impl KvClient {
         end_key: Option<Key>,
         limit: u32,
         key_only: bool,
-    ) -> impl Future<Item = Vec<KvPair>, Error = Error> {
+    ) -> impl Future<Output = Result<Vec<KvPair>>> {
         let mut req = raw_request!(context, kvrpcpb::RawScanRequest);
         start_key
             .map(|k| req.set_start_key(k.into_inner()))
@@ -550,9 +586,11 @@ impl KvClient {
 
         self.execute(request_context(
             "raw_scan",
-            move |cli: Arc<TikvClient>, opt: _| cli.raw_scan_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.raw_scan_async_opt(&req, opt).map(Compat01As03::new)
+            },
         ))
-        .map(|mut resp| Self::convert_from_grpc_pairs(resp.take_kvs()))
+        .map_ok(|mut resp| Self::convert_from_grpc_pairs(resp.take_kvs()))
     }
 
     pub fn raw_batch_scan(
@@ -561,7 +599,7 @@ impl KvClient {
         ranges: impl Iterator<Item = (Option<Key>, Option<Key>)>,
         each_limit: u32,
         key_only: bool,
-    ) -> impl Future<Item = Vec<KvPair>, Error = Error> {
+    ) -> impl Future<Output = Result<Vec<KvPair>>> {
         let mut req = raw_request!(context, kvrpcpb::RawBatchScanRequest);
         req.set_ranges(Self::convert_to_grpc_ranges(ranges));
         req.set_each_limit(each_limit);
@@ -569,9 +607,12 @@ impl KvClient {
 
         self.execute(request_context(
             "raw_batch_scan",
-            move |cli: Arc<TikvClient>, opt: _| cli.raw_batch_scan_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.raw_batch_scan_async_opt(&req, opt)
+                    .map(Compat01As03::new)
+            },
         ))
-        .map(|mut resp| Self::convert_from_grpc_pairs(resp.take_kvs()))
+        .map_ok(|mut resp| Self::convert_from_grpc_pairs(resp.take_kvs()))
     }
 
     pub fn raw_delete_range(
@@ -579,25 +620,28 @@ impl KvClient {
         context: RawContext,
         start_key: Key,
         end_key: Key,
-    ) -> impl Future<Item = (), Error = Error> {
+    ) -> impl Future<Output = Result<()>> {
         let mut req = raw_request!(context, kvrpcpb::RawDeleteRangeRequest);
         req.set_start_key(start_key.into_inner());
         req.set_end_key(end_key.into_inner());
 
         self.execute(request_context(
             "raw_delete_range",
-            move |cli: Arc<TikvClient>, opt: _| cli.raw_delete_range_async_opt(&req, opt),
+            move |cli: Arc<TikvClient>, opt: _| {
+                cli.raw_delete_range_async_opt(&req, opt)
+                    .map(Compat01As03::new)
+            },
         ))
-        .map(|_| ())
+        .map_ok(|_| ())
     }
 
     fn execute<Executor, Resp, RpcFuture>(
         &self,
         mut context: RequestContext<Executor>,
-    ) -> impl Future<Item = Resp, Error = Error>
+    ) -> impl Future<Output = Result<Resp>>
     where
         Executor: FnOnce(Arc<TikvClient>, CallOption) -> ::grpcio::Result<RpcFuture>,
-        RpcFuture: Future<Item = Resp, Error = ::grpcio::Error>,
+        RpcFuture: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
         Resp: HasRegionError + HasError + Sized + Clone,
     {
         let executor = context.executor();
@@ -606,7 +650,7 @@ impl KvClient {
             CallOption::default().timeout(self.timeout),
         )
         .unwrap()
-        .then(|r| match r {
+        .map(|r| match r {
             Err(e) => Err(ErrorKind::Grpc(e))?,
             Ok(mut r) => {
                 if let Some(e) = r.region_error() {
@@ -618,7 +662,7 @@ impl KvClient {
                 }
             }
         })
-        .then(move |r| context.done(r))
+        .map(move |r| context.done(r))
     }
 
     #[inline]

@@ -1,15 +1,17 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
+#![feature(async_await, await_macro)]
+
 mod common;
 
 use crate::common::parse_args;
-use futures::future::Future;
 use tikv_client::{raw::Client, Config, Key, KvPair, Result, Value};
 
 const KEY: &str = "TiKV";
 const VALUE: &str = "Rust";
 
-fn main() -> Result<()> {
+#[runtime::main(runtime_tokio::Tokio)]
+async fn main() -> Result<()> {
     // You can try running this example by passing your pd endpoints
     // (and SSL options if necessary) through command line arguments.
     let args = parse_args("raw");
@@ -25,15 +27,14 @@ fn main() -> Result<()> {
     // When we first create a client we receive a `Connect` structure which must be resolved before
     // the client is actually connected and usable.
     let unconnnected_client = Client::new(config);
-    let client = unconnnected_client.wait()?;
+    let client = unconnnected_client.await?;
 
     // Requests are created from the connected client. These calls return structures which
     // implement `Future`. This means the `Future` must be resolved before the action ever takes
     // place.
     //
     // Here we set the key `TiKV` to have the value `Rust` associated with it.
-    let put_request = client.put(KEY, VALUE);
-    put_request.wait()?; // Returns a `tikv_client::Error` on failure.
+    client.put(KEY, VALUE).await.unwrap(); // Returns a `tikv_client::Error` on failure.
     println!("Put key {:?}, value {:?}.", KEY, VALUE);
 
     // Unlike a standard Rust HashMap all calls take owned values. This is because under the hood
@@ -45,19 +46,19 @@ fn main() -> Result<()> {
     //
     // It is best to pass a `Vec<u8>` in terms of explictness and speed. `String`s and a few other
     // types are supported as well, but it all ends up as `Vec<u8>` in the end.
-    let value: Option<Value> = client.get(KEY).wait()?;
+    let value: Option<Value> = client.get(KEY).await?;
     assert_eq!(value, Some(Value::from(VALUE)));
     println!("Get key {:?} returned value {:?}.", Key::from(KEY), value);
 
     // You can also set the `ColumnFamily` used by the request.
     // This is *advanced usage* and should have some special considerations.
-    client.delete(KEY).wait().expect("Could not delete value");
+    client.delete(KEY).await.expect("Could not delete value");
     println!("Key: {:?} deleted", Key::from(KEY));
 
     // Here we check if the key has been deleted from the key-value store.
     let value: Option<Value> = client
         .get(KEY)
-        .wait()
+        .await
         .expect("Could not get just deleted entry");
     assert!(value.is_none());
 
@@ -68,13 +69,13 @@ fn main() -> Result<()> {
         KvPair::from(("k2", "v2")),
         KvPair::from(("k3", "v3")),
     ];
-    client.batch_put(pairs).wait().expect("Could not put pairs");
+    client.batch_put(pairs).await.expect("Could not put pairs");
 
     // Same thing when you want to retrieve multiple values.
     let keys = vec![Key::from("k1"), Key::from("k2")];
     let values = client
         .batch_get(keys.clone())
-        .wait()
+        .await
         .expect("Could not get values");
     println!("Found values: {:?} for keys: {:?}", values, keys);
 
@@ -85,7 +86,7 @@ fn main() -> Result<()> {
     let pairs = client
         .scan(start..=end, 10)
         .key_only()
-        .wait()
+        .await
         .expect("Could not scan");
 
     let keys: Vec<_> = pairs.into_iter().map(|p| p.key().clone()).collect();

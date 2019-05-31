@@ -2,38 +2,42 @@
 
 //! Raw related functionality.
 //!
-//! Using the [`raw::Client`](struct.Client.html) you can utilize TiKV's raw interface.
+//! Using the [`raw::Client`](raw::Client) you can utilize TiKV's raw interface.
 //!
 //! This interface offers optimal performance as it does not require coordination with a timestamp
 //! oracle, while the transactional interface does.
 //!
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 //!
-use crate::{rpc::RpcClient, Config, Error, Key, KeyRange, KvFuture, KvPair, Result, Value};
-use futures::{future, Async, Future, Poll};
+use crate::{rpc::RpcClient, Config, Error, Key, KeyRange, KvPair, Result, Value};
+use futures::{future, task::Context, Future, Poll};
 use std::{
     ops::{Bound, Deref},
+    pin::Pin,
     sync::Arc,
     u32,
 };
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
-/// The TiKV raw [`Client`](struct.Client.html) is used to issue requests to the TiKV server and PD cluster.
+/// The TiKV raw [`Client`](Client) is used to issue requests to the TiKV server and PD cluster.
 pub struct Client {
     rpc: Arc<RpcClient>,
 }
 
 impl Client {
-    /// Create a new [`Client`](struct.Client.html) once the [`Connect`](struct.Connect.html) resolves.
+    /// Create a new [`Client`](Client) once the [`Connect`](Connect) resolves.
     ///
     /// ```rust,no_run
-    /// use tikv_client::{Config, raw::Client};
-    /// use futures::Future;
+    /// # #![feature(async_await)]
+    /// # use tikv_client::{Config, raw::Client};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
     /// let connect = Client::new(Config::default());
-    /// let client = connect.wait();
+    /// let client = connect.await.unwrap();
+    /// # });
     /// ```
-    #[cfg_attr(feature = "cargo-clippy", allow(clippy::new_ret_no_self))]
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(config: Config) -> Connect {
         Connect::new(config)
     }
@@ -43,37 +47,43 @@ impl Client {
         Arc::clone(&self.rpc)
     }
 
-    /// Create a new [`Get`](struct.Get.html) request.
+    /// Create a new [`Get`](Get) request.
     ///
     /// Once resolved this request will result in the fetching of the value associated with the
     /// given key.
     ///
     /// ```rust,no_run
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Value, Config, raw::Client};
-    /// # use futures::Future;
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.wait().unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let key = "TiKV";
     /// let req = connected_client.get(key);
-    /// let result: Option<Value> = req.wait().unwrap();
+    /// let result: Option<Value> = req.await.unwrap();
+    /// # });
     /// ```
     pub fn get(&self, key: impl Into<Key>) -> Get {
         Get::new(self.rpc(), GetInner::new(key.into()))
     }
 
-    /// Create a new [`BatchGet`](struct.BatchGet.html) request.
+    /// Create a new [`BatchGet`](BatchGet) request.
     ///
     /// Once resolved this request will result in the fetching of the values associated with the
     /// given keys.
     ///
     /// ```rust,no_run
+    /// # #![feature(async_await)]
     /// # use tikv_client::{KvPair, Config, raw::Client};
-    /// # use futures::Future;
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.wait().unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let keys = vec!["TiKV", "TiDB"];
     /// let req = connected_client.batch_get(keys);
-    /// let result: Vec<KvPair> = req.wait().unwrap();
+    /// let result: Vec<KvPair> = req.await.unwrap();
+    /// # });
     /// ```
     pub fn batch_get(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> BatchGet {
         BatchGet::new(
@@ -82,38 +92,44 @@ impl Client {
         )
     }
 
-    /// Create a new [`Put`](struct.Put.html) request.
+    /// Create a new [`Put`](Put) request.
     ///
     /// Once resolved this request will result in the setting of the value associated with the given key.
     ///
     /// ```rust,no_run
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Value, Config, raw::Client};
-    /// # use futures::Future;
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.wait().unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let key = "TiKV";
     /// let val = "TiKV";
     /// let req = connected_client.put(key, val);
-    /// let result: () = req.wait().unwrap();
+    /// let result: () = req.await.unwrap();
+    /// # });
     /// ```
     pub fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Put {
         Put::new(self.rpc(), PutInner::new(key.into(), value.into()))
     }
 
-    /// Create a new [`BatchPut`](struct.BatchPut.html) request.
+    /// Create a new [`BatchPut`](BatchPut) request.
     ///
     /// Once resolved this request will result in the setting of the value associated with the given key.
     ///
     /// ```rust,no_run
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Error, Result, KvPair, Key, Value, Config, raw::Client};
-    /// # use futures::Future;
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.wait().unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let kvpair1 = ("PD", "Go");
     /// let kvpair2 = ("TiKV", "Rust");
     /// let iterable = vec![kvpair1, kvpair2];
     /// let req = connected_client.batch_put(iterable);
-    /// let result: () = req.wait().unwrap();
+    /// let result: () = req.await.unwrap();
+    /// # });
     /// ```
     pub fn batch_put(&self, pairs: impl IntoIterator<Item = impl Into<KvPair>>) -> BatchPut {
         BatchPut::new(
@@ -122,35 +138,41 @@ impl Client {
         )
     }
 
-    /// Create a new [`Delete`](struct.Delete.html) request.
+    /// Create a new [`Delete`](Delete) request.
     ///
     /// Once resolved this request will result in the deletion of the given key.
     ///
     /// ```rust,no_run
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Config, raw::Client};
-    /// # use futures::Future;
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.wait().unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let key = "TiKV";
     /// let req = connected_client.delete(key);
-    /// let result: () = req.wait().unwrap();
+    /// let result: () = req.await.unwrap();
+    /// # });
     /// ```
     pub fn delete(&self, key: impl Into<Key>) -> Delete {
         Delete::new(self.rpc(), DeleteInner::new(key.into()))
     }
 
-    /// Create a new [`BatchDelete`](struct.BatchDelete.html) request.
+    /// Create a new [`BatchDelete`](BatchDelete) request.
     ///
     /// Once resolved this request will result in the deletion of the given keys.
     ///
     /// ```rust,no_run
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Config, raw::Client};
-    /// # use futures::Future;
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.wait().unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let keys = vec!["TiKV", "TiDB"];
     /// let req = connected_client.batch_delete(keys);
-    /// let result: () = req.wait().unwrap();
+    /// let result: () = req.await.unwrap();
+    /// # });
     /// ```
     pub fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> BatchDelete {
         BatchDelete::new(
@@ -159,37 +181,43 @@ impl Client {
         )
     }
 
-    /// Create a new [`Scan`](struct.Scan.html) request.
+    /// Create a new [`Scan`](Scan) request.
     ///
     /// Once resolved this request will result in a scanner over the given keys.
     ///
     /// ```rust,no_run
+    /// # #![feature(async_await)]
     /// # use tikv_client::{KvPair, Config, raw::Client};
-    /// # use futures::Future;
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.wait().unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = connected_client.scan(inclusive_range, 2);
-    /// let result: Vec<KvPair> = req.wait().unwrap();
+    /// let result: Vec<KvPair> = req.await.unwrap();
+    /// # });
     /// ```
     pub fn scan(&self, range: impl KeyRange, limit: u32) -> Scan {
         Scan::new(self.rpc(), ScanInner::new(range.into_bounds(), limit))
     }
 
-    /// Create a new [`BatchScan`](struct.BatchScan.html) request.
+    /// Create a new [`BatchScan`](BatchScan) request.
     ///
     /// Once resolved this request will result in a set of scanners over the given keys.
     ///
     /// ```rust,no_run
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Config, raw::Client};
-    /// # use futures::Future;
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.wait().unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let inclusive_range1 = "TiDB"..="TiKV";
     /// let inclusive_range2 = "TiKV"..="TiSpark";
     /// let iterable = vec![inclusive_range1, inclusive_range2];
     /// let req = connected_client.batch_scan(iterable, 2);
-    /// let result = req.wait();
+    /// let result = req.await;
+    /// # });
     /// ```
     pub fn batch_scan(
         &self,
@@ -205,34 +233,40 @@ impl Client {
         )
     }
 
-    /// Create a new [`DeleteRange`](struct.DeleteRange.html) request.
+    /// Create a new [`DeleteRange`](DeleteRange) request.
     ///
     /// Once resolved this request will result in the deletion of all keys over the given range.
     ///
     /// ```rust,no_run
+    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Config, raw::Client};
-    /// # use futures::Future;
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.wait().unwrap();
+    /// # let connected_client = connecting_client.await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = connected_client.delete_range(inclusive_range);
-    /// let result: () = req.wait().unwrap();
+    /// let result: () = req.await.unwrap();
+    /// # });
     /// ```
     pub fn delete_range(&self, range: impl KeyRange) -> DeleteRange {
         DeleteRange::new(self.rpc(), DeleteRangeInner::new(range.into_keys()))
     }
 }
 
-/// An unresolved [`Client`](struct.Client.html) connection to a TiKV cluster.
+/// An unresolved [`Client`](Client) connection to a TiKV cluster.
 ///
-/// Once resolved it will result in a connected [`Client`](struct.Client.html).
+/// Once resolved it will result in a connected [`Client`](Client).
 ///
 /// ```rust,no_run
+/// # #![feature(async_await)]
 /// use tikv_client::{Config, raw::{Client, Connect}};
-/// use futures::Future;
+/// use futures::prelude::*;
 ///
+/// # futures::executor::block_on(async {
 /// let connect: Connect = Client::new(Config::default());
-/// let client: Client = connect.wait().unwrap();
+/// let client: Client = connect.await.unwrap();
+/// # });
 /// ```
 pub struct Connect {
     config: Config,
@@ -245,17 +279,16 @@ impl Connect {
 }
 
 impl Future for Connect {
-    type Item = Client;
-    type Error = Error;
+    type Output = Result<Client>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
         let config = &self.config;
         let rpc = Arc::new(RpcClient::connect(config)?);
-        Ok(Async::Ready(Client { rpc }))
+        Poll::Ready(Ok(Client { rpc }))
     }
 }
 
-/// A [`ColumnFamily`](struct.ColumnFamily.html) is an optional parameter for [`raw::Client`](struct.Client.html) requests.
+/// A [`ColumnFamily`](ColumnFamily) is an optional parameter for [`raw::Client`](Client) requests.
 ///
 /// TiKV uses RocksDB's `ColumnFamily` support. You can learn more about RocksDB's `ColumnFamily`s [on their wiki](https://github.com/facebook/rocksdb/wiki/Column-Families).
 ///
@@ -267,7 +300,7 @@ impl Future for Connect {
 ///
 /// Not providing a call a `ColumnFamily` means it will use the default value of `default`.
 ///
-/// The best (and only) way to create a [`ColumnFamily`](struct.ColumnFamily.html) is via the `From` implementation:
+/// The best (and only) way to create a [`ColumnFamily`](ColumnFamily) is via the `From` implementation:
 ///
 /// ```rust
 /// # use tikv_client::raw::ColumnFamily;
@@ -307,10 +340,12 @@ impl Deref for ColumnFamily {
     }
 }
 
+type BoxTryFuture<Resp> = Box<dyn Future<Output = Result<Resp>> + Send>;
+
 trait RequestInner: Sized {
     type Resp;
 
-    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp>;
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> BoxTryFuture<Self::Resp>;
 }
 
 enum RequestState<Inner>
@@ -318,7 +353,7 @@ where
     Inner: RequestInner,
 {
     Uninitiated(Option<(Arc<RpcClient>, Inner, Option<ColumnFamily>)>),
-    Initiated(KvFuture<Inner::Resp>),
+    Initiated(BoxTryFuture<Inner::Resp>),
 }
 
 impl<Inner> RequestState<Inner>
@@ -342,19 +377,35 @@ where
         }
     }
 
-    fn poll(&mut self) -> Poll<Inner::Resp, Error> {
-        if let RequestState::Uninitiated(state) = self {
-            let (client, inner, cf) = state.take().unwrap();
-            *self = RequestState::Initiated(inner.execute(client, cf));
+    fn assure_initialized<'a>(self: Pin<&'a mut Self>) -> Pin<&'a mut Self> {
+        unsafe {
+            let mut this = Pin::get_unchecked_mut(self);
+            if let RequestState::Uninitiated(state) = &mut this {
+                let (client, inner, cf) = state.take().unwrap();
+                *this = RequestState::Initiated(inner.execute(client, cf));
+            }
+            Pin::new_unchecked(this)
         }
-        match self {
-            RequestState::Initiated(ref mut future) => future.poll(),
-            _ => unreachable!(),
+    }
+
+    fn assert_init_pin_mut<'a>(
+        self: Pin<&'a mut Self>,
+    ) -> Pin<&'a mut dyn Future<Output = Result<Inner::Resp>>> {
+        unsafe {
+            match Pin::get_unchecked_mut(self) {
+                RequestState::Initiated(future) => Pin::new_unchecked(&mut **future),
+                _ => unreachable!(),
+            }
         }
+    }
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<Inner::Resp>> {
+        self = self.assure_initialized();
+        self.assert_init_pin_mut().poll(cx)
     }
 }
 
-/// An unresolved [`Client::get`](struct.Client.html#method.get) request.
+/// An unresolved [`Client::get`](Client::get) request.
 ///
 /// Once resolved this request will result in the fetching of the value associated with the given
 /// key.
@@ -369,7 +420,7 @@ impl Get {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -377,11 +428,10 @@ impl Get {
 }
 
 impl Future for Get {
-    type Item = Option<Value>;
-    type Error = Error;
+    type Output = Result<Option<Value>>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.state.poll()
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        unsafe { Pin::new_unchecked(&mut Pin::get_unchecked_mut(self).state).poll(cx) }
     }
 }
 
@@ -398,12 +448,16 @@ impl GetInner {
 impl RequestInner for GetInner {
     type Resp = Option<Value>;
 
-    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+    fn execute(
+        self,
+        client: Arc<RpcClient>,
+        cf: Option<ColumnFamily>,
+    ) -> BoxTryFuture<Option<Value>> {
         Box::new(client.raw_get(self.key, cf))
     }
 }
 
-/// An unresolved [`Client::batch_get`](struct.Client.html#method.batch_get) request.
+/// An unresolved [`Client::batch_get`](Client::batch_get) request.
 ///
 /// Once resolved this request will result in the fetching of the values associated with the given
 /// keys.
@@ -418,7 +472,7 @@ impl BatchGet {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -426,11 +480,10 @@ impl BatchGet {
 }
 
 impl Future for BatchGet {
-    type Item = Vec<KvPair>;
-    type Error = Error;
+    type Output = Result<Vec<KvPair>>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.state.poll()
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        unsafe { Pin::new_unchecked(&mut Pin::get_unchecked_mut(self).state).poll(cx) }
     }
 }
 
@@ -441,7 +494,11 @@ pub(crate) struct BatchGetInner {
 impl RequestInner for BatchGetInner {
     type Resp = Vec<KvPair>;
 
-    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+    fn execute(
+        self,
+        client: Arc<RpcClient>,
+        cf: Option<ColumnFamily>,
+    ) -> BoxTryFuture<Vec<KvPair>> {
         Box::new(client.raw_batch_get(self.keys, cf))
     }
 }
@@ -452,7 +509,7 @@ impl BatchGetInner {
     }
 }
 
-/// An unresolved [`Client::put`](struct.Client.html#method.put) request.
+/// An unresolved [`Client::put`](Client::put) request.
 ///
 /// Once resolved this request will result in the putting of the value associated with the given
 /// key.
@@ -467,7 +524,7 @@ impl Put {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -475,11 +532,10 @@ impl Put {
 }
 
 impl Future for Put {
-    type Item = ();
-    type Error = Error;
+    type Output = Result<()>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.state.poll()
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        unsafe { Pin::new_unchecked(&mut Pin::get_unchecked_mut(self).state).poll(cx) }
     }
 }
 
@@ -497,13 +553,13 @@ impl PutInner {
 impl RequestInner for PutInner {
     type Resp = ();
 
-    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> BoxTryFuture<()> {
         let (key, value) = (self.key, self.value);
         Box::new(client.raw_put(key, value, cf))
     }
 }
 
-/// An unresolved [`Client::batch_put`](struct.Client.html#method.batch_put) request.
+/// An unresolved [`Client::batch_put`](Client::batch_put) request.
 ///
 /// Once resolved this request will result in the setting of the value associated with the given key.
 pub struct BatchPut {
@@ -517,7 +573,7 @@ impl BatchPut {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -525,11 +581,10 @@ impl BatchPut {
 }
 
 impl Future for BatchPut {
-    type Item = ();
-    type Error = Error;
+    type Output = Result<()>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.state.poll()
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        unsafe { Pin::new_unchecked(&mut Pin::get_unchecked_mut(self).state).poll(cx) }
     }
 }
 
@@ -546,12 +601,12 @@ impl BatchPutInner {
 impl RequestInner for BatchPutInner {
     type Resp = ();
 
-    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> BoxTryFuture<()> {
         Box::new(client.raw_batch_put(self.pairs, cf))
     }
 }
 
-/// An unresolved [`Client::delete`](struct.Client.html#method.delete) request.
+/// An unresolved [`Client::delete`](Client::delete) request.
 ///
 /// Once resolved this request will result in the deletion of the given key.
 pub struct Delete {
@@ -565,7 +620,7 @@ impl Delete {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -573,11 +628,10 @@ impl Delete {
 }
 
 impl Future for Delete {
-    type Item = ();
-    type Error = Error;
+    type Output = Result<()>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.state.poll()
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        unsafe { Pin::new_unchecked(&mut Pin::get_unchecked_mut(self).state).poll(cx) }
     }
 }
 
@@ -594,12 +648,12 @@ impl DeleteInner {
 impl RequestInner for DeleteInner {
     type Resp = ();
 
-    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> BoxTryFuture<()> {
         Box::new(client.raw_delete(self.key, cf))
     }
 }
 
-/// An unresolved [`Client::batch_delete`](struct.Client.html#method.batch_delete) request.
+/// An unresolved [`Client::batch_delete`](Client::batch_delete) request.
 ///
 /// Once resolved this request will result in the deletion of the given keys.
 pub struct BatchDelete {
@@ -613,7 +667,7 @@ impl BatchDelete {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -621,11 +675,10 @@ impl BatchDelete {
 }
 
 impl Future for BatchDelete {
-    type Item = ();
-    type Error = Error;
+    type Output = Result<()>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.state.poll()
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        unsafe { Pin::new_unchecked(&mut Pin::get_unchecked_mut(self).state).poll(cx) }
     }
 }
 
@@ -642,7 +695,7 @@ impl BatchDeleteInner {
 impl RequestInner for BatchDeleteInner {
     type Resp = ();
 
-    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> BoxTryFuture<()> {
         Box::new(client.raw_batch_delete(self.keys, cf))
     }
 }
@@ -666,7 +719,11 @@ impl ScanInner {
 impl RequestInner for ScanInner {
     type Resp = Vec<KvPair>;
 
-    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+    fn execute(
+        self,
+        client: Arc<RpcClient>,
+        cf: Option<ColumnFamily>,
+    ) -> BoxTryFuture<Vec<KvPair>> {
         if self.limit > MAX_RAW_KV_SCAN_LIMIT {
             Box::new(future::err(Error::max_scan_limit_exceeded(
                 self.limit,
@@ -682,7 +739,7 @@ impl RequestInner for ScanInner {
     }
 }
 
-/// An unresolved [`Client::scan`](struct.Client.html#method.scan) request.
+/// An unresolved [`Client::scan`](Client::scan) request.
 ///
 /// Once resolved this request will result in a scanner over the given range.
 pub struct Scan {
@@ -696,7 +753,7 @@ impl Scan {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -711,11 +768,10 @@ impl Scan {
 }
 
 impl Future for Scan {
-    type Item = Vec<KvPair>;
-    type Error = Error;
+    type Output = Result<Vec<KvPair>>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.state.poll()
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        unsafe { Pin::new_unchecked(&mut Pin::get_unchecked_mut(self).state).poll(cx) }
     }
 }
 
@@ -738,7 +794,11 @@ impl BatchScanInner {
 impl RequestInner for BatchScanInner {
     type Resp = Vec<KvPair>;
 
-    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+    fn execute(
+        self,
+        client: Arc<RpcClient>,
+        cf: Option<ColumnFamily>,
+    ) -> BoxTryFuture<Vec<KvPair>> {
         if self.each_limit > MAX_RAW_KV_SCAN_LIMIT {
             Box::new(future::err(Error::max_scan_limit_exceeded(
                 self.each_limit,
@@ -758,7 +818,7 @@ impl RequestInner for BatchScanInner {
     }
 }
 
-/// An unresolved [`Client::batch_scan`](struct.Client.html#method.batch_scan) request.
+/// An unresolved [`Client::batch_scan`](Client::batch_scan) request.
 ///
 /// Once resolved this request will result in a scanner over the given ranges.
 pub struct BatchScan {
@@ -772,7 +832,7 @@ impl BatchScan {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -787,15 +847,14 @@ impl BatchScan {
 }
 
 impl Future for BatchScan {
-    type Item = Vec<KvPair>;
-    type Error = Error;
+    type Output = Result<Vec<KvPair>>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.state.poll()
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        unsafe { Pin::new_unchecked(&mut Pin::get_unchecked_mut(self).state).poll(cx) }
     }
 }
 
-/// An unresolved [`Client::delete_range`](struct.Client.html#method.delete_range) request.
+/// An unresolved [`Client::delete_range`](Client::delete_range) request.
 ///
 /// Once resolved this request will result in the deletion of the values in the given
 /// range.
@@ -810,7 +869,7 @@ impl DeleteRange {
         }
     }
 
-    /// Set the (optional) [`ColumnFamily`](struct.ColumnFamily.html).
+    /// Set the (optional) [`ColumnFamily`](ColumnFamily).
     pub fn cf(mut self, cf: impl Into<ColumnFamily>) -> Self {
         self.state.cf(cf);
         self
@@ -818,11 +877,10 @@ impl DeleteRange {
 }
 
 impl Future for DeleteRange {
-    type Item = ();
-    type Error = Error;
+    type Output = Result<()>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.state.poll()
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        unsafe { Pin::new_unchecked(&mut Pin::get_unchecked_mut(self).state).poll(cx) }
     }
 }
 
@@ -839,7 +897,7 @@ impl DeleteRangeInner {
 impl RequestInner for DeleteRangeInner {
     type Resp = ();
 
-    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> KvFuture<Self::Resp> {
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> BoxTryFuture<()> {
         match self.range {
             Ok(range) => Box::new(client.raw_delete_range(range, cf)),
             Err(e) => Box::new(future::err(e)),

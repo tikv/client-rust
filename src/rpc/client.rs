@@ -11,15 +11,14 @@ use std::{
     time::Duration,
 };
 
-use futures::{
-    future::{self, loop_fn, Either, Loop},
-    Future,
-};
+use futures::future::{self, ready, Either, Future};
+use futures::prelude::TryFutureExt;
 use grpcio::{EnvBuilder, Environment};
 use kvproto::kvrpcpb;
 use log::*;
 
 use crate::{
+    compat::{loop_fn, Loop},
     raw::ColumnFamily,
     rpc::{
         pd::{PdClient, PdTimestamp, Region, RegionId, RegionVerId, Store, StoreId},
@@ -75,41 +74,41 @@ impl RpcClientInner {
         })
     }
 
-    fn get_all_stores(&self) -> impl Future<Item = Vec<Store>, Error = Error> {
+    fn get_all_stores(&self) -> impl Future<Output = Result<Vec<Store>>> {
         self.pd.get_all_stores()
     }
 
-    fn get_store_by_id(&self, id: StoreId) -> impl Future<Item = Store, Error = Error> {
+    fn get_store_by_id(&self, id: StoreId) -> impl Future<Output = Result<Store>> {
         self.pd.get_store(id)
     }
 
-    fn get_region(&self, key: &[u8]) -> impl Future<Item = Region, Error = Error> {
+    fn get_region(&self, key: &[u8]) -> impl Future<Output = Result<Region>> {
         self.pd.get_region(key)
     }
 
-    fn get_region_by_id(&self, id: RegionId) -> impl Future<Item = Region, Error = Error> {
+    fn get_region_by_id(&self, id: RegionId) -> impl Future<Output = Result<Region>> {
         self.pd.get_region_by_id(id)
     }
 
-    fn get_ts(&self) -> impl Future<Item = PdTimestamp, Error = Error> {
+    fn get_ts(&self) -> impl Future<Output = Result<PdTimestamp>> {
         self.pd.get_ts()
     }
 
-    fn load_store(&self, id: StoreId) -> impl Future<Item = Store, Error = Error> {
+    fn load_store(&self, id: StoreId) -> impl Future<Output = Result<Store>> {
         info!("reload info for store {}", id);
-        self.pd.get_store(id).map(Into::into)
+        self.pd.get_store(id).map_ok(Into::into)
     }
 
-    fn load_region(&self, key: &Key) -> impl Future<Item = Region, Error = Error> {
+    fn load_region(&self, key: &Key) -> impl Future<Output = Result<Region>> {
         self.pd.get_region(key.as_ref())
     }
 
-    fn load_region_by_id(&self, id: RegionId) -> impl Future<Item = Region, Error = Error> {
+    fn load_region_by_id(&self, id: RegionId) -> impl Future<Output = Result<Region>> {
         self.pd.get_region_by_id(id)
     }
 
-    fn locate_key(&self, key: &Key) -> impl Future<Item = KeyLocation, Error = Error> {
-        self.load_region(key).map(KeyLocation::new)
+    fn locate_key(&self, key: &Key) -> impl Future<Output = Result<KeyLocation>> {
+        self.load_region(key).map_ok(KeyLocation::new)
     }
 
     fn kv_client(&self, context: RegionContext) -> Result<(RegionContext, Arc<KvClient>)> {
@@ -147,7 +146,7 @@ impl RpcClient {
     fn group_tasks_by_region<Task>(
         &self,
         tasks: Vec<Task>,
-    ) -> impl Future<Item = GroupedTasks<Task>, Error = Error>
+    ) -> impl Future<Output = Result<GroupedTasks<Task>>>
     where
         Task: GroupingTask,
     {
@@ -155,56 +154,60 @@ impl RpcClient {
         let inner = self.inner();
         loop_fn((0, tasks, result), move |(mut index, tasks, mut result)| {
             if index == tasks.len() {
-                Either::A(future::ok(Loop::Break(result)))
+                Either::Left(future::ok(Loop::Break(result)))
             } else {
                 let inner = Arc::clone(&inner);
-                Either::B(inner.locate_key(tasks[index].key()).map(move |location| {
-                    while let Some(item) = tasks.get(index) {
-                        if !location.contains(item.key()) {
-                            break;
-                        }
-                        let ver_id = location.ver_id();
-                        let item = item.clone();
-                        if let Some(ref mut grouped) = result {
-                            grouped.add(ver_id, item);
-                        } else {
-                            result = Some(GroupedTasks::new(ver_id, item));
-                        }
-                        index += 1;
-                    }
-                    if index == tasks.len() {
-                        Loop::Break(result)
-                    } else {
-                        Loop::Continue((index, tasks, result))
-                    }
-                }))
+                Either::Right(
+                    inner
+                        .locate_key(tasks[index].key())
+                        .map_ok(move |location| {
+                            while let Some(item) = tasks.get(index) {
+                                if !location.contains(item.key()) {
+                                    break;
+                                }
+                                let ver_id = location.ver_id();
+                                let item = item.clone();
+                                if let Some(ref mut grouped) = result {
+                                    grouped.add(ver_id, item);
+                                } else {
+                                    result = Some(GroupedTasks::new(ver_id, item));
+                                }
+                                index += 1;
+                            }
+                            if index == tasks.len() {
+                                Loop::Break(result)
+                            } else {
+                                Loop::Continue((index, tasks, result))
+                            }
+                        }),
+                )
             }
         })
-        .map(|r| r.unwrap_or_default())
+        .map_ok(|r| r.unwrap_or_default())
     }
 
     fn region_context(
         inner: Arc<RpcClientInner>,
         key: &Key,
-    ) -> impl Future<Item = (RegionContext, Arc<KvClient>), Error = Error> {
+    ) -> impl Future<Output = Result<(RegionContext, Arc<KvClient>)>> {
         let inner2 = Arc::clone(&inner);
         inner
             .locate_key(key)
             .and_then(move |location| {
                 let peer = location.peer().expect("leader must exist");
                 let store_id = peer.get_store_id();
-                inner.load_store(store_id).map(|store| RegionContext {
+                inner.load_store(store_id).map_ok(|store| RegionContext {
                     region: location.into_inner(),
                     store,
                 })
             })
-            .and_then(move |region| inner2.kv_client(region))
+            .and_then(move |region| ready(inner2.kv_client(region)))
     }
 
     fn region_context_by_id(
         inner: Arc<RpcClientInner>,
         id: RegionId,
-    ) -> impl Future<Item = (RegionContext, Arc<KvClient>), Error = Error> {
+    ) -> impl Future<Output = Result<(RegionContext, Arc<KvClient>)>> {
         let inner2 = Arc::clone(&inner);
         inner
             .load_region_by_id(id)
@@ -213,21 +216,22 @@ impl RpcClient {
                 let store_id = peer.get_store_id();
                 inner
                     .load_store(store_id)
-                    .map(|store| RegionContext { region, store })
+                    .map_ok(|store| RegionContext { region, store })
             })
-            .and_then(move |region| inner2.kv_client(region))
+            .and_then(move |region| ready(inner2.kv_client(region)))
     }
 
     fn raw(
         inner: Arc<RpcClientInner>,
         key: &Key,
         cf: Option<ColumnFamily>,
-    ) -> impl Future<Item = RawContext, Error = Error> {
-        Self::region_context(inner, key).map(|(region, client)| RawContext::new(region, client, cf))
+    ) -> impl Future<Output = Result<RawContext>> {
+        Self::region_context(inner, key)
+            .map_ok(|(region, client)| RawContext::new(region, client, cf))
     }
 
-    fn txn(inner: Arc<RpcClientInner>, key: &Key) -> impl Future<Item = TxnContext, Error = Error> {
-        Self::region_context(inner, key).map(|(region, _client)| TxnContext::new(region))
+    fn txn(inner: Arc<RpcClientInner>, key: &Key) -> impl Future<Output = Result<TxnContext>> {
+        Self::region_context(inner, key).map_ok(|(region, _client)| TxnContext::new(region))
     }
 
     #[inline]
@@ -239,17 +243,17 @@ impl RpcClient {
         &self,
         key: Key,
         cf: Option<ColumnFamily>,
-    ) -> impl Future<Item = Option<Value>, Error = Error> {
+    ) -> impl Future<Output = Result<Option<Value>>> {
         Self::raw(self.inner(), &key, cf)
             .and_then(|context| context.client().raw_get(context, key))
-            .map(|value| if value.is_empty() { None } else { Some(value) })
+            .map_ok(|value| if value.is_empty() { None } else { Some(value) })
     }
 
     pub fn raw_batch_get(
         &self,
         keys: Vec<Key>,
         cf: Option<ColumnFamily>,
-    ) -> impl Future<Item = Vec<KvPair>, Error = Error> {
+    ) -> impl Future<Output = Result<Vec<KvPair>>> {
         let inner = self.inner();
         self.group_tasks_by_region(keys)
             .and_then(move |task_groups| {
@@ -259,15 +263,15 @@ impl RpcClient {
                     let inner = Arc::clone(&inner);
                     let cf = cf.clone();
                     let task = Self::region_context_by_id(inner, region.id)
-                        .map(|(region, client)| RawContext::new(region, client, cf))
+                        .map_ok(|(region, client)| RawContext::new(region, client, cf))
                         .and_then(|context| {
                             context.client().raw_batch_get(context, keys.into_iter())
                         });
                     tasks.push(task);
                 }
-                future::join_all(tasks)
+                future::try_join_all(tasks)
             })
-            .map(|r| r.into_iter().flat_map(|a| a.into_iter()).collect())
+            .map_ok(|r| r.into_iter().flat_map(|a| a.into_iter()).collect())
     }
 
     pub fn raw_put(
@@ -275,11 +279,11 @@ impl RpcClient {
         key: Key,
         value: Value,
         cf: Option<ColumnFamily>,
-    ) -> impl Future<Item = (), Error = Error> {
+    ) -> impl Future<Output = Result<()>> {
         if value.is_empty() {
-            Either::A(future::err(Error::empty_value()))
+            Either::Left(future::err(Error::empty_value()))
         } else {
-            Either::B(
+            Either::Right(
                 Self::raw(self.inner(), &key, cf)
                     .and_then(|context| context.client().raw_put(context, key, value)),
             )
@@ -290,12 +294,12 @@ impl RpcClient {
         &self,
         pairs: Vec<KvPair>,
         cf: Option<ColumnFamily>,
-    ) -> impl Future<Item = (), Error = Error> {
+    ) -> impl Future<Output = Result<()>> {
         if pairs.iter().any(|p| p.value().is_empty()) {
-            Either::A(future::err(Error::empty_value()))
+            Either::Left(future::err(Error::empty_value()))
         } else {
             let inner = self.inner();
-            Either::B(
+            Either::Right(
                 self.group_tasks_by_region(pairs)
                     .and_then(move |task_groups| {
                         let task_groups = task_groups.into_inner();
@@ -304,13 +308,13 @@ impl RpcClient {
                             let inner = Arc::clone(&inner);
                             let cf = cf.clone();
                             let task = Self::region_context_by_id(inner, region.id)
-                                .map(|(region, client)| RawContext::new(region, client, cf))
+                                .map_ok(|(region, client)| RawContext::new(region, client, cf))
                                 .and_then(|context| context.client().raw_batch_put(context, pairs));
                             tasks.push(task);
                         }
-                        future::join_all(tasks)
+                        future::try_join_all(tasks)
                     })
-                    .map(|_| ()),
+                    .map_ok(|_| ()),
             )
         }
     }
@@ -319,7 +323,7 @@ impl RpcClient {
         &self,
         key: Key,
         cf: Option<ColumnFamily>,
-    ) -> impl Future<Item = (), Error = Error> {
+    ) -> impl Future<Output = Result<()>> {
         Self::raw(self.inner(), &key, cf)
             .and_then(|context| context.client().raw_delete(context, key))
     }
@@ -328,7 +332,7 @@ impl RpcClient {
         &self,
         keys: Vec<Key>,
         cf: Option<ColumnFamily>,
-    ) -> impl Future<Item = (), Error = Error> {
+    ) -> impl Future<Output = Result<()>> {
         let inner = self.inner();
         self.group_tasks_by_region(keys)
             .and_then(move |task_groups| {
@@ -338,13 +342,13 @@ impl RpcClient {
                     let inner = Arc::clone(&inner);
                     let cf = cf.clone();
                     let task = Self::region_context_by_id(inner, region.id)
-                        .map(|(region, client)| RawContext::new(region, client, cf))
+                        .map_ok(|(region, client)| RawContext::new(region, client, cf))
                         .and_then(|context| context.client().raw_batch_delete(context, keys));
                     tasks.push(task);
                 }
-                future::join_all(tasks)
+                future::try_join_all(tasks)
             })
-            .map(|_| ())
+            .map_ok(|_| ())
     }
 
     pub fn raw_scan(
@@ -353,7 +357,7 @@ impl RpcClient {
         limit: u32,
         key_only: bool,
         cf: Option<ColumnFamily>,
-    ) -> impl Future<Item = Vec<KvPair>, Error = Error> {
+    ) -> impl Future<Output = Result<Vec<KvPair>>> {
         struct State {
             limit: u32,
             key_only: bool,
@@ -373,7 +377,7 @@ impl RpcClient {
                 let region = location.into_inner();
                 let cf = scan.cf.clone();
                 Self::region_context_by_id(Arc::clone(&inner), region.id)
-                    .map(|(region, client)| {
+                    .map_ok(|(region, client)| {
                         (scan, region.range(), RawContext::new(region, client, cf))
                     })
                     .and_then(|(mut scan, region_range, context)| {
@@ -381,9 +385,9 @@ impl RpcClient {
                         context
                             .client()
                             .raw_scan(context, start_key, end_key, scan.limit, scan.key_only)
-                            .map(|pairs| (scan, region_range, pairs))
+                            .map_ok(|pairs| (scan, region_range, pairs))
                     })
-                    .map(|(mut scan, region_range, mut pairs)| {
+                    .map_ok(|(mut scan, region_range, mut pairs)| {
                         let limit = scan.limit;
                         scan.result_mut().append(&mut pairs);
                         if scan.result().len() as u32 >= limit {
@@ -405,7 +409,7 @@ impl RpcClient {
         _each_limit: u32,
         _key_only: bool,
         cf: Option<ColumnFamily>,
-    ) -> impl Future<Item = Vec<KvPair>, Error = Error> {
+    ) -> impl Future<Output = Result<Vec<KvPair>>> {
         drop(ranges);
         drop(cf);
         future::err(Error::unimplemented())
@@ -415,7 +419,7 @@ impl RpcClient {
         &self,
         range: (Key, Option<Key>),
         cf: Option<ColumnFamily>,
-    ) -> impl Future<Item = (), Error = Error> {
+    ) -> impl Future<Output = Result<()>> {
         let scan: ScanRegionsContext<(), Option<ColumnFamily>> = ScanRegionsContext::new(range, cf);
         let inner = Arc::clone(&self.inner);
         loop_fn((inner, scan), |(inner, scan)| {
@@ -423,7 +427,7 @@ impl RpcClient {
                 let region = location.into_inner();
                 let cf = scan.clone();
                 Self::region_context_by_id(Arc::clone(&inner), region.id)
-                    .map(|(region, client)| {
+                    .map_ok(|(region, client)| {
                         (scan, region.range(), RawContext::new(region, client, cf))
                     })
                     .and_then(|(mut scan, region_range, context)| {
@@ -433,9 +437,9 @@ impl RpcClient {
                         context
                             .client()
                             .raw_delete_range(context, start_key, end_key)
-                            .map(|_| (scan, region_range))
+                            .map_ok(|_| (scan, region_range))
                     })
-                    .map(|(mut scan, region_range)| match scan.next(region_range) {
+                    .map_ok(|(mut scan, region_range)| match scan.next(region_range) {
                         ScanRegionsStatus::Continue => Loop::Continue((inner, scan)),
                         ScanRegionsStatus::Break => Loop::Break(()),
                     })
