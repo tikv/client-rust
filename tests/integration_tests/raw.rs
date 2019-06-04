@@ -22,7 +22,7 @@ async fn wipe_all(client: &Client) {
 }
 
 async fn connect() -> Client {
-    let client = Client::new(Config::new(pd_addr()))
+    let client = Client::connect(Config::new(pd_addr()))
         .await
         .expect("Could not connect to tikv");
     wipe_all(&client).await;

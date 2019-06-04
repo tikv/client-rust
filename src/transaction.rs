@@ -25,12 +25,11 @@ impl Client {
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = Client::new(Config::default());
+    /// let connect = Client::connect(Config::default());
     /// let client = connect.await.unwrap();
     /// # });
     /// ```
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new(config: Config) -> Connect {
+    pub fn connect(config: Config) -> Connect {
         Connect::new(config)
     }
 
@@ -43,7 +42,7 @@ impl Client {
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = Client::new(Config::default());
+    /// let connect = Client::connect(Config::default());
     /// let client = connect.await.unwrap();
     /// let transaction = client.begin();
     /// // ... Issue some commands.
@@ -62,7 +61,7 @@ impl Client {
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = Client::new(Config::default());
+    /// let connect = Client::connect(Config::default());
     /// let client = connect.await.unwrap();
     /// let timestamp = client.current_timestamp();
     /// let transaction = client.begin_with_timestamp(timestamp);
@@ -82,7 +81,7 @@ impl Client {
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = Client::new(Config::default());
+    /// let connect = Client::connect(Config::default());
     /// let client = connect.await.unwrap();
     /// let snapshot = client.snapshot();
     /// // ... Issue some commands.
@@ -99,7 +98,7 @@ impl Client {
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = Client::new(Config::default());
+    /// let connect = Client::connect(Config::default());
     /// let client = connect.await.unwrap();
     /// let timestamp = client.current_timestamp();
     /// # });
@@ -119,7 +118,7 @@ impl Client {
 /// use futures::prelude::*;
 ///
 /// # futures::executor::block_on(async {
-/// let connect: Connect = Client::new(Config::default());
+/// let connect: Connect = Client::connect(Config::default());
 /// let client: Client = connect.await.unwrap();
 /// # });
 /// ```
@@ -196,7 +195,7 @@ impl Transaction {
     /// use tikv_client::{Config, transaction::Client};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = Client::new(Config::default());
+    /// let connect = Client::connect(Config::default());
     /// let client = connect.await.unwrap();
     /// let txn = client.begin();
     /// # });
@@ -214,7 +213,7 @@ impl Transaction {
     /// # use tikv_client::{Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connect = Client::new(Config::default());
+    /// # let connect = Client::connect(Config::default());
     /// # let connected_client = connect.await.unwrap();
     /// let txn = connected_client.begin();
     /// // ... Do some actions.
@@ -233,7 +232,7 @@ impl Transaction {
     /// # use tikv_client::{Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connect = Client::new(Config::default());
+    /// # let connect = Client::connect(Config::default());
     /// # let connected_client = connect.await.unwrap();
     /// let txn = connected_client.begin();
     /// // ... Do some actions.
@@ -252,7 +251,7 @@ impl Transaction {
     /// # use tikv_client::{Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connect = Client::new(Config::default());
+    /// # let connect = Client::connect(Config::default());
     /// # let connected_client = connect.await.unwrap();
     /// let mut txn = connected_client.begin();
     /// // ... Do some actions.
@@ -275,7 +274,7 @@ impl Transaction {
     /// # use tikv_client::{Config, transaction::{Client, Timestamp}};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connect = Client::new(Config::default());
+    /// # let connect = Client::connect(Config::default());
     /// # let connected_client = connect.await.unwrap();
     /// let txn = connected_client.begin();
     /// // ... Do some actions.
@@ -293,7 +292,7 @@ impl Transaction {
     /// # use tikv_client::{Config, transaction::{Client, Snapshot}};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connect = Client::new(Config::default());
+    /// # let connect = Client::connect(Config::default());
     /// # let connected_client = connect.await.unwrap();
     /// let txn = connected_client.begin();
     /// // ... Do some actions.
@@ -311,7 +310,7 @@ impl Transaction {
     /// # use tikv_client::{Config, transaction::{Client, IsolationLevel}};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connect = Client::new(Config::default());
+    /// # let connect = Client::connect(Config::default());
     /// # let connected_client = connect.await.unwrap();
     /// let mut txn = connected_client.begin();
     /// txn.set_isolation_level(IsolationLevel::SnapshotIsolation);
@@ -331,7 +330,7 @@ impl Transaction {
     /// # use tikv_client::{Value, Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let mut txn = connected_client.begin();
     /// let key = "TiKV";
@@ -355,7 +354,7 @@ impl Transaction {
     /// # use tikv_client::{KvPair, Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let mut txn = connected_client.begin();
     /// let keys = vec!["TiKV", "TiDB"];
@@ -386,7 +385,7 @@ impl Transaction {
     /// # use tikv_client::{Key, Value, Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let mut txn = connected_client.begin();
     /// let key = "TiKV";
@@ -410,7 +409,7 @@ impl Transaction {
     /// # use tikv_client::{Key, Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
+    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let mut txn = connected_client.begin();
     /// let key = "TiKV";
