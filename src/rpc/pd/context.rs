@@ -1,44 +1,22 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::ops::{Deref, DerefMut};
-
 use lazy_static::*;
 use prometheus::*;
 
 use crate::rpc::context::RequestContext;
 
-pub struct PdRequestContext<Executor> {
-    target: RequestContext<Executor>,
-}
-
-impl<Executor> Deref for PdRequestContext<Executor> {
-    type Target = RequestContext<Executor>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.target
-    }
-}
-
-impl<Executor> DerefMut for PdRequestContext<Executor> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.target
-    }
-}
-
 pub fn request_context<Executor>(
     cmd: &'static str,
     executor: Executor,
-) -> PdRequestContext<Executor> {
-    PdRequestContext {
-        target: RequestContext::new(
-            cmd,
-            &PD_REQUEST_DURATION_HISTOGRAM_VEC,
-            &PD_REQUEST_COUNTER_VEC,
-            &PD_FAILED_REQUEST_DURATION_HISTOGRAM_VEC,
-            &PD_FAILED_REQUEST_COUNTER_VEC,
-            executor,
-        ),
-    }
+) -> RequestContext<Executor> {
+    RequestContext::new(
+        cmd,
+        &PD_REQUEST_DURATION_HISTOGRAM_VEC,
+        &PD_REQUEST_COUNTER_VEC,
+        &PD_FAILED_REQUEST_DURATION_HISTOGRAM_VEC,
+        &PD_FAILED_REQUEST_COUNTER_VEC,
+        executor,
+    )
 }
 
 pub fn observe_tso_batch(batch_size: usize) -> u32 {

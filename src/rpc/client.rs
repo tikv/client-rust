@@ -23,7 +23,6 @@ use crate::{
         pd::{PdClient, PdTimestamp, Region, RegionId, RegionVerId, Store, StoreId},
         security::SecurityManager,
         tikv::KvClient,
-        util::HandyRwLock,
     },
     Config, Error, Key, KvPair, Result, Value,
 };
@@ -44,7 +43,7 @@ impl RpcClientInner {
         let env = Arc::new(
             EnvBuilder::new()
                 .cq_count(CQ_COUNT)
-                .name_prefix(thd_name!(CLIENT_PREFIX))
+                .name_prefix(thread_name!(CLIENT_PREFIX))
                 .build(),
         );
         let security_mgr = Arc::new(
@@ -111,7 +110,7 @@ impl RpcClientInner {
     }
 
     fn kv_client(&self, context: RegionContext) -> Result<(RegionContext, Arc<KvClient>)> {
-        if let Some(conn) = self.tikv.rl().get(context.address()) {
+        if let Some(conn) = self.tikv.read().unwrap().get(context.address()) {
             return Ok((context, Arc::clone(conn)));
         };
         info!("connect to tikv endpoint: {:?}", context.address());
@@ -124,7 +123,8 @@ impl RpcClientInner {
         )
         .map(Arc::new)
         .map(|c| {
-            tikv.wl()
+            tikv.write()
+                .unwrap()
                 .insert(context.address().to_owned(), Arc::clone(&c));
             (context, c)
         })
