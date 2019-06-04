@@ -165,7 +165,7 @@ macro_rules! raw_request {
         let (region, cf) = $context.into_inner();
         req.set_context(region.into());
         if let Some(cf) = cf {
-            req.set_cf(cf.into_inner());
+            req.set_cf(cf.to_string());
         }
         req
     }};
