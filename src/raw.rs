@@ -11,12 +11,7 @@
 //!
 use crate::{rpc::RpcClient, Config, Error, Key, KeyRange, KvPair, Result, Value};
 use futures::{future, task::Context, Future, Poll};
-use std::{
-    ops::{Bound, Deref},
-    pin::Pin,
-    sync::Arc,
-    u32,
-};
+use std::{fmt, ops::Bound, pin::Pin, sync::Arc, u32};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
@@ -310,33 +305,21 @@ impl Future for Connect {
 /// let cf = ColumnFamily::from(&String::from("write"));
 /// ```
 ///
-/// This is a *wrapper type* that implements `Deref<Target=String>` so it can be used like one transparently.
-///
 /// **But, you should not need to worry about all this:** Many functions which accept a
 /// `ColumnFamily` accept an `Into<ColumnFamily>`, which means all of the above types can be passed
 /// directly to those functions.
 #[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub struct ColumnFamily(String);
 
-impl<T> From<T> for ColumnFamily
-where
-    T: ToString,
-{
+impl<T: Into<String>> From<T> for ColumnFamily {
     fn from(i: T) -> ColumnFamily {
-        ColumnFamily(i.to_string())
+        ColumnFamily(i.into())
     }
 }
 
-impl ColumnFamily {
-    pub fn into_inner(self) -> String {
-        self.0
-    }
-}
-
-impl Deref for ColumnFamily {
-    type Target = String;
-    fn deref(&self) -> &Self::Target {
-        &self.0
+impl fmt::Display for ColumnFamily {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
     }
 }
 
