@@ -3,8 +3,7 @@
 // TODO: Remove this when txn is done.
 #![allow(dead_code)]
 
-use std::ops::{Deref, DerefMut};
-
+pub use kvproto::metapb::{Peer, Store};
 use kvproto::{kvrpcpb, metapb};
 
 pub use crate::rpc::pd::client::PdClient;
@@ -32,26 +31,9 @@ pub struct Region {
     pub leader: Option<Peer>,
 }
 
-impl Deref for Region {
-    type Target = metapb::Region;
-
-    fn deref(&self) -> &Self::Target {
-        &self.region
-    }
-}
-
-impl DerefMut for Region {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.region
-    }
-}
-
 impl Region {
     pub fn new(region: metapb::Region, leader: Option<metapb::Peer>) -> Self {
-        Region {
-            region,
-            leader: leader.map(Peer),
-        }
+        Region { region, leader }
     }
 
     pub fn switch_peer(&mut self, _to: StoreId) -> Result<()> {
@@ -109,59 +91,7 @@ impl Region {
     }
 
     pub fn meta(&self) -> metapb::Region {
-        Clone::clone(&self.region)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Store(metapb::Store);
-
-impl From<metapb::Store> for Store {
-    fn from(store: metapb::Store) -> Store {
-        Store(store)
-    }
-}
-
-impl Deref for Store {
-    type Target = metapb::Store;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Store {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-#[derive(Clone, Default, Debug, PartialEq)]
-pub struct Peer(metapb::Peer);
-
-impl From<metapb::Peer> for Peer {
-    fn from(peer: metapb::Peer) -> Peer {
-        Peer(peer)
-    }
-}
-
-impl Deref for Peer {
-    type Target = metapb::Peer;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Peer {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl Peer {
-    pub fn into_inner(self) -> metapb::Peer {
-        self.0
+        self.region.clone()
     }
 }
 
