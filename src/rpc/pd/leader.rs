@@ -119,12 +119,11 @@ impl PdReactor {
         let mut core = Core::new().unwrap();
         let handle = core.handle();
         {
-            let f = rx.take_while(|t| ready(t.is_some())).then(|t| {
+            let f = rx.take_while(|t| ready(t.is_some())).for_each(|t| {
                 Self::dispatch(&client, t.unwrap(), &handle);
                 ready(())
             });
-            core.run(TryFutureExt::compat(f.into_future().unit_error()))
-                .unwrap();
+            core.run(TryFutureExt::compat(f.unit_error())).unwrap();
         }
     }
 
