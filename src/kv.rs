@@ -334,6 +334,12 @@ where
     }
 }
 
+impl Into<(Key, Value)> for KvPair {
+    fn into(self) -> (Key, Value) {
+        (self.0, self.1)
+    }
+}
+
 impl fmt::Debug for KvPair {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let KvPair(key, value) = self;

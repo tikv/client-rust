@@ -16,7 +16,6 @@ integration-tests = ["property-testing"]
 # Enable propery testing features with `proptest`.
 property-testing = ["proptest", "proptest-derive"]
 
-
 [lib]
 name = "tikv_client"
 
@@ -43,7 +42,13 @@ default-features = false
 features = ["push", "process"]
 
 [dev-dependencies]
+criterion = "0.2"
+proptest = "0.9"
 clap = "2.32"
 tempdir = "0.3"
 runtime = "0.3.0-alpha.3"
 runtime-tokio = "0.3.0-alpha.3"
+
+[[bench]]
+name = "bench"
+harness = false

@@ -1,6 +1,6 @@
 # TiKV Client (Rust)
 
-[![Build Status](https://travis-ci.org/tikv/client-rust.svg?branch=master)](https://travis-ci.org/tikv/client-rust)
+[![Build Status](https://travis-ci.org/tikv/client-rust.svg?branch=master)](https://travis-ci.org/pingcap/client-rust)
 [![Documentation](https://docs.rs/tikv-client/badge.svg)](https://docs.rs/tikv-client/)
 
 > Currently this crate is experimental and some portions (e.g. the Transactional API) are still in active development. You're encouraged to use this library for testing and to help us find problems!
@@ -42,6 +42,24 @@ You can access the documentation on your machine by running the following in any
 ```bash
 cargo doc --package tikv-client --open
 # If it didn't work, browse file URL it tried to open with your browser.
+```
+
+## Running benchmarks
+
+This crate uses [`criterion`](https://github.com/bheisler/criterion.rs) for benchmarking. Most benchmarks use [`proptest`](https://github.com/altsysrq/proptest) to generate values for bench runs.
+
+Currently, all of the benchmarks are gated by the `integration-tests` feature, and require a functioning TiKV (and PD) cluster.
+
+```bash
+export PD_ADDRS=192.168.0.100:2379,192.168.0.101:2379,192.168.0.102:2379
+cargo +nightly bench --features integration-tests
+```
+
+It is possible to limit the scope of benchmarks:
+
+```bash
+export PD_ADDRS=192.168.0.100:2379,192.168.0.101:2379,192.168.0.102:2379
+cargo +nightly bench --features integration-tests raw
 ```
 
 ## Toolchain versions
