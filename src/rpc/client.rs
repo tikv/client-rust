@@ -10,8 +10,7 @@ use std::{
     time::Duration,
 };
 
-use futures::future::{self, ready, Either, Future};
-use futures::prelude::TryFutureExt;
+use futures::prelude::*;
 use grpcio::{EnvBuilder, Environment};
 use kvproto::kvrpcpb;
 use log::*;
@@ -153,33 +152,31 @@ impl RpcClient {
         let inner = self.inner();
         loop_fn((0, tasks, result), move |(mut index, tasks, mut result)| {
             if index == tasks.len() {
-                Either::Left(future::ok(Loop::Break(result)))
+                future::Either::Left(future::ok(Loop::Break(result)))
             } else {
                 let inner = Arc::clone(&inner);
-                Either::Right(
-                    inner
-                        .locate_key(tasks[index].key())
-                        .map_ok(move |location| {
-                            while let Some(item) = tasks.get(index) {
-                                if !location.contains(item.key()) {
-                                    break;
-                                }
-                                let ver_id = location.ver_id();
-                                let item = item.clone();
-                                if let Some(ref mut grouped) = result {
-                                    grouped.add(ver_id, item);
-                                } else {
-                                    result = Some(GroupedTasks::new(ver_id, item));
-                                }
-                                index += 1;
+                future::Either::Right(inner.locate_key(tasks[index].key()).map_ok(
+                    move |location| {
+                        while let Some(item) = tasks.get(index) {
+                            if !location.contains(item.key()) {
+                                break;
                             }
-                            if index == tasks.len() {
-                                Loop::Break(result)
+                            let ver_id = location.ver_id();
+                            let item = item.clone();
+                            if let Some(ref mut grouped) = result {
+                                grouped.add(ver_id, item);
                             } else {
-                                Loop::Continue((index, tasks, result))
+                                result = Some(GroupedTasks::new(ver_id, item));
                             }
-                        }),
-                )
+                            index += 1;
+                        }
+                        if index == tasks.len() {
+                            Loop::Break(result)
+                        } else {
+                            Loop::Continue((index, tasks, result))
+                        }
+                    },
+                ))
             }
         })
         .map_ok(|r| r.unwrap_or_default())
@@ -200,7 +197,7 @@ impl RpcClient {
                     store,
                 })
             })
-            .and_then(move |region| ready(inner2.kv_client(region)))
+            .and_then(move |region| future::ready(inner2.kv_client(region)))
     }
 
     fn region_context_by_id(
@@ -217,7 +214,7 @@ impl RpcClient {
                     .load_store(store_id)
                     .map_ok(|store| RegionContext { region, store })
             })
-            .and_then(move |region| ready(inner2.kv_client(region)))
+            .and_then(move |region| future::ready(inner2.kv_client(region)))
     }
 
     fn raw(
@@ -279,9 +276,9 @@ impl RpcClient {
         cf: Option<ColumnFamily>,
     ) -> impl Future<Output = Result<()>> {
         if value.is_empty() {
-            Either::Left(future::err(Error::empty_value()))
+            future::Either::Left(future::err(Error::empty_value()))
         } else {
-            Either::Right(
+            future::Either::Right(
                 Self::raw(self.inner(), &key, cf)
                     .and_then(|context| context.client().raw_put(context, key, value)),
             )
@@ -294,10 +291,10 @@ impl RpcClient {
         cf: Option<ColumnFamily>,
     ) -> impl Future<Output = Result<()>> {
         if pairs.iter().any(|p| p.value().is_empty()) {
-            Either::Left(future::err(Error::empty_value()))
+            future::Either::Left(future::err(Error::empty_value()))
         } else {
             let inner = self.inner();
-            Either::Right(
+            future::Either::Right(
                 self.group_tasks_by_region(pairs)
                     .and_then(move |task_groups| {
                         let mut tasks = Vec::with_capacity(task_groups.len());

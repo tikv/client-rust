@@ -5,11 +5,7 @@
 mod common;
 
 use crate::common::parse_args;
-use futures::{
-    future,
-    prelude::{StreamExt, TryStreamExt},
-    stream, TryFutureExt,
-};
+use futures::prelude::*;
 use std::ops::RangeBounds;
 use tikv_client::{
     transaction::{Client, IsolationLevel},

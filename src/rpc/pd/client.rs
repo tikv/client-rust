@@ -7,8 +7,7 @@ use std::{
 };
 
 use futures::compat::Compat01As03;
-use futures::future::{ready, Future};
-use futures::prelude::{FutureExt, TryFutureExt};
+use futures::prelude::*;
 use grpcio::{CallOption, Environment};
 use kvproto::{metapb, pdpb, pdpb::PdClient as RpcClient};
 
@@ -93,14 +92,14 @@ impl PdClient {
             let region = if resp.has_region() {
                 resp.take_region()
             } else {
-                return ready(Err(Error::region_for_key_not_found(key)));
+                return future::ready(Err(Error::region_for_key_not_found(key)));
             };
             let leader = if resp.has_leader() {
                 Some(resp.take_leader())
             } else {
                 None
             };
-            ready(Ok((region, leader)))
+            future::ready(Ok((region, leader)))
         })
     }
 
@@ -122,14 +121,14 @@ impl PdClient {
             let region = if resp.has_region() {
                 resp.take_region()
             } else {
-                return ready(Err(Error::region_not_found(region_id, None)));
+                return future::ready(Err(Error::region_not_found(region_id, None)));
             };
             let leader = if resp.has_leader() {
                 Some(resp.take_leader())
             } else {
                 None
             };
-            ready(Ok((region, leader)))
+            future::ready(Ok((region, leader)))
         })
     }
 

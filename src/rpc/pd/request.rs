@@ -7,8 +7,7 @@ use std::{
 };
 
 use futures::compat::Compat01As03;
-use futures::future::{ok, ready, Either, Future, TryFutureExt};
-use futures::prelude::FutureExt;
+use futures::prelude::*;
 use log::*;
 use tokio_timer::timer::Handle;
 
@@ -61,7 +60,7 @@ where
         debug!("reconnect remains: {}", self.reconnect_count);
 
         if self.request_sent < MAX_REQUEST_COUNT {
-            return Either::Left(ok(self));
+            return future::Either::Left(future::ok(self));
         }
 
         // Updating client.
@@ -71,9 +70,9 @@ where
         match (self.reconnect)(&self.client, RECONNECT_INTERVAL_SEC) {
             Ok(_) => {
                 self.request_sent = 0;
-                Either::Left(ok(self))
+                future::Either::Left(future::ok(self))
             }
-            Err(_) => Either::Right(
+            Err(_) => future::Either::Right(
                 Compat01As03::new(
                     self.timer
                         .delay(Instant::now() + Duration::from_secs(RECONNECT_INTERVAL_SEC)),
@@ -87,7 +86,7 @@ where
         self.request_sent += 1;
         debug!("request sent: {}", self.request_sent);
 
-        ok(self).and_then(|mut ctx| {
+        future::ok(self).and_then(|mut ctx| {
             let req = (ctx.func)(&ctx.client);
             req.map(|resp| match resp {
                 Ok(resp) => {
@@ -128,6 +127,6 @@ where
                 .and_then(Self::send_and_receive)
                 .map(Self::break_or_continue)
         })
-        .and_then(|r| ready(r.post_loop()))
+        .and_then(|r| future::ready(r.post_loop()))
     }
 }

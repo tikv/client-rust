@@ -3,8 +3,7 @@
 //! This module contains utility types and functions for making the transition
 //! from futures 0.1 to 1.0 easier.
 
-use futures::prelude::{Future, Sink, Stream, StreamExt};
-use futures::stream::Fuse;
+use futures::prelude::*;
 use futures::task::{Context, Poll};
 use futures::try_ready;
 use std::pin::Pin;
@@ -85,7 +84,7 @@ where
     St: Stream + Unpin,
 {
     sink: Option<Si>,
-    stream: Option<Fuse<St>>,
+    stream: Option<stream::Fuse<St>>,
     buffered: Option<St::Item>,
 }
 
@@ -118,7 +117,7 @@ where
         )
     }
 
-    fn stream_mut(&mut self) -> Pin<&mut Fuse<St>> {
+    fn stream_mut(&mut self) -> Pin<&mut stream::Fuse<St>> {
         Pin::new(
             self.stream
                 .as_mut()

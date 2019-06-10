@@ -10,7 +10,9 @@
 //!
 
 use crate::{Config, Error, Key, KvPair, Value};
-use futures::{task::Context, Future, Poll, Stream};
+
+use futures::prelude::*;
+use futures::task::{Context, Poll};
 use std::ops::RangeBounds;
 use std::pin::Pin;
 

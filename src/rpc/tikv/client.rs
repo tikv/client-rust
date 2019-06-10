@@ -6,8 +6,7 @@
 use std::{fmt, sync::Arc, time::Duration};
 
 use futures::compat::Compat01As03;
-use futures::future::Future;
-use futures::prelude::{FutureExt, TryFutureExt};
+use futures::prelude::*;
 use grpcio::{CallOption, Environment};
 use kvproto::{errorpb, kvrpcpb, tikvpb::TikvClient};
 
