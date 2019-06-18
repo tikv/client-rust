@@ -1,13 +1,13 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+#[cfg(feature = "proptest-derive")]
+use proptest::{arbitrary::any_with, collection::size_range};
+#[cfg(feature = "proptest-derive")]
+use proptest_derive::Arbitrary;
 use std::ops::{
     Bound, Deref, DerefMut, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
 };
 use std::{fmt, str, u8};
-#[cfg(feature = "proptest-derive")]
-use proptest::{collection::size_range, arbitrary::any_with};
-#[cfg(feature = "proptest-derive")]
-use proptest_derive::Arbitrary;
 
 #[cfg(feature = "proptest-derive")]
 const PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
@@ -67,8 +67,11 @@ impl<'a> fmt::Display for HexRepr<'a> {
 #[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "proptest-derive", derive(Arbitrary))]
 pub struct Key(
-    #[cfg_attr(feature = "proptest-derive", proptest(strategy = "any_with::<Vec<u8>>((size_range(PROPTEST_KEY_MAX), ()))"))]
-    Vec<u8>
+    #[cfg_attr(
+        feature = "proptest-derive",
+        proptest(strategy = "any_with::<Vec<u8>>((size_range(PROPTEST_KEY_MAX), ()))")
+    )]
+    Vec<u8>,
 );
 
 impl Key {
@@ -185,8 +188,11 @@ impl fmt::Debug for Key {
 #[derive(Default, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "proptest-derive", derive(Arbitrary))]
 pub struct Value(
-    #[cfg_attr(feature = "proptest-derive", proptest(strategy = "any_with::<Vec<u8>>((size_range(PROPTEST_VALUE_MAX), ()))"))]
-    Vec<u8>
+    #[cfg_attr(
+        feature = "proptest-derive",
+        proptest(strategy = "any_with::<Vec<u8>>((size_range(PROPTEST_VALUE_MAX), ()))")
+    )]
+    Vec<u8>,
 );
 
 impl Value {

@@ -1,9 +1,9 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{arb_batch, integration::pd_addr};
-use proptest::{arbitrary::{any, any_with}, collection::size_range, proptest};
 use futures::executor::block_on;
-use tikv_client::{KvPair, raw::Client, Config, Value};
+use proptest::{arbitrary::any, proptest};
+use tikv_client::{raw::Client, Config, KvPair, Value};
 
 proptest! {
     #[test]
@@ -15,12 +15,12 @@ proptest! {
         block_on(
             client.put(pair.key().clone(), pair.value().clone())
         ).unwrap();
-        
+
         let out_value = block_on(
             client.get(pair.key().clone())
         ).unwrap();
         assert_eq!(Some(Value::from(pair.value().clone())), out_value);
-        
+
         block_on(
             client.delete(pair.key().clone())
         ).unwrap();
@@ -38,12 +38,12 @@ proptest! {
         block_on(
             client.batch_put(kvs.clone())
         ).unwrap();
-        
+
         let out_value = block_on(
             client.batch_get(keys.clone())
         ).unwrap();
         assert_eq!(kvs, out_value);
-        
+
         block_on(
             client.batch_delete(keys.clone())
         ).unwrap();
@@ -74,7 +74,7 @@ proptest! {
         assert!(kvs.iter().all(|kv| {
             out_value.iter().find(|out| kv == *out).is_some()
         }));
-        
+
         block_on(
             client.batch_delete(keys.clone())
         ).unwrap();
