@@ -1,8 +1,8 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::ops::{
-    Bound, Deref, DerefMut, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
-};
+use std::cmp::{Eq, PartialEq};
+use std::convert::TryFrom;
+use std::ops::{Bound, Deref, DerefMut, Range, RangeFrom, RangeInclusive};
 use std::{fmt, str, u8};
 
 use crate::{Error, Result};
@@ -67,6 +67,36 @@ impl Key {
     #[inline]
     pub(crate) fn into_inner(self) -> Vec<u8> {
         self.0
+    }
+
+    #[inline]
+    fn zero_terminated(&self) -> bool {
+        self.0.last().map(|i| *i == 0).unwrap_or(false)
+    }
+
+    #[inline]
+    fn push_zero(&mut self) {
+        self.0.push(0)
+    }
+
+    #[inline]
+    fn into_lower_bound(mut self) -> Bound<Key> {
+        if self.zero_terminated() {
+            self.0.pop().unwrap();
+            Bound::Excluded(self)
+        } else {
+            Bound::Included(self)
+        }
+    }
+
+    #[inline]
+    fn into_upper_bound(mut self) -> Bound<Key> {
+        if self.zero_terminated() {
+            self.0.pop().unwrap();
+            Bound::Included(self)
+        } else {
+            Bound::Excluded(self)
+        }
     }
 }
 
@@ -320,65 +350,63 @@ impl fmt::Debug for KvPair {
     }
 }
 
-/// A convenience trait for expressing ranges.
+/// A struct for expressing ranges. This type is semi-opaque and is not really meant for users to
+/// deal with directly. Most functions which operate on ranges will accept any types which
+/// implement `Into<BoundRange>`.
 ///
 /// In TiKV, keys are an ordered sequence of bytes. This means we can have ranges over those
 /// bytes. Eg `001` is before `010`.
 ///
-/// This trait has implementations for common range types like `a..b`, `a..=b` where `a` and `b`
-/// `impl Into<Key>`. You could implement this for your own types.
+/// `Into<BoundRange>` has implementations for common range types like `a..b`, `a..=b` where `a` and `b`
+/// `impl Into<Key>`. You can implement `Into<BoundRange>` for your own types by using `try_from`.
+///
+/// Invariant: a range may not be unbounded below.
 ///
 /// ```rust
-/// use tikv_client::{KeyRange, Key};
+/// use tikv_client::{BoundRange, Key};
 /// use std::ops::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull, Bound};
+/// # use std::convert::TryInto;
 ///
 /// let explict_range: Range<Key> = Range { start: Key::from("Rust"), end: Key::from("TiKV") };
-/// let from_explict_range = explict_range.into_bounds();
+/// let from_explict_range: BoundRange = explict_range.into();
 ///
 /// let range: Range<&str> = "Rust".."TiKV";
-/// let from_range = range.into_bounds();
+/// let from_range: BoundRange = range.into();
 /// assert_eq!(from_explict_range, from_range);
 ///
 /// let range: RangeInclusive<&str> = "Rust"..="TiKV";
-/// let from_range = range.into_bounds();
+/// let from_range: BoundRange = range.into();
 /// assert_eq!(
+///     from_range,
 ///     (Bound::Included(Key::from("Rust")), Bound::Included(Key::from("TiKV"))),
-///     from_range
 /// );
 ///
 /// let range_from: RangeFrom<&str> = "Rust"..;
-/// let from_range_from = range_from.into_bounds();
+/// let from_range_from: BoundRange = range_from.into();
 /// assert_eq!(
-///     (Bound::Included(Key::from("Rust")), Bound::Unbounded),
 ///     from_range_from,
-/// );
-///
-/// let range_to: RangeTo<&str> = .."TiKV";
-/// let from_range_to = range_to.into_bounds();
-/// assert_eq!(
-///     (Bound::Unbounded, Bound::Excluded(Key::from("TiKV"))),
-///     from_range_to,
-/// );
-///
-/// let range_to_inclusive: RangeToInclusive<&str> = ..="TiKV";
-/// let from_range_to_inclusive = range_to_inclusive.into_bounds();
-/// assert_eq!(
-///     (Bound::Unbounded, Bound::Included(Key::from("TiKV"))),
-///     from_range_to_inclusive,
-/// );
-///
-/// let range_full: RangeFull = ..;
-/// let from_range_full = range_full.into_bounds();
-/// assert_eq!(
-///     (Bound::Unbounded, Bound::Unbounded),
-///     from_range_full
+///     (Bound::Included(Key::from("Rust")), Bound::Unbounded),
 /// );
 /// ```
 ///
-/// **But, you should not need to worry about all this:** Many functions accept a `impl KeyRange`
+/// **But, you should not need to worry about all this:** Many functions accept a `impl Into<BoundRange>`
 /// which means all of the above types can be passed directly to those functions.
-pub trait KeyRange: Sized {
-    fn into_bounds(self) -> (Bound<Key>, Bound<Key>);
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BoundRange {
+    from: Bound<Key>,
+    to: Bound<Key>,
+}
+
+impl BoundRange {
+    /// Create a new BoundRange.
+    ///
+    /// The caller must ensure that `from` is not `Unbounded`.
+    fn new(from: Bound<Key>, to: Bound<Key>) -> BoundRange {
+        // Debug assert because this function is private.
+        debug_assert!(from != Bound::Unbounded);
+        BoundRange { from, to }
+    }
+
     /// Ranges used in scanning TiKV have a particularity to them.
     ///
     /// The **start** of a scan is inclusive, unless appended with an '\0', then it is exclusive.
@@ -386,105 +414,115 @@ pub trait KeyRange: Sized {
     /// The **end** of a scan is exclusive, unless appended with an '\0', then it is inclusive.
     ///
     /// ```rust
-    /// use tikv_client::{KeyRange, Key};
+    /// use tikv_client::{BoundRange, Key};
     /// // Exclusive
     /// let range = "a".."z";
     /// assert_eq!(
-    ///     range.into_keys().unwrap(),
-    ///     (Key::from("a"), Some(Key::from("z")))
+    ///     BoundRange::from(range).into_keys(),
+    ///     (Key::from("a"), Some(Key::from("z"))),
     /// );
     /// // Inclusive
     /// let range = "a"..="z";
     /// assert_eq!(
-    ///     range.into_keys().unwrap(),
-    ///     (Key::from("a"), Some(Key::from("z\0")))
+    ///     BoundRange::from(range).into_keys(),
+    ///     (Key::from("a"), Some(Key::from("z\0"))),
     /// );
     /// // Open
     /// let range = "a"..;
     /// assert_eq!(
-    ///     range.into_keys().unwrap(),
-    ///     (Key::from("a"), None)
+    ///     BoundRange::from(range).into_keys(),
+    ///     (Key::from("a"), None),
     /// );
     // ```
-    fn into_keys(self) -> Result<(Key, Option<Key>)> {
-        range_to_keys(self.into_bounds())
+    pub fn into_keys(self) -> (Key, Option<Key>) {
+        let start = match self.from {
+            Bound::Included(v) => v,
+            Bound::Excluded(mut v) => {
+                v.push_zero();
+                v
+            }
+            Bound::Unbounded => unreachable!(),
+        };
+        let end = match self.to {
+            Bound::Included(mut v) => {
+                v.push_zero();
+                Some(v)
+            }
+            Bound::Excluded(v) => Some(v),
+            Bound::Unbounded => None,
+        };
+        (start, end)
     }
 }
 
-fn range_to_keys(range: (Bound<Key>, Bound<Key>)) -> Result<(Key, Option<Key>)> {
-    let start = match range.0 {
-        Bound::Included(v) => v,
-        Bound::Excluded(mut v) => {
-            v.0.push(b"\0"[0]);
-            v
-        }
-        Bound::Unbounded => Err(Error::invalid_key_range())?,
-    };
-    let end = match range.1 {
-        Bound::Included(mut v) => {
-            v.0.push(b"\0"[0]);
-            Some(v)
-        }
-        Bound::Excluded(v) => Some(v),
-        Bound::Unbounded => None,
-    };
-    Ok((start, end))
+impl<T: Into<Key> + Clone> PartialEq<(Bound<T>, Bound<T>)> for BoundRange {
+    fn eq(&self, other: &(Bound<T>, Bound<T>)) -> bool {
+        self.from == convert_to_bound_key(other.0.clone())
+            && self.to == convert_to_bound_key(other.1.clone())
+    }
 }
 
-impl<T: Into<Key>> KeyRange for Range<T> {
-    fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
-        (
-            Bound::Included(self.start.into()),
-            Bound::Excluded(self.end.into()),
+impl<T: Into<Key>> From<Range<T>> for BoundRange {
+    fn from(other: Range<T>) -> BoundRange {
+        BoundRange::new(
+            Bound::Included(other.start.into()),
+            Bound::Excluded(other.end.into()),
         )
     }
 }
 
-impl<T: Into<Key>> KeyRange for RangeFrom<T> {
-    fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
-        (Bound::Included(self.start.into()), Bound::Unbounded)
+impl<T: Into<Key>> From<RangeFrom<T>> for BoundRange {
+    fn from(other: RangeFrom<T>) -> BoundRange {
+        BoundRange::new(Bound::Included(other.start.into()), Bound::Unbounded)
     }
 }
 
-impl KeyRange for RangeFull {
-    fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
-        (Bound::Unbounded, Bound::Unbounded)
+impl<T: Into<Key>> From<RangeInclusive<T>> for BoundRange {
+    fn from(other: RangeInclusive<T>) -> BoundRange {
+        let (start, end) = other.into_inner();
+        BoundRange::new(Bound::Included(start.into()), Bound::Included(end.into()))
     }
 }
 
-impl<T: Into<Key>> KeyRange for RangeInclusive<T> {
-    fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
-        let (start, end) = self.into_inner();
-        (Bound::Included(start.into()), Bound::Included(end.into()))
+impl<T: Into<Key>> From<(T, Option<T>)> for BoundRange {
+    fn from(other: (T, Option<T>)) -> BoundRange {
+        let to = match other.1 {
+            None => Bound::Unbounded,
+            Some(to) => to.into().into_upper_bound(),
+        };
+
+        BoundRange::new(other.0.into().into_lower_bound(), to)
     }
 }
 
-impl<T: Into<Key>> KeyRange for RangeTo<T> {
-    fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
-        (Bound::Unbounded, Bound::Excluded(self.end.into()))
+impl<T: Into<Key>> From<(T, T)> for BoundRange {
+    fn from(other: (T, T)) -> BoundRange {
+        BoundRange::new(
+            other.0.into().into_lower_bound(),
+            other.1.into().into_upper_bound(),
+        )
     }
 }
 
-impl<T: Into<Key>> KeyRange for RangeToInclusive<T> {
-    fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
-        (Bound::Unbounded, Bound::Included(self.end.into()))
+impl<T: Into<Key> + Eq> TryFrom<(Bound<T>, Bound<T>)> for BoundRange {
+    type Error = Error;
+
+    fn try_from(bounds: (Bound<T>, Bound<T>)) -> Result<BoundRange> {
+        if bounds.0 == Bound::Unbounded {
+            Err(Error::invalid_key_range())
+        } else {
+            Ok(BoundRange::new(
+                convert_to_bound_key(bounds.0),
+                convert_to_bound_key(bounds.1),
+            ))
+        }
     }
 }
 
-impl<T: Into<Key>> KeyRange for (Bound<T>, Bound<T>) {
-    fn into_bounds(self) -> (Bound<Key>, Bound<Key>) {
-        (convert_to_bound_key(self.0), convert_to_bound_key(self.1))
-    }
-}
-
-fn convert_to_bound_key<K>(b: Bound<K>) -> Bound<Key>
-where
-    K: Into<Key>,
-{
-    use std::ops::Bound::*;
+fn convert_to_bound_key<K: Into<Key>>(b: Bound<K>) -> Bound<Key> {
     match b {
-        Included(k) => Included(k.into()),
-        Excluded(k) => Excluded(k.into()),
-        Unbounded => Unbounded,
+        Bound::Included(k) => Bound::Included(k.into()),
+        Bound::Excluded(k) => Bound::Excluded(k.into()),
+        Bound::Unbounded => Bound::Unbounded,
     }
 }
