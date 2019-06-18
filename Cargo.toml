@@ -12,7 +12,10 @@ edition = "2018"
 default = []
 # Enable integration tests with a running TiKV and PD instance.
 # Use $PD_ADDRS, comma separated, to set the addresses the tests use. 
-integration-tests = []
+integration-tests = ["property-testing"]
+# Enable propery testing features with `proptest`.
+property-testing = ["proptest", "proptest-derive"]
+
 
 [lib]
 name = "tikv_client"
@@ -28,6 +31,8 @@ serde = "1.0"
 serde_derive = "1.0"
 tokio-core = "0.1"
 tokio-timer = "0.2"
+proptest = { version = "0.9", optional = true }
+proptest-derive = { version = "0.1.0", optional = true }
 
 [dependencies.kvproto]
 git = "https://github.com/pingcap/kvproto.git"

@@ -4,6 +4,15 @@ use std::ops::{
     Bound, Deref, DerefMut, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
 };
 use std::{fmt, str, u8};
+#[cfg(feature = "proptest-derive")]
+use proptest::{collection::size_range, arbitrary::any_with};
+#[cfg(feature = "proptest-derive")]
+use proptest_derive::Arbitrary;
+
+#[cfg(feature = "proptest-derive")]
+const PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
+#[cfg(feature = "proptest-derive")]
+const PROPTEST_VALUE_MAX: usize = 1024 * 16; // 16 KB
 
 use crate::{Error, Result};
 
@@ -56,7 +65,11 @@ impl<'a> fmt::Display for HexRepr<'a> {
 /// accept an `Into<Key>`, which means all of the above types can be passed directly to those
 /// functions.
 #[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Key(Vec<u8>);
+#[cfg_attr(feature = "proptest-derive", derive(Arbitrary))]
+pub struct Key(
+    #[cfg_attr(feature = "proptest-derive", proptest(strategy = "any_with::<Vec<u8>>((size_range(PROPTEST_KEY_MAX), ()))"))]
+    Vec<u8>
+);
 
 impl Key {
     #[inline]
@@ -170,7 +183,11 @@ impl fmt::Debug for Key {
 /// accept an `Into<Value>`, which means all of the above types can be passed directly to those
 /// functions.
 #[derive(Default, Clone, Eq, PartialEq, Hash)]
-pub struct Value(Vec<u8>);
+#[cfg_attr(feature = "proptest-derive", derive(Arbitrary))]
+pub struct Value(
+    #[cfg_attr(feature = "proptest-derive", proptest(strategy = "any_with::<Vec<u8>>((size_range(PROPTEST_VALUE_MAX), ()))"))]
+    Vec<u8>
+);
 
 impl Value {
     #[inline]
@@ -239,6 +256,7 @@ impl fmt::Debug for Value {
 /// Many functions which accept a `KvPair` accept an `Into<KvPair>`, which means all of the above
 /// types (Like a `(Key, Value)`) can be passed directly to those functions.
 #[derive(Default, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "proptest-derive", derive(Arbitrary))]
 pub struct KvPair(Key, Value);
 
 impl KvPair {
