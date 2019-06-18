@@ -8,7 +8,7 @@ os:
 rust:
   # Requires nightly for now, stable can be re-enabled when 1.36 is stable.
   # - stable
-  - nightly
+  - nightly-2019-05-22
 env:
   global:
     - RUST_BACKTRACE=1
