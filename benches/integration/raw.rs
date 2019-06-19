@@ -1,10 +1,8 @@
-use crate::{
-    generate, arb_batch, pd_addrs,
-};
+use crate::{arb_batch, generate, pd_addrs};
 use criterion::{black_box, criterion_group, BatchSize, Bencher, Criterion};
 use futures::executor::block_on;
-use tikv_client::{raw::Client, KvPair, Config, Result};
 use proptest::arbitrary::any;
+use tikv_client::{raw::Client, Config, KvPair, Result};
 
 fn client() -> Result<Client> {
     let connect = Client::connect(Config::new(pd_addrs()));
@@ -90,8 +88,7 @@ fn delete(b: &mut Bencher) -> Result<()> {
     Ok(())
 }
 
-fn batch_put(
-    b: &mut Bencher) -> Result<()> {
+fn batch_put(b: &mut Bencher) -> Result<()> {
     let client = client()?;
     let mut cleanup_keys = Vec::new();
     b.iter_batched(
@@ -115,8 +112,7 @@ fn batch_put(
     Ok(())
 }
 
-fn batch_get(
-    b: &mut Bencher) -> Result<()> {
+fn batch_get(b: &mut Bencher) -> Result<()> {
     let client = client()?;
     let mut cleanup_keys = Vec::new();
     b.iter_batched(
@@ -141,8 +137,7 @@ fn batch_get(
     Ok(())
 }
 
-fn batch_delete(
-    b: &mut Bencher) -> Result<()> {
+fn batch_delete(b: &mut Bencher) -> Result<()> {
     let client = client()?;
     b.iter_batched(
         || {

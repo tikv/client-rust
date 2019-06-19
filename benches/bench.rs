@@ -48,7 +48,6 @@ pub fn arb_batch<T: core::fmt::Debug>(
     proptest::collection::vec(single_strategy, 0..max_batch_size)
 }
 
-
 #[cfg(feature = "integration-tests")]
 criterion_main!(integration::raw::suite);
 
