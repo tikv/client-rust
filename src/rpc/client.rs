@@ -14,7 +14,6 @@ use derive_new::new;
 use futures::prelude::*;
 use grpcio::{EnvBuilder, Environment};
 use kvproto::kvrpcpb;
-use log::*;
 
 use crate::{
     compat::{loop_fn, Loop},

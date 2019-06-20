@@ -8,7 +8,6 @@ use std::{
 
 use futures::compat::Compat01As03;
 use futures::prelude::*;
-use log::*;
 use tokio_timer::timer::Handle;
 
 use crate::{
