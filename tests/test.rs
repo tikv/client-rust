@@ -2,16 +2,16 @@
 
 #![feature(async_await)]
 
-#[cfg(feature = "integration-tests")]
+#[cfg(feature = "property-testing")]
 mod integration;
 
-#[cfg(feature = "proptest")]
+#[cfg(feature = "property-testing")]
 use proptest::strategy::Strategy;
 
-#[cfg(feature = "proptest")]
+#[cfg(feature = "property-testing")]
 const PROPTEST_BATCH_SIZE_MAX: usize = 16;
 
-#[cfg(feature = "proptest")]
+#[cfg(feature = "property-testing")]
 pub fn arb_batch<T: core::fmt::Debug>(
     single_strategy: impl Strategy<Value = T>,
     max_batch_size: impl Into<Option<usize>>,
