@@ -2,18 +2,18 @@
 
 use super::ColumnFamily;
 use crate::{rpc::RpcClient, BoundRange, Error, Key, KvPair, Result, Value};
+use futures::future::Either;
 use futures::prelude::*;
 use futures::task::{Context, Poll};
 use std::{pin::Pin, sync::Arc, u32};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
-type BoxTryFuture<Resp> = Box<dyn Future<Output = Result<Resp>> + Send>;
-
 trait RequestInner: Sized {
     type Resp;
+    type F: Future<Output = Result<Self::Resp>>;
 
-    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> BoxTryFuture<Self::Resp>;
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> Self::F;
 }
 
 enum RequestState<Inner>
@@ -21,7 +21,7 @@ where
     Inner: RequestInner,
 {
     Uninitiated(Option<(Arc<RpcClient>, Inner, Option<ColumnFamily>)>),
-    Initiated(BoxTryFuture<Inner::Resp>),
+    Initiated(Inner::F),
 }
 
 impl<Inner> RequestState<Inner>
@@ -61,7 +61,7 @@ where
     ) -> Pin<&'a mut dyn Future<Output = Result<Inner::Resp>>> {
         unsafe {
             match Pin::get_unchecked_mut(self) {
-                RequestState::Initiated(future) => Pin::new_unchecked(&mut **future),
+                RequestState::Initiated(future) => Pin::new_unchecked(&mut *future),
                 _ => unreachable!(),
             }
         }
@@ -109,13 +109,10 @@ struct GetInner {
 
 impl RequestInner for GetInner {
     type Resp = Option<Value>;
+    existential type F: Future<Output = Result<Option<Value>>>;
 
-    fn execute(
-        self,
-        client: Arc<RpcClient>,
-        cf: Option<ColumnFamily>,
-    ) -> BoxTryFuture<Option<Value>> {
-        Box::new(client.raw_get(self.key, cf))
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> Self::F {
+        client.raw_get(self.key, cf)
     }
 }
 
@@ -155,13 +152,10 @@ struct BatchGetInner {
 
 impl RequestInner for BatchGetInner {
     type Resp = Vec<KvPair>;
+    existential type F: Future<Output = Result<Vec<KvPair>>>;
 
-    fn execute(
-        self,
-        client: Arc<RpcClient>,
-        cf: Option<ColumnFamily>,
-    ) -> BoxTryFuture<Vec<KvPair>> {
-        Box::new(client.raw_batch_get(self.keys, cf))
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> Self::F {
+        client.raw_batch_get(self.keys, cf)
     }
 }
 
@@ -202,10 +196,11 @@ struct PutInner {
 
 impl RequestInner for PutInner {
     type Resp = ();
+    existential type F: Future<Output = Result<()>>;
 
-    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> BoxTryFuture<()> {
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> Self::F {
         let (key, value) = (self.key, self.value);
-        Box::new(client.raw_put(key, value, cf))
+        client.raw_put(key, value, cf)
     }
 }
 
@@ -244,9 +239,10 @@ struct BatchPutInner {
 
 impl RequestInner for BatchPutInner {
     type Resp = ();
+    existential type F: Future<Output = Result<()>>;
 
-    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> BoxTryFuture<()> {
-        Box::new(client.raw_batch_put(self.pairs, cf))
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> Self::F {
+        client.raw_batch_put(self.pairs, cf)
     }
 }
 
@@ -285,9 +281,10 @@ struct DeleteInner {
 
 impl RequestInner for DeleteInner {
     type Resp = ();
+    existential type F: Future<Output = Result<()>>;
 
-    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> BoxTryFuture<()> {
-        Box::new(client.raw_delete(self.key, cf))
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> Self::F {
+        client.raw_delete(self.key, cf)
     }
 }
 
@@ -326,9 +323,10 @@ struct BatchDeleteInner {
 
 impl RequestInner for BatchDeleteInner {
     type Resp = ();
+    existential type F: Future<Output = Result<()>>;
 
-    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> BoxTryFuture<()> {
-        Box::new(client.raw_batch_delete(self.keys, cf))
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> Self::F {
+        client.raw_batch_delete(self.keys, cf)
     }
 }
 
@@ -386,19 +384,16 @@ impl ScanInner {
 
 impl RequestInner for ScanInner {
     type Resp = Vec<KvPair>;
+    existential type F: Future<Output = Result<Vec<KvPair>>>;
 
-    fn execute(
-        self,
-        client: Arc<RpcClient>,
-        cf: Option<ColumnFamily>,
-    ) -> BoxTryFuture<Vec<KvPair>> {
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> Self::F {
         if self.limit > MAX_RAW_KV_SCAN_LIMIT {
-            Box::new(future::err(Error::max_scan_limit_exceeded(
+            Either::Right(future::err(Error::max_scan_limit_exceeded(
                 self.limit,
                 MAX_RAW_KV_SCAN_LIMIT,
             )))
         } else {
-            Box::new(client.raw_scan(self.range, self.limit, self.key_only, cf))
+            Either::Left(client.raw_scan(self.range, self.limit, self.key_only, cf))
         }
     }
 }
@@ -457,19 +452,16 @@ impl BatchScanInner {
 
 impl RequestInner for BatchScanInner {
     type Resp = Vec<KvPair>;
+    existential type F: Future<Output = Result<Vec<KvPair>>>;
 
-    fn execute(
-        self,
-        client: Arc<RpcClient>,
-        cf: Option<ColumnFamily>,
-    ) -> BoxTryFuture<Vec<KvPair>> {
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> Self::F {
         if self.each_limit > MAX_RAW_KV_SCAN_LIMIT {
-            Box::new(future::err(Error::max_scan_limit_exceeded(
+            Either::Right(future::err(Error::max_scan_limit_exceeded(
                 self.each_limit,
                 MAX_RAW_KV_SCAN_LIMIT,
             )))
         } else {
-            Box::new(client.raw_batch_scan(self.ranges, self.each_limit, self.key_only, cf))
+            Either::Left(client.raw_batch_scan(self.ranges, self.each_limit, self.key_only, cf))
         }
     }
 }
@@ -510,8 +502,9 @@ pub struct DeleteRangeInner {
 
 impl RequestInner for DeleteRangeInner {
     type Resp = ();
+    existential type F: Future<Output = Result<()>>;
 
-    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> BoxTryFuture<()> {
-        Box::new(client.raw_delete_range(self.range, cf))
+    fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> Self::F {
+        client.raw_delete_range(self.range, cf)
     }
 }
