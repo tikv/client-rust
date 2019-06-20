@@ -4,13 +4,13 @@
 
 #[cfg(feature = "property-testing")]
 use core::fmt::Debug;
+#[cfg(feature = "integration-tests")]
+use criterion::criterion_main;
 #[cfg(feature = "property-testing")]
 use proptest::{
     self,
     strategy::{Strategy, ValueTree},
 };
-#[cfg(feature = "integration-tests")]
-use criterion::criterion_main;
 #[cfg(feature = "property-testing")]
 mod integration;
 
