@@ -1,3 +1,5 @@
+// Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
+
 use crate::{arb_batch, generate, pd_addrs};
 use criterion::{black_box, criterion_group, BatchSize, Bencher, Criterion};
 use futures::executor::block_on;

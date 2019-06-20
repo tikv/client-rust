@@ -1,21 +1,20 @@
+// Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
+
 #![feature(async_await)]
+
+#[cfg(feature = "property-testing")]
 use core::fmt::Debug;
+#[cfg(feature = "property-testing")]
 use proptest::{
     self,
     strategy::{Strategy, ValueTree},
 };
-
 #[cfg(feature = "integration-tests")]
 use criterion::criterion_main;
-#[cfg(feature = "integration-tests")]
+#[cfg(feature = "property-testing")]
 mod integration;
 
 use std::env::var;
-
-// Typical usage
-pub const DEFAULT_KEY_SIZE_BOUND: usize = 512;
-pub const DEFAULT_VALUE_SIZE_BOUND: usize = 2048;
-pub const DEFAULT_BATCH_BOUND: usize = 8;
 
 pub const ENV_PD_ADDR: &str = "PD_ADDR";
 
@@ -27,6 +26,7 @@ pub fn pd_addrs() -> Vec<String> {
         .collect()
 }
 
+#[cfg(feature = "property-testing")]
 pub fn generate<T: Debug>(strat: impl Strategy<Value = T>) -> T {
     strat
         .new_tree(&mut proptest::test_runner::TestRunner::new(
@@ -36,10 +36,10 @@ pub fn generate<T: Debug>(strat: impl Strategy<Value = T>) -> T {
         .current()
 }
 
-#[cfg(feature = "proptest")]
+#[cfg(feature = "property-testing")]
 const PROPTEST_BATCH_SIZE_MAX: usize = 16;
 
-#[cfg(feature = "proptest")]
+#[cfg(feature = "property-testing")]
 pub fn arb_batch<T: core::fmt::Debug>(
     single_strategy: impl Strategy<Value = T>,
     max_batch_size: impl Into<Option<usize>>,
@@ -53,5 +53,5 @@ criterion_main!(integration::raw::suite);
 
 #[cfg(not(feature = "integration-tests"))]
 fn main() {
-    unimplemented!();
+    unimplemented!("Try adding the `integration-tests` feature with the `PD_ADDR` ENV variable.");
 }
