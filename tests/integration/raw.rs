@@ -8,6 +8,7 @@ use tikv_client::{raw::Client, Config, KvPair, Value};
 proptest! {
     /// Test single point (put, get, delete) operations on keys.
     #[test]
+    #[cfg_attr(not(feature = "integration-tests"), ignore)]
     fn point(
         pair in any::<KvPair>(),
     ) {
@@ -31,6 +32,7 @@ proptest! {
 proptest! {
     /// Test batch (put, get, delete) operations on keys.
     #[test]
+    #[cfg_attr(not(feature = "integration-tests"), ignore)]
     fn batch(
         kvs in arb_batch(any::<KvPair>(), None),
     ) {

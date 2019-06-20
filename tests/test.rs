@@ -2,7 +2,7 @@
 
 #![feature(async_await)]
 
-#[cfg(feature = "integration-tests")]
+#[cfg(feature = "property-testing")]
 mod integration;
 
 #[cfg(feature = "property-testing")]
