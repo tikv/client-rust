@@ -15,7 +15,6 @@ pub use self::requests::{
     BatchDelete, BatchGet, BatchPut, BatchScan, Delete, DeleteRange, Get, Put, Scan,
 };
 
-
 use std::fmt;
 
 mod client;

@@ -1,11 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::requests::{
-    BatchDeleteInner, BatchGetInner, BatchPutInner, BatchScanInner, DeleteInner, DeleteRangeInner,
-    GetInner, PutInner, ScanInner,
-};
 use super::{BatchDelete, BatchGet, BatchPut, BatchScan, Delete, DeleteRange, Get, Put, Scan};
-use crate::{rpc::RpcClient, Config, Key, BoundRange, KvPair, Result, Value};
+use crate::{rpc::RpcClient, BoundRange, Config, Key, KvPair, Result, Value};
 
 use futures::prelude::*;
 use futures::task::{Context, Poll};
@@ -55,7 +51,7 @@ impl Client {
     /// # });
     /// ```
     pub fn get(&self, key: impl Into<Key>) -> Get {
-        Get::new(self.rpc(), GetInner::new(key.into()))
+        Get::new(self.rpc(), key.into())
     }
 
     /// Create a new [`BatchGet`](BatchGet) request.
@@ -76,10 +72,7 @@ impl Client {
     /// # });
     /// ```
     pub fn batch_get(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> BatchGet {
-        BatchGet::new(
-            self.rpc(),
-            BatchGetInner::new(keys.into_iter().map(Into::into).collect()),
-        )
+        BatchGet::new(self.rpc(), keys.into_iter().map(Into::into).collect())
     }
 
     /// Create a new [`Put`](Put) request.
@@ -100,7 +93,7 @@ impl Client {
     /// # });
     /// ```
     pub fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Put {
-        Put::new(self.rpc(), PutInner::new(key.into(), value.into()))
+        Put::new(self.rpc(), key.into(), value.into())
     }
 
     /// Create a new [`BatchPut`](BatchPut) request.
@@ -122,10 +115,7 @@ impl Client {
     /// # });
     /// ```
     pub fn batch_put(&self, pairs: impl IntoIterator<Item = impl Into<KvPair>>) -> BatchPut {
-        BatchPut::new(
-            self.rpc(),
-            BatchPutInner::new(pairs.into_iter().map(Into::into).collect()),
-        )
+        BatchPut::new(self.rpc(), pairs.into_iter().map(Into::into).collect())
     }
 
     /// Create a new [`Delete`](Delete) request.
@@ -145,7 +135,7 @@ impl Client {
     /// # });
     /// ```
     pub fn delete(&self, key: impl Into<Key>) -> Delete {
-        Delete::new(self.rpc(), DeleteInner::new(key.into()))
+        Delete::new(self.rpc(), key.into())
     }
 
     /// Create a new [`BatchDelete`](BatchDelete) request.
@@ -165,10 +155,7 @@ impl Client {
     /// # });
     /// ```
     pub fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> BatchDelete {
-        BatchDelete::new(
-            self.rpc(),
-            BatchDeleteInner::new(keys.into_iter().map(Into::into).collect()),
-        )
+        BatchDelete::new(self.rpc(), keys.into_iter().map(Into::into).collect())
     }
 
     /// Create a new [`Scan`](Scan) request.
@@ -188,7 +175,7 @@ impl Client {
     /// # });
     /// ```
     pub fn scan(&self, range: impl Into<BoundRange>, limit: u32) -> Scan {
-        Scan::new(self.rpc(), ScanInner::new(range.into(), limit))
+        Scan::new(self.rpc(), range.into(), limit)
     }
 
     /// Create a new [`BatchScan`](BatchScan) request.
@@ -216,10 +203,8 @@ impl Client {
     ) -> BatchScan {
         BatchScan::new(
             self.rpc(),
-            BatchScanInner::new(
-                ranges.into_iter().map(KeyRange::into).collect(),
-                each_limit,
-            ),
+            ranges.into_iter().map(Into::into).collect(),
+            each_limit,
         )
     }
 
@@ -240,7 +225,7 @@ impl Client {
     /// # });
     /// ```
     pub fn delete_range(&self, range: impl Into<BoundRange>) -> DeleteRange {
-        DeleteRange::new(self.rpc(), DeleteRangeInner::new(range.into()))
+        DeleteRange::new(self.rpc(), range.into())
     }
 }
 

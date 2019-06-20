@@ -1,10 +1,10 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::ColumnFamily;
-use crate::{rpc::RpcClient, Error, Key, BoundRange, KvPair, Result, Value};
+use crate::{rpc::RpcClient, BoundRange, Error, Key, KvPair, Result, Value};
 use futures::prelude::*;
 use futures::task::{Context, Poll};
-use std::{ops::Bound, pin::Pin, sync::Arc, u32};
+use std::{pin::Pin, sync::Arc, u32};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
@@ -82,9 +82,9 @@ pub struct Get {
 }
 
 impl Get {
-    pub fn new(client: Arc<RpcClient>, inner: GetInner) -> Self {
+    pub fn new(client: Arc<RpcClient>, key: Key) -> Self {
         Self {
-            state: RequestState::new(client, inner),
+            state: RequestState::new(client, GetInner { key }),
         }
     }
 
@@ -103,14 +103,8 @@ impl Future for Get {
     }
 }
 
-pub struct GetInner {
+struct GetInner {
     key: Key,
-}
-
-impl GetInner {
-    pub fn new(key: Key) -> Self {
-        GetInner { key }
-    }
 }
 
 impl RequestInner for GetInner {
@@ -134,9 +128,9 @@ pub struct BatchGet {
 }
 
 impl BatchGet {
-    pub fn new(client: Arc<RpcClient>, inner: BatchGetInner) -> Self {
+    pub fn new(client: Arc<RpcClient>, keys: Vec<Key>) -> Self {
         Self {
-            state: RequestState::new(client, inner),
+            state: RequestState::new(client, BatchGetInner { keys }),
         }
     }
 
@@ -155,7 +149,7 @@ impl Future for BatchGet {
     }
 }
 
-pub struct BatchGetInner {
+struct BatchGetInner {
     keys: Vec<Key>,
 }
 
@@ -171,12 +165,6 @@ impl RequestInner for BatchGetInner {
     }
 }
 
-impl BatchGetInner {
-    pub fn new(keys: Vec<Key>) -> Self {
-        BatchGetInner { keys }
-    }
-}
-
 /// An unresolved [`Client::put`](Client::put) request.
 ///
 /// Once resolved this request will result in the putting of the value associated with the given
@@ -186,9 +174,9 @@ pub struct Put {
 }
 
 impl Put {
-    pub fn new(client: Arc<RpcClient>, inner: PutInner) -> Self {
+    pub fn new(client: Arc<RpcClient>, key: Key, value: Value) -> Self {
         Self {
-            state: RequestState::new(client, inner),
+            state: RequestState::new(client, PutInner { key, value }),
         }
     }
 
@@ -207,15 +195,9 @@ impl Future for Put {
     }
 }
 
-pub struct PutInner {
+struct PutInner {
     key: Key,
     value: Value,
-}
-
-impl PutInner {
-    pub fn new(key: Key, value: Value) -> Self {
-        PutInner { key, value }
-    }
 }
 
 impl RequestInner for PutInner {
@@ -235,9 +217,9 @@ pub struct BatchPut {
 }
 
 impl BatchPut {
-    pub fn new(client: Arc<RpcClient>, inner: BatchPutInner) -> Self {
+    pub fn new(client: Arc<RpcClient>, pairs: Vec<KvPair>) -> Self {
         Self {
-            state: RequestState::new(client, inner),
+            state: RequestState::new(client, BatchPutInner { pairs }),
         }
     }
 
@@ -256,14 +238,8 @@ impl Future for BatchPut {
     }
 }
 
-pub struct BatchPutInner {
+struct BatchPutInner {
     pairs: Vec<KvPair>,
-}
-
-impl BatchPutInner {
-    pub fn new(pairs: Vec<KvPair>) -> Self {
-        BatchPutInner { pairs }
-    }
 }
 
 impl RequestInner for BatchPutInner {
@@ -282,9 +258,9 @@ pub struct Delete {
 }
 
 impl Delete {
-    pub fn new(client: Arc<RpcClient>, inner: DeleteInner) -> Self {
+    pub fn new(client: Arc<RpcClient>, key: Key) -> Self {
         Self {
-            state: RequestState::new(client, inner),
+            state: RequestState::new(client, DeleteInner { key }),
         }
     }
 
@@ -303,14 +279,8 @@ impl Future for Delete {
     }
 }
 
-pub struct DeleteInner {
+struct DeleteInner {
     key: Key,
-}
-
-impl DeleteInner {
-    pub fn new(key: Key) -> Self {
-        DeleteInner { key }
-    }
 }
 
 impl RequestInner for DeleteInner {
@@ -329,9 +299,9 @@ pub struct BatchDelete {
 }
 
 impl BatchDelete {
-    pub fn new(client: Arc<RpcClient>, inner: BatchDeleteInner) -> Self {
+    pub fn new(client: Arc<RpcClient>, keys: Vec<Key>) -> Self {
         Self {
-            state: RequestState::new(client, inner),
+            state: RequestState::new(client, BatchDeleteInner { keys }),
         }
     }
 
@@ -350,14 +320,8 @@ impl Future for BatchDelete {
     }
 }
 
-pub struct BatchDeleteInner {
+struct BatchDeleteInner {
     keys: Vec<Key>,
-}
-
-impl BatchDeleteInner {
-    pub fn new(keys: Vec<Key>) -> Self {
-        BatchDeleteInner { keys }
-    }
 }
 
 impl RequestInner for BatchDeleteInner {
@@ -376,9 +340,9 @@ pub struct Scan {
 }
 
 impl Scan {
-    pub fn new(client: Arc<RpcClient>, inner: ScanInner) -> Self {
+    pub fn new(client: Arc<RpcClient>, range: BoundRange, limit: u32) -> Self {
         Scan {
-            state: RequestState::new(client, inner),
+            state: RequestState::new(client, ScanInner::new(range, limit)),
         }
     }
 
@@ -404,14 +368,14 @@ impl Future for Scan {
     }
 }
 
-pub struct ScanInner {
+struct ScanInner {
     range: BoundRange,
     limit: u32,
     key_only: bool,
 }
 
 impl ScanInner {
-    pub fn new(range: BoundRange, limit: u32) -> Self {
+    fn new(range: BoundRange, limit: u32) -> Self {
         ScanInner {
             range,
             limit,
@@ -447,9 +411,9 @@ pub struct BatchScan {
 }
 
 impl BatchScan {
-    pub fn new(client: Arc<RpcClient>, inner: BatchScanInner) -> Self {
+    pub fn new(client: Arc<RpcClient>, ranges: Vec<BoundRange>, each_limit: u32) -> Self {
         BatchScan {
-            state: RequestState::new(client, inner),
+            state: RequestState::new(client, BatchScanInner::new(ranges, each_limit)),
         }
     }
 
@@ -475,14 +439,14 @@ impl Future for BatchScan {
     }
 }
 
-pub struct BatchScanInner {
+struct BatchScanInner {
     ranges: Vec<BoundRange>,
     each_limit: u32,
     key_only: bool,
 }
 
 impl BatchScanInner {
-    pub fn new(ranges: Vec<BoundRange>, each_limit: u32) -> Self {
+    fn new(ranges: Vec<BoundRange>, each_limit: u32) -> Self {
         BatchScanInner {
             ranges,
             each_limit,
@@ -519,9 +483,9 @@ pub struct DeleteRange {
 }
 
 impl DeleteRange {
-    pub fn new(client: Arc<RpcClient>, inner: DeleteRangeInner) -> Self {
+    pub fn new(client: Arc<RpcClient>, range: BoundRange) -> Self {
         Self {
-            state: RequestState::new(client, inner),
+            state: RequestState::new(client, DeleteRangeInner { range }),
         }
     }
 
@@ -542,12 +506,6 @@ impl Future for DeleteRange {
 
 pub struct DeleteRangeInner {
     range: BoundRange,
-}
-
-impl DeleteRangeInner {
-    pub fn new(range: BoundRange) -> Self {
-        DeleteRangeInner { range }
-    }
 }
 
 impl RequestInner for DeleteRangeInner {
