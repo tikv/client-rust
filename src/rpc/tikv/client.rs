@@ -161,9 +161,8 @@ has_no_error!(kvrpcpb::RawBatchScanResponse);
 macro_rules! raw_request {
     ($context:expr, $type:ty) => {{
         let mut req = <$type>::default();
-        let (region, cf) = $context.into_inner();
-        req.set_context(region.into());
-        if let Some(cf) = cf {
+        req.set_context($context.region.into());
+        if let Some(cf) = $context.cf {
             req.set_cf(cf.to_string());
         }
         req
@@ -173,7 +172,7 @@ macro_rules! raw_request {
 macro_rules! txn_request {
     ($context:expr, $type:ty) => {{
         let mut req = <$type>::default();
-        req.set_context($context.into_inner().into());
+        req.set_context($context.region.into());
         req
     }};
 }
