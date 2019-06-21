@@ -18,6 +18,7 @@ use log::*;
 
 use crate::{
     compat::{loop_fn, Loop},
+    kv::BoundRange,
     raw::ColumnFamily,
     rpc::{
         pd::{PdClient, Region, RegionId, RegionVerId, Store, StoreId},
@@ -334,7 +335,7 @@ impl RpcClient {
 
     pub fn raw_scan(
         &self,
-        range: (Key, Option<Key>),
+        range: BoundRange,
         limit: u32,
         key_only: bool,
         cf: Option<ColumnFamily>,
@@ -364,14 +365,14 @@ impl RpcClient {
                     .map_ok(|(region, client)| {
                         (scan, region.range(), RawContext::new(region, client, cf))
                     })
-                    .and_then(|(mut scan, region_range, context)| {
-                        let (start_key, end_key) = scan.range();
+                    .and_then(|(scan, region_range, context)| {
+                        let (ref start_key, ref end_key) = scan.range;
                         context
                             .client()
                             .raw_scan(
                                 context,
-                                start_key,
-                                end_key,
+                                Some(start_key.clone()),
+                                end_key.clone(),
                                 scan.state.limit,
                                 scan.state.key_only,
                             )
@@ -395,7 +396,7 @@ impl RpcClient {
 
     pub fn raw_batch_scan(
         &self,
-        ranges: Vec<(Key, Option<Key>)>,
+        ranges: Vec<BoundRange>,
         _each_limit: u32,
         _key_only: bool,
         cf: Option<ColumnFamily>,
@@ -407,7 +408,7 @@ impl RpcClient {
 
     pub fn raw_delete_range(
         &self,
-        range: (Key, Option<Key>),
+        range: BoundRange,
         cf: Option<ColumnFamily>,
     ) -> impl Future<Output = Result<()>> {
         let scan: ScanRegionsContext<(), Option<ColumnFamily>> = ScanRegionsContext::new(range, cf);
@@ -422,10 +423,10 @@ impl RpcClient {
                     .map_ok(|(region, client)| {
                         (scan, region.range(), RawContext::new(region, client, cf))
                     })
-                    .and_then(|(mut scan, region_range, context)| {
-                        let (start_key, end_key) = scan.range();
-                        let start_key = start_key.expect("start key must be specified");
-                        let end_key = end_key.expect("end key must be specified");
+                    .and_then(|(scan, region_range, context)| {
+                        let (ref start_key, ref end_key) = scan.range;
+                        let start_key = start_key.clone();
+                        let end_key = end_key.clone().expect("end key must be specified");
                         context
                             .client()
                             .raw_delete_range(context, start_key, end_key)
@@ -559,8 +560,7 @@ where
     Res: Default,
     State: Sized,
 {
-    start_key: Option<Key>,
-    end_key: Option<Key>,
+    range: (Key, Option<Key>),
     result: Res,
     state: State,
 }
@@ -570,25 +570,20 @@ where
     Res: Default,
     State: Sized,
 {
-    fn new(range: (Key, Option<Key>), state: State) -> Self {
+    fn new(range: BoundRange, state: State) -> Self {
         ScanRegionsContext {
-            start_key: Some(range.0),
-            end_key: range.1,
+            range: range.into_keys(),
             result: Res::default(),
             state,
         }
     }
 
-    fn range(&mut self) -> (Option<Key>, Option<Key>) {
-        (self.start_key.take(), self.end_key.clone())
-    }
-
     fn start_key(&self) -> &Key {
-        self.start_key.as_ref().unwrap()
+        &self.range.0
     }
 
     fn end_key(&self) -> Option<&Key> {
-        self.end_key.as_ref()
+        self.range.1.as_ref()
     }
 
     fn next(&mut self, region_range: (Key, Key)) -> ScanRegionsStatus {
@@ -598,7 +593,7 @@ where
                 return ScanRegionsStatus::Break;
             }
         }
-        self.start_key = Some(region_range.1);
+        self.range.0 = region_range.1;
         ScanRegionsStatus::Continue
     }
 }

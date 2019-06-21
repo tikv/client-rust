@@ -9,10 +9,10 @@
 //!
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 //!
-use crate::{rpc::RpcClient, Config, Error, Key, KeyRange, KvPair, Result, Value};
+use crate::{rpc::RpcClient, BoundRange, Config, Error, Key, KvPair, Result, Value};
 use futures::prelude::*;
 use futures::task::{Context, Poll};
-use std::{fmt, ops::Bound, pin::Pin, sync::Arc, u32};
+use std::{fmt, pin::Pin, sync::Arc, u32};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
@@ -192,8 +192,8 @@ impl Client {
     /// let result: Vec<KvPair> = req.await.unwrap();
     /// # });
     /// ```
-    pub fn scan(&self, range: impl KeyRange, limit: u32) -> Scan {
-        Scan::new(self.rpc(), ScanInner::new(range.into_bounds(), limit))
+    pub fn scan(&self, range: impl Into<BoundRange>, limit: u32) -> Scan {
+        Scan::new(self.rpc(), ScanInner::new(range.into(), limit))
     }
 
     /// Create a new [`BatchScan`](BatchScan) request.
@@ -216,15 +216,12 @@ impl Client {
     /// ```
     pub fn batch_scan(
         &self,
-        ranges: impl IntoIterator<Item = impl KeyRange>,
+        ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
         each_limit: u32,
     ) -> BatchScan {
         BatchScan::new(
             self.rpc(),
-            BatchScanInner::new(
-                ranges.into_iter().map(KeyRange::into_keys).collect(),
-                each_limit,
-            ),
+            BatchScanInner::new(ranges.into_iter().map(Into::into).collect(), each_limit),
         )
     }
 
@@ -244,8 +241,8 @@ impl Client {
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
-    pub fn delete_range(&self, range: impl KeyRange) -> DeleteRange {
-        DeleteRange::new(self.rpc(), DeleteRangeInner::new(range.into_keys()))
+    pub fn delete_range(&self, range: impl Into<BoundRange>) -> DeleteRange {
+        DeleteRange::new(self.rpc(), DeleteRangeInner::new(range.into()))
     }
 }
 
@@ -684,13 +681,13 @@ impl RequestInner for BatchDeleteInner {
 }
 
 pub(crate) struct ScanInner {
-    range: (Bound<Key>, Bound<Key>),
+    range: BoundRange,
     limit: u32,
     key_only: bool,
 }
 
 impl ScanInner {
-    fn new(range: (Bound<Key>, Bound<Key>), limit: u32) -> Self {
+    fn new(range: BoundRange, limit: u32) -> Self {
         ScanInner {
             range,
             limit,
@@ -713,11 +710,7 @@ impl RequestInner for ScanInner {
                 MAX_RAW_KV_SCAN_LIMIT,
             )))
         } else {
-            let keys = match self.range.into_keys() {
-                Err(e) => return Box::new(future::err(e)),
-                Ok(v) => v,
-            };
-            Box::new(client.raw_scan(keys, self.limit, self.key_only, cf))
+            Box::new(client.raw_scan(self.range, self.limit, self.key_only, cf))
         }
     }
 }
@@ -759,13 +752,13 @@ impl Future for Scan {
 }
 
 pub(crate) struct BatchScanInner {
-    ranges: Vec<Result<(Key, Option<Key>)>>,
+    ranges: Vec<BoundRange>,
     each_limit: u32,
     key_only: bool,
 }
 
 impl BatchScanInner {
-    fn new(ranges: Vec<Result<(Key, Option<Key>)>>, each_limit: u32) -> Self {
+    fn new(ranges: Vec<BoundRange>, each_limit: u32) -> Self {
         BatchScanInner {
             ranges,
             each_limit,
@@ -787,16 +780,8 @@ impl RequestInner for BatchScanInner {
                 self.each_limit,
                 MAX_RAW_KV_SCAN_LIMIT,
             )))
-        } else if self.ranges.iter().any(Result::is_err) {
-            // All errors must be InvalidKeyRange so we can simply return a new InvalidKeyRange
-            Box::new(future::err(Error::invalid_key_range()))
         } else {
-            Box::new(client.raw_batch_scan(
-                self.ranges.into_iter().map(Result::unwrap).collect(),
-                self.each_limit,
-                self.key_only,
-                cf,
-            ))
+            Box::new(client.raw_batch_scan(self.ranges, self.each_limit, self.key_only, cf))
         }
     }
 }
@@ -868,11 +853,11 @@ impl Future for DeleteRange {
 }
 
 pub(crate) struct DeleteRangeInner {
-    range: Result<(Key, Option<Key>)>,
+    range: BoundRange,
 }
 
 impl DeleteRangeInner {
-    fn new(range: Result<(Key, Option<Key>)>) -> Self {
+    fn new(range: BoundRange) -> Self {
         DeleteRangeInner { range }
     }
 }
@@ -881,9 +866,6 @@ impl RequestInner for DeleteRangeInner {
     type Resp = ();
 
     fn execute(self, client: Arc<RpcClient>, cf: Option<ColumnFamily>) -> BoxTryFuture<()> {
-        match self.range {
-            Ok(range) => Box::new(client.raw_delete_range(range, cf)),
-            Err(e) => Box::new(future::err(e)),
-        }
+        Box::new(client.raw_delete_range(self.range, cf))
     }
 }

@@ -91,4 +91,4 @@ pub use crate::errors::ErrorKind;
 #[doc(inline)]
 pub use crate::errors::Result;
 #[doc(inline)]
-pub use crate::kv::{Key, KeyRange, KvPair, Value};
+pub use crate::kv::{BoundRange, Key, KvPair, Value};
