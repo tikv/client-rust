@@ -5,7 +5,7 @@
 
 use futures::prelude::*;
 use futures::task::{Context, Poll};
-use futures::try_ready;
+use futures::{ready, try_ready};
 use std::pin::Pin;
 
 /// The status of a `loop_fn` loop.

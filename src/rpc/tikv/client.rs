@@ -11,8 +11,9 @@ use grpcio::{CallOption, Environment};
 use kvproto::{errorpb, kvrpcpb, tikvpb::TikvClient};
 
 use crate::{
+    raw::ColumnFamily,
     rpc::{
-        client::{RawContext, TxnContext},
+        client::{RegionContext, TxnContext},
         security::SecurityManager,
         tikv::context::{request_context, RequestContext},
     },
@@ -159,10 +160,10 @@ has_no_error!(kvrpcpb::RawScanResponse);
 has_no_error!(kvrpcpb::RawBatchScanResponse);
 
 macro_rules! raw_request {
-    ($context:expr, $type:ty) => {{
+    ($region:expr, $cf:expr, $type:ty) => {{
         let mut req = <$type>::default();
-        req.set_context($context.region.into());
-        if let Some(cf) = $context.cf {
+        req.set_context($region.into());
+        if let Some(cf) = $cf {
             req.set_cf(cf.to_string());
         }
         req
@@ -467,8 +468,13 @@ impl KvClient {
         ))
     }
 
-    pub fn raw_get(&self, context: RawContext, key: Key) -> impl Future<Output = Result<Value>> {
-        let mut req = raw_request!(context, kvrpcpb::RawGetRequest);
+    pub fn raw_get(
+        &self,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
+        key: Key,
+    ) -> impl Future<Output = Result<Value>> {
+        let mut req = raw_request!(context, cf, kvrpcpb::RawGetRequest);
         req.set_key(key.into_inner());
 
         self.execute(request_context(
@@ -482,10 +488,11 @@ impl KvClient {
 
     pub fn raw_batch_get(
         &self,
-        context: RawContext,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
         keys: impl Iterator<Item = Key>,
     ) -> impl Future<Output = Result<Vec<KvPair>>> {
-        let mut req = raw_request!(context, kvrpcpb::RawBatchGetRequest);
+        let mut req = raw_request!(context, cf, kvrpcpb::RawBatchGetRequest);
         req.set_keys(keys.map(|x| x.into_inner()).collect());
 
         self.execute(request_context(
@@ -500,11 +507,12 @@ impl KvClient {
 
     pub fn raw_put(
         &self,
-        context: RawContext,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
         key: Key,
         value: Value,
     ) -> impl Future<Output = Result<()>> {
-        let mut req = raw_request!(context, kvrpcpb::RawPutRequest);
+        let mut req = raw_request!(context, cf, kvrpcpb::RawPutRequest);
         req.set_key(key.into_inner());
         req.set_value(value.into_inner());
 
@@ -519,10 +527,11 @@ impl KvClient {
 
     pub fn raw_batch_put(
         &self,
-        context: RawContext,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
         pairs: Vec<KvPair>,
     ) -> impl Future<Output = Result<()>> {
-        let mut req = raw_request!(context, kvrpcpb::RawBatchPutRequest);
+        let mut req = raw_request!(context, cf, kvrpcpb::RawBatchPutRequest);
         req.set_pairs(Self::convert_to_grpc_pairs(pairs));
 
         self.execute(request_context(
@@ -535,8 +544,13 @@ impl KvClient {
         .map_ok(|_| ())
     }
 
-    pub fn raw_delete(&self, context: RawContext, key: Key) -> impl Future<Output = Result<()>> {
-        let mut req = raw_request!(context, kvrpcpb::RawDeleteRequest);
+    pub fn raw_delete(
+        &self,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
+        key: Key,
+    ) -> impl Future<Output = Result<()>> {
+        let mut req = raw_request!(context, cf, kvrpcpb::RawDeleteRequest);
         req.set_key(key.into_inner());
 
         self.execute(request_context(
@@ -550,10 +564,11 @@ impl KvClient {
 
     pub fn raw_batch_delete(
         &self,
-        context: RawContext,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
         keys: Vec<Key>,
     ) -> impl Future<Output = Result<()>> {
-        let mut req = raw_request!(context, kvrpcpb::RawBatchDeleteRequest);
+        let mut req = raw_request!(context, cf, kvrpcpb::RawBatchDeleteRequest);
         req.set_keys(keys.into_iter().map(|x| x.into_inner()).collect());
 
         self.execute(request_context(
@@ -568,16 +583,16 @@ impl KvClient {
 
     pub fn raw_scan(
         &self,
-        context: RawContext,
-        start_key: Option<Key>,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
+        start_key: Key,
         end_key: Option<Key>,
         limit: u32,
         key_only: bool,
     ) -> impl Future<Output = Result<Vec<KvPair>>> {
-        let mut req = raw_request!(context, kvrpcpb::RawScanRequest);
-        start_key
-            .map(|k| req.set_start_key(k.into_inner()))
-            .unwrap();
+        let mut req = raw_request!(context, cf, kvrpcpb::RawScanRequest);
+        req.set_start_key(start_key.into_inner());
+        // FIXME we shouldn't panic when there is no end_key
         end_key.map(|k| req.set_end_key(k.into_inner())).unwrap();
         req.set_limit(limit);
         req.set_key_only(key_only);
@@ -593,12 +608,13 @@ impl KvClient {
 
     pub fn raw_batch_scan(
         &self,
-        context: RawContext,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
         ranges: impl Iterator<Item = (Option<Key>, Option<Key>)>,
         each_limit: u32,
         key_only: bool,
     ) -> impl Future<Output = Result<Vec<KvPair>>> {
-        let mut req = raw_request!(context, kvrpcpb::RawBatchScanRequest);
+        let mut req = raw_request!(context, cf, kvrpcpb::RawBatchScanRequest);
         req.set_ranges(Self::convert_to_grpc_ranges(ranges));
         req.set_each_limit(each_limit);
         req.set_key_only(key_only);
@@ -615,11 +631,12 @@ impl KvClient {
 
     pub fn raw_delete_range(
         &self,
-        context: RawContext,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
         start_key: Key,
         end_key: Key,
     ) -> impl Future<Output = Result<()>> {
-        let mut req = raw_request!(context, kvrpcpb::RawDeleteRangeRequest);
+        let mut req = raw_request!(context, cf, kvrpcpb::RawDeleteRangeRequest);
         req.set_start_key(start_key.into_inner());
         req.set_end_key(end_key.into_inner());
 
