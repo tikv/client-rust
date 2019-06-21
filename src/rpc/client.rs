@@ -85,9 +85,9 @@ impl RpcClientInner {
         self.pd.get_region(key.as_ref())
     }
 
-    fn kv_client(&self, context: RegionContext) -> Result<(RegionContext, Arc<KvClient>)> {
+    fn kv_client(&self, context: &RegionContext) -> Result<Arc<KvClient>> {
         if let Some(conn) = self.tikv.read().unwrap().get(context.address()) {
-            return Ok((context, Arc::clone(conn)));
+            return Ok(Arc::clone(conn));
         };
         info!("connect to tikv endpoint: {:?}", context.address());
         let tikv = Arc::clone(&self.tikv);
@@ -102,7 +102,7 @@ impl RpcClientInner {
             tikv.write()
                 .unwrap()
                 .insert(context.address().to_owned(), Arc::clone(&c));
-            (context, c)
+            c
         })
     }
 
@@ -118,7 +118,7 @@ impl RpcClientInner {
                 self.load_store(store_id)
                     .map_ok(|store| RegionContext { region, store })
             })
-            .and_then(move |region| future::ready(self2.kv_client(region)))
+            .and_then(move |region| future::ready(self2.kv_client(&region).map(|c| ((region, c)))))
     }
 
     fn region_context_for_key(
@@ -395,13 +395,11 @@ impl RpcClient {
 
     pub fn raw_batch_scan(
         &self,
-        ranges: Vec<BoundRange>,
+        _ranges: Vec<BoundRange>,
         _each_limit: u32,
         _key_only: bool,
-        cf: Option<ColumnFamily>,
+        _cf: Option<ColumnFamily>,
     ) -> impl Future<Output = Result<Vec<KvPair>>> {
-        drop(ranges);
-        drop(cf);
         future::err(Error::unimplemented())
     }
 
