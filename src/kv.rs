@@ -389,7 +389,8 @@ impl fmt::Debug for KvPair {
 /// );
 /// ```
 ///
-/// **But, you should not need to worry about all this:** Many functions accept a `impl Into<BoundRange>`
+/// **But, you should not need to worry about all this:** Most functions which operate
+/// on ranges will accept any types  which implement `Into<BoundRange>`.
 /// which means all of the above types can be passed directly to those functions.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundRange {
