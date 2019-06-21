@@ -11,14 +11,10 @@
 //!
 
 pub use self::client::{Client, Connect};
-pub use self::requests::{
-    BatchDelete, BatchGet, BatchPut, BatchScan, Delete, DeleteRange, Get, Put, Scan,
-};
 
 use std::fmt;
 
 mod client;
-mod requests;
 
 /// A [`ColumnFamily`](ColumnFamily) is an optional parameter for [`raw::Client`](Client) requests.
 ///

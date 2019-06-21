@@ -2,7 +2,6 @@
 
 // Long and nested future chains can quickly result in large generic types.
 #![type_length_limit = "16777216"]
-#![feature(existential_type)]
 #![allow(clippy::redundant_closure)]
 
 //! This crate provides a clean, ready to use client for [TiKV](https://github.com/tikv/tikv), a
