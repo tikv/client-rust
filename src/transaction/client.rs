@@ -3,6 +3,7 @@
 use super::{Snapshot, Timestamp, Transaction};
 use crate::{Config, Error};
 
+use derive_new::new;
 use futures::prelude::*;
 use futures::task::{Context, Poll};
 use std::pin::Pin;
@@ -115,14 +116,9 @@ impl Client {
 /// let client: Client = connect.await.unwrap();
 /// # });
 /// ```
+#[derive(new)]
 pub struct Connect {
     config: Config,
-}
-
-impl Connect {
-    fn new(config: Config) -> Self {
-        Connect { config }
-    }
 }
 
 impl Future for Connect {

@@ -3,6 +3,7 @@
 use super::{BatchGet, Commit, Delete, Get, LockKeys, Rollback, Scanner, Set, Timestamp};
 use crate::{Key, Value};
 
+use derive_new::new;
 use std::ops::RangeBounds;
 
 /// A undo-able set of actions on the dataset.
@@ -11,27 +12,12 @@ use std::ops::RangeBounds;
 /// particular timestamp obtained from the placement driver.
 ///
 /// Once a transaction is commited, a new commit timestamp is obtained from the placement driver.
+#[derive(new)]
 pub struct Transaction {
     snapshot: Snapshot,
 }
 
 impl Transaction {
-    /// Create a new transaction operating on the given snapshot.
-    ///
-    /// ```rust,no_run
-    /// # #![feature(async_await)]
-    /// use tikv_client::{Config, transaction::Client};
-    /// use futures::prelude::*;
-    /// # futures::executor::block_on(async {
-    /// let connect = Client::connect(Config::default());
-    /// let client = connect.await.unwrap();
-    /// let txn = client.begin();
-    /// # });
-    /// ```
-    pub fn new(snapshot: Snapshot) -> Self {
-        Self { snapshot }
-    }
-
     /// Commit the actions of the transaction.
     ///
     /// Once committed, it is no longer possible to `rollback` the actions in the transaction.

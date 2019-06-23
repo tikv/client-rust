@@ -3,6 +3,7 @@
 use super::ColumnFamily;
 use crate::{rpc::RpcClient, BoundRange, Config, Error, Key, KvPair, Result, Value};
 
+use derive_new::new;
 use futures::future::Either;
 use futures::prelude::*;
 use futures::task::{Context, Poll};
@@ -356,14 +357,9 @@ impl Client {
 /// let client: Client = connect.await.unwrap();
 /// # });
 /// ```
+#[derive(new)]
 pub struct Connect {
     config: Config,
-}
-
-impl Connect {
-    fn new(config: Config) -> Self {
-        Connect { config }
-    }
 }
 
 impl Future for Connect {

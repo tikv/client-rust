@@ -1,5 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use derive_new::new;
 use std::cmp::{Eq, PartialEq};
 use std::convert::TryFrom;
 use std::ops::{Bound, Deref, DerefMut, Range, RangeFrom, RangeInclusive};
@@ -55,15 +56,10 @@ impl<'a> fmt::Display for HexRepr<'a> {
 /// **But, you should not need to worry about all this:** Many functions which accept a `Key`
 /// accept an `Into<Key>`, which means all of the above types can be passed directly to those
 /// functions.
-#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(new, Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Key(Vec<u8>);
 
 impl Key {
-    #[inline]
-    pub fn new(value: Vec<u8>) -> Self {
-        Key(value)
-    }
-
     #[inline]
     pub(crate) fn into_inner(self) -> Vec<u8> {
         self.0
@@ -199,15 +195,10 @@ impl fmt::Debug for Key {
 /// **But, you should not need to worry about all this:** Many functions which accept a `Value`
 /// accept an `Into<Value>`, which means all of the above types can be passed directly to those
 /// functions.
-#[derive(Default, Clone, Eq, PartialEq, Hash)]
+#[derive(new, Default, Clone, Eq, PartialEq, Hash)]
 pub struct Value(Vec<u8>);
 
 impl Value {
-    #[inline]
-    pub fn new(value: Vec<u8>) -> Self {
-        Value(value)
-    }
-
     #[inline]
     pub(crate) fn into_inner(self) -> Vec<u8> {
         self.0
