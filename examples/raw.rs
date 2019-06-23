@@ -62,8 +62,7 @@ async fn main() -> Result<()> {
         .expect("Could not get just deleted entry");
     assert!(value.is_none());
 
-    // FIXME: batch commands seem to be broken due to over-large types. I think
-    // LoopFn is to blame.
+    // FIXME: batch commands seem to be broken due to over-large types.
     // You can ask to write multiple key-values at the same time, it is much more
     // performant because it is passed in one request to the key-value store.
     // let pairs = vec![

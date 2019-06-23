@@ -4,7 +4,7 @@
 #![allow(dead_code)]
 
 use std::{
-    collections::hash_map::{self, HashMap},
+    collections::{HashMap, VecDeque},
     fmt,
     sync::{Arc, RwLock},
     time::Duration,
@@ -17,11 +17,11 @@ use grpcio::{EnvBuilder, Environment};
 use kvproto::kvrpcpb;
 
 use crate::{
-    compat::{loop_fn, stream_fn, ClientFutureExt, Loop},
+    compat::{stream_fn, ClientFutureExt},
     kv::BoundRange,
     raw::ColumnFamily,
     rpc::{
-        pd::{PdClient, Region, RegionId, RegionVerId, Store, StoreId},
+        pd::{PdClient, Region, RegionId, Store, StoreId},
         security::SecurityManager,
         tikv::KvClient,
     },
@@ -183,26 +183,24 @@ impl RpcClient {
         cf: Option<ColumnFamily>,
     ) -> impl Future<Output = Result<Vec<KvPair>>> {
         let inner = self.inner.clone();
-        self.group_tasks_by_region(keys)
-            .and_then(move |task_groups| {
-                let tasks: Vec<_> = task_groups
-                    .into_iter()
-                    .map(|(region_ver_id, keys)| {
-                        let cf = cf.clone();
-                        inner
-                            .clone()
-                            .raw_from_id(region_ver_id.id)
-                            .and_then(|context| {
-                                context
-                                    .client
-                                    .raw_batch_get(context.region, cf, keys.into_iter())
-                            })
+        self.group_tasks_by_region(keys).try_fold(
+            Vec::new(),
+            move |mut result, (region_id, keys)| {
+                let cf = cf.clone();
+                inner
+                    .clone()
+                    .raw_from_id(region_id)
+                    .and_then(|context| {
+                        context
+                            .client
+                            .raw_batch_get(context.region, cf, keys.into_iter())
                     })
-                    .collect();
-
-                future::try_join_all(tasks)
-            })
-            .map_ok(|r| r.into_iter().flat_map(|a| a.into_iter()).collect())
+                    .map_ok(move |mut pairs| {
+                        result.append(&mut pairs);
+                        result
+                    })
+            },
+        )
     }
 
     pub fn raw_put(
@@ -232,23 +230,15 @@ impl RpcClient {
             future::Either::Left(future::err(Error::empty_value()))
         } else {
             let inner = self.inner.clone();
-            future::Either::Right(
-                self.group_tasks_by_region(pairs)
-                    .and_then(move |task_groups| {
-                        let tasks: Vec<_> = task_groups
-                            .into_iter()
-                            .map(|(region, keys)| {
-                                let cf = cf.clone();
-                                inner.clone().raw_from_id(region.id).and_then(|context| {
-                                    context.client.raw_batch_put(context.region, cf, keys)
-                                })
-                            })
-                            .collect();
-
-                        future::try_join_all(tasks)
-                    })
-                    .map_ok(|_| ()),
-            )
+            future::Either::Right(self.group_tasks_by_region(pairs).try_for_each(
+                move |(region_id, keys)| {
+                    let cf = cf.clone();
+                    inner
+                        .clone()
+                        .raw_from_id(region_id)
+                        .and_then(|context| context.client.raw_batch_put(context.region, cf, keys))
+                },
+            ))
         }
     }
 
@@ -270,20 +260,13 @@ impl RpcClient {
     ) -> impl Future<Output = Result<()>> {
         let inner = self.inner.clone();
         self.group_tasks_by_region(keys)
-            .and_then(move |task_groups| {
-                let tasks: Vec<_> = task_groups
-                    .into_iter()
-                    .map(|(region, keys)| {
-                        let cf = cf.clone();
-                        inner.clone().raw_from_id(region.id).and_then(|context| {
-                            context.client.raw_batch_delete(context.region, cf, keys)
-                        })
-                    })
-                    .collect();
-
-                future::try_join_all(tasks)
+            .try_for_each(move |(region_id, keys)| {
+                let cf = cf.clone();
+                inner
+                    .clone()
+                    .raw_from_id(region_id)
+                    .and_then(|context| context.client.raw_batch_delete(context.region, cf, keys))
             })
-            .map_ok(|_| ())
     }
 
     pub fn raw_scan(
@@ -368,42 +351,31 @@ impl RpcClient {
     fn group_tasks_by_region<Task>(
         &self,
         tasks: Vec<Task>,
-    ) -> impl Future<Output = Result<GroupedTasks<Task>>>
+    ) -> impl Stream<Item = Result<(RegionId, Vec<Task>)>>
     where
         Task: GroupingTask,
     {
-        let result: Option<GroupedTasks<Task>> = None;
         let inner = self.inner.clone();
-        loop_fn((0, tasks, result), move |(mut index, tasks, mut result)| {
-            if index == tasks.len() {
-                future::Either::Left(future::ok(Loop::Break(result)))
+        let tasks: VecDeque<Task> = tasks.into();
+
+        stream_fn(tasks, move |mut tasks| {
+            if tasks.is_empty() {
+                return Either::Right(ready(Ok(None)));
             } else {
-                let inner = Arc::clone(&inner);
-                future::Either::Right(inner.get_region(tasks[index].key()).map_ok(
-                    move |location| {
-                        while let Some(item) = tasks.get(index) {
-                            if !location.contains(item.key()) {
-                                break;
-                            }
-                            let ver_id = location.ver_id();
-                            let item = item.clone();
-                            if let Some(ref mut grouped) = result {
-                                grouped.add(ver_id, item);
-                            } else {
-                                result = Some(GroupedTasks::new(ver_id, item));
-                            }
-                            index += 1;
+                let inner = inner.clone();
+                Either::Left(inner.get_region(tasks[0].key()).map_ok(move |location| {
+                    let ver_id = location.ver_id();
+                    let mut grouped = Vec::new();
+                    while let Some(task) = tasks.pop_front() {
+                        if !location.contains(task.key()) {
+                            break;
                         }
-                        if index == tasks.len() {
-                            Loop::Break(result)
-                        } else {
-                            Loop::Continue((index, tasks, result))
-                        }
-                    },
-                ))
+                        grouped.push(task);
+                    }
+                    Some((tasks, (ver_id.id, grouped)))
+                }))
             }
         })
-        .map_ok(|r| r.unwrap_or_default())
     }
 }
 
@@ -461,34 +433,6 @@ pub struct TxnContext {
 
 trait GroupingTask: Clone + Default + Sized {
     fn key(&self) -> &Key;
-}
-
-#[derive(Default)]
-struct GroupedTasks<Task: GroupingTask>(HashMap<RegionVerId, Vec<Task>>, RegionVerId);
-
-impl<Task: GroupingTask> GroupedTasks<Task> {
-    fn new(ver_id: RegionVerId, task: Task) -> Self {
-        let mut map = HashMap::with_capacity(1);
-        map.insert(ver_id.clone(), vec![task]);
-        GroupedTasks(map, ver_id)
-    }
-
-    #[inline]
-    fn add(&mut self, ver_id: RegionVerId, task: Task) {
-        self.0
-            .entry(ver_id)
-            .or_insert_with(|| Vec::with_capacity(1))
-            .push(task)
-    }
-}
-
-impl<Task: GroupingTask> IntoIterator for GroupedTasks<Task> {
-    type Item = (RegionVerId, Vec<Task>);
-    type IntoIter = hash_map::IntoIter<RegionVerId, Vec<Task>>;
-
-    fn into_iter(self) -> hash_map::IntoIter<RegionVerId, Vec<Task>> {
-        self.0.into_iter()
-    }
 }
 
 impl GroupingTask for Key {
