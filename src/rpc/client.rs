@@ -265,7 +265,7 @@ impl RpcClient {
 
         stream_fn(tasks, move |mut tasks| {
             if tasks.is_empty() {
-                return Either::Right(ready(Ok(None)));
+                Either::Right(ready(Ok(None)))
             } else {
                 Either::Left(
                     self.clone()

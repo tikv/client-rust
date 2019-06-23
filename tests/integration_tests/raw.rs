@@ -49,7 +49,7 @@ async fn test_existence<'a>(
     let test_key_end = generate_key(NUM_TEST_KEYS as i32 - 1);
 
     for pair in existing_pairs.iter().map(Clone::clone) {
-        let (key, value) = pair.into_inner();
+        let (key, value) = pair.into();
         assert_eq!(
             client
                 .get(key)
@@ -102,8 +102,8 @@ async fn test_existence<'a>(
 
     assert_eq!(
         client
+            .with_key_only(true)
             .scan(test_key_start.clone()..test_key_end.clone(), NUM_TEST_KEYS)
-            .key_only()
             .await
             .expect("Could not scan"),
         existing_key_only_pairs,
@@ -155,7 +155,7 @@ async fn basic_raw_test() {
     test_existence(
         &client,
         &empty_pairs,
-        pairs.into_iter().map(|x| x.into_inner().0).collect(),
+        pairs.into_iter().map(|x| x.into_key()).collect(),
     )
     .await;
 }
