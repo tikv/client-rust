@@ -1,6 +1,7 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 #![feature(async_await, await_macro)]
+#![type_length_limit = "3081103"]
 
 mod common;
 
@@ -62,23 +63,22 @@ async fn main() -> Result<()> {
         .expect("Could not get just deleted entry");
     assert!(value.is_none());
 
-    // FIXME: batch commands seem to be broken due to over-large types.
     // You can ask to write multiple key-values at the same time, it is much more
     // performant because it is passed in one request to the key-value store.
-    // let pairs = vec![
-    //     KvPair::from(("k1", "v1")),
-    //     KvPair::from(("k2", "v2")),
-    //     KvPair::from(("k3", "v3")),
-    // ];
-    // client.batch_put(pairs).await.expect("Could not put pairs");
+    let pairs = vec![
+        KvPair::from(("k1", "v1")),
+        KvPair::from(("k2", "v2")),
+        KvPair::from(("k3", "v3")),
+    ];
+    client.batch_put(pairs).await.expect("Could not put pairs");
 
     // Same thing when you want to retrieve multiple values.
-    // let keys = vec![Key::from("k1"), Key::from("k2")];
-    // let values = client
-    //     .batch_get(keys.clone())
-    //     .await
-    //     .expect("Could not get values");
-    // println!("Found values: {:?} for keys: {:?}", values, keys);
+    let keys = vec![Key::from("k1"), Key::from("k2")];
+    let values = client
+        .batch_get(keys.clone())
+        .await
+        .expect("Could not get values");
+    println!("Found values: {:?} for keys: {:?}", values, keys);
 
     // Scanning a range of keys is also possible giving it two bounds
     // it will returns all entries between these two.
