@@ -165,58 +165,13 @@ impl RpcClient {
         })
     }
 
-    #[inline]
-    fn inner(&self) -> Arc<RpcClientInner> {
-        self.inner.clone()
-    }
-
-    fn group_tasks_by_region<Task>(
-        &self,
-        tasks: Vec<Task>,
-    ) -> impl Future<Output = Result<GroupedTasks<Task>>>
-    where
-        Task: GroupingTask,
-    {
-        let result: Option<GroupedTasks<Task>> = None;
-        let inner = self.inner();
-        loop_fn((0, tasks, result), move |(mut index, tasks, mut result)| {
-            if index == tasks.len() {
-                future::Either::Left(future::ok(Loop::Break(result)))
-            } else {
-                let inner = Arc::clone(&inner);
-                future::Either::Right(inner.get_region(tasks[index].key()).map_ok(
-                    move |location| {
-                        while let Some(item) = tasks.get(index) {
-                            if !location.contains(item.key()) {
-                                break;
-                            }
-                            let ver_id = location.ver_id();
-                            let item = item.clone();
-                            if let Some(ref mut grouped) = result {
-                                grouped.add(ver_id, item);
-                            } else {
-                                result = Some(GroupedTasks::new(ver_id, item));
-                            }
-                            index += 1;
-                        }
-                        if index == tasks.len() {
-                            Loop::Break(result)
-                        } else {
-                            Loop::Continue((index, tasks, result))
-                        }
-                    },
-                ))
-            }
-        })
-        .map_ok(|r| r.unwrap_or_default())
-    }
-
     pub fn raw_get(
         &self,
         key: Key,
         cf: Option<ColumnFamily>,
     ) -> impl Future<Output = Result<Option<Value>>> {
-        self.inner()
+        self.inner
+            .clone()
             .raw(&key)
             .and_then(|context| context.client.raw_get(context.region, cf, key))
             .map_ok(|value| if value.is_empty() { None } else { Some(value) })
@@ -227,7 +182,7 @@ impl RpcClient {
         keys: Vec<Key>,
         cf: Option<ColumnFamily>,
     ) -> impl Future<Output = Result<Vec<KvPair>>> {
-        let inner = self.inner();
+        let inner = self.inner.clone();
         self.group_tasks_by_region(keys)
             .and_then(move |task_groups| {
                 let tasks: Vec<_> = task_groups
@@ -260,7 +215,8 @@ impl RpcClient {
             future::Either::Left(future::err(Error::empty_value()))
         } else {
             future::Either::Right(
-                self.inner()
+                self.inner
+                    .clone()
                     .raw(&key)
                     .and_then(|context| context.client.raw_put(context.region, cf, key, value)),
             )
@@ -275,7 +231,7 @@ impl RpcClient {
         if pairs.iter().any(|p| p.value().is_empty()) {
             future::Either::Left(future::err(Error::empty_value()))
         } else {
-            let inner = self.inner();
+            let inner = self.inner.clone();
             future::Either::Right(
                 self.group_tasks_by_region(pairs)
                     .and_then(move |task_groups| {
@@ -301,7 +257,8 @@ impl RpcClient {
         key: Key,
         cf: Option<ColumnFamily>,
     ) -> impl Future<Output = Result<()>> {
-        self.inner()
+        self.inner
+            .clone()
             .raw(&key)
             .and_then(|context| context.client.raw_delete(context.region, cf, key))
     }
@@ -311,7 +268,7 @@ impl RpcClient {
         keys: Vec<Key>,
         cf: Option<ColumnFamily>,
     ) -> impl Future<Output = Result<()>> {
-        let inner = self.inner();
+        let inner = self.inner.clone();
         self.group_tasks_by_region(keys)
             .and_then(move |task_groups| {
                 let tasks: Vec<_> = task_groups
@@ -406,6 +363,47 @@ impl RpcClient {
                 })
             }))
         })
+    }
+
+    fn group_tasks_by_region<Task>(
+        &self,
+        tasks: Vec<Task>,
+    ) -> impl Future<Output = Result<GroupedTasks<Task>>>
+    where
+        Task: GroupingTask,
+    {
+        let result: Option<GroupedTasks<Task>> = None;
+        let inner = self.inner.clone();
+        loop_fn((0, tasks, result), move |(mut index, tasks, mut result)| {
+            if index == tasks.len() {
+                future::Either::Left(future::ok(Loop::Break(result)))
+            } else {
+                let inner = Arc::clone(&inner);
+                future::Either::Right(inner.get_region(tasks[index].key()).map_ok(
+                    move |location| {
+                        while let Some(item) = tasks.get(index) {
+                            if !location.contains(item.key()) {
+                                break;
+                            }
+                            let ver_id = location.ver_id();
+                            let item = item.clone();
+                            if let Some(ref mut grouped) = result {
+                                grouped.add(ver_id, item);
+                            } else {
+                                result = Some(GroupedTasks::new(ver_id, item));
+                            }
+                            index += 1;
+                        }
+                        if index == tasks.len() {
+                            Loop::Break(result)
+                        } else {
+                            Loop::Continue((index, tasks, result))
+                        }
+                    },
+                ))
+            }
+        })
+        .map_ok(|r| r.unwrap_or_default())
     }
 }
 
