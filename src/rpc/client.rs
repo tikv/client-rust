@@ -31,7 +31,7 @@ use crate::{
 const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";
 
-struct RpcClientInner {
+pub struct RpcClient {
     pd: Arc<PdClient>,
     tikv: Arc<RwLock<HashMap<String, Arc<KvClient>>>>,
     env: Arc<Environment>,
@@ -39,8 +39,8 @@ struct RpcClientInner {
     timeout: Duration,
 }
 
-impl RpcClientInner {
-    fn connect(config: &Config) -> Result<RpcClientInner> {
+impl RpcClient {
+    pub fn connect(config: &Config) -> Result<RpcClient> {
         let env = Arc::new(
             EnvBuilder::new()
                 .cq_count(CQ_COUNT)
@@ -64,12 +64,225 @@ impl RpcClientInner {
             config.timeout,
         )?);
         let tikv = Default::default();
-        Ok(RpcClientInner {
+        Ok(RpcClient {
             pd,
             tikv,
             env,
             security_mgr,
             timeout: config.timeout,
+        })
+    }
+
+    pub fn raw_get(
+        self: Arc<Self>,
+        key: Key,
+        cf: Option<ColumnFamily>,
+    ) -> impl Future<Output = Result<Option<Value>>> {
+        self.clone()
+            .raw(&key)
+            .and_then(|context| context.client.raw_get(context.region, cf, key))
+            .map_ok(|value| if value.is_empty() { None } else { Some(value) })
+    }
+
+    pub fn raw_batch_get(
+        self: Arc<Self>,
+        keys: Vec<Key>,
+        cf: Option<ColumnFamily>,
+    ) -> impl Future<Output = Result<Vec<KvPair>>> {
+        self.clone().group_tasks_by_region(keys).try_fold(
+            Vec::new(),
+            move |mut result, (region_id, keys)| {
+                let cf = cf.clone();
+                self.clone()
+                    .raw_from_id(region_id)
+                    .and_then(|context| {
+                        context
+                            .client
+                            .raw_batch_get(context.region, cf, keys.into_iter())
+                    })
+                    .map_ok(move |mut pairs| {
+                        result.append(&mut pairs);
+                        result
+                    })
+            },
+        )
+    }
+
+    pub fn raw_put(
+        self: Arc<Self>,
+        key: Key,
+        value: Value,
+        cf: Option<ColumnFamily>,
+    ) -> impl Future<Output = Result<()>> {
+        if value.is_empty() {
+            future::Either::Left(future::err(Error::empty_value()))
+        } else {
+            future::Either::Right(
+                self.raw(&key)
+                    .and_then(|context| context.client.raw_put(context.region, cf, key, value)),
+            )
+        }
+    }
+
+    pub fn raw_batch_put(
+        self: Arc<Self>,
+        pairs: Vec<KvPair>,
+        cf: Option<ColumnFamily>,
+    ) -> impl Future<Output = Result<()>> {
+        if pairs.iter().any(|p| p.value().is_empty()) {
+            future::Either::Left(future::err(Error::empty_value()))
+        } else {
+            future::Either::Right(self.clone().group_tasks_by_region(pairs).try_for_each(
+                move |(region_id, keys)| {
+                    let cf = cf.clone();
+                    self.clone()
+                        .raw_from_id(region_id)
+                        .and_then(|context| context.client.raw_batch_put(context.region, cf, keys))
+                },
+            ))
+        }
+    }
+
+    pub fn raw_delete(
+        self: Arc<Self>,
+        key: Key,
+        cf: Option<ColumnFamily>,
+    ) -> impl Future<Output = Result<()>> {
+        self.raw(&key)
+            .and_then(|context| context.client.raw_delete(context.region, cf, key))
+    }
+
+    pub fn raw_batch_delete(
+        self: Arc<Self>,
+        keys: Vec<Key>,
+        cf: Option<ColumnFamily>,
+    ) -> impl Future<Output = Result<()>> {
+        self.clone()
+            .group_tasks_by_region(keys)
+            .try_for_each(move |(region_id, keys)| {
+                let cf = cf.clone();
+                self.clone()
+                    .raw_from_id(region_id)
+                    .and_then(|context| context.client.raw_batch_delete(context.region, cf, keys))
+            })
+    }
+
+    pub fn raw_scan(
+        self: Arc<Self>,
+        range: BoundRange,
+        limit: u32,
+        key_only: bool,
+        cf: Option<ColumnFamily>,
+    ) -> impl Future<Output = Result<Vec<KvPair>>> {
+        self.regions_for_range(range)
+            .try_fold(Vec::new(), move |mut result, context| {
+                if result.len() as u32 >= limit {
+                    // Skip any more scans if we've hit the limit already.
+                    return Either::Left(ready(Ok(result)));
+                }
+                let (start_key, end_key) = context.region.range();
+                Either::Right(
+                    context
+                        .client
+                        .raw_scan(
+                            context.region,
+                            cf.clone(),
+                            start_key,
+                            Some(end_key),
+                            limit,
+                            key_only,
+                        )
+                        .map_ok(move |mut pairs| {
+                            result.append(&mut pairs);
+                            result
+                        }),
+                )
+            })
+    }
+
+    pub fn raw_delete_range(
+        self: Arc<Self>,
+        range: BoundRange,
+        cf: Option<ColumnFamily>,
+    ) -> impl Future<Output = Result<()>> {
+        self.regions_for_range(range).try_for_each(move |context| {
+            let (start_key, end_key) = context.region.range();
+            context
+                .client
+                .raw_delete_range(context.region, cf.clone(), start_key, end_key)
+        })
+    }
+
+    pub fn raw_batch_scan(
+        self: Arc<Self>,
+        _ranges: Vec<BoundRange>,
+        _each_limit: u32,
+        _key_only: bool,
+        _cf: Option<ColumnFamily>,
+    ) -> impl Future<Output = Result<Vec<KvPair>>> {
+        future::err(Error::unimplemented())
+    }
+
+    // Returns a Steam which iterates over the contexts for each region covered by range.
+    fn regions_for_range(
+        self: Arc<Self>,
+        range: BoundRange,
+    ) -> impl Stream<Item = Result<RawContext>> {
+        let (start_key, end_key) = range.into_keys();
+        stream_fn(Some(start_key), move |start_key| {
+            let start_key = match start_key {
+                None => return Either::Right(ready(Ok(None))),
+                Some(sk) => sk,
+            };
+            let end_key = end_key.clone();
+            let this = self.clone();
+            Either::Left(
+                self.clone()
+                    .get_region(&start_key)
+                    .and_then(move |location| {
+                        this.raw_from_id(location.id()).map_ok(move |context| {
+                            let region_end = context.region.end_key();
+                            if end_key.map(|x| x < region_end).unwrap_or(false)
+                                || region_end.is_empty()
+                            {
+                                return Some((None, context));
+                            }
+                            Some((Some(region_end), context))
+                        })
+                    }),
+            )
+        })
+    }
+
+    fn group_tasks_by_region<Task>(
+        self: Arc<Self>,
+        tasks: Vec<Task>,
+    ) -> impl Stream<Item = Result<(RegionId, Vec<Task>)>>
+    where
+        Task: GroupingTask,
+    {
+        let tasks: VecDeque<Task> = tasks.into();
+
+        stream_fn(tasks, move |mut tasks| {
+            if tasks.is_empty() {
+                return Either::Right(ready(Ok(None)));
+            } else {
+                Either::Left(
+                    self.clone()
+                        .get_region(tasks[0].key())
+                        .map_ok(move |location| {
+                            let ver_id = location.ver_id();
+                            let mut grouped = Vec::new();
+                            while let Some(task) = tasks.pop_front() {
+                                if !location.contains(task.key()) {
+                                    break;
+                                }
+                                grouped.push(task);
+                            }
+                            Some((tasks, (ver_id.id, grouped)))
+                        }),
+                )
+            }
         })
     }
 
@@ -154,235 +367,10 @@ impl RpcClientInner {
     }
 }
 
-pub struct RpcClient {
-    inner: Arc<RpcClientInner>,
-}
-
-impl RpcClient {
-    pub fn connect(config: &Config) -> Result<RpcClient> {
-        Ok(RpcClient {
-            inner: Arc::new(RpcClientInner::connect(config)?),
-        })
-    }
-
-    pub fn raw_get(
-        &self,
-        key: Key,
-        cf: Option<ColumnFamily>,
-    ) -> impl Future<Output = Result<Option<Value>>> {
-        self.inner
-            .clone()
-            .raw(&key)
-            .and_then(|context| context.client.raw_get(context.region, cf, key))
-            .map_ok(|value| if value.is_empty() { None } else { Some(value) })
-    }
-
-    pub fn raw_batch_get(
-        &self,
-        keys: Vec<Key>,
-        cf: Option<ColumnFamily>,
-    ) -> impl Future<Output = Result<Vec<KvPair>>> {
-        let inner = self.inner.clone();
-        self.group_tasks_by_region(keys).try_fold(
-            Vec::new(),
-            move |mut result, (region_id, keys)| {
-                let cf = cf.clone();
-                inner
-                    .clone()
-                    .raw_from_id(region_id)
-                    .and_then(|context| {
-                        context
-                            .client
-                            .raw_batch_get(context.region, cf, keys.into_iter())
-                    })
-                    .map_ok(move |mut pairs| {
-                        result.append(&mut pairs);
-                        result
-                    })
-            },
-        )
-    }
-
-    pub fn raw_put(
-        &self,
-        key: Key,
-        value: Value,
-        cf: Option<ColumnFamily>,
-    ) -> impl Future<Output = Result<()>> {
-        if value.is_empty() {
-            future::Either::Left(future::err(Error::empty_value()))
-        } else {
-            future::Either::Right(
-                self.inner
-                    .clone()
-                    .raw(&key)
-                    .and_then(|context| context.client.raw_put(context.region, cf, key, value)),
-            )
-        }
-    }
-
-    pub fn raw_batch_put(
-        &self,
-        pairs: Vec<KvPair>,
-        cf: Option<ColumnFamily>,
-    ) -> impl Future<Output = Result<()>> {
-        if pairs.iter().any(|p| p.value().is_empty()) {
-            future::Either::Left(future::err(Error::empty_value()))
-        } else {
-            let inner = self.inner.clone();
-            future::Either::Right(self.group_tasks_by_region(pairs).try_for_each(
-                move |(region_id, keys)| {
-                    let cf = cf.clone();
-                    inner
-                        .clone()
-                        .raw_from_id(region_id)
-                        .and_then(|context| context.client.raw_batch_put(context.region, cf, keys))
-                },
-            ))
-        }
-    }
-
-    pub fn raw_delete(
-        &self,
-        key: Key,
-        cf: Option<ColumnFamily>,
-    ) -> impl Future<Output = Result<()>> {
-        self.inner
-            .clone()
-            .raw(&key)
-            .and_then(|context| context.client.raw_delete(context.region, cf, key))
-    }
-
-    pub fn raw_batch_delete(
-        &self,
-        keys: Vec<Key>,
-        cf: Option<ColumnFamily>,
-    ) -> impl Future<Output = Result<()>> {
-        let inner = self.inner.clone();
-        self.group_tasks_by_region(keys)
-            .try_for_each(move |(region_id, keys)| {
-                let cf = cf.clone();
-                inner
-                    .clone()
-                    .raw_from_id(region_id)
-                    .and_then(|context| context.client.raw_batch_delete(context.region, cf, keys))
-            })
-    }
-
-    pub fn raw_scan(
-        &self,
-        range: BoundRange,
-        limit: u32,
-        key_only: bool,
-        cf: Option<ColumnFamily>,
-    ) -> impl Future<Output = Result<Vec<KvPair>>> {
-        self.regions_for_range(range)
-            .try_fold(Vec::new(), move |mut result, context| {
-                if result.len() as u32 >= limit {
-                    // Skip any more scans if we've hit the limit already.
-                    return Either::Left(ready(Ok(result)));
-                }
-                let (start_key, end_key) = context.region.range();
-                Either::Right(
-                    context
-                        .client
-                        .raw_scan(
-                            context.region,
-                            cf.clone(),
-                            start_key,
-                            Some(end_key),
-                            limit,
-                            key_only,
-                        )
-                        .map_ok(move |mut pairs| {
-                            result.append(&mut pairs);
-                            result
-                        }),
-                )
-            })
-    }
-
-    pub fn raw_delete_range(
-        &self,
-        range: BoundRange,
-        cf: Option<ColumnFamily>,
-    ) -> impl Future<Output = Result<()>> {
-        self.regions_for_range(range).try_for_each(move |context| {
-            let (start_key, end_key) = context.region.range();
-            context
-                .client
-                .raw_delete_range(context.region, cf.clone(), start_key, end_key)
-        })
-    }
-
-    pub fn raw_batch_scan(
-        &self,
-        _ranges: Vec<BoundRange>,
-        _each_limit: u32,
-        _key_only: bool,
-        _cf: Option<ColumnFamily>,
-    ) -> impl Future<Output = Result<Vec<KvPair>>> {
-        future::err(Error::unimplemented())
-    }
-
-    // Returns a Steam which iterates over the contexts for each region covered by range.
-    fn regions_for_range(&self, range: BoundRange) -> impl Stream<Item = Result<RawContext>> {
-        let inner = self.inner.clone();
-        let (start_key, end_key) = range.into_keys();
-        stream_fn(Some(start_key), move |start_key| {
-            let start_key = match start_key {
-                None => return Either::Right(ready(Ok(None))),
-                Some(sk) => sk,
-            };
-            let end_key = end_key.clone();
-            let inner = inner.clone();
-            Either::Left(inner.get_region(&start_key).and_then(move |location| {
-                inner.raw_from_id(location.id()).map_ok(move |context| {
-                    let region_end = context.region.end_key();
-                    if end_key.map(|x| x < region_end).unwrap_or(false) || region_end.is_empty() {
-                        return Some((None, context));
-                    }
-                    Some((Some(region_end), context))
-                })
-            }))
-        })
-    }
-
-    fn group_tasks_by_region<Task>(
-        &self,
-        tasks: Vec<Task>,
-    ) -> impl Stream<Item = Result<(RegionId, Vec<Task>)>>
-    where
-        Task: GroupingTask,
-    {
-        let inner = self.inner.clone();
-        let tasks: VecDeque<Task> = tasks.into();
-
-        stream_fn(tasks, move |mut tasks| {
-            if tasks.is_empty() {
-                return Either::Right(ready(Ok(None)));
-            } else {
-                let inner = inner.clone();
-                Either::Left(inner.get_region(tasks[0].key()).map_ok(move |location| {
-                    let ver_id = location.ver_id();
-                    let mut grouped = Vec::new();
-                    while let Some(task) = tasks.pop_front() {
-                        if !location.contains(task.key()) {
-                            break;
-                        }
-                        grouped.push(task);
-                    }
-                    Some((tasks, (ver_id.id, grouped)))
-                }))
-            }
-        })
-    }
-}
-
 impl fmt::Debug for RpcClient {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("tikv-client")
-            .field("pd", &self.inner.pd)
+            .field("pd", &self.pd)
             .finish()
     }
 }
