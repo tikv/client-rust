@@ -61,11 +61,6 @@ pub struct Key(Vec<u8>);
 
 impl Key {
     #[inline]
-    pub(crate) fn into_inner(self) -> Vec<u8> {
-        self.0
-    }
-
-    #[inline]
     fn zero_terminated(&self) -> bool {
         self.0.last().map(|i| *i == 0).unwrap_or(false)
     }
@@ -138,6 +133,12 @@ impl AsMut<[u8]> for Key {
     }
 }
 
+impl Into<Vec<u8>> for Key {
+    fn into(self) -> Vec<u8> {
+        self.0
+    }
+}
+
 impl Deref for Key {
     type Target = [u8];
 
@@ -198,13 +199,6 @@ impl fmt::Debug for Key {
 #[derive(new, Default, Clone, Eq, PartialEq, Hash)]
 pub struct Value(Vec<u8>);
 
-impl Value {
-    #[inline]
-    pub(crate) fn into_inner(self) -> Vec<u8> {
-        self.0
-    }
-}
-
 impl From<Vec<u8>> for Value {
     fn from(v: Vec<u8>) -> Self {
         Value(v)
@@ -220,6 +214,12 @@ impl From<String> for Value {
 impl From<&'static str> for Value {
     fn from(v: &'static str) -> Value {
         Value(v.as_bytes().to_vec())
+    }
+}
+
+impl Into<Vec<u8>> for Value {
+    fn into(self) -> Vec<u8> {
+        self.0
     }
 }
 
@@ -282,11 +282,6 @@ impl KvPair {
     }
 
     #[inline]
-    pub fn into_inner(self) -> (Key, Value) {
-        (self.0, self.1)
-    }
-
-    #[inline]
     pub fn into_key(self) -> Key {
         self.0
     }
@@ -328,6 +323,12 @@ where
 {
     fn from((k, v): (K, V)) -> Self {
         KvPair(k.into(), v.into())
+    }
+}
+
+impl Into<(Key, Value)> for KvPair {
+    fn into(self) -> (Key, Value) {
+        (self.0, self.1)
     }
 }
 
