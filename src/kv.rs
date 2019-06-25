@@ -3,7 +3,7 @@
 use derive_new::new;
 use std::cmp::{Eq, PartialEq};
 use std::convert::TryFrom;
-use std::ops::{Bound, Deref, DerefMut, Range, RangeFrom, RangeInclusive};
+use std::ops::{Bound, Range, RangeFrom, RangeInclusive};
 use std::{fmt, str, u8};
 
 use crate::{Error, Result};
@@ -24,8 +24,6 @@ impl<'a> fmt::Display for HexRepr<'a> {
 /// In TiKV, keys are an ordered sequence of bytes. This has an advantage over choosing `String` as
 /// valid `UTF-8` is not required. This means that the user is permitted to store any data they wish,
 /// as long as it can be represented by bytes. (Which is to say, pretty much anything!)
-///
-/// This is a *wrapper type* that implements `Deref<Target=[u8]>` so it can be used like one transparently.
 ///
 /// This type also implements `From` for many types. With one exception, these are all done without
 /// reallocation. Using a `&'static str`, like many examples do for simplicity, has an internal
@@ -60,6 +58,11 @@ impl<'a> fmt::Display for HexRepr<'a> {
 pub struct Key(Vec<u8>);
 
 impl Key {
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     #[inline]
     fn zero_terminated(&self) -> bool {
         self.0.last().map(|i| *i == 0).unwrap_or(false)
@@ -109,47 +112,15 @@ impl From<&'static str> for Key {
     }
 }
 
-impl AsRef<Key> for Key {
-    fn as_ref(&self) -> &Key {
-        self
-    }
-}
-
-impl AsMut<Key> for Key {
-    fn as_mut(&mut self) -> &mut Key {
-        self
-    }
-}
-
-impl AsRef<[u8]> for Key {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl AsMut<[u8]> for Key {
-    fn as_mut(&mut self) -> &mut [u8] {
-        &mut self.0
-    }
-}
-
 impl Into<Vec<u8>> for Key {
     fn into(self) -> Vec<u8> {
         self.0
     }
 }
 
-impl Deref for Key {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
+impl<'a> Into<&'a [u8]> for &'a Key {
+    fn into(self) -> &'a [u8] {
         &self.0
-    }
-}
-
-impl DerefMut for Key {
-    fn deref_mut(&mut self) -> &mut [u8] {
-        &mut self.0
     }
 }
 
@@ -164,8 +135,6 @@ impl fmt::Debug for Key {
 /// In TiKV, values are an ordered sequence of bytes. This has an advantage over choosing `String`
 /// as valid `UTF-8` is not required. This means that the user is permitted to store any data they wish,
 /// as long as it can be represented by bytes. (Which is to say, pretty much anything!)
-///
-/// This is a *wrapper type* that implements `Deref<Target=[u8]>` so it can be used like one transparently.
 ///
 /// This type also implements `From` for many types. With one exception, these are all done without
 /// reallocation. Using a `&'static str`, like many examples do for simplicity, has an internal
@@ -199,6 +168,13 @@ impl fmt::Debug for Key {
 #[derive(new, Default, Clone, Eq, PartialEq, Hash)]
 pub struct Value(Vec<u8>);
 
+impl Value {
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
 impl From<Vec<u8>> for Value {
     fn from(v: Vec<u8>) -> Self {
         Value(v)
@@ -223,16 +199,8 @@ impl Into<Vec<u8>> for Value {
     }
 }
 
-impl Deref for Value {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl AsRef<[u8]> for Value {
-    fn as_ref(&self) -> &[u8] {
+impl<'a> Into<&'a [u8]> for &'a Value {
+    fn into(self) -> &'a [u8] {
         &self.0
     }
 }
@@ -335,9 +303,9 @@ impl Into<(Key, Value)> for KvPair {
 impl fmt::Debug for KvPair {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let KvPair(key, value) = self;
-        match str::from_utf8(&value) {
-            Ok(s) => write!(f, "KvPair({}, {:?})", HexRepr(&key), s),
-            Err(_) => write!(f, "KvPair({}, {})", HexRepr(&key), HexRepr(&value)),
+        match str::from_utf8(&value.0) {
+            Ok(s) => write!(f, "KvPair({}, {:?})", HexRepr(&key.0), s),
+            Err(_) => write!(f, "KvPair({}, {})", HexRepr(&key.0), HexRepr(&value.0)),
         }
     }
 }
