@@ -9,9 +9,9 @@ use std::{fmt, str};
 ///
 /// ```rust
 /// # use tikv_client::{Key, Value, KvPair};
-/// let key = "key";
-/// let value = "value";
-/// let constructed = KvPair::new(key, value);
+/// let key = "key".to_owned();
+/// let value = "value".to_owned();
+/// let constructed = KvPair::new(key.clone(), value.clone());
 /// let from_tuple = KvPair::from((key, value));
 /// assert_eq!(constructed, from_tuple);
 /// ```

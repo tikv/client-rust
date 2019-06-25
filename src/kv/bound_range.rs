@@ -26,25 +26,25 @@ use crate::{Error, Result};
 /// use std::ops::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull, Bound};
 /// # use std::convert::TryInto;
 ///
-/// let explict_range: Range<Key> = Range { start: Key::from("Rust"), end: Key::from("TiKV") };
+/// let explict_range: Range<Key> = Range { start: Key::from("Rust".to_owned()), end: Key::from("TiKV".to_owned()) };
 /// let from_explict_range: BoundRange = explict_range.into();
 ///
-/// let range: Range<&str> = "Rust".."TiKV";
+/// let range: Range<String> = "Rust".to_owned().."TiKV".to_owned();
 /// let from_range: BoundRange = range.into();
 /// assert_eq!(from_explict_range, from_range);
 ///
-/// let range: RangeInclusive<&str> = "Rust"..="TiKV";
+/// let range: RangeInclusive<String> = "Rust".to_owned()..="TiKV".to_owned();
 /// let from_range: BoundRange = range.into();
 /// assert_eq!(
 ///     from_range,
-///     (Bound::Included(Key::from("Rust")), Bound::Included(Key::from("TiKV"))),
+///     (Bound::Included(Key::from("Rust".to_owned())), Bound::Included(Key::from("TiKV".to_owned()))),
 /// );
 ///
-/// let range_from: RangeFrom<&str> = "Rust"..;
+/// let range_from: RangeFrom<String> = "Rust".to_owned()..;
 /// let from_range_from: BoundRange = range_from.into();
 /// assert_eq!(
 ///     from_range_from,
-///     (Bound::Included(Key::from("Rust")), Bound::Unbounded),
+///     (Bound::Included(Key::from("Rust".to_owned())), Bound::Unbounded),
 /// );
 /// ```
 ///
@@ -77,22 +77,22 @@ impl BoundRange {
     /// ```rust
     /// use tikv_client::{BoundRange, Key};
     /// // Exclusive
-    /// let range = "a".."z";
+    /// let range = "a".to_owned().."z".to_owned();
     /// assert_eq!(
     ///     BoundRange::from(range).into_keys(),
-    ///     (Key::from("a"), Some(Key::from("z"))),
+    ///     (Key::from("a".to_owned()), Some(Key::from("z".to_owned()))),
     /// );
     /// // Inclusive
-    /// let range = "a"..="z";
+    /// let range = "a".to_owned()..="z".to_owned();
     /// assert_eq!(
     ///     BoundRange::from(range).into_keys(),
-    ///     (Key::from("a"), Some(Key::from("z\0"))),
+    ///     (Key::from("a".to_owned()), Some(Key::from("z\0".to_owned()))),
     /// );
     /// // Open
-    /// let range = "a"..;
+    /// let range = "a".to_owned()..;
     /// assert_eq!(
     ///     BoundRange::from(range).into_keys(),
-    ///     (Key::from("a"), None),
+    ///     (Key::from("a".to_owned()), None),
     /// );
     // ```
     pub fn into_keys(self) -> (Key, Option<Key>) {
@@ -116,6 +116,7 @@ impl BoundRange {
     }
 }
 
+// FIXME `==` should not `clone`
 impl<T: Into<Key> + Clone> PartialEq<(Bound<T>, Bound<T>)> for BoundRange {
     fn eq(&self, other: &(Bound<T>, Bound<T>)) -> bool {
         self.from == convert_to_bound_key(other.0.clone())

@@ -13,18 +13,13 @@ use std::{fmt, str, u8};
 /// as valid `UTF-8` is not required. This means that the user is permitted to store any data they wish,
 /// as long as it can be represented by bytes. (Which is to say, pretty much anything!)
 ///
-/// This type also implements `From` for many types. With one exception, these are all done without
-/// reallocation. Using a `&'static str`, like many examples do for simplicity, has an internal
-/// allocation cost.
-///
-/// This type wraps around an owned value, so it should be treated it like `String` or `Vec<u8>`
-/// over a `&str` or `&[u8]`.
+/// This type wraps around an owned value, so it should be treated it like `String` or `Vec<u8>`.
 ///
 /// ```rust
 /// use tikv_client::Value;
 ///
 /// let static_str: &'static str = "TiKV";
-/// let from_static_str = Value::from(static_str);
+/// let from_static_str = Value::from(static_str.to_owned());
 ///
 /// let string: String = String::from(static_str);
 /// let from_string = Value::from(string);
@@ -70,12 +65,6 @@ impl From<Vec<u8>> for Value {
 impl From<String> for Value {
     fn from(v: String) -> Value {
         Value(v.into_bytes())
-    }
-}
-
-impl From<&'static str> for Value {
-    fn from(v: &'static str) -> Value {
-        Value(v.as_bytes().to_vec())
     }
 }
 
