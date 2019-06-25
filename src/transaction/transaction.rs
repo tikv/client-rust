@@ -12,6 +12,19 @@ use std::ops::RangeBounds;
 /// particular timestamp obtained from the placement driver.
 ///
 /// Once a transaction is commited, a new commit timestamp is obtained from the placement driver.
+///
+/// Create a new transaction from a snapshot using `new`.
+///
+/// ```rust,no_run
+/// # #![feature(async_await)]
+/// use tikv_client::{Config, transaction::Client};
+/// use futures::prelude::*;
+/// # futures::executor::block_on(async {
+/// let connect = Client::connect(Config::default());
+/// let client = connect.await.unwrap();
+/// let txn = client.begin();
+/// # });
+/// ```
 #[derive(new)]
 pub struct Transaction {
     snapshot: Snapshot,
