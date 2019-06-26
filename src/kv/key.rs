@@ -6,7 +6,7 @@ use proptest::{arbitrary::any_with, collection::size_range};
 #[cfg(test)]
 use proptest_derive::Arbitrary;
 use std::ops::Bound;
-use std::{fmt, str, u8};
+use std::{fmt, u8};
 
 /// The key part of a key/value pair.
 ///

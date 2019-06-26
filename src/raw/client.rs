@@ -157,12 +157,12 @@ impl Client {
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// # use tikv_client::{Config, raw::Client};
+    /// # use tikv_client::{Config, raw::Client, ToOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// let connect = Client::connect(Config::default());
     /// let client = connect.await.unwrap();
-    /// let scan_request = client.with_key_only(true).scan("TiKV".to_owned()..="TiDB".to_owned(), 2);
+    /// let scan_request = client.with_key_only(true).scan(("TiKV"..="TiDB").to_owned(), 2);
     /// # });
     /// ```
     pub fn with_key_only(&self, key_only: bool) -> Client {
