@@ -1,9 +1,9 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{arb_batch, integration::pd_addr};
+use super::{arb_batch, pd_addr};
+use crate::{raw::Client, Config, KvPair, Value};
 use futures::executor::block_on;
 use proptest::{arbitrary::any, proptest};
-use tikv_client::{raw::Client, Config, KvPair, Value};
 
 proptest! {
     /// Test single point (put, get, delete) operations on keys.

@@ -78,6 +78,8 @@ mod compat;
 mod config;
 mod errors;
 mod kv;
+#[cfg(test)]
+mod proptests;
 pub mod raw;
 mod rpc;
 pub mod transaction;
@@ -91,4 +93,4 @@ pub use crate::errors::ErrorKind;
 #[doc(inline)]
 pub use crate::errors::Result;
 #[doc(inline)]
-pub use crate::kv::{Key, KeyRange, KvPair, Value};
+pub use crate::kv::{BoundRange, Key, KvPair, Value};
