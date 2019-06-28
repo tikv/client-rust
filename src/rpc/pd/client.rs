@@ -9,14 +9,14 @@ use std::{
 use futures::compat::Compat01As03;
 use futures::prelude::*;
 use grpcio::{CallOption, Environment};
-use kvproto::{metapb, pdpb, pdpb::PdClient as RpcClient};
+use kvproto::{pdpb, pdpb::PdClient as RpcClient};
 
 use crate::{
     rpc::{
         context::RequestContext,
         pd::{
-            context::request_context, leader::LeaderClient, request::Request, Region, RegionId,
-            Store, StoreId, Timestamp,
+            context::request_context, leader::LeaderClient, request::Request, Region, Store,
+            StoreId, Timestamp,
         },
         security::SecurityManager,
     },
@@ -74,10 +74,7 @@ impl PdClient {
         self.leader.read().unwrap().members.get_leader().clone()
     }
 
-    fn get_region_and_leader(
-        &self,
-        key: &[u8],
-    ) -> impl Future<Output = Result<(metapb::Region, Option<metapb::Peer>)>> {
+    pub fn get_region(&self, key: &[u8]) -> impl Future<Output = Result<Region>> {
         let mut req = pd_request!(self.cluster_id, pdpb::GetRegionRequest);
         req.set_region_key(key.to_owned());
         let key = req.get_region_key().to_owned();
@@ -99,14 +96,11 @@ impl PdClient {
             } else {
                 None
             };
-            future::ready(Ok((region, leader)))
+            future::ready(Ok(Region::new(region, leader)))
         })
     }
 
-    fn get_region_and_leader_by_id(
-        &self,
-        region_id: u64,
-    ) -> impl Future<Output = Result<(metapb::Region, Option<metapb::Peer>)>> {
+    pub fn get_region_by_id(&self, region_id: u64) -> impl Future<Output = Result<Region>> {
         let mut req = pd_request!(self.cluster_id, pdpb::GetRegionByIdRequest);
         req.set_region_id(region_id);
 
@@ -128,7 +122,7 @@ impl PdClient {
             } else {
                 None
             };
-            future::ready(Ok((region, leader)))
+            future::ready(Ok(Region::new(region, leader)))
         })
     }
 
@@ -193,16 +187,6 @@ impl PdClient {
             },
         ))
         .map_ok(|mut resp| resp.take_store())
-    }
-
-    pub fn get_region(&self, key: &[u8]) -> impl Future<Output = Result<Region>> {
-        self.get_region_and_leader(key)
-            .map_ok(|x| Region::new(x.0, x.1))
-    }
-
-    pub fn get_region_by_id(&self, id: RegionId) -> impl Future<Output = Result<Region>> {
-        self.get_region_and_leader_by_id(id)
-            .map_ok(|x| Region::new(x.0, x.1))
     }
 
     pub fn get_ts(&self) -> impl Future<Output = Result<Timestamp>> {
