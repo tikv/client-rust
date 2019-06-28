@@ -3,6 +3,7 @@
 use super::Transaction;
 use crate::{Error, Key, KvPair, Value};
 
+use derive_new::new;
 use futures::prelude::*;
 use futures::task::{Context, Poll};
 use std::pin::Pin;
@@ -24,14 +25,9 @@ impl Stream for Scanner {
 ///
 /// Once resolved this request will result in the fetching of the value associated with the given
 /// key.
+#[derive(new)]
 pub struct Get {
     key: Key,
-}
-
-impl Get {
-    pub fn new(key: Key) -> Self {
-        Get { key }
-    }
 }
 
 impl Future for Get {
@@ -47,14 +43,9 @@ impl Future for Get {
 ///
 /// Once resolved this request will result in the fetching of the values associated with the given
 /// keys.
+#[derive(new)]
 pub struct BatchGet {
     keys: Vec<Key>,
-}
-
-impl BatchGet {
-    pub fn new(keys: Vec<Key>) -> Self {
-        BatchGet { keys }
-    }
 }
 
 impl Future for BatchGet {
@@ -69,14 +60,9 @@ impl Future for BatchGet {
 /// An unresolved [`Transaction::commit`](Transaction::commit) request.
 ///
 /// Once resolved this request will result in the committing of the transaction.
+#[derive(new)]
 pub struct Commit {
     txn: Transaction,
-}
-
-impl Commit {
-    pub fn new(txn: Transaction) -> Self {
-        Commit { txn }
-    }
 }
 
 impl Future for Commit {
@@ -91,14 +77,9 @@ impl Future for Commit {
 /// An unresolved [`Transaction::rollback`](Transaction::rollback) request.
 ///
 /// Once resolved this request will result in the rolling back of the transaction.
+#[derive(new)]
 pub struct Rollback {
     txn: Transaction,
-}
-
-impl Rollback {
-    pub fn new(txn: Transaction) -> Self {
-        Rollback { txn }
-    }
 }
 
 impl Future for Rollback {
@@ -113,14 +94,9 @@ impl Future for Rollback {
 /// An unresolved [`Transaction::lock_keys`](Transaction::lock_keys) request.
 ///
 /// Once resolved this request will result in the locking of the given keys.
+#[derive(new)]
 pub struct LockKeys {
     keys: Vec<Key>,
-}
-
-impl LockKeys {
-    pub fn new(keys: Vec<Key>) -> Self {
-        LockKeys { keys }
-    }
 }
 
 impl Future for LockKeys {
@@ -136,15 +112,10 @@ impl Future for LockKeys {
 ///
 /// Once resolved this request will result in the setting of the value associated with the given
 /// key.
+#[derive(new)]
 pub struct Set {
     key: Key,
     value: Value,
-}
-
-impl Set {
-    pub fn new(key: Key, value: Value) -> Self {
-        Set { key, value }
-    }
 }
 
 impl Future for Set {
@@ -160,14 +131,9 @@ impl Future for Set {
 /// An unresolved [`Transaction::delete`](Transaction::delete) request.
 ///
 /// Once resolved this request will result in the deletion of the given key.
+#[derive(new)]
 pub struct Delete {
     key: Key,
-}
-
-impl Delete {
-    pub fn new(key: Key) -> Self {
-        Delete { key }
-    }
 }
 
 impl Future for Delete {

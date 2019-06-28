@@ -1,8 +1,6 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::{sync::mpsc, thread, time::Duration};
-
-use lazy_static::*;
 use tokio_timer::{self, timer::Handle};
 
 macro_rules! internal_err {

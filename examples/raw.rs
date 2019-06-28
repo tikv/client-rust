@@ -1,6 +1,7 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 #![feature(async_await, await_macro)]
+#![type_length_limit = "3081103"]
 
 mod common;
 
@@ -84,8 +85,8 @@ async fn main() -> Result<()> {
     let start = "k1";
     let end = "k2";
     let pairs = client
+        .with_key_only(true)
         .scan(start..=end, 10)
-        .key_only()
         .await
         .expect("Could not scan");
 

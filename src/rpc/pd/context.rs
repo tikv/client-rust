@@ -1,7 +1,6 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use lazy_static::*;
-use prometheus::*;
+use prometheus::{Histogram, HistogramVec, IntCounterVec};
 
 use crate::rpc::context::RequestContext;
 

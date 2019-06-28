@@ -1,15 +1,112 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::{BatchDelete, BatchGet, BatchPut, BatchScan, Delete, DeleteRange, Get, Put, Scan};
-use crate::{rpc::RpcClient, BoundRange, Config, Key, KvPair, Result, Value};
+use super::ColumnFamily;
+use crate::{rpc::RpcClient, BoundRange, Config, Error, Key, KvPair, Result, Value};
 
+use derive_new::new;
+use futures::future::Either;
 use futures::prelude::*;
 use futures::task::{Context, Poll};
 use std::{pin::Pin, sync::Arc, u32};
 
+const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
+
 /// The TiKV raw [`Client`](Client) is used to issue requests to the TiKV server and PD cluster.
+#[derive(Clone)]
 pub struct Client {
     rpc: Arc<RpcClient>,
+    cf: Option<ColumnFamily>,
+    key_only: bool,
+}
+
+// The macros below make writing `impl Client` concise and hopefully easy to
+// read. Otherwise, the important bits get lost in boilerplate.
+
+// `request` and `scan_request` define public functions which return a future for
+// a request. When using them, supply the name of the function and the names of
+// arguments, the name of the function on the RPC client, and the `Output` type
+// of the returned future.
+macro_rules! request {
+    ($fn_name:ident ($($args:ident),*), $rpc_name:ident, $output:ty) => {
+        pub fn $fn_name(
+            &self,
+            $($args: arg_type!($args),)*
+        ) -> impl Future<Output = Result<$output>> {
+            let this = self.clone();
+            this.rpc.$rpc_name($(arg_convert!($args, $args)),*, this.cf)
+        }
+    }
+}
+
+macro_rules! scan_request {
+    ($fn_name:ident ($($args:ident),*), $rpc_name:ident, $output:ty) => {
+        pub fn $fn_name(
+            &self,
+            $($args: arg_type!($args),)*
+            limit: u32,
+        ) -> impl Future<Output = Result<$output>> {
+            if limit > MAX_RAW_KV_SCAN_LIMIT {
+                Either::Right(future::err(Error::max_scan_limit_exceeded(
+                    limit,
+                    MAX_RAW_KV_SCAN_LIMIT,
+                )))
+            } else {
+                let this = self.clone();
+                Either::Left(this.rpc.$rpc_name($(arg_convert!($args, $args)),*, limit, this.key_only, this.cf))
+            }
+        }
+    }
+}
+
+// The following macros are used by the above macros to understand how arguments
+// should be treated. `self` and `limit` (in scan requests) are treated separately.
+// Skip to the use of `args!` to see the definitions.
+//
+// When using arguments in the `request` macros, we need to use their name, type,
+// and be able to convert them for the RPC client functions. There are two kinds
+// of argument - individual values, and collections of values. In the first case
+// we always use `Into`, and in the second we take an iterator which we also
+// also transform using `Into::into`. This gives users maximum flexibility.
+//
+// `arg_type` defines the type for values (`into`) and collections (`iter`).
+// Likewise, `arg_convert` rule defines how to convert the argument into the more
+// concrete type required by the RPC client. Both macros are created by `args`.
+
+macro_rules! arg_type_rule {
+    (into<$ty:ty>) => (impl Into<$ty>);
+    (iter<$ty:ty>) => (impl IntoIterator<Item = impl Into<$ty>>);
+}
+
+macro_rules! arg_convert_rule {
+    (into $id:ident) => {
+        $id.into()
+    };
+    (iter $id:ident) => {
+        $id.into_iter().map(Into::into).collect()
+    };
+}
+
+// `$i` is the name of the argument (e.g, `key`)
+// `$kind` is either `iter` or `into`.
+// `$ty` is the concrete type of the argument.
+macro_rules! args {
+    ($($i:ident: $kind:ident<$ty:ty>;)*) => {
+        macro_rules! arg_type {
+            $(($i) => (arg_type_rule!($kind<$ty>));)*
+        }
+        macro_rules! arg_convert {
+            $(($i, $id : ident) => (arg_convert_rule!($kind $id));)*
+        }
+    }
+}
+
+args! {
+    key: into<Key>;
+    keys: iter<Key>;
+    value: into<Value>;
+    pairs: iter<KvPair>;
+    range: into<BoundRange>;
+    ranges: iter<BoundRange>;
 }
 
 impl Client {
@@ -28,12 +125,55 @@ impl Client {
         Connect::new(config)
     }
 
-    #[inline]
-    fn rpc(&self) -> Arc<RpcClient> {
-        Arc::clone(&self.rpc)
+    /// Set the column family of requests.
+    ///
+    /// This function returns a new `Client`, requests created with it will have the
+    /// supplied column family constraint. The original `Client` can still be used.
+    ///
+    /// ```rust,no_run
+    /// # #![feature(async_await)]
+    /// # use tikv_client::{Config, raw::Client};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// let connect = Client::connect(Config::default());
+    /// let client = connect.await.unwrap();
+    /// let get_request = client.with_cf("write").get("foo");
+    /// # });
+    /// ```
+    pub fn with_cf(&self, cf: impl Into<ColumnFamily>) -> Client {
+        Client {
+            rpc: self.rpc.clone(),
+            cf: Some(cf.into()),
+            key_only: self.key_only,
+        }
     }
 
-    /// Create a new [`Get`](Get) request.
+    /// Set the `key_only` option of requests.
+    ///
+    /// This function returns a new `Client`, requests created with it will have the
+    /// supplied `key_only` option. The original `Client` can still be used. `key_only`
+    /// is only relevant for `scan`-like requests, for other kinds of request, it
+    /// will be ignored.
+    ///
+    /// ```rust,no_run
+    /// # #![feature(async_await)]
+    /// # use tikv_client::{Config, raw::Client};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// let connect = Client::connect(Config::default());
+    /// let client = connect.await.unwrap();
+    /// let scan_request = client.with_key_only(true).scan("TiKV"..="TiDB", 2);
+    /// # });
+    /// ```
+    pub fn with_key_only(&self, key_only: bool) -> Client {
+        Client {
+            rpc: self.rpc.clone(),
+            cf: self.cf.clone(),
+            key_only,
+        }
+    }
+
+    /// Create a new get request.
     ///
     /// Once resolved this request will result in the fetching of the value associated with the
     /// given key.
@@ -50,11 +190,9 @@ impl Client {
     /// let result: Option<Value> = req.await.unwrap();
     /// # });
     /// ```
-    pub fn get(&self, key: impl Into<Key>) -> Get {
-        Get::new(self.rpc(), key.into())
-    }
+    request!(get(key), raw_get, Option<Value>);
 
-    /// Create a new [`BatchGet`](BatchGet) request.
+    /// Create a new batch get request.
     ///
     /// Once resolved this request will result in the fetching of the values associated with the
     /// given keys.
@@ -71,9 +209,7 @@ impl Client {
     /// let result: Vec<KvPair> = req.await.unwrap();
     /// # });
     /// ```
-    pub fn batch_get(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> BatchGet {
-        BatchGet::new(self.rpc(), keys.into_iter().map(Into::into).collect())
-    }
+    request!(batch_get(keys), raw_batch_get, Vec<KvPair>);
 
     /// Create a new [`Put`](Put) request.
     ///
@@ -92,9 +228,7 @@ impl Client {
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
-    pub fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Put {
-        Put::new(self.rpc(), key.into(), value.into())
-    }
+    request!(put(key, value), raw_put, ());
 
     /// Create a new [`BatchPut`](BatchPut) request.
     ///
@@ -114,9 +248,7 @@ impl Client {
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
-    pub fn batch_put(&self, pairs: impl IntoIterator<Item = impl Into<KvPair>>) -> BatchPut {
-        BatchPut::new(self.rpc(), pairs.into_iter().map(Into::into).collect())
-    }
+    request!(batch_put(pairs), raw_batch_put, ());
 
     /// Create a new [`Delete`](Delete) request.
     ///
@@ -134,9 +266,7 @@ impl Client {
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
-    pub fn delete(&self, key: impl Into<Key>) -> Delete {
-        Delete::new(self.rpc(), key.into())
-    }
+    request!(delete(key), raw_delete, ());
 
     /// Create a new [`BatchDelete`](BatchDelete) request.
     ///
@@ -154,9 +284,7 @@ impl Client {
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
-    pub fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> BatchDelete {
-        BatchDelete::new(self.rpc(), keys.into_iter().map(Into::into).collect())
-    }
+    request!(batch_delete(keys), raw_batch_delete, ());
 
     /// Create a new [`Scan`](Scan) request.
     ///
@@ -174,9 +302,7 @@ impl Client {
     /// let result: Vec<KvPair> = req.await.unwrap();
     /// # });
     /// ```
-    pub fn scan(&self, range: impl Into<BoundRange>, limit: u32) -> Scan {
-        Scan::new(self.rpc(), range.into(), limit)
-    }
+    scan_request!(scan(range), raw_scan, Vec<KvPair>);
 
     /// Create a new [`BatchScan`](BatchScan) request.
     ///
@@ -196,17 +322,7 @@ impl Client {
     /// let result = req.await;
     /// # });
     /// ```
-    pub fn batch_scan(
-        &self,
-        ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
-        each_limit: u32,
-    ) -> BatchScan {
-        BatchScan::new(
-            self.rpc(),
-            ranges.into_iter().map(Into::into).collect(),
-            each_limit,
-        )
-    }
+    scan_request!(batch_scan(ranges), raw_batch_scan, Vec<KvPair>);
 
     /// Create a new [`DeleteRange`](DeleteRange) request.
     ///
@@ -224,9 +340,7 @@ impl Client {
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
-    pub fn delete_range(&self, range: impl Into<BoundRange>) -> DeleteRange {
-        DeleteRange::new(self.rpc(), range.into())
-    }
+    request!(delete_range(range), raw_delete_range, ());
 }
 
 /// An unresolved [`Client`](Client) connection to a TiKV cluster.
@@ -243,14 +357,9 @@ impl Client {
 /// let client: Client = connect.await.unwrap();
 /// # });
 /// ```
+#[derive(new)]
 pub struct Connect {
     config: Config,
-}
-
-impl Connect {
-    fn new(config: Config) -> Self {
-        Connect { config }
-    }
 }
 
 impl Future for Connect {
@@ -259,6 +368,10 @@ impl Future for Connect {
     fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
         let config = &self.config;
         let rpc = Arc::new(RpcClient::connect(config)?);
-        Poll::Ready(Ok(Client { rpc }))
+        Poll::Ready(Ok(Client {
+            rpc,
+            cf: None,
+            key_only: false,
+        }))
     }
 }
