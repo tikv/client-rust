@@ -15,8 +15,8 @@ use crate::{
     rpc::{
         context::RequestContext,
         pd::{
-            context::request_context, leader::LeaderClient, request::Request, PdTimestamp, Region,
-            RegionId, Store, StoreId,
+            context::request_context, leader::LeaderClient, request::Request, Region, RegionId,
+            Store, StoreId, Timestamp,
         },
         security::SecurityManager,
     },
@@ -205,7 +205,7 @@ impl PdClient {
             .map_ok(|x| Region::new(x.0, x.1))
     }
 
-    pub fn get_ts(&self) -> impl Future<Output = Result<PdTimestamp>> {
+    pub fn get_ts(&self) -> impl Future<Output = Result<Timestamp>> {
         self.leader.write().unwrap().get_ts()
     }
 }

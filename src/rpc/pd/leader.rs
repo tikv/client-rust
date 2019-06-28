@@ -22,7 +22,7 @@ use crate::{
     rpc::{
         pd::{
             context::{observe_tso_batch, request_context},
-            PdTimestamp,
+            Timestamp,
         },
         security::SecurityManager,
     },
@@ -39,12 +39,12 @@ macro_rules! pd_request {
     }};
 }
 
-type TsoChannel = oneshot::Sender<PdTimestamp>;
+type TsoChannel = oneshot::Sender<Timestamp>;
 
 enum PdTask {
     Init,
     Request,
-    Response(Vec<oneshot::Sender<PdTimestamp>>, pdpb::TsoResponse),
+    Response(Vec<oneshot::Sender<Timestamp>>, pdpb::TsoResponse),
 }
 
 struct PdReactor {
@@ -189,7 +189,7 @@ impl PdReactor {
         let timestamp = response.get_timestamp();
         for (offset, request) in requests.drain(..).enumerate() {
             request
-                .send(PdTimestamp {
+                .send(Timestamp {
                     physical: timestamp.physical,
                     logical: timestamp.logical + offset as i64,
                 })
@@ -206,9 +206,9 @@ impl PdReactor {
         }
     }
 
-    fn get_ts(&mut self) -> impl Future<Output = Result<PdTimestamp>> {
+    fn get_ts(&mut self) -> impl Future<Output = Result<Timestamp>> {
         let context = request_context("get_ts", ());
-        let (tx, rx) = oneshot::channel::<PdTimestamp>();
+        let (tx, rx) = oneshot::channel::<Timestamp>();
         self.tso_batch.push(tx);
         if self.tso_pending.is_none() {
             // Schedule tso request to run.
@@ -260,7 +260,7 @@ impl LeaderClient {
         Ok(client)
     }
 
-    pub fn get_ts(&mut self) -> impl Future<Output = Result<PdTimestamp>> {
+    pub fn get_ts(&mut self) -> impl Future<Output = Result<Timestamp>> {
         self.reactor.get_ts()
     }
 

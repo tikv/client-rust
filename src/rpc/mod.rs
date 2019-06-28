@@ -8,4 +8,5 @@ mod pd;
 mod security;
 mod tikv;
 
-pub(crate) use crate::rpc::client::RpcClient;
+pub(crate) use self::client::RpcClient;
+pub use self::pd::Timestamp;

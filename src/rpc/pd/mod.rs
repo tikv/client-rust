@@ -93,7 +93,7 @@ impl Region {
 }
 
 #[derive(Eq, PartialEq, Debug)]
-pub struct PdTimestamp {
+pub struct Timestamp {
     pub physical: i64,
     pub logical: i64,
 }
