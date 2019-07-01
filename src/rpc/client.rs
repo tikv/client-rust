@@ -296,7 +296,7 @@ impl RpcClient {
     }
 
     fn get_region(&self, key: &Key) -> impl Future<Output = Result<Region>> {
-        self.pd.get_region(key)
+        self.pd.get_region(key.into())
     }
 
     fn kv_client(&self, context: &RegionContext) -> Result<Arc<KvClient>> {
