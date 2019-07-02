@@ -5,7 +5,6 @@ use super::HexRepr;
 use proptest::{arbitrary::any_with, collection::size_range};
 #[cfg(test)]
 use proptest_derive::Arbitrary;
-use std::ops::Deref;
 use std::{fmt, str, u8};
 
 /// The value part of a key/value pair.
@@ -13,8 +12,6 @@ use std::{fmt, str, u8};
 /// In TiKV, values are an ordered sequence of bytes. This has an advantage over choosing `String`
 /// as valid `UTF-8` is not required. This means that the user is permitted to store any data they wish,
 /// as long as it can be represented by bytes. (Which is to say, pretty much anything!)
-///
-/// This is a *wrapper type* that implements `Deref<Target=[u8]>` so it can be used like one transparently.
 ///
 /// This type also implements `From` for many types. With one exception, these are all done without
 /// reallocation. Using a `&'static str`, like many examples do for simplicity, has an internal
@@ -54,18 +51,13 @@ pub struct Value(
             strategy = "any_with::<Vec<u8>>((size_range(crate::proptests::PROPTEST_VALUE_MAX), ()))"
         )
     )]
-    Vec<u8>,
+    pub(super) Vec<u8>,
 );
 
 impl Value {
     #[inline]
-    pub fn new(value: Vec<u8>) -> Self {
-        Value(value)
-    }
-
-    #[inline]
-    pub(crate) fn into_inner(self) -> Vec<u8> {
-        self.0
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -87,16 +79,14 @@ impl From<&'static str> for Value {
     }
 }
 
-impl Deref for Value {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+impl Into<Vec<u8>> for Value {
+    fn into(self) -> Vec<u8> {
+        self.0
     }
 }
 
-impl AsRef<[u8]> for Value {
-    fn as_ref(&self) -> &[u8] {
+impl<'a> Into<&'a [u8]> for &'a Value {
+    fn into(self) -> &'a [u8] {
         &self.0
     }
 }

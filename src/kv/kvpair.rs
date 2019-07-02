@@ -42,11 +42,6 @@ impl KvPair {
     }
 
     #[inline]
-    pub fn into_inner(self) -> (Key, Value) {
-        (self.0, self.1)
-    }
-
-    #[inline]
     pub fn into_key(self) -> Key {
         self.0
     }
@@ -91,12 +86,18 @@ where
     }
 }
 
+impl Into<(Key, Value)> for KvPair {
+    fn into(self) -> (Key, Value) {
+        (self.0, self.1)
+    }
+}
+
 impl fmt::Debug for KvPair {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let KvPair(key, value) = self;
-        match str::from_utf8(&value) {
-            Ok(s) => write!(f, "KvPair({}, {:?})", HexRepr(&key), s),
-            Err(_) => write!(f, "KvPair({}, {})", HexRepr(&key), HexRepr(&value)),
+        match str::from_utf8(&value.0) {
+            Ok(s) => write!(f, "KvPair({}, {:?})", HexRepr(&key.0), s),
+            Err(_) => write!(f, "KvPair({}, {})", HexRepr(&key.0), HexRepr(&value.0)),
         }
     }
 }

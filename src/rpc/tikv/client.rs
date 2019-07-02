@@ -11,8 +11,9 @@ use grpcio::{CallOption, Environment};
 use kvproto::{errorpb, kvrpcpb, tikvpb::TikvClient};
 
 use crate::{
+    raw::ColumnFamily,
     rpc::{
-        client::{RawContext, TxnContext},
+        client::{RegionContext, TxnContext},
         security::SecurityManager,
         tikv::context::{request_context, RequestContext},
     },
@@ -159,10 +160,10 @@ has_no_error!(kvrpcpb::RawScanResponse);
 has_no_error!(kvrpcpb::RawBatchScanResponse);
 
 macro_rules! raw_request {
-    ($context:expr, $type:ty) => {{
+    ($region:expr, $cf:expr, $type:ty) => {{
         let mut req = <$type>::default();
-        req.set_context($context.region.into());
-        if let Some(cf) = $context.cf {
+        req.set_context($region.into());
+        if let Some(cf) = $cf {
             req.set_cf(cf.to_string());
         }
         req
@@ -183,20 +184,20 @@ impl From<Mutation> for kvrpcpb::Mutation {
         match mutation {
             Mutation::Put(k, v) => {
                 pb.set_op(kvrpcpb::Op::Put);
-                pb.set_key(k.into_inner());
-                pb.set_value(v.into_inner());
+                pb.set_key(k.into());
+                pb.set_value(v.into());
             }
             Mutation::Del(k) => {
                 pb.set_op(kvrpcpb::Op::Del);
-                pb.set_key(k.into_inner());
+                pb.set_key(k.into());
             }
             Mutation::Lock(k) => {
                 pb.set_op(kvrpcpb::Op::Lock);
-                pb.set_key(k.into_inner());
+                pb.set_key(k.into());
             }
             Mutation::Rollback(k) => {
                 pb.set_op(kvrpcpb::Op::Rollback);
-                pb.set_key(k.into_inner());
+                pb.set_key(k.into());
             }
         };
         pb
@@ -240,7 +241,7 @@ impl KvClient {
         key: Key,
     ) -> impl Future<Output = Result<kvrpcpb::GetResponse>> {
         let mut req = txn_request!(context, kvrpcpb::GetRequest);
-        req.set_key(key.into_inner());
+        req.set_key(key.into());
         req.set_version(version);
 
         self.execute(request_context(
@@ -261,8 +262,8 @@ impl KvClient {
         key_only: bool,
     ) -> impl Future<Output = Result<kvrpcpb::ScanResponse>> {
         let mut req = txn_request!(context, kvrpcpb::ScanRequest);
-        req.set_start_key(start_key.into_inner());
-        req.set_end_key(end_key.into_inner());
+        req.set_start_key(start_key.into());
+        req.set_end_key(end_key.into());
         req.set_version(version);
         req.set_limit(limit);
         req.set_key_only(key_only);
@@ -286,7 +287,7 @@ impl KvClient {
     ) -> impl Future<Output = Result<kvrpcpb::PrewriteResponse>> {
         let mut req = txn_request!(context, kvrpcpb::PrewriteRequest);
         req.set_mutations(mutations.map(Into::into).collect());
-        req.set_primary_lock(primary_lock.into_inner());
+        req.set_primary_lock(primary_lock.into());
         req.set_start_version(start_version);
         req.set_lock_ttl(lock_ttl);
         req.set_skip_constraint_check(skip_constraint_check);
@@ -307,7 +308,7 @@ impl KvClient {
         commit_version: u64,
     ) -> impl Future<Output = Result<kvrpcpb::CommitResponse>> {
         let mut req = txn_request!(context, kvrpcpb::CommitRequest);
-        req.set_keys(keys.map(|x| x.into_inner()).collect());
+        req.set_keys(keys.map(|x| x.into()).collect());
         req.set_start_version(start_version);
         req.set_commit_version(commit_version);
 
@@ -343,7 +344,7 @@ impl KvClient {
         start_version: u64,
     ) -> impl Future<Output = Result<kvrpcpb::CleanupResponse>> {
         let mut req = txn_request!(context, kvrpcpb::CleanupRequest);
-        req.set_key(key.into_inner());
+        req.set_key(key.into());
         req.set_start_version(start_version);
 
         self.execute(request_context(
@@ -361,7 +362,7 @@ impl KvClient {
         version: u64,
     ) -> impl Future<Output = Result<kvrpcpb::BatchGetResponse>> {
         let mut req = txn_request!(context, kvrpcpb::BatchGetRequest);
-        req.set_keys(keys.map(|x| x.into_inner()).collect());
+        req.set_keys(keys.map(|x| x.into()).collect());
         req.set_version(version);
 
         self.execute(request_context(
@@ -379,7 +380,7 @@ impl KvClient {
         start_version: u64,
     ) -> impl Future<Output = Result<kvrpcpb::BatchRollbackResponse>> {
         let mut req = txn_request!(context, kvrpcpb::BatchRollbackRequest);
-        req.set_keys(keys.map(|x| x.into_inner()).collect());
+        req.set_keys(keys.map(|x| x.into()).collect());
         req.set_start_version(start_version);
 
         self.execute(request_context(
@@ -399,7 +400,7 @@ impl KvClient {
         limit: u32,
     ) -> impl Future<Output = Result<kvrpcpb::ScanLockResponse>> {
         let mut req = txn_request!(context, kvrpcpb::ScanLockRequest);
-        req.set_start_key(start_key.into_inner());
+        req.set_start_key(start_key.into());
         req.set_max_version(max_version);
         req.set_limit(limit);
 
@@ -455,8 +456,8 @@ impl KvClient {
         end_key: Key,
     ) -> impl Future<Output = Result<kvrpcpb::DeleteRangeResponse>> {
         let mut req = txn_request!(context, kvrpcpb::DeleteRangeRequest);
-        req.set_start_key(start_key.into_inner());
-        req.set_end_key(end_key.into_inner());
+        req.set_start_key(start_key.into());
+        req.set_end_key(end_key.into());
 
         self.execute(request_context(
             "kv_delete_range",
@@ -467,9 +468,14 @@ impl KvClient {
         ))
     }
 
-    pub fn raw_get(&self, context: RawContext, key: Key) -> impl Future<Output = Result<Value>> {
-        let mut req = raw_request!(context, kvrpcpb::RawGetRequest);
-        req.set_key(key.into_inner());
+    pub fn raw_get(
+        &self,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
+        key: Key,
+    ) -> impl Future<Output = Result<Value>> {
+        let mut req = raw_request!(context, cf, kvrpcpb::RawGetRequest);
+        req.set_key(key.into());
 
         self.execute(request_context(
             "raw_get",
@@ -482,11 +488,12 @@ impl KvClient {
 
     pub fn raw_batch_get(
         &self,
-        context: RawContext,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
         keys: impl Iterator<Item = Key>,
     ) -> impl Future<Output = Result<Vec<KvPair>>> {
-        let mut req = raw_request!(context, kvrpcpb::RawBatchGetRequest);
-        req.set_keys(keys.map(|x| x.into_inner()).collect());
+        let mut req = raw_request!(context, cf, kvrpcpb::RawBatchGetRequest);
+        req.set_keys(keys.map(|x| x.into()).collect());
 
         self.execute(request_context(
             "raw_batch_get",
@@ -500,13 +507,14 @@ impl KvClient {
 
     pub fn raw_put(
         &self,
-        context: RawContext,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
         key: Key,
         value: Value,
     ) -> impl Future<Output = Result<()>> {
-        let mut req = raw_request!(context, kvrpcpb::RawPutRequest);
-        req.set_key(key.into_inner());
-        req.set_value(value.into_inner());
+        let mut req = raw_request!(context, cf, kvrpcpb::RawPutRequest);
+        req.set_key(key.into());
+        req.set_value(value.into());
 
         self.execute(request_context(
             "raw_put",
@@ -519,10 +527,11 @@ impl KvClient {
 
     pub fn raw_batch_put(
         &self,
-        context: RawContext,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
         pairs: Vec<KvPair>,
     ) -> impl Future<Output = Result<()>> {
-        let mut req = raw_request!(context, kvrpcpb::RawBatchPutRequest);
+        let mut req = raw_request!(context, cf, kvrpcpb::RawBatchPutRequest);
         req.set_pairs(Self::convert_to_grpc_pairs(pairs));
 
         self.execute(request_context(
@@ -535,9 +544,14 @@ impl KvClient {
         .map_ok(|_| ())
     }
 
-    pub fn raw_delete(&self, context: RawContext, key: Key) -> impl Future<Output = Result<()>> {
-        let mut req = raw_request!(context, kvrpcpb::RawDeleteRequest);
-        req.set_key(key.into_inner());
+    pub fn raw_delete(
+        &self,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
+        key: Key,
+    ) -> impl Future<Output = Result<()>> {
+        let mut req = raw_request!(context, cf, kvrpcpb::RawDeleteRequest);
+        req.set_key(key.into());
 
         self.execute(request_context(
             "raw_delete",
@@ -550,11 +564,12 @@ impl KvClient {
 
     pub fn raw_batch_delete(
         &self,
-        context: RawContext,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
         keys: Vec<Key>,
     ) -> impl Future<Output = Result<()>> {
-        let mut req = raw_request!(context, kvrpcpb::RawBatchDeleteRequest);
-        req.set_keys(keys.into_iter().map(|x| x.into_inner()).collect());
+        let mut req = raw_request!(context, cf, kvrpcpb::RawBatchDeleteRequest);
+        req.set_keys(keys.into_iter().map(|x| x.into()).collect());
 
         self.execute(request_context(
             "raw_batch_delete",
@@ -568,17 +583,17 @@ impl KvClient {
 
     pub fn raw_scan(
         &self,
-        context: RawContext,
-        start_key: Option<Key>,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
+        start_key: Key,
         end_key: Option<Key>,
         limit: u32,
         key_only: bool,
     ) -> impl Future<Output = Result<Vec<KvPair>>> {
-        let mut req = raw_request!(context, kvrpcpb::RawScanRequest);
-        start_key
-            .map(|k| req.set_start_key(k.into_inner()))
-            .unwrap();
-        end_key.map(|k| req.set_end_key(k.into_inner())).unwrap();
+        let mut req = raw_request!(context, cf, kvrpcpb::RawScanRequest);
+        req.set_start_key(start_key.into());
+        // FIXME we shouldn't panic when there is no end_key
+        end_key.map(|k| req.set_end_key(k.into())).unwrap();
         req.set_limit(limit);
         req.set_key_only(key_only);
 
@@ -593,12 +608,13 @@ impl KvClient {
 
     pub fn raw_batch_scan(
         &self,
-        context: RawContext,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
         ranges: impl Iterator<Item = (Option<Key>, Option<Key>)>,
         each_limit: u32,
         key_only: bool,
     ) -> impl Future<Output = Result<Vec<KvPair>>> {
-        let mut req = raw_request!(context, kvrpcpb::RawBatchScanRequest);
+        let mut req = raw_request!(context, cf, kvrpcpb::RawBatchScanRequest);
         req.set_ranges(Self::convert_to_grpc_ranges(ranges));
         req.set_each_limit(each_limit);
         req.set_key_only(key_only);
@@ -615,13 +631,14 @@ impl KvClient {
 
     pub fn raw_delete_range(
         &self,
-        context: RawContext,
+        context: RegionContext,
+        cf: Option<ColumnFamily>,
         start_key: Key,
         end_key: Key,
     ) -> impl Future<Output = Result<()>> {
-        let mut req = raw_request!(context, kvrpcpb::RawDeleteRangeRequest);
-        req.set_start_key(start_key.into_inner());
-        req.set_end_key(end_key.into_inner());
+        let mut req = raw_request!(context, cf, kvrpcpb::RawDeleteRangeRequest);
+        req.set_start_key(start_key.into());
+        req.set_end_key(end_key.into());
 
         self.execute(request_context(
             "raw_delete_range",
@@ -666,9 +683,9 @@ impl KvClient {
     #[inline]
     fn convert_to_grpc_pair(pair: KvPair) -> kvrpcpb::KvPair {
         let mut result = kvrpcpb::KvPair::default();
-        let (key, value) = pair.into_inner();
-        result.set_key(key.into_inner());
-        result.set_value(value.into_inner());
+        let (key, value) = pair.into();
+        result.set_key(key.into());
+        result.set_value(value.into());
         result
     }
 
@@ -694,8 +711,8 @@ impl KvClient {
     fn convert_to_grpc_range(range: (Option<Key>, Option<Key>)) -> kvrpcpb::KeyRange {
         let (start, end) = range;
         let mut range = kvrpcpb::KeyRange::default();
-        start.map(|k| range.set_start_key(k.into_inner())).unwrap();
-        end.map(|k| range.set_end_key(k.into_inner())).unwrap();
+        start.map(|k| range.set_start_key(k.into())).unwrap();
+        end.map(|k| range.set_end_key(k.into())).unwrap();
         range
     }
 

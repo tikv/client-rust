@@ -9,8 +9,6 @@ use std::{
 };
 
 use grpcio::{Channel, ChannelBuilder, ChannelCredentialsBuilder, Environment};
-use lazy_static::*;
-use log::*;
 use regex::Regex;
 
 use crate::Result;

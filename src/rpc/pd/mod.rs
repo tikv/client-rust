@@ -3,6 +3,7 @@
 // TODO: Remove this when txn is done.
 #![allow(dead_code)]
 
+use derive_new::new;
 pub use kvproto::metapb::{Peer, Store};
 use kvproto::{kvrpcpb, metapb};
 
@@ -25,23 +26,19 @@ pub struct RegionVerId {
     pub ver: u64,
 }
 
-#[derive(Clone, Default, Debug, PartialEq)]
+#[derive(new, Clone, Default, Debug, PartialEq)]
 pub struct Region {
     pub region: metapb::Region,
     pub leader: Option<Peer>,
 }
 
 impl Region {
-    pub fn new(region: metapb::Region, leader: Option<metapb::Peer>) -> Self {
-        Region { region, leader }
-    }
-
     pub fn switch_peer(&mut self, _to: StoreId) -> Result<()> {
         unimplemented!()
     }
 
     pub fn contains(&self, key: &Key) -> bool {
-        let key: &[u8] = key.as_ref();
+        let key: &[u8] = key.into();
         let start_key = self.region.get_start_key();
         let end_key = self.region.get_end_key();
         start_key <= key && (end_key > key || end_key.is_empty())

@@ -84,6 +84,13 @@ pub mod raw;
 mod rpc;
 pub mod transaction;
 
+#[macro_use]
+extern crate lazy_static;
+#[macro_use]
+extern crate log;
+#[macro_use]
+extern crate prometheus;
+
 #[doc(inline)]
 pub use crate::config::Config;
 #[doc(inline)]

@@ -15,7 +15,6 @@ use futures::compat::{Compat01As03, Compat01As03Sink};
 use futures::prelude::*;
 use grpcio::{CallOption, Environment, WriteFlags};
 use kvproto::pdpb;
-use log::*;
 use tokio_core::reactor::{Core, Handle as TokioHandle};
 
 use crate::{
