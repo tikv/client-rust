@@ -8,7 +8,7 @@ os:
 rust:
   # Requires nightly for now, stable can be re-enabled when 1.36 is stable.
   # - stable
-  - nightly-2019-05-22
+  - nightly
 env:
   global:
     - RUST_BACKTRACE=1
@@ -28,9 +28,6 @@ addons:
       - go
 
 install:
-  # FIXME(#55) Remove when Clippy is fixed in current nightly
-  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then rustup toolchain install nightly-2019-05-22; fi
-  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then rustup default nightly-2019-05-22; fi
   - if [[ $TRAVIS_OS_NAME == "linux" ]]; then rustup component add rustfmt; fi
   - if [[ $TRAVIS_OS_NAME == "linux" ]]; then rustup component add clippy; fi
   - if [[ $TRAVIS_OS_NAME == "windows" ]]; then choco install golang cmake strawberryperl protoc; fi
