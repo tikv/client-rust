@@ -78,6 +78,8 @@ mod compat;
 mod config;
 mod errors;
 mod kv;
+#[cfg(test)]
+mod proptests;
 pub mod raw;
 mod rpc;
 pub mod transaction;
