@@ -10,20 +10,20 @@ use std::{
     time::Duration,
 };
 
-use derive_new::new;
 use futures::future::{ready, Either};
 use futures::prelude::*;
 use grpcio::{EnvBuilder, Environment};
-use kvproto::kvrpcpb;
+use kvproto::metapb;
 
 use crate::{
     compat::{stream_fn, ClientFutureExt},
     kv::BoundRange,
     raw::ColumnFamily,
     rpc::{
-        pd::{PdClient, Region, RegionId, Store, StoreId},
+        pd::{PdClient, Region, RegionId, StoreId},
         security::SecurityManager,
         tikv::KvClient,
+        RawContext, RegionContext, TxnContext,
     },
     Config, Error, Key, KvPair, Result, Value,
 };
@@ -58,9 +58,9 @@ impl RpcClient {
         );
 
         let pd = Arc::new(PdClient::connect(
-            Arc::clone(&env),
+            env.clone(),
             &config.pd_endpoints,
-            Arc::clone(&security_mgr),
+            security_mgr.clone(),
             config.timeout,
         )?);
         let tikv = Default::default();
@@ -236,21 +236,15 @@ impl RpcClient {
             };
             let end_key = end_key.clone();
             let this = self.clone();
-            Either::Left(
-                self.clone()
-                    .get_region(&start_key)
-                    .and_then(move |location| {
-                        this.raw_from_id(location.id()).map_ok(move |context| {
-                            let region_end = context.region.end_key();
-                            if end_key.map(|x| x < region_end).unwrap_or(false)
-                                || region_end.is_empty()
-                            {
-                                return Some((None, context));
-                            }
-                            Some((Some(region_end), context))
-                        })
-                    }),
-            )
+            Either::Left(self.get_region(&start_key).and_then(move |location| {
+                this.raw_from_id(location.id()).map_ok(move |context| {
+                    let region_end = context.region.end_key();
+                    if end_key.map(|x| x < region_end).unwrap_or(false) || region_end.is_empty() {
+                        return Some((None, context));
+                    }
+                    Some((Some(region_end), context))
+                })
+            }))
         })
     }
 
@@ -267,28 +261,24 @@ impl RpcClient {
             if tasks.is_empty() {
                 Either::Right(ready(Ok(None)))
             } else {
-                Either::Left(
-                    self.clone()
-                        .get_region(tasks[0].key())
-                        .map_ok(move |location| {
-                            let ver_id = location.ver_id();
-                            let mut grouped = Vec::new();
-                            while let Some(task) = tasks.pop_front() {
-                                if !location.contains(task.key()) {
-                                    break;
-                                }
-                                grouped.push(task);
-                            }
-                            Some((tasks, (ver_id.id, grouped)))
-                        }),
-                )
+                Either::Left(self.get_region(tasks[0].key()).map_ok(move |location| {
+                    let ver_id = location.ver_id();
+                    let mut grouped = Vec::new();
+                    while let Some(task) = tasks.pop_front() {
+                        if !location.contains(task.key()) {
+                            break;
+                        }
+                        grouped.push(task);
+                    }
+                    Some((tasks, (ver_id.id, grouped)))
+                }))
             }
         })
     }
 
-    fn load_store(&self, id: StoreId) -> impl Future<Output = Result<Store>> {
+    fn load_store(&self, id: StoreId) -> impl Future<Output = Result<metapb::Store>> {
         info!("reload info for store {}", id);
-        self.pd.get_store(id).map_ok(Into::into)
+        self.pd.get_store(id)
     }
 
     fn load_region_by_id(&self, id: RegionId) -> impl Future<Output = Result<Region>> {
@@ -301,12 +291,12 @@ impl RpcClient {
 
     fn kv_client(&self, context: &RegionContext) -> Result<Arc<KvClient>> {
         if let Some(conn) = self.tikv.read().unwrap().get(context.address()) {
-            return Ok(Arc::clone(conn));
+            return Ok(conn.clone());
         };
         info!("connect to tikv endpoint: {:?}", context.address());
         let tikv = self.tikv.clone();
         KvClient::connect(
-            Arc::clone(&self.env),
+            self.env.clone(),
             context.address(),
             &self.security_mgr,
             self.timeout,
@@ -315,7 +305,7 @@ impl RpcClient {
         .map(|c| {
             tikv.write()
                 .unwrap()
-                .insert(context.address().to_owned(), Arc::clone(&c));
+                .insert(context.address().to_owned(), c.clone());
             c
         })
     }
@@ -373,50 +363,6 @@ impl fmt::Debug for RpcClient {
             .field("pd", &self.pd)
             .finish()
     }
-}
-
-pub struct RegionContext {
-    region: Region,
-    store: Store,
-}
-
-impl RegionContext {
-    fn address(&self) -> &str {
-        self.store.get_address()
-    }
-
-    fn start_key(&self) -> Key {
-        self.region.start_key().to_vec().into()
-    }
-
-    fn end_key(&self) -> Key {
-        self.region.end_key().to_vec().into()
-    }
-
-    fn range(&self) -> (Key, Key) {
-        (self.start_key(), self.end_key())
-    }
-}
-
-impl From<RegionContext> for kvrpcpb::Context {
-    fn from(mut ctx: RegionContext) -> kvrpcpb::Context {
-        let mut kvctx = kvrpcpb::Context::default();
-        kvctx.set_region_id(ctx.region.id());
-        kvctx.set_region_epoch(ctx.region.region.take_region_epoch());
-        kvctx.set_peer(ctx.region.peer().expect("leader must exist"));
-        kvctx
-    }
-}
-
-#[derive(new)]
-pub struct RawContext {
-    pub(super) region: RegionContext,
-    pub(super) client: Arc<KvClient>,
-}
-
-#[derive(new)]
-pub struct TxnContext {
-    pub(super) region: RegionContext,
 }
 
 trait GroupingTask: Clone + Default + Sized {

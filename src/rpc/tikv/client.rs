@@ -13,9 +13,9 @@ use kvproto::{errorpb, kvrpcpb, tikvpb::TikvClient};
 use crate::{
     raw::ColumnFamily,
     rpc::{
-        client::{RegionContext, TxnContext},
         security::SecurityManager,
         tikv::context::{request_context, RequestContext},
+        RegionContext, TxnContext,
     },
     transaction::{Mutation, TxnInfo},
     Error, ErrorKind, Key, KvPair, Result, Value,
@@ -220,7 +220,7 @@ pub struct KvClient {
 }
 
 impl KvClient {
-    pub fn connect(
+    pub(in crate::rpc) fn connect(
         env: Arc<Environment>,
         addr: &str,
         security_mgr: &Arc<SecurityManager>,
@@ -234,7 +234,7 @@ impl KvClient {
         })
     }
 
-    pub fn kv_get(
+    pub(in crate::rpc) fn kv_get(
         &self,
         context: TxnContext,
         version: u64,
@@ -252,7 +252,7 @@ impl KvClient {
         ))
     }
 
-    pub fn kv_scan(
+    pub(in crate::rpc) fn kv_scan(
         &self,
         context: TxnContext,
         version: u64,
@@ -276,7 +276,7 @@ impl KvClient {
         ))
     }
 
-    pub fn kv_prewrite(
+    pub(in crate::rpc) fn kv_prewrite(
         &self,
         context: TxnContext,
         mutations: impl Iterator<Item = Mutation>,
@@ -300,7 +300,7 @@ impl KvClient {
         ))
     }
 
-    pub fn kv_commit(
+    pub(in crate::rpc) fn kv_commit(
         &self,
         context: TxnContext,
         keys: impl Iterator<Item = Key>,
@@ -320,7 +320,7 @@ impl KvClient {
         ))
     }
 
-    pub fn kv_import(
+    pub(in crate::rpc) fn kv_import(
         &self,
         mutations: impl Iterator<Item = Mutation>,
         commit_version: u64,
@@ -337,7 +337,7 @@ impl KvClient {
         ))
     }
 
-    pub fn kv_cleanup(
+    pub(in crate::rpc) fn kv_cleanup(
         &self,
         context: TxnContext,
         key: Key,
@@ -355,7 +355,7 @@ impl KvClient {
         ))
     }
 
-    pub fn kv_batch_get(
+    pub(in crate::rpc) fn kv_batch_get(
         &self,
         context: TxnContext,
         keys: impl Iterator<Item = Key>,
@@ -373,7 +373,7 @@ impl KvClient {
         ))
     }
 
-    pub fn kv_batch_rollback(
+    pub(in crate::rpc) fn kv_batch_rollback(
         &self,
         context: TxnContext,
         keys: impl Iterator<Item = Key>,
@@ -392,7 +392,7 @@ impl KvClient {
         ))
     }
 
-    pub fn kv_scan_lock(
+    pub(in crate::rpc) fn kv_scan_lock(
         &self,
         context: TxnContext,
         start_key: Key,
@@ -412,7 +412,7 @@ impl KvClient {
         ))
     }
 
-    pub fn kv_resolve_lock(
+    pub(in crate::rpc) fn kv_resolve_lock(
         &self,
         context: TxnContext,
         txn_infos: impl Iterator<Item = TxnInfo>,
@@ -433,7 +433,7 @@ impl KvClient {
         ))
     }
 
-    pub fn kv_gc(
+    pub(in crate::rpc) fn kv_gc(
         &self,
         context: TxnContext,
         safe_point: u64,
@@ -449,7 +449,7 @@ impl KvClient {
         ))
     }
 
-    pub fn kv_delete_range(
+    pub(in crate::rpc) fn kv_delete_range(
         &self,
         context: TxnContext,
         start_key: Key,
@@ -468,7 +468,7 @@ impl KvClient {
         ))
     }
 
-    pub fn raw_get(
+    pub(in crate::rpc) fn raw_get(
         &self,
         context: RegionContext,
         cf: Option<ColumnFamily>,
@@ -486,7 +486,7 @@ impl KvClient {
         .map_ok(|mut resp| resp.take_value().into())
     }
 
-    pub fn raw_batch_get(
+    pub(in crate::rpc) fn raw_batch_get(
         &self,
         context: RegionContext,
         cf: Option<ColumnFamily>,
@@ -505,7 +505,7 @@ impl KvClient {
         .map_ok(|mut resp| Self::convert_from_grpc_pairs(resp.take_pairs()))
     }
 
-    pub fn raw_put(
+    pub(in crate::rpc) fn raw_put(
         &self,
         context: RegionContext,
         cf: Option<ColumnFamily>,
@@ -525,7 +525,7 @@ impl KvClient {
         .map_ok(|_| ())
     }
 
-    pub fn raw_batch_put(
+    pub(in crate::rpc) fn raw_batch_put(
         &self,
         context: RegionContext,
         cf: Option<ColumnFamily>,
@@ -544,7 +544,7 @@ impl KvClient {
         .map_ok(|_| ())
     }
 
-    pub fn raw_delete(
+    pub(in crate::rpc) fn raw_delete(
         &self,
         context: RegionContext,
         cf: Option<ColumnFamily>,
@@ -562,7 +562,7 @@ impl KvClient {
         .map_ok(|_| ())
     }
 
-    pub fn raw_batch_delete(
+    pub(in crate::rpc) fn raw_batch_delete(
         &self,
         context: RegionContext,
         cf: Option<ColumnFamily>,
@@ -581,7 +581,7 @@ impl KvClient {
         .map_ok(|_| ())
     }
 
-    pub fn raw_scan(
+    pub(in crate::rpc) fn raw_scan(
         &self,
         context: RegionContext,
         cf: Option<ColumnFamily>,
@@ -606,7 +606,7 @@ impl KvClient {
         .map_ok(|mut resp| Self::convert_from_grpc_pairs(resp.take_kvs()))
     }
 
-    pub fn raw_batch_scan(
+    pub(in crate::rpc) fn raw_batch_scan(
         &self,
         context: RegionContext,
         cf: Option<ColumnFamily>,
@@ -629,7 +629,7 @@ impl KvClient {
         .map_ok(|mut resp| Self::convert_from_grpc_pairs(resp.take_kvs()))
     }
 
-    pub fn raw_delete_range(
+    pub(in crate::rpc) fn raw_delete_range(
         &self,
         context: RegionContext,
         cf: Option<ColumnFamily>,

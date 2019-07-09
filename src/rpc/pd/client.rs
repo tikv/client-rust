@@ -15,8 +15,8 @@ use crate::{
     rpc::{
         context::RequestContext,
         pd::{
-            context::request_context, leader::LeaderClient, request::Request, Region, Store,
-            StoreId, Timestamp,
+            context::request_context, leader::LeaderClient, request::Request, Region,
+            RegionId, StoreId, Timestamp
         },
         security::SecurityManager,
     },
@@ -163,7 +163,7 @@ impl PdClient {
         .map(move |r| context.done(r))
     }
 
-    pub fn get_all_stores(&self) -> impl Future<Output = Result<Vec<Store>>> {
+    pub fn get_all_stores(&self) -> impl Future<Output = Result<Vec<metapb::Store>>> {
         let req = pd_request!(self.cluster_id, pdpb::GetAllStoresRequest);
 
         self.execute(request_context(
@@ -176,7 +176,7 @@ impl PdClient {
         .map_ok(|mut resp| resp.take_stores().into_iter().map(Into::into).collect())
     }
 
-    pub fn get_store(&self, store_id: StoreId) -> impl Future<Output = Result<Store>> {
+    pub fn get_store(&self, store_id: StoreId) -> impl Future<Output = Result<metapb::Store>> {
         let mut req = pd_request!(self.cluster_id, pdpb::GetStoreRequest);
         req.set_store_id(store_id);
 

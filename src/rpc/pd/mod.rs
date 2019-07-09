@@ -4,7 +4,6 @@
 #![allow(dead_code)]
 
 use derive_new::new;
-pub use kvproto::metapb::{Peer, Store};
 use kvproto::{kvrpcpb, metapb};
 
 pub use crate::rpc::pd::client::PdClient;
@@ -29,7 +28,7 @@ pub struct RegionVerId {
 #[derive(new, Clone, Default, Debug, PartialEq)]
 pub struct Region {
     pub region: metapb::Region,
-    pub leader: Option<Peer>,
+    pub leader: Option<metapb::Peer>,
 }
 
 impl Region {
@@ -79,7 +78,7 @@ impl Region {
         self.region.get_id()
     }
 
-    pub fn peer(&self) -> Result<Peer> {
+    pub fn peer(&self) -> Result<metapb::Peer> {
         self.leader
             .as_ref()
             .map(Clone::clone)
