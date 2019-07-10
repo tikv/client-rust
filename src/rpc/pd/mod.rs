@@ -4,16 +4,16 @@
 #![allow(dead_code)]
 
 use derive_new::new;
-use kvproto::{kvrpcpb, metapb};
+use kvproto::{kvrpcpb, metapb, pdpb};
 
 pub use crate::rpc::pd::client::PdClient;
 use crate::{Error, Key, Result};
 
 #[macro_use]
-mod leader;
 mod client;
 mod context;
 mod request;
+mod timestamp;
 
 pub type RegionId = u64;
 pub type StoreId = u64;
@@ -91,4 +91,26 @@ impl Region {
 pub struct Timestamp {
     pub physical: i64,
     pub logical: i64,
+}
+
+trait PdResponse {
+    fn header(&self) -> &pdpb::ResponseHeader;
+}
+
+impl PdResponse for pdpb::GetStoreResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.get_header()
+    }
+}
+
+impl PdResponse for pdpb::GetRegionResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.get_header()
+    }
+}
+
+impl PdResponse for pdpb::GetAllStoresResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.get_header()
+    }
 }

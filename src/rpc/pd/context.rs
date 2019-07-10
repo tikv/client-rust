@@ -4,23 +4,18 @@ use prometheus::{Histogram, HistogramVec, IntCounterVec};
 
 use crate::rpc::context::RequestContext;
 
-pub fn request_context<Executor>(
-    cmd: &'static str,
-    executor: Executor,
-) -> RequestContext<Executor> {
+pub fn request_context(cmd: &'static str) -> RequestContext {
     RequestContext::new(
         cmd,
         &PD_REQUEST_DURATION_HISTOGRAM_VEC,
         &PD_REQUEST_COUNTER_VEC,
         &PD_FAILED_REQUEST_DURATION_HISTOGRAM_VEC,
         &PD_FAILED_REQUEST_COUNTER_VEC,
-        executor,
     )
 }
 
-pub fn observe_tso_batch(batch_size: usize) -> u32 {
+pub fn observe_tso_batch(batch_size: usize) {
     PD_TSO_BATCH_SIZE_HISTOGRAM.observe(batch_size as f64);
-    batch_size as u32
 }
 
 lazy_static! {

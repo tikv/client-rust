@@ -9,6 +9,7 @@ mod security;
 mod tikv;
 
 pub(crate) use crate::rpc::client::RpcClient;
+pub use crate::rpc::pd::Timestamp;
 
 use derive_new::new;
 use kvproto::{kvrpcpb, metapb};
@@ -19,16 +20,13 @@ use crate::{
     Key,
 };
 
-struct RegionContext {
+/// A single KV store.
+struct Store {
     region: Region,
     store: metapb::Store,
 }
 
-impl RegionContext {
-    fn address(&self) -> &str {
-        self.store.get_address()
-    }
-
+impl Store {
     fn start_key(&self) -> Key {
         self.region.start_key().to_vec().into()
     }
@@ -42,23 +40,41 @@ impl RegionContext {
     }
 }
 
-impl From<RegionContext> for kvrpcpb::Context {
-    fn from(mut ctx: RegionContext) -> kvrpcpb::Context {
+/// An object which can be identified by an IP address.
+trait Address {
+    fn address(&self) -> &str;
+}
+
+impl Address for Store {
+    fn address(&self) -> &str {
+        self.store.get_address()
+    }
+}
+
+#[cfg(test)]
+impl Address for &'static str {
+    fn address(&self) -> &str {
+        self
+    }
+}
+
+impl From<Store> for kvrpcpb::Context {
+    fn from(mut store: Store) -> kvrpcpb::Context {
         let mut kvctx = kvrpcpb::Context::default();
-        kvctx.set_region_id(ctx.region.id());
-        kvctx.set_region_epoch(ctx.region.region.take_region_epoch());
-        kvctx.set_peer(ctx.region.peer().expect("leader must exist"));
+        kvctx.set_region_id(store.region.id());
+        kvctx.set_region_epoch(store.region.region.take_region_epoch());
+        kvctx.set_peer(store.region.peer().expect("leader must exist"));
         kvctx
     }
 }
 
 #[derive(new)]
 struct RawContext {
-    region: RegionContext,
+    store: Store,
     client: Arc<KvClient>,
 }
 
 #[derive(new)]
 struct TxnContext {
-    region: RegionContext,
+    store: Store,
 }

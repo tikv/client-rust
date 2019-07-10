@@ -23,7 +23,7 @@ use crate::{
         pd::{PdClient, Region, RegionId, StoreId},
         security::SecurityManager,
         tikv::KvClient,
-        RawContext, RegionContext, TxnContext,
+        Address, RawContext, Store, TxnContext,
     },
     Config, Error, Key, KvPair, Result, Value,
 };
@@ -80,7 +80,7 @@ impl RpcClient {
     ) -> impl Future<Output = Result<Option<Value>>> {
         self.clone()
             .raw(&key)
-            .and_then(|context| context.client.raw_get(context.region, cf, key))
+            .and_then(|context| context.client.raw_get(context.store, cf, key))
             .map_ok(|value| if value.is_empty() { None } else { Some(value) })
     }
 
@@ -98,7 +98,7 @@ impl RpcClient {
                     .and_then(|context| {
                         context
                             .client
-                            .raw_batch_get(context.region, cf, keys.into_iter())
+                            .raw_batch_get(context.store, cf, keys.into_iter())
                     })
                     .map_ok(move |mut pairs| {
                         result.append(&mut pairs);
@@ -119,7 +119,7 @@ impl RpcClient {
         } else {
             future::Either::Right(
                 self.raw(&key)
-                    .and_then(|context| context.client.raw_put(context.region, cf, key, value)),
+                    .and_then(|context| context.client.raw_put(context.store, cf, key, value)),
             )
         }
     }
@@ -137,7 +137,7 @@ impl RpcClient {
                     let cf = cf.clone();
                     self.clone()
                         .raw_from_id(region_id)
-                        .and_then(|context| context.client.raw_batch_put(context.region, cf, keys))
+                        .and_then(|context| context.client.raw_batch_put(context.store, cf, keys))
                 },
             ))
         }
@@ -149,7 +149,7 @@ impl RpcClient {
         cf: Option<ColumnFamily>,
     ) -> impl Future<Output = Result<()>> {
         self.raw(&key)
-            .and_then(|context| context.client.raw_delete(context.region, cf, key))
+            .and_then(|context| context.client.raw_delete(context.store, cf, key))
     }
 
     pub fn raw_batch_delete(
@@ -163,7 +163,7 @@ impl RpcClient {
                 let cf = cf.clone();
                 self.clone()
                     .raw_from_id(region_id)
-                    .and_then(|context| context.client.raw_batch_delete(context.region, cf, keys))
+                    .and_then(|context| context.client.raw_batch_delete(context.store, cf, keys))
             })
     }
 
@@ -180,12 +180,12 @@ impl RpcClient {
                     // Skip any more scans if we've hit the limit already.
                     return Either::Left(ready(Ok(result)));
                 }
-                let (start_key, end_key) = context.region.range();
+                let (start_key, end_key) = context.store.range();
                 Either::Right(
                     context
                         .client
                         .raw_scan(
-                            context.region,
+                            context.store,
                             cf.clone(),
                             start_key,
                             Some(end_key),
@@ -206,10 +206,10 @@ impl RpcClient {
         cf: Option<ColumnFamily>,
     ) -> impl Future<Output = Result<()>> {
         self.regions_for_range(range).try_for_each(move |context| {
-            let (start_key, end_key) = context.region.range();
+            let (start_key, end_key) = context.store.range();
             context
                 .client
-                .raw_delete_range(context.region, cf.clone(), start_key, end_key)
+                .raw_delete_range(context.store, cf.clone(), start_key, end_key)
         })
     }
 
@@ -238,7 +238,7 @@ impl RpcClient {
             let this = self.clone();
             Either::Left(self.get_region(&start_key).and_then(move |location| {
                 this.raw_from_id(location.id()).map_ok(move |context| {
-                    let region_end = context.region.end_key();
+                    let region_end = context.store.end_key();
                     if end_key.map(|x| x < region_end).unwrap_or(false) || region_end.is_empty() {
                         return Some((None, context));
                     }
@@ -278,49 +278,40 @@ impl RpcClient {
 
     fn load_store(&self, id: StoreId) -> impl Future<Output = Result<metapb::Store>> {
         info!("reload info for store {}", id);
-        self.pd.get_store(id)
+        self.pd.clone().get_store(id)
     }
 
     fn load_region_by_id(&self, id: RegionId) -> impl Future<Output = Result<Region>> {
-        self.pd.get_region_by_id(id)
+        self.pd.clone().get_region_by_id(id)
     }
 
     fn get_region(&self, key: &Key) -> impl Future<Output = Result<Region>> {
-        self.pd.get_region(key.into())
+        self.pd.clone().get_region(key.into())
     }
 
-    fn kv_client(&self, context: &RegionContext) -> Result<Arc<KvClient>> {
-        if let Some(conn) = self.tikv.read().unwrap().get(context.address()) {
-            return Ok(conn.clone());
+    fn kv_client(&self, a: &impl Address) -> Result<Arc<KvClient>> {
+        let address = a.address();
+        if let Some(client) = self.tikv.read().unwrap().get(address) {
+            return Ok(client.clone());
         };
-        info!("connect to tikv endpoint: {:?}", context.address());
+        info!("connect to tikv endpoint: {:?}", address);
         let tikv = self.tikv.clone();
-        KvClient::connect(
-            self.env.clone(),
-            context.address(),
-            &self.security_mgr,
-            self.timeout,
-        )
-        .map(Arc::new)
-        .map(|c| {
-            tikv.write()
-                .unwrap()
-                .insert(context.address().to_owned(), c.clone());
-            c
-        })
+        KvClient::connect(self.env.clone(), address, &self.security_mgr, self.timeout)
+            .map(Arc::new)
+            .map(|c| {
+                tikv.write().unwrap().insert(address.to_owned(), c.clone());
+                c
+            })
     }
 
-    fn region_context_for_key(
-        self: Arc<Self>,
-        key: &Key,
-    ) -> impl Future<Output = Result<RegionContext>> {
+    fn store_for_key(self: Arc<Self>, key: &Key) -> impl Future<Output = Result<Store>> {
         let region = self.get_region(key);
-        self.map_region_to_context(region)
+        self.map_region_to_store(region)
     }
 
-    fn map_region_context_to_raw(
+    fn map_store_to_raw_context(
         self: Arc<Self>,
-        region_ctx: impl Future<Output = Result<RegionContext>>,
+        region_ctx: impl Future<Output = Result<Store>>,
     ) -> impl Future<Output = Result<RawContext>> {
         region_ctx.ok_and_then(move |region_ctx| {
             self.kv_client(&region_ctx)
@@ -328,31 +319,31 @@ impl RpcClient {
         })
     }
 
-    fn map_region_to_context(
+    fn map_region_to_store(
         self: Arc<Self>,
         region: impl Future<Output = Result<Region>>,
-    ) -> impl Future<Output = Result<RegionContext>> {
+    ) -> impl Future<Output = Result<Store>> {
         region.and_then(move |region| {
             let peer = region.peer().expect("leader must exist");
             let store_id = peer.get_store_id();
             self.load_store(store_id)
-                .map_ok(|store| RegionContext { region, store })
+                .map_ok(|store| Store { region, store })
         })
     }
 
     fn raw_from_id(self: Arc<Self>, id: RegionId) -> impl Future<Output = Result<RawContext>> {
         let region = self.clone().load_region_by_id(id);
-        let region_ctx = self.clone().map_region_to_context(region);
-        self.map_region_context_to_raw(region_ctx)
+        let store = self.clone().map_region_to_store(region);
+        self.map_store_to_raw_context(store)
     }
 
     fn raw(self: Arc<Self>, key: &Key) -> impl Future<Output = Result<RawContext>> {
-        let region_ctx = self.clone().region_context_for_key(key);
-        self.map_region_context_to_raw(region_ctx)
+        let store = self.clone().store_for_key(key);
+        self.map_store_to_raw_context(store)
     }
 
     fn txn(self: Arc<Self>, key: &Key) -> impl Future<Output = Result<TxnContext>> {
-        self.region_context_for_key(key)
+        self.store_for_key(key)
             .map_ok(|region_ctx| TxnContext::new(region_ctx))
     }
 }
