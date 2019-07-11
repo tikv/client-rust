@@ -141,7 +141,7 @@ impl PdClient {
             let option = CallOption::default().timeout(timeout);
             let cli = &cli.read().unwrap().client;
             executor(cli, option).unwrap().map(|r| match r {
-                Err(e) => Err(ErrorKind::Grpc(e))?,
+                Err(e) => Err(ErrorKind::Grpc(e).into()),
                 Ok(r) => {
                     {
                         let header = r.header();

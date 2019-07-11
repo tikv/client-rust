@@ -23,7 +23,7 @@ derive-new = "0.5"
 failure = "0.1"
 futures-preview = { version = "0.3.0-alpha.15", features = ["compat"] }
 grpcio = { version = "0.5.0-alpha", features = [ "secure", "prost-codec" ], default-features = false }
-lazy_static = "0.2.1"
+lazy_static = "1"
 log = "0.3.9"
 serde = "1.0"
 serde_derive = "1.0"
@@ -45,3 +45,6 @@ runtime = "0.3.0-alpha.3"
 runtime-tokio = "0.3.0-alpha.3"
 proptest = "0.9"
 proptest-derive = "0.1.0"
+
+[replace]
+"prost:0.5.0" = { git = "https://github.com/danburkert/prost", rev = "1944c27c3029d01ff216e7b126d846b6cf8c7d77" }

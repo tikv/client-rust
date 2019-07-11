@@ -4,8 +4,8 @@
 //! from futures 0.1 to 1.0 easier.
 
 use futures::prelude::*;
+use futures::ready;
 use futures::task::{Context, Poll};
-use futures::{ready, try_ready};
 use std::pin::Pin;
 
 /// The status of a `loop_fn` loop.
@@ -52,7 +52,7 @@ where
         loop {
             unsafe {
                 let this = Pin::get_unchecked_mut(self);
-                match try_ready!(Pin::new_unchecked(&mut this.future).poll(cx)) {
+                match ready!(Pin::new_unchecked(&mut this.future).poll(cx))? {
                     Loop::Break(x) => return Poll::Ready(Ok(x)),
                     Loop::Continue(s) => this.future = (this.func)(s),
                 }
@@ -112,7 +112,7 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<T, E>> {
         unsafe {
             let this = Pin::get_unchecked_mut(self);
-            let result = try_ready!(Pin::new_unchecked(&mut this.future).poll(cx));
+            let result = ready!(Pin::new_unchecked(&mut this.future).poll(cx))?;
             Poll::Ready((this.func)(result))
         }
     }
@@ -145,13 +145,13 @@ pub(crate) trait SinkCompat<I, E> {
     fn send_all_compat<S>(self, stream: S) -> SendAllCompat<Self, S>
     where
         S: Stream<Item = I> + Unpin,
-        Self: Sink<I, SinkError = E> + Sized + Unpin,
+        Self: Sink<I, Error = E> + Sized + Unpin,
     {
         SendAllCompat::new(self, stream)
     }
 }
 
-impl<T, E, S: Sink<T, SinkError = E>> SinkCompat<T, E> for S {}
+impl<T, E, S: Sink<T, Error = E>> SinkCompat<T, E> for S {}
 
 #[derive(Debug)]
 #[must_use = "futures do nothing unless polled"]
@@ -219,7 +219,7 @@ where
         &mut self,
         item: St::Item,
         cx: &mut Context,
-    ) -> Poll<Result<(()), Si::SinkError>> {
+    ) -> Poll<Result<(()), Si::Error>> {
         debug_assert!(self.buffered.is_none());
         match self.sink_mut().poll_ready(cx) {
             Poll::Ready(Ok(())) => Poll::Ready(self.sink_mut().start_send(item)),
@@ -237,22 +237,22 @@ where
     Si: Sink<St::Item> + Unpin,
     St: Stream + Unpin,
 {
-    type Output = Result<((Si, St)), Si::SinkError>;
+    type Output = Result<((Si, St)), Si::Error>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<((Si, St)), Si::SinkError>> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<((Si, St)), Si::Error>> {
         if let Some(item) = self.buffered.take() {
-            try_ready!(self.try_start_send(item, cx))
+            ready!(self.try_start_send(item, cx))?
         }
 
         loop {
             match self.stream_mut().poll_next(cx) {
-                Poll::Ready(Some(item)) => try_ready!(self.try_start_send(item, cx)),
+                Poll::Ready(Some(item)) => ready!(self.try_start_send(item, cx))?,
                 Poll::Ready(None) => {
-                    try_ready!(self.sink_mut().poll_close(cx));
+                    ready!(self.sink_mut().poll_close(cx))?;
                     return Poll::Ready(Ok(self.take_result()));
                 }
                 Poll::Pending => {
-                    try_ready!(self.sink_mut().poll_flush(cx));
+                    ready!(self.sink_mut().poll_flush(cx))?;
                     return Poll::Pending;
                 }
             }
