@@ -6,7 +6,7 @@
 use derive_new::new;
 use kvproto::{kvrpcpb, metapb, pdpb};
 
-pub use crate::rpc::pd::client::PdClient;
+pub use crate::rpc::pd::client::{PdClient, RetryClient};
 use crate::{Error, Key, Result};
 
 #[macro_use]

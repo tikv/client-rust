@@ -20,7 +20,7 @@ use crate::{
     kv::BoundRange,
     raw::ColumnFamily,
     rpc::{
-        pd::{PdClient, Region, RegionId, StoreId},
+        pd::{PdClient, Region, RegionId, RetryClient, StoreId},
         security::SecurityManager,
         tikv::KvClient,
         Address, RawContext, Store, TxnContext,
@@ -31,16 +31,16 @@ use crate::{
 const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";
 
-pub struct RpcClient {
-    pd: Arc<PdClient>,
+pub struct RpcClient<PdC: PdClient = RetryClient> {
+    pd: Arc<PdC>,
     tikv: Arc<RwLock<HashMap<String, Arc<KvClient>>>>,
     env: Arc<Environment>,
     security_mgr: Arc<SecurityManager>,
     timeout: Duration,
 }
 
-impl RpcClient {
-    pub fn connect(config: &Config) -> Result<RpcClient> {
+impl RpcClient<RetryClient> {
+    pub fn connect(config: &Config) -> Result<RpcClient<RetryClient>> {
         let env = Arc::new(
             EnvBuilder::new()
                 .cq_count(CQ_COUNT)
@@ -57,7 +57,7 @@ impl RpcClient {
             },
         );
 
-        let pd = Arc::new(PdClient::connect(
+        let pd = Arc::new(RetryClient::connect(
             env.clone(),
             &config.pd_endpoints,
             security_mgr.clone(),
@@ -72,7 +72,9 @@ impl RpcClient {
             timeout: config.timeout,
         })
     }
+}
 
+impl<PdC: PdClient> RpcClient<PdC> {
     pub fn raw_get(
         self: Arc<Self>,
         key: Key,
@@ -375,5 +377,75 @@ impl GroupingTask for KvPair {
 impl GroupingTask for (Key, Option<Key>) {
     fn key(&self) -> &Key {
         &self.0
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::rpc::pd::Timestamp;
+    use futures::future::BoxFuture;
+
+    struct MockPdClient {}
+
+    impl PdClient for MockPdClient {
+        fn connect(
+            _env: Arc<Environment>,
+            _endpoints: &[String],
+            _security_mgr: Arc<SecurityManager>,
+            _timeout: Duration,
+        ) -> Result<Self> {
+            Ok(MockPdClient {})
+        }
+
+        fn get_region(self: Arc<Self>, _key: &[u8]) -> BoxFuture<'static, Result<Region>> {
+            unimplemented!();
+        }
+
+        fn get_region_by_id(self: Arc<Self>, _id: RegionId) -> BoxFuture<'static, Result<Region>> {
+            unimplemented!();
+        }
+
+        fn get_store(self: Arc<Self>, _id: StoreId) -> BoxFuture<'static, Result<metapb::Store>> {
+            unimplemented!();
+        }
+
+        fn get_all_stores(self: Arc<Self>) -> BoxFuture<'static, Result<Vec<metapb::Store>>> {
+            unimplemented!();
+        }
+
+        fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
+            unimplemented!();
+        }
+    }
+
+    fn mock_rpc_client() -> RpcClient<MockPdClient> {
+        let config = Config::default();
+        let env = Arc::new(
+            EnvBuilder::new()
+                .cq_count(CQ_COUNT)
+                .name_prefix(thread_name!(CLIENT_PREFIX))
+                .build(),
+        );
+        RpcClient {
+            pd: Arc::new(MockPdClient {}),
+            tikv: Default::default(),
+            env,
+            security_mgr: Arc::new(SecurityManager::default()),
+            timeout: config.timeout,
+        }
+    }
+
+    #[test]
+    fn test_kv_client() {
+        let client = mock_rpc_client();
+        let addr1 = "foo";
+        let addr2 = "bar";
+
+        let kv1 = client.kv_client(&addr1).unwrap();
+        let kv2 = client.kv_client(&addr2).unwrap();
+        let kv3 = client.kv_client(&addr2).unwrap();
+        assert!(&*kv1 as *const _ != &*kv2 as *const _);
+        assert_eq!(&*kv2 as *const _, &*kv3 as *const _);
     }
 }

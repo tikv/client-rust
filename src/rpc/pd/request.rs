@@ -15,7 +15,7 @@ use std::pin::Pin;
 use tokio_timer::timer::Handle;
 
 use crate::{
-    rpc::pd::client::{Cluster, PdClient},
+    rpc::pd::client::{Cluster, RetryClient},
     rpc::util::GLOBAL_TIMER_HANDLE,
     Result,
 };
@@ -25,7 +25,7 @@ const MAX_REQUEST_COUNT: usize = 3;
 const LEADER_CHANGE_RETRY: usize = 10;
 
 pub(super) fn retry_request<Resp, Func, RespFuture>(
-    client: Arc<PdClient>,
+    client: Arc<RetryClient>,
     func: Func,
 ) -> RetryRequest<impl Future<Output = Result<Resp>>>
 where
@@ -54,7 +54,7 @@ struct Request<Func> {
     // We keep track of requests sent and after `MAX_REQUEST_COUNT` we reconnect.
     request_sent: usize,
 
-    client: Arc<PdClient>,
+    client: Arc<RetryClient>,
     timer: Handle,
 
     // A function which makes an async request.
@@ -89,7 +89,7 @@ where
     Func: Fn(&Cluster) -> RespFuture + Send + 'static,
     RespFuture: Future<Output = Result<Resp>> + Send + 'static,
 {
-    fn new(func: Func, client: Arc<PdClient>) -> Self {
+    fn new(func: Func, client: Arc<RetryClient>) -> Self {
         Request {
             request_sent: 0,
             client,

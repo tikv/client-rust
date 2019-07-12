@@ -8,6 +8,7 @@ use std::{
 };
 
 use futures::compat::Compat01As03;
+use futures::future::BoxFuture;
 use futures::prelude::*;
 use grpcio::{CallOption, Environment};
 use kvproto::{metapb, pdpb};
@@ -33,23 +34,43 @@ macro_rules! pd_request {
     }};
 }
 
+pub trait PdClient: Sized {
+    fn connect(
+        env: Arc<Environment>,
+        endpoints: &[String],
+        security_mgr: Arc<SecurityManager>,
+        timeout: Duration,
+    ) -> Result<Self>;
+
+    fn get_region(self: Arc<Self>, key: &[u8]) -> BoxFuture<'static, Result<Region>>;
+
+    fn get_region_by_id(self: Arc<Self>, id: RegionId) -> BoxFuture<'static, Result<Region>>;
+
+    fn get_store(self: Arc<Self>, id: StoreId) -> BoxFuture<'static, Result<metapb::Store>>;
+
+    fn get_all_stores(self: Arc<Self>) -> BoxFuture<'static, Result<Vec<metapb::Store>>>;
+
+    /// Request a timestamp from the PD cluster.
+    fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>>;
+}
+
 /// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
-pub struct PdClient {
+pub struct RetryClient {
     cluster: RwLock<Cluster>,
     connection: Connection,
     timeout: Duration,
 }
 
-impl PdClient {
-    pub fn connect(
+impl PdClient for RetryClient {
+    fn connect(
         env: Arc<Environment>,
         endpoints: &[String],
         security_mgr: Arc<SecurityManager>,
         timeout: Duration,
-    ) -> Result<PdClient> {
+    ) -> Result<RetryClient> {
         let connection = Connection::new(env, security_mgr);
         let cluster = RwLock::new(connection.connect_cluster(endpoints, timeout)?);
-        Ok(PdClient {
+        Ok(RetryClient {
             cluster,
             connection,
             timeout,
@@ -57,34 +78,41 @@ impl PdClient {
     }
 
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
-    pub fn get_region(self: Arc<Self>, key: &[u8]) -> impl Future<Output = Result<Region>> {
+    fn get_region(self: Arc<Self>, key: &[u8]) -> BoxFuture<'static, Result<Region>> {
         let key = key.to_owned();
         let timeout = self.timeout;
-        retry_request(self, move |cluster| {
+        Box::pin(retry_request(self, move |cluster| {
             cluster.get_region(key.clone(), timeout)
-        })
+        }))
     }
 
-    pub fn get_region_by_id(self: Arc<Self>, id: RegionId) -> impl Future<Output = Result<Region>> {
+    fn get_region_by_id(self: Arc<Self>, id: RegionId) -> BoxFuture<'static, Result<Region>> {
         let timeout = self.timeout;
-        retry_request(self, move |cluster| cluster.get_region_by_id(id, timeout))
+        Box::pin(retry_request(self, move |cluster| {
+            cluster.get_region_by_id(id, timeout)
+        }))
     }
 
-    pub fn get_store(self: Arc<Self>, id: StoreId) -> impl Future<Output = Result<metapb::Store>> {
+    fn get_store(self: Arc<Self>, id: StoreId) -> BoxFuture<'static, Result<metapb::Store>> {
         let timeout = self.timeout;
-        retry_request(self, move |cluster| cluster.get_store(id, timeout))
+        Box::pin(retry_request(self, move |cluster| {
+            cluster.get_store(id, timeout)
+        }))
     }
 
-    pub fn get_all_stores(self: Arc<Self>) -> impl Future<Output = Result<Vec<metapb::Store>>> {
+    fn get_all_stores(self: Arc<Self>) -> BoxFuture<'static, Result<Vec<metapb::Store>>> {
         let timeout = self.timeout;
-        retry_request(self, move |cluster| cluster.get_all_stores(timeout))
+        Box::pin(retry_request(self, move |cluster| {
+            cluster.get_all_stores(timeout)
+        }))
     }
 
-    /// Request a timestamp from the PD cluster.
-    pub fn get_timestamp(self: Arc<Self>) -> impl Future<Output = Result<Timestamp>> {
-        self.cluster.read().unwrap().get_timestamp()
+    fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
+        Box::pin(self.cluster.read().unwrap().get_timestamp())
     }
+}
 
+impl RetryClient {
     pub fn reconnect(&self, interval: u64) -> Result<()> {
         if let Some(cluster) =
             self.connection
@@ -100,9 +128,9 @@ impl PdClient {
     }
 }
 
-impl fmt::Debug for PdClient {
+impl fmt::Debug for RetryClient {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("PdClient")
+        fmt.debug_struct("pd::RetryClient")
             .field("cluster_id", &self.cluster.read().unwrap().id)
             .field("timeout", &self.timeout)
             .finish()
