@@ -82,7 +82,7 @@ impl Transaction {
     /// # let connected_client = connect.await.unwrap();
     /// let mut txn = connected_client.begin();
     /// // ... Do some actions.
-    /// let req = txn.lock_keys(vec!["TiKV", "Rust"]);
+    /// let req = txn.lock_keys(vec!["TiKV".to_owned(), "Rust".to_owned()]);
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
@@ -160,7 +160,7 @@ impl Transaction {
     /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let mut txn = connected_client.begin();
-    /// let key = "TiKV";
+    /// let key = "TiKV".to_owned();
     /// let req = txn.get(key);
     /// let result: Value = req.await.unwrap();
     /// // Finish the transaction...
@@ -184,7 +184,7 @@ impl Transaction {
     /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let mut txn = connected_client.begin();
-    /// let keys = vec!["TiKV", "TiDB"];
+    /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let req = txn.batch_get(keys);
     /// let result: Vec<KvPair> = req.await.unwrap();
     /// // Finish the transaction...
@@ -215,8 +215,8 @@ impl Transaction {
     /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let mut txn = connected_client.begin();
-    /// let key = "TiKV";
-    /// let val = "TiKV";
+    /// let key = "TiKV".to_owned();
+    /// let val = "TiKV".to_owned();
     /// let req = txn.set(key, val);
     /// let result: () = req.await.unwrap();
     /// // Finish the transaction...
@@ -239,7 +239,7 @@ impl Transaction {
     /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let mut txn = connected_client.begin();
-    /// let key = "TiKV";
+    /// let key = "TiKV".to_owned();
     /// let req = txn.delete(key);
     /// let result: () = req.await.unwrap();
     /// // Finish the transaction...

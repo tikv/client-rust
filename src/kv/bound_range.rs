@@ -3,6 +3,7 @@
 use super::Key;
 #[cfg(test)]
 use proptest_derive::Arbitrary;
+use std::borrow::Borrow;
 use std::cmp::{Eq, PartialEq};
 use std::convert::TryFrom;
 use std::ops::{Bound, Range, RangeFrom, RangeInclusive};
@@ -26,25 +27,25 @@ use crate::{Error, Result};
 /// use std::ops::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull, Bound};
 /// # use std::convert::TryInto;
 ///
-/// let explict_range: Range<Key> = Range { start: Key::from("Rust"), end: Key::from("TiKV") };
+/// let explict_range: Range<Key> = Range { start: Key::from("Rust".to_owned()), end: Key::from("TiKV".to_owned()) };
 /// let from_explict_range: BoundRange = explict_range.into();
 ///
-/// let range: Range<&str> = "Rust".."TiKV";
+/// let range: Range<String> = "Rust".to_owned().."TiKV".to_owned();
 /// let from_range: BoundRange = range.into();
 /// assert_eq!(from_explict_range, from_range);
 ///
-/// let range: RangeInclusive<&str> = "Rust"..="TiKV";
+/// let range: RangeInclusive<String> = "Rust".to_owned()..="TiKV".to_owned();
 /// let from_range: BoundRange = range.into();
 /// assert_eq!(
 ///     from_range,
-///     (Bound::Included(Key::from("Rust")), Bound::Included(Key::from("TiKV"))),
+///     (Bound::Included(Key::from("Rust".to_owned())), Bound::Included(Key::from("TiKV".to_owned()))),
 /// );
 ///
-/// let range_from: RangeFrom<&str> = "Rust"..;
+/// let range_from: RangeFrom<String> = "Rust".to_owned()..;
 /// let from_range_from: BoundRange = range_from.into();
 /// assert_eq!(
 ///     from_range_from,
-///     (Bound::Included(Key::from("Rust")), Bound::Unbounded),
+///     (Bound::Included(Key::from("Rust".to_owned())), Bound::Unbounded),
 /// );
 /// ```
 ///
@@ -75,24 +76,24 @@ impl BoundRange {
     /// The **end** of a scan is exclusive, unless appended with an '\0', then it is inclusive.
     ///
     /// ```rust
-    /// use tikv_client::{BoundRange, Key};
+    /// use tikv_client::{BoundRange, Key, ToOwnedRange};
     /// // Exclusive
     /// let range = "a".."z";
     /// assert_eq!(
-    ///     BoundRange::from(range).into_keys(),
-    ///     (Key::from("a"), Some(Key::from("z"))),
+    ///     BoundRange::from(range.to_owned()).into_keys(),
+    ///     (Key::from("a".to_owned()), Some(Key::from("z".to_owned()))),
     /// );
     /// // Inclusive
     /// let range = "a"..="z";
     /// assert_eq!(
-    ///     BoundRange::from(range).into_keys(),
-    ///     (Key::from("a"), Some(Key::from("z\0"))),
+    ///     BoundRange::from(range.to_owned()).into_keys(),
+    ///     (Key::from("a".to_owned()), Some(Key::from("z\0".to_owned()))),
     /// );
     /// // Open
-    /// let range = "a"..;
+    /// let range = "a".to_owned()..;
     /// assert_eq!(
     ///     BoundRange::from(range).into_keys(),
-    ///     (Key::from("a"), None),
+    ///     (Key::from("a".to_owned()), None),
     /// );
     // ```
     pub fn into_keys(self) -> (Key, Option<Key>) {
@@ -116,6 +117,7 @@ impl BoundRange {
     }
 }
 
+// FIXME `==` should not `clone`
 impl<T: Into<Key> + Clone> PartialEq<(Bound<T>, Bound<T>)> for BoundRange {
     fn eq(&self, other: &(Bound<T>, Bound<T>)) -> bool {
         self.from == convert_to_bound_key(other.0.clone())
@@ -177,6 +179,48 @@ impl<T: Into<Key> + Eq> TryFrom<(Bound<T>, Bound<T>)> for BoundRange {
                 convert_to_bound_key(bounds.1),
             ))
         }
+    }
+}
+
+/// A convenience trait for converting ranges of borrowed types into a `BoundRange`.
+pub trait ToOwnedRange {
+    /// Transform a borrowed range of some form into an owned `BoundRange`.
+    fn to_owned(self) -> BoundRange;
+}
+
+impl<T: Into<Key> + Borrow<U>, U: ToOwned<Owned = T> + ?Sized> ToOwnedRange for Range<&U> {
+    fn to_owned(self) -> BoundRange {
+        From::from(Range {
+            start: self.start.to_owned(),
+            end: self.end.to_owned(),
+        })
+    }
+}
+
+impl<T: Into<Key> + Borrow<U>, U: ToOwned<Owned = T> + ?Sized> ToOwnedRange for RangeFrom<&U> {
+    fn to_owned(self) -> BoundRange {
+        From::from(RangeFrom {
+            start: self.start.to_owned(),
+        })
+    }
+}
+
+impl<T: Into<Key> + Borrow<U>, U: ToOwned<Owned = T> + ?Sized> ToOwnedRange for RangeInclusive<&U> {
+    fn to_owned(self) -> BoundRange {
+        let (from, to) = self.into_inner();
+        From::from(RangeInclusive::new(from.to_owned(), to.to_owned()))
+    }
+}
+
+impl<T: Into<Key> + Borrow<U>, U: ToOwned<Owned = T> + ?Sized> ToOwnedRange for (&U, Option<&U>) {
+    fn to_owned(self) -> BoundRange {
+        From::from((self.0.to_owned(), self.1.map(|u| u.to_owned())))
+    }
+}
+
+impl<T: Into<Key> + Borrow<U>, U: ToOwned<Owned = T> + ?Sized> ToOwnedRange for (&U, &U) {
+    fn to_owned(self) -> BoundRange {
+        From::from((self.0.to_owned(), self.1.to_owned()))
     }
 }
 
