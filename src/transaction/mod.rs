@@ -12,6 +12,7 @@
 pub use self::client::{Client, Connect};
 pub use self::requests::{BatchGet, Commit, Delete, Get, LockKeys, Rollback, Scanner, Set};
 pub use self::transaction::{IsolationLevel, Snapshot, Transaction, TxnInfo};
+pub use super::rpc::Timestamp;
 
 use crate::{Key, Value};
 
@@ -25,28 +26,4 @@ pub enum Mutation {
     Del(Key),
     Lock(Key),
     Rollback(Key),
-}
-
-/// A logical timestamp produced by PD.
-#[derive(Copy, Clone)]
-pub struct Timestamp(u64);
-
-impl From<u64> for Timestamp {
-    fn from(v: u64) -> Self {
-        Timestamp(v)
-    }
-}
-
-impl Timestamp {
-    pub fn timestamp(self) -> u64 {
-        self.0
-    }
-
-    pub fn physical(self) -> i64 {
-        (self.0 >> 16) as i64
-    }
-
-    pub fn logical(self) -> i64 {
-        (self.0 & 0xFFFF as u64) as i64
-    }
 }

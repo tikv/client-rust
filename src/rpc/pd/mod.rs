@@ -86,14 +86,10 @@ impl Region {
             .map(Into::into)
             .ok_or_else(|| Error::stale_epoch(None))
     }
-
-    pub fn meta(&self) -> metapb::Region {
-        self.region.clone()
-    }
 }
 
 #[derive(Eq, PartialEq, Debug)]
-pub struct PdTimestamp {
+pub struct Timestamp {
     pub physical: i64,
     pub logical: i64,
 }

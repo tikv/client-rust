@@ -666,7 +666,7 @@ impl KvClient {
         )
         .unwrap()
         .map(|r| match r {
-            Err(e) => Err(ErrorKind::Grpc(e))?,
+            Err(e) => Err(ErrorKind::Grpc(e).into()),
             Ok(mut r) => {
                 if let Some(e) = r.region_error() {
                     Err(e)
