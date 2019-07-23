@@ -8,17 +8,6 @@ use futures::ready;
 use futures::task::{Context, Poll};
 use std::pin::Pin;
 
-/// The status of a `loop_fn` loop.
-#[derive(Debug)]
-pub(crate) enum Loop<T, S> {
-    /// Indicates that the loop has completed with output `T`.
-    Break(T),
-
-    /// Indicates that the loop function should be called again with input
-    /// state `S`.
-    Continue(S),
-}
-
 /// A future implementing a tail-recursive loop.
 ///
 /// Created by the `loop_fn` function.
@@ -27,39 +16,6 @@ pub(crate) enum Loop<T, S> {
 pub(crate) struct LoopFn<A, F> {
     future: A,
     func: F,
-}
-
-/// Creates a new future implementing a tail-recursive loop.
-pub(crate) fn loop_fn<S, T, A, F, E>(initial_state: S, mut func: F) -> LoopFn<A, F>
-where
-    F: FnMut(S) -> A,
-    A: Future<Output = Result<Loop<T, S>, E>>,
-{
-    LoopFn {
-        future: func(initial_state),
-        func,
-    }
-}
-
-impl<S, T, A, F, E> Future for LoopFn<A, F>
-where
-    F: FnMut(S) -> A,
-    A: Future<Output = Result<Loop<T, S>, E>>,
-{
-    type Output = Result<T, E>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<T, E>> {
-        loop {
-            unsafe {
-                let this = Pin::get_unchecked_mut(self);
-                match ready!(Pin::new_unchecked(&mut this.future).poll(cx))? {
-                    Loop::Break(x) => return Poll::Ready(Ok(x)),
-                    Loop::Continue(s) => this.future = (this.func)(s),
-                }
-                self = Pin::new_unchecked(this);
-            }
-        }
-    }
 }
 
 pub(crate) fn stream_fn<S, T, A, F, E>(initial_state: S, mut func: F) -> LoopFn<A, F>

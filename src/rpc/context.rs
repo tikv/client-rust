@@ -6,23 +6,21 @@ use prometheus::{HistogramVec, IntCounterVec};
 
 use crate::{rpc::util::duration_to_sec, Result};
 
-pub struct RequestContext<Executor> {
+pub struct RequestContext {
     start: Instant,
     cmd: &'static str,
     duration: &'static HistogramVec,
     failed_duration: &'static HistogramVec,
     failed_counter: &'static IntCounterVec,
-    executor: Option<Executor>,
 }
 
-impl<Executor> RequestContext<Executor> {
+impl RequestContext {
     pub fn new(
         cmd: &'static str,
         duration: &'static HistogramVec,
         counter: &'static IntCounterVec,
         failed_duration: &'static HistogramVec,
         failed_counter: &'static IntCounterVec,
-        executor: Executor,
     ) -> Self {
         counter.with_label_values(&[cmd]).inc();
         RequestContext {
@@ -31,14 +29,7 @@ impl<Executor> RequestContext<Executor> {
             duration,
             failed_duration,
             failed_counter,
-            executor: Some(executor),
         }
-    }
-
-    pub fn executor(&mut self) -> Executor {
-        self.executor
-            .take()
-            .expect("executor can only be take once")
     }
 
     pub fn done<R>(&self, r: Result<R>) -> Result<R> {

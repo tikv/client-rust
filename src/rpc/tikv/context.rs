@@ -4,17 +4,13 @@ use prometheus::{HistogramVec, IntCounterVec};
 
 pub use crate::rpc::context::RequestContext;
 
-pub fn request_context<Executor>(
-    cmd: &'static str,
-    executor: Executor,
-) -> RequestContext<Executor> {
+pub fn request_context(cmd: &'static str) -> RequestContext {
     RequestContext::new(
         cmd,
         &TIKV_REQUEST_DURATION_HISTOGRAM_VEC,
         &TIKV_REQUEST_COUNTER_VEC,
         &TIKV_FAILED_REQUEST_DURATION_HISTOGRAM_VEC,
         &TIKV_FAILED_REQUEST_COUNTER_VEC,
-        executor,
     )
 }
 

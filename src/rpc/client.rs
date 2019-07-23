@@ -10,20 +10,20 @@ use std::{
     time::Duration,
 };
 
-use derive_new::new;
 use futures::future::{ready, Either};
 use futures::prelude::*;
 use grpcio::{EnvBuilder, Environment};
-use kvproto::kvrpcpb;
+use kvproto::metapb;
 
 use crate::{
     compat::{stream_fn, ClientFutureExt},
     kv::BoundRange,
     raw::ColumnFamily,
     rpc::{
-        pd::{PdClient, Region, RegionId, Store, StoreId},
+        pd::{PdClient, Region, RegionId, RetryClient, StoreId},
         security::SecurityManager,
         tikv::KvClient,
+        Address, RawContext, Store, TxnContext,
     },
     Config, Error, Key, KvPair, Result, Value,
 };
@@ -31,16 +31,16 @@ use crate::{
 const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";
 
-pub struct RpcClient {
-    pd: Arc<PdClient>,
+pub struct RpcClient<PdC: PdClient = RetryClient> {
+    pd: Arc<PdC>,
     tikv: Arc<RwLock<HashMap<String, Arc<KvClient>>>>,
     env: Arc<Environment>,
     security_mgr: Arc<SecurityManager>,
     timeout: Duration,
 }
 
-impl RpcClient {
-    pub fn connect(config: &Config) -> Result<RpcClient> {
+impl RpcClient<RetryClient> {
+    pub fn connect(config: &Config) -> Result<RpcClient<RetryClient>> {
         let env = Arc::new(
             EnvBuilder::new()
                 .cq_count(CQ_COUNT)
@@ -57,10 +57,10 @@ impl RpcClient {
             },
         );
 
-        let pd = Arc::new(PdClient::connect(
-            Arc::clone(&env),
+        let pd = Arc::new(RetryClient::connect(
+            env.clone(),
             &config.pd_endpoints,
-            Arc::clone(&security_mgr),
+            security_mgr.clone(),
             config.timeout,
         )?);
         let tikv = Default::default();
@@ -72,7 +72,9 @@ impl RpcClient {
             timeout: config.timeout,
         })
     }
+}
 
+impl<PdC: PdClient> RpcClient<PdC> {
     pub fn raw_get(
         self: Arc<Self>,
         key: Key,
@@ -80,7 +82,7 @@ impl RpcClient {
     ) -> impl Future<Output = Result<Option<Value>>> {
         self.clone()
             .raw(&key)
-            .and_then(|context| context.client.raw_get(context.region, cf, key))
+            .and_then(|context| context.client.raw_get(context.store, cf, key))
             .map_ok(|value| if value.is_empty() { None } else { Some(value) })
     }
 
@@ -98,7 +100,7 @@ impl RpcClient {
                     .and_then(|context| {
                         context
                             .client
-                            .raw_batch_get(context.region, cf, keys.into_iter())
+                            .raw_batch_get(context.store, cf, keys.into_iter())
                     })
                     .map_ok(move |mut pairs| {
                         result.append(&mut pairs);
@@ -119,7 +121,7 @@ impl RpcClient {
         } else {
             future::Either::Right(
                 self.raw(&key)
-                    .and_then(|context| context.client.raw_put(context.region, cf, key, value)),
+                    .and_then(|context| context.client.raw_put(context.store, cf, key, value)),
             )
         }
     }
@@ -137,7 +139,7 @@ impl RpcClient {
                     let cf = cf.clone();
                     self.clone()
                         .raw_from_id(region_id)
-                        .and_then(|context| context.client.raw_batch_put(context.region, cf, keys))
+                        .and_then(|context| context.client.raw_batch_put(context.store, cf, keys))
                 },
             ))
         }
@@ -149,7 +151,7 @@ impl RpcClient {
         cf: Option<ColumnFamily>,
     ) -> impl Future<Output = Result<()>> {
         self.raw(&key)
-            .and_then(|context| context.client.raw_delete(context.region, cf, key))
+            .and_then(|context| context.client.raw_delete(context.store, cf, key))
     }
 
     pub fn raw_batch_delete(
@@ -163,7 +165,7 @@ impl RpcClient {
                 let cf = cf.clone();
                 self.clone()
                     .raw_from_id(region_id)
-                    .and_then(|context| context.client.raw_batch_delete(context.region, cf, keys))
+                    .and_then(|context| context.client.raw_batch_delete(context.store, cf, keys))
             })
     }
 
@@ -180,12 +182,12 @@ impl RpcClient {
                     // Skip any more scans if we've hit the limit already.
                     return Either::Left(ready(Ok(result)));
                 }
-                let (start_key, end_key) = context.region.range();
+                let (start_key, end_key) = context.store.range();
                 Either::Right(
                     context
                         .client
                         .raw_scan(
-                            context.region,
+                            context.store,
                             cf.clone(),
                             start_key,
                             Some(end_key),
@@ -206,10 +208,10 @@ impl RpcClient {
         cf: Option<ColumnFamily>,
     ) -> impl Future<Output = Result<()>> {
         self.regions_for_range(range).try_for_each(move |context| {
-            let (start_key, end_key) = context.region.range();
+            let (start_key, end_key) = context.store.range();
             context
                 .client
-                .raw_delete_range(context.region, cf.clone(), start_key, end_key)
+                .raw_delete_range(context.store, cf.clone(), start_key, end_key)
         })
     }
 
@@ -236,21 +238,15 @@ impl RpcClient {
             };
             let end_key = end_key.clone();
             let this = self.clone();
-            Either::Left(
-                self.clone()
-                    .get_region(&start_key)
-                    .and_then(move |location| {
-                        this.raw_from_id(location.id()).map_ok(move |context| {
-                            let region_end = context.region.end_key();
-                            if end_key.map(|x| x < region_end).unwrap_or(false)
-                                || region_end.is_empty()
-                            {
-                                return Some((None, context));
-                            }
-                            Some((Some(region_end), context))
-                        })
-                    }),
-            )
+            Either::Left(self.get_region(&start_key).and_then(move |location| {
+                this.raw_from_id(location.id()).map_ok(move |context| {
+                    let region_end = context.store.end_key();
+                    if end_key.map(|x| x < region_end).unwrap_or(false) || region_end.is_empty() {
+                        return Some((None, context));
+                    }
+                    Some((Some(region_end), context))
+                })
+            }))
         })
     }
 
@@ -267,70 +263,57 @@ impl RpcClient {
             if tasks.is_empty() {
                 Either::Right(ready(Ok(None)))
             } else {
-                Either::Left(
-                    self.clone()
-                        .get_region(tasks[0].key())
-                        .map_ok(move |location| {
-                            let ver_id = location.ver_id();
-                            let mut grouped = Vec::new();
-                            while let Some(task) = tasks.pop_front() {
-                                if !location.contains(task.key()) {
-                                    break;
-                                }
-                                grouped.push(task);
-                            }
-                            Some((tasks, (ver_id.id, grouped)))
-                        }),
-                )
+                Either::Left(self.get_region(tasks[0].key()).map_ok(move |location| {
+                    let ver_id = location.ver_id();
+                    let mut grouped = Vec::new();
+                    while let Some(task) = tasks.pop_front() {
+                        if !location.contains(task.key()) {
+                            break;
+                        }
+                        grouped.push(task);
+                    }
+                    Some((tasks, (ver_id.id, grouped)))
+                }))
             }
         })
     }
 
-    fn load_store(&self, id: StoreId) -> impl Future<Output = Result<Store>> {
+    fn load_store(&self, id: StoreId) -> impl Future<Output = Result<metapb::Store>> {
         info!("reload info for store {}", id);
-        self.pd.get_store(id).map_ok(Into::into)
+        self.pd.clone().get_store(id)
     }
 
     fn load_region_by_id(&self, id: RegionId) -> impl Future<Output = Result<Region>> {
-        self.pd.get_region_by_id(id)
+        self.pd.clone().get_region_by_id(id)
     }
 
     fn get_region(&self, key: &Key) -> impl Future<Output = Result<Region>> {
-        self.pd.get_region(key.into())
+        self.pd.clone().get_region(key.into())
     }
 
-    fn kv_client(&self, context: &RegionContext) -> Result<Arc<KvClient>> {
-        if let Some(conn) = self.tikv.read().unwrap().get(context.address()) {
-            return Ok(Arc::clone(conn));
+    fn kv_client(&self, a: &impl Address) -> Result<Arc<KvClient>> {
+        let address = a.address();
+        if let Some(client) = self.tikv.read().unwrap().get(address) {
+            return Ok(client.clone());
         };
-        info!("connect to tikv endpoint: {:?}", context.address());
+        info!("connect to tikv endpoint: {:?}", address);
         let tikv = self.tikv.clone();
-        KvClient::connect(
-            Arc::clone(&self.env),
-            context.address(),
-            &self.security_mgr,
-            self.timeout,
-        )
-        .map(Arc::new)
-        .map(|c| {
-            tikv.write()
-                .unwrap()
-                .insert(context.address().to_owned(), Arc::clone(&c));
-            c
-        })
+        KvClient::connect(self.env.clone(), address, &self.security_mgr, self.timeout)
+            .map(Arc::new)
+            .map(|c| {
+                tikv.write().unwrap().insert(address.to_owned(), c.clone());
+                c
+            })
     }
 
-    fn region_context_for_key(
-        self: Arc<Self>,
-        key: &Key,
-    ) -> impl Future<Output = Result<RegionContext>> {
+    fn store_for_key(self: Arc<Self>, key: &Key) -> impl Future<Output = Result<Store>> {
         let region = self.get_region(key);
-        self.map_region_to_context(region)
+        self.map_region_to_store(region)
     }
 
-    fn map_region_context_to_raw(
+    fn map_store_to_raw_context(
         self: Arc<Self>,
-        region_ctx: impl Future<Output = Result<RegionContext>>,
+        region_ctx: impl Future<Output = Result<Store>>,
     ) -> impl Future<Output = Result<RawContext>> {
         region_ctx.ok_and_then(move |region_ctx| {
             self.kv_client(&region_ctx)
@@ -338,31 +321,31 @@ impl RpcClient {
         })
     }
 
-    fn map_region_to_context(
+    fn map_region_to_store(
         self: Arc<Self>,
         region: impl Future<Output = Result<Region>>,
-    ) -> impl Future<Output = Result<RegionContext>> {
+    ) -> impl Future<Output = Result<Store>> {
         region.and_then(move |region| {
             let peer = region.peer().expect("leader must exist");
             let store_id = peer.get_store_id();
             self.load_store(store_id)
-                .map_ok(|store| RegionContext { region, store })
+                .map_ok(|store| Store { region, store })
         })
     }
 
     fn raw_from_id(self: Arc<Self>, id: RegionId) -> impl Future<Output = Result<RawContext>> {
         let region = self.clone().load_region_by_id(id);
-        let region_ctx = self.clone().map_region_to_context(region);
-        self.map_region_context_to_raw(region_ctx)
+        let store = self.clone().map_region_to_store(region);
+        self.map_store_to_raw_context(store)
     }
 
     fn raw(self: Arc<Self>, key: &Key) -> impl Future<Output = Result<RawContext>> {
-        let region_ctx = self.clone().region_context_for_key(key);
-        self.map_region_context_to_raw(region_ctx)
+        let store = self.clone().store_for_key(key);
+        self.map_store_to_raw_context(store)
     }
 
     fn txn(self: Arc<Self>, key: &Key) -> impl Future<Output = Result<TxnContext>> {
-        self.region_context_for_key(key)
+        self.store_for_key(key)
             .map_ok(|region_ctx| TxnContext::new(region_ctx))
     }
 }
@@ -373,50 +356,6 @@ impl fmt::Debug for RpcClient {
             .field("pd", &self.pd)
             .finish()
     }
-}
-
-pub struct RegionContext {
-    region: Region,
-    store: Store,
-}
-
-impl RegionContext {
-    fn address(&self) -> &str {
-        self.store.get_address()
-    }
-
-    fn start_key(&self) -> Key {
-        self.region.start_key().to_vec().into()
-    }
-
-    fn end_key(&self) -> Key {
-        self.region.end_key().to_vec().into()
-    }
-
-    fn range(&self) -> (Key, Key) {
-        (self.start_key(), self.end_key())
-    }
-}
-
-impl From<RegionContext> for kvrpcpb::Context {
-    fn from(mut ctx: RegionContext) -> kvrpcpb::Context {
-        let mut kvctx = kvrpcpb::Context::default();
-        kvctx.set_region_id(ctx.region.id());
-        kvctx.set_region_epoch(ctx.region.region.take_region_epoch());
-        kvctx.set_peer(ctx.region.peer().expect("leader must exist"));
-        kvctx
-    }
-}
-
-#[derive(new)]
-pub struct RawContext {
-    pub(super) region: RegionContext,
-    pub(super) client: Arc<KvClient>,
-}
-
-#[derive(new)]
-pub struct TxnContext {
-    pub(super) region: RegionContext,
 }
 
 trait GroupingTask: Clone + Default + Sized {
@@ -438,5 +377,75 @@ impl GroupingTask for KvPair {
 impl GroupingTask for (Key, Option<Key>) {
     fn key(&self) -> &Key {
         &self.0
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::rpc::pd::Timestamp;
+    use futures::future::BoxFuture;
+
+    struct MockPdClient {}
+
+    impl PdClient for MockPdClient {
+        fn connect(
+            _env: Arc<Environment>,
+            _endpoints: &[String],
+            _security_mgr: Arc<SecurityManager>,
+            _timeout: Duration,
+        ) -> Result<Self> {
+            Ok(MockPdClient {})
+        }
+
+        fn get_region(self: Arc<Self>, _key: &[u8]) -> BoxFuture<'static, Result<Region>> {
+            unimplemented!();
+        }
+
+        fn get_region_by_id(self: Arc<Self>, _id: RegionId) -> BoxFuture<'static, Result<Region>> {
+            unimplemented!();
+        }
+
+        fn get_store(self: Arc<Self>, _id: StoreId) -> BoxFuture<'static, Result<metapb::Store>> {
+            unimplemented!();
+        }
+
+        fn get_all_stores(self: Arc<Self>) -> BoxFuture<'static, Result<Vec<metapb::Store>>> {
+            unimplemented!();
+        }
+
+        fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
+            unimplemented!();
+        }
+    }
+
+    fn mock_rpc_client() -> RpcClient<MockPdClient> {
+        let config = Config::default();
+        let env = Arc::new(
+            EnvBuilder::new()
+                .cq_count(CQ_COUNT)
+                .name_prefix(thread_name!(CLIENT_PREFIX))
+                .build(),
+        );
+        RpcClient {
+            pd: Arc::new(MockPdClient {}),
+            tikv: Default::default(),
+            env,
+            security_mgr: Arc::new(SecurityManager::default()),
+            timeout: config.timeout,
+        }
+    }
+
+    #[test]
+    fn test_kv_client() {
+        let client = mock_rpc_client();
+        let addr1 = "foo";
+        let addr2 = "bar";
+
+        let kv1 = client.kv_client(&addr1).unwrap();
+        let kv2 = client.kv_client(&addr2).unwrap();
+        let kv3 = client.kv_client(&addr2).unwrap();
+        assert!(&*kv1 as *const _ != &*kv2 as *const _);
+        assert_eq!(&*kv2 as *const _, &*kv3 as *const _);
     }
 }
