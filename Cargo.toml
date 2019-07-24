@@ -18,20 +18,18 @@ integration-tests = []
 name = "tikv_client"
 
 [dependencies]
-regex = "1"
 derive-new = "0.5"
 failure = "0.1"
-futures-preview = { version = "0.3.0-alpha.15", features = ["compat"] }
+futures-preview = { version = "0.3.0-alpha.17", features = ["compat"] }
 grpcio = { version = "0.5.0-alpha", features = [ "secure", "prost-codec" ], default-features = false }
+kvproto = { git = "https://github.com/pingcap/kvproto.git", rev = "ec9df5f208a768074c28d04bfb8b90e5321d2f69", features = [ "prost-codec" ], default-features = false }
 lazy_static = "1"
 log = "0.3.9"
+regex = "1"
 serde = "1.0"
 serde_derive = "1.0"
 tokio-core = "0.1"
 tokio-timer = "0.2"
-
-[dependencies.kvproto]
-git = "https://github.com/pingcap/kvproto.git"
 
 [dependencies.prometheus]
 version = "0.4.2"
@@ -45,6 +43,3 @@ runtime = "0.3.0-alpha.3"
 runtime-tokio = "0.3.0-alpha.3"
 proptest = "0.9"
 proptest-derive = "0.1.0"
-
-[replace]
-"prost:0.5.0" = { git = "https://github.com/danburkert/prost", rev = "1944c27c3029d01ff216e7b126d846b6cf8c7d77" }
