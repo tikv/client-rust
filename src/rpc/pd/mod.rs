@@ -40,7 +40,7 @@ impl Region {
         let key: &[u8] = key.into();
         let start_key = self.region.get_start_key();
         let end_key = self.region.get_end_key();
-        start_key <= key && (end_key > key || end_key.is_empty())
+        key >= start_key && (key < end_key || end_key.is_empty())
     }
 
     pub fn context(&self) -> Result<kvrpcpb::Context> {
