@@ -3,20 +3,29 @@
 //! A utility module for managing and retrying PD requests.
 
 use std::{
-    sync::Arc,
+    fmt,
+    sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 
 use futures::compat::Compat01As03;
+use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::ready;
 use futures::task::{Context, Poll};
+use grpcio::Environment;
+use kvproto::metapb;
 use std::pin::Pin;
 use tokio_timer::timer::Handle;
 
 use crate::{
-    rpc::pd::client::{Cluster, RetryClient},
-    rpc::util::GLOBAL_TIMER_HANDLE,
+    pd::{
+        cluster::{Cluster, Connection},
+        Region, RegionId, StoreId,
+    },
+    security::SecurityManager,
+    transaction::Timestamp,
+    util::GLOBAL_TIMER_HANDLE,
     Result,
 };
 
@@ -24,7 +33,90 @@ const RECONNECT_INTERVAL_SEC: u64 = 1;
 const MAX_REQUEST_COUNT: usize = 3;
 const LEADER_CHANGE_RETRY: usize = 10;
 
-pub(super) fn retry_request<Resp, Func, RespFuture>(
+/// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
+pub struct RetryClient {
+    cluster: RwLock<Cluster>,
+    connection: Connection,
+    timeout: Duration,
+}
+
+impl RetryClient {
+    pub fn connect(
+        env: Arc<Environment>,
+        endpoints: &[String],
+        security_mgr: Arc<SecurityManager>,
+        timeout: Duration,
+    ) -> Result<RetryClient> {
+        let connection = Connection::new(env, security_mgr);
+        let cluster = RwLock::new(connection.connect_cluster(endpoints, timeout)?);
+        Ok(RetryClient {
+            cluster,
+            connection,
+            timeout,
+        })
+    }
+
+    // These get_* functions will try multiple times to make a request, reconnecting as necessary.
+    pub fn get_region(self: Arc<Self>, key: &[u8]) -> BoxFuture<'static, Result<Region>> {
+        let key = key.to_owned();
+        let timeout = self.timeout;
+        Box::pin(retry_request(self, move |cluster| {
+            cluster.get_region(key.clone(), timeout)
+        }))
+    }
+
+    pub fn get_region_by_id(self: Arc<Self>, id: RegionId) -> BoxFuture<'static, Result<Region>> {
+        let timeout = self.timeout;
+        Box::pin(retry_request(self, move |cluster| {
+            cluster.get_region_by_id(id, timeout)
+        }))
+    }
+
+    pub fn get_store(self: Arc<Self>, id: StoreId) -> BoxFuture<'static, Result<metapb::Store>> {
+        let timeout = self.timeout;
+        Box::pin(retry_request(self, move |cluster| {
+            cluster.get_store(id, timeout)
+        }))
+    }
+
+    pub fn reconnect(&self, interval: u64) -> Result<()> {
+        if let Some(cluster) =
+            self.connection
+                .reconnect(&self.cluster.read().unwrap(), interval, self.timeout)?
+        {
+            *self.cluster.write().unwrap() = cluster;
+        }
+        Ok(())
+    }
+
+    pub fn with_cluster<T, F: Fn(&Cluster) -> T>(&self, f: F) -> T {
+        f(&self.cluster.read().unwrap())
+    }
+
+    #[allow(dead_code)]
+    pub fn get_all_stores(self: Arc<Self>) -> BoxFuture<'static, Result<Vec<metapb::Store>>> {
+        let timeout = self.timeout;
+        Box::pin(retry_request(self, move |cluster| {
+            cluster.get_all_stores(timeout)
+        }))
+    }
+
+    pub fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
+        // FIXME: retry or reconnect on error
+        Box::pin(self.cluster.read().unwrap().get_timestamp())
+    }
+}
+
+impl fmt::Debug for RetryClient {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("pd::RetryClient")
+            .field("cluster_id", &self.cluster.read().unwrap().id)
+            .field("timeout", &self.timeout)
+            .finish()
+    }
+}
+
+fn retry_request<Resp, Func, RespFuture>(
     client: Arc<RetryClient>,
     func: Func,
 ) -> RetryRequest<impl Future<Output = Result<Resp>>>
@@ -45,7 +137,7 @@ where
 
 /// A future which will retry a request up to `reconnect_count` times or until it
 /// succeeds.
-pub(super) struct RetryRequest<Fut> {
+struct RetryRequest<Fut> {
     reconnect_count: usize,
     future: Fut,
 }

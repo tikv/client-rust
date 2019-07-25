@@ -3,6 +3,7 @@
 // Long and nested future chains can quickly result in large generic types.
 #![type_length_limit = "16777216"]
 #![allow(clippy::redundant_closure)]
+#![allow(clippy::type_complexity)]
 #![feature(async_await)]
 
 //! This crate provides a clean, ready to use client for [TiKV](https://github.com/tikv/tikv), a
@@ -33,7 +34,7 @@
 //! operations affecting multiple keys or values, or operations that depend on strong ordering.
 //!
 //! ```rust
-//! use tikv_client::{*, transaction::*};
+//! use tikv_client::*;
 //! ```
 //!
 //! ### Raw
@@ -45,7 +46,7 @@
 //! key) requirements. You will not be able to use transactions with this API.
 //!
 //! ```rust
-//! use tikv_client::{*, raw::*};
+//! use tikv_client::*;
 //! ```
 //!
 //! ## Connect
@@ -55,7 +56,7 @@
 //!
 //! ```rust
 //! # #![feature(async_await)]
-//! # use tikv_client::{*, raw::*};
+//! # use tikv_client::*;
 //! # use futures::prelude::*;
 //!
 //! # futures::executor::block_on(async {
@@ -66,7 +67,7 @@
 //! ]).with_security("root.ca", "internal.cert", "internal.key");
 //!
 //! // Get an unresolved connection.
-//! let connect = Client::connect(config);
+//! let connect = TransactionClient::connect(config);
 //!
 //! // Resolve the connection into a client.
 //! let client = connect.into_future().await;
@@ -75,15 +76,22 @@
 //!
 //! At this point, you should seek the documentation in the related API modules.
 
+#[macro_use]
+mod util;
+
 mod compat;
 mod config;
 mod errors;
 mod kv;
+mod kv_client;
+mod pd;
+pub mod raw;
+mod security;
+mod stats;
+pub mod transaction;
+
 #[cfg(test)]
 mod proptests;
-pub mod raw;
-mod rpc;
-pub mod transaction;
 
 #[macro_use]
 extern crate lazy_static;
@@ -102,3 +110,9 @@ pub use crate::errors::ErrorKind;
 pub use crate::errors::Result;
 #[doc(inline)]
 pub use crate::kv::{BoundRange, Key, KvPair, ToOwnedRange, Value};
+#[doc(inline)]
+pub use crate::raw::{Client as RawClient, ColumnFamily};
+#[doc(inline)]
+pub use crate::transaction::{
+    Client as TransactionClient, Connect, Snapshot, Timestamp, Transaction,
+};

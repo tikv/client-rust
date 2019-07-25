@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::{HexRepr, Key, Value};
+use kvproto::kvrpcpb;
 #[cfg(test)]
 use proptest_derive::Arbitrary;
 use std::{fmt, str};
@@ -20,7 +21,7 @@ use std::{fmt, str};
 /// types (Like a `(Key, Value)`) can be passed directly to those functions.
 #[derive(Default, Clone, Eq, PartialEq)]
 #[cfg_attr(test, derive(Arbitrary))]
-pub struct KvPair(Key, Value);
+pub struct KvPair(pub Key, pub Value);
 
 impl KvPair {
     /// Create a new `KvPair`.
@@ -89,6 +90,34 @@ where
 impl Into<(Key, Value)> for KvPair {
     fn into(self) -> (Key, Value) {
         (self.0, self.1)
+    }
+}
+
+impl From<kvrpcpb::KvPair> for KvPair {
+    fn from(mut pair: kvrpcpb::KvPair) -> Self {
+        KvPair(Key::from(pair.take_key()), Value::from(pair.take_value()))
+    }
+}
+
+impl Into<kvrpcpb::KvPair> for KvPair {
+    fn into(self) -> kvrpcpb::KvPair {
+        let mut result = kvrpcpb::KvPair::default();
+        let (key, value) = self.into();
+        result.set_key(key.into());
+        result.set_value(value.into());
+        result
+    }
+}
+
+impl AsRef<Key> for KvPair {
+    fn as_ref(&self) -> &Key {
+        &self.0
+    }
+}
+
+impl AsRef<Value> for KvPair {
+    fn as_ref(&self) -> &Value {
+        &self.1
     }
 }
 

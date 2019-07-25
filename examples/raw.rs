@@ -6,7 +6,7 @@
 mod common;
 
 use crate::common::parse_args;
-use tikv_client::{raw::Client, Config, Key, KvPair, Result, ToOwnedRange, Value};
+use tikv_client::{Config, Key, KvPair, RawClient as Client, Result, ToOwnedRange, Value};
 
 const KEY: &str = "TiKV";
 const VALUE: &str = "Rust";
@@ -27,8 +27,7 @@ async fn main() -> Result<()> {
 
     // When we first create a client we receive a `Connect` structure which must be resolved before
     // the client is actually connected and usable.
-    let unconnnected_client = Client::connect(config);
-    let client = unconnnected_client.await?;
+    let client = Client::new(config)?;
 
     // Requests are created from the connected client. These calls return structures which
     // implement `Future`. This means the `Future` must be resolved before the action ever takes

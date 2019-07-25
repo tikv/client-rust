@@ -1,7 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::{Snapshot, Timestamp, Transaction};
-use crate::rpc::RpcClient;
+use crate::pd::{PdClient, PdRpcClient};
 use crate::{Config, Result};
 
 use derive_new::new;
@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 /// The TiKV transactional `Client` is used to issue requests to the TiKV server and PD cluster.
 pub struct Client {
-    rpc: Arc<RpcClient>,
+    pd: Arc<PdRpcClient>,
 }
 
 impl Client {
@@ -20,10 +20,10 @@ impl Client {
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// use tikv_client::{Config, transaction::Client};
+    /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = Client::connect(Config::default());
+    /// let connect = TransactionClient::connect(Config::default());
     /// let client = connect.await.unwrap();
     /// # });
     /// ```
@@ -37,10 +37,10 @@ impl Client {
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// use tikv_client::{Config, transaction::Client};
+    /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = Client::connect(Config::default());
+    /// let connect = TransactionClient::connect(Config::default());
     /// let client = connect.await.unwrap();
     /// let mut transaction = client.begin().await.unwrap();
     /// // ... Issue some commands.
@@ -57,10 +57,10 @@ impl Client {
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// use tikv_client::{Config, transaction::Client};
+    /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = Client::connect(Config::default());
+    /// let connect = TransactionClient::connect(Config::default());
     /// let client = connect.await.unwrap();
     /// let snapshot = client.snapshot().await.unwrap();
     /// // ... Issue some commands.
@@ -75,10 +75,10 @@ impl Client {
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// use tikv_client::{Config, transaction::{Client, Timestamp}};
+    /// use tikv_client::{Config, TransactionClient, Timestamp};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = Client::connect(Config::default());
+    /// let connect = TransactionClient::connect(Config::default());
     /// let client = connect.await.unwrap();
     /// let timestamp = Timestamp { physical: 1564481750172, logical: 1 };
     /// let snapshot = client.snapshot_at(timestamp);
@@ -93,16 +93,16 @@ impl Client {
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// use tikv_client::{Config, transaction::Client};
+    /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = Client::connect(Config::default());
+    /// let connect = TransactionClient::connect(Config::default());
     /// let client = connect.await.unwrap();
     /// let timestamp = client.current_timestamp().await.unwrap();
     /// # });
     /// ```
     pub async fn current_timestamp(&self) -> Result<Timestamp> {
-        self.rpc.clone().get_timestamp().await
+        self.pd.clone().get_timestamp().await
     }
 }
 
@@ -112,12 +112,12 @@ impl Client {
 ///
 /// ```rust,no_run
 /// # #![feature(async_await)]
-/// use tikv_client::{Config, transaction::{Client, Connect}};
+/// use tikv_client::{Config, TransactionClient, Connect};
 /// use futures::prelude::*;
 ///
 /// # futures::executor::block_on(async {
-/// let connect: Connect = Client::connect(Config::default());
-/// let client: Client = connect.await.unwrap();
+/// let connect: Connect = TransactionClient::connect(Config::default());
+/// let client: TransactionClient = connect.await.unwrap();
 /// # });
 /// ```
 #[derive(new)]
@@ -130,9 +130,9 @@ impl Future for Connect {
 
     fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
         let config = &self.config;
-        // TODO: RpcClient::connect currently uses a blocking implementation.
+        // TODO: PdRpcClient::connect currently uses a blocking implementation.
         //       Make it asynchronous later.
-        let rpc = Arc::new(RpcClient::connect(config)?);
-        Poll::Ready(Ok(Client { rpc }))
+        let pd = Arc::new(PdRpcClient::connect(config)?);
+        Poll::Ready(Ok(Client { pd }))
     }
 }
