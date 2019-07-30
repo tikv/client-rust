@@ -258,7 +258,7 @@ pub struct TxnInfo {
 
 /// A snapshot of dataset at a particular point in time.
 pub struct Snapshot {
-    timestamp: Timestamp,
+    _timestamp: Timestamp,
 }
 
 impl Snapshot {

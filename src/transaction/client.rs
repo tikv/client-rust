@@ -69,16 +69,17 @@ impl Client {
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// use tikv_client::{Config, transaction::Client};
+    /// use tikv_client::{Config, transaction::{Client, Timestamp}};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// let connect = Client::connect(Config::default());
     /// let client = connect.await.unwrap();
-    /// let snapshot = client.snapshot();
+    /// let timestamp = Timestamp { physical: 1564474902, logical: 1 };
+    /// let snapshot = client.snapshot_at(timestamp);
     /// // ... Issue some commands.
     /// # });
     /// ```
-    pub fn snapshot_at(&self, timestamp: Timestamp) -> Snapshot {
+    pub fn snapshot_at(&self, _timestamp: Timestamp) -> Snapshot {
         unimplemented!()
     }
 
