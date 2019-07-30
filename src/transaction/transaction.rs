@@ -257,7 +257,9 @@ pub struct TxnInfo {
 }
 
 /// A snapshot of dataset at a particular point in time.
-pub struct Snapshot;
+pub struct Snapshot {
+    timestamp: Timestamp,
+}
 
 impl Snapshot {
     pub fn get(&self, key: impl Into<Key>) -> Get {
