@@ -1,15 +1,19 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::{Snapshot, Timestamp, Transaction};
-use crate::{Config, Error};
+use crate::rpc::RpcClient;
+use crate::{Config, Result};
 
 use derive_new::new;
 use futures::prelude::*;
 use futures::task::{Context, Poll};
 use std::pin::Pin;
+use std::sync::Arc;
 
 /// The TiKV transactional `Client` is used to issue requests to the TiKV server and PD cluster.
-pub struct Client;
+pub struct Client {
+    rpc: Arc<RpcClient>,
+}
 
 impl Client {
     /// Creates a new [`Client`](Client) once the [`Connect`](Connect) resolves.
@@ -38,13 +42,13 @@ impl Client {
     /// # futures::executor::block_on(async {
     /// let connect = Client::connect(Config::default());
     /// let client = connect.await.unwrap();
-    /// let transaction = client.begin();
+    /// let transaction = client.begin().await.unwrap();
     /// // ... Issue some commands.
     /// let commit = transaction.commit();
     /// let result: () = commit.await.unwrap();
     /// # });
     /// ```
-    pub fn begin(&self) -> Transaction {
+    pub async fn begin(&self) -> Result<Transaction> {
         unimplemented!()
     }
 
@@ -57,11 +61,11 @@ impl Client {
     /// # futures::executor::block_on(async {
     /// let connect = Client::connect(Config::default());
     /// let client = connect.await.unwrap();
-    /// let snapshot = client.snapshot();
+    /// let snapshot = client.snapshot().await.unwrap();
     /// // ... Issue some commands.
     /// # });
     /// ```
-    pub fn snapshot(&self) -> Snapshot {
+    pub async fn snapshot(&self) -> Result<Snapshot> {
         unimplemented!()
     }
 
@@ -79,7 +83,7 @@ impl Client {
     /// // ... Issue some commands.
     /// # });
     /// ```
-    pub fn snapshot_at(&self, _timestamp: Timestamp) -> Snapshot {
+    pub async fn snapshot_at(&self, _timestamp: Timestamp) -> Result<Snapshot> {
         unimplemented!()
     }
 
@@ -92,11 +96,11 @@ impl Client {
     /// # futures::executor::block_on(async {
     /// let connect = Client::connect(Config::default());
     /// let client = connect.await.unwrap();
-    /// let timestamp = client.current_timestamp();
+    /// let timestamp = client.current_timestamp().await.unwrap();
     /// # });
     /// ```
-    pub fn current_timestamp(&self) -> Timestamp {
-        unimplemented!()
+    pub async fn current_timestamp(&self) -> Result<Timestamp> {
+        Arc::clone(&self.rpc).get_timestamp().await
     }
 }
 
@@ -120,7 +124,7 @@ pub struct Connect {
 }
 
 impl Future for Connect {
-    type Output = Result<Client, Error>;
+    type Output = Result<Client>;
 
     fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
         let _config = &self.config;

@@ -22,7 +22,7 @@ use std::ops::RangeBounds;
 /// # futures::executor::block_on(async {
 /// let connect = Client::connect(Config::default());
 /// let client = connect.await.unwrap();
-/// let txn = client.begin();
+/// let txn = client.begin().await.unwrap();
 /// # });
 /// ```
 #[derive(new)]
@@ -42,7 +42,7 @@ impl Transaction {
     /// # futures::executor::block_on(async {
     /// # let connect = Client::connect(Config::default());
     /// # let connected_client = connect.await.unwrap();
-    /// let txn = connected_client.begin();
+    /// let txn = connected_client.begin().await.unwrap();
     /// // ... Do some actions.
     /// let req = txn.commit();
     /// let result: () = req.await.unwrap();
@@ -61,7 +61,7 @@ impl Transaction {
     /// # futures::executor::block_on(async {
     /// # let connect = Client::connect(Config::default());
     /// # let connected_client = connect.await.unwrap();
-    /// let txn = connected_client.begin();
+    /// let txn = connected_client.begin().await.unwrap();
     /// // ... Do some actions.
     /// let req = txn.rollback();
     /// let result: () = req.await.unwrap();
@@ -80,7 +80,7 @@ impl Transaction {
     /// # futures::executor::block_on(async {
     /// # let connect = Client::connect(Config::default());
     /// # let connected_client = connect.await.unwrap();
-    /// let mut txn = connected_client.begin();
+    /// let mut txn = connected_client.begin().await.unwrap();
     /// // ... Do some actions.
     /// let req = txn.lock_keys(vec!["TiKV".to_owned(), "Rust".to_owned()]);
     /// let result: () = req.await.unwrap();
@@ -103,7 +103,7 @@ impl Transaction {
     /// # futures::executor::block_on(async {
     /// # let connect = Client::connect(Config::default());
     /// # let connected_client = connect.await.unwrap();
-    /// let txn = connected_client.begin();
+    /// let txn = connected_client.begin().await.unwrap();
     /// // ... Do some actions.
     /// let ts: Timestamp = txn.start_ts();
     /// # });
@@ -121,7 +121,7 @@ impl Transaction {
     /// # futures::executor::block_on(async {
     /// # let connect = Client::connect(Config::default());
     /// # let connected_client = connect.await.unwrap();
-    /// let txn = connected_client.begin();
+    /// let txn = connected_client.begin().await.unwrap();
     /// // ... Do some actions.
     /// let snap: Snapshot = txn.snapshot();
     /// # });
@@ -139,7 +139,7 @@ impl Transaction {
     /// # futures::executor::block_on(async {
     /// # let connect = Client::connect(Config::default());
     /// # let connected_client = connect.await.unwrap();
-    /// let mut txn = connected_client.begin();
+    /// let mut txn = connected_client.begin().await.unwrap();
     /// txn.set_isolation_level(IsolationLevel::SnapshotIsolation);
     /// # });
     /// ```
@@ -159,7 +159,7 @@ impl Transaction {
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
-    /// let mut txn = connected_client.begin();
+    /// let mut txn = connected_client.begin().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let req = txn.get(key);
     /// let result: Value = req.await.unwrap();
@@ -183,7 +183,7 @@ impl Transaction {
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
-    /// let mut txn = connected_client.begin();
+    /// let mut txn = connected_client.begin().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let req = txn.batch_get(keys);
     /// let result: Vec<KvPair> = req.await.unwrap();
@@ -214,7 +214,7 @@ impl Transaction {
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
-    /// let mut txn = connected_client.begin();
+    /// let mut txn = connected_client.begin().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let val = "TiKV".to_owned();
     /// let req = txn.set(key, val);
@@ -238,7 +238,7 @@ impl Transaction {
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
-    /// let mut txn = connected_client.begin();
+    /// let mut txn = connected_client.begin().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let req = txn.delete(key);
     /// let result: () = req.await.unwrap();
