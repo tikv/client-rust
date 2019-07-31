@@ -12,7 +12,7 @@ use std::pin::Pin;
 pub struct Client;
 
 impl Client {
-    /// Create a new [`Client`](Client) once the [`Connect`](Connect) resolves.
+    /// Creates a new [`Client`](Client) once the [`Connect`](Connect) resolves.
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
@@ -27,7 +27,7 @@ impl Client {
         Connect::new(config)
     }
 
-    /// Create a new [`Transaction`](Transaction) using the timestamp from [`current_timestamp`](Client::current_timestamp).
+    /// Creates a new [`Transaction`](Transaction).
     ///
     /// Using the transaction you can issue commands like [`get`](Transaction::get) or [`set`](Transaction::set).
     ///
@@ -48,27 +48,7 @@ impl Client {
         unimplemented!()
     }
 
-    /// Create a new [`Transaction`](Transaction) at the provded timestamp.
-    ///
-    /// ```rust,no_run
-    /// # #![feature(async_await)]
-    /// use tikv_client::{Config, transaction::Client};
-    /// use futures::prelude::*;
-    /// # futures::executor::block_on(async {
-    /// let connect = Client::connect(Config::default());
-    /// let client = connect.await.unwrap();
-    /// let timestamp = client.current_timestamp();
-    /// let transaction = client.begin_with_timestamp(timestamp);
-    /// // ... Issue some commands.
-    /// let commit = transaction.commit();
-    /// let result: () = commit.await.unwrap();
-    /// # });
-    /// ```
-    pub fn begin_with_timestamp(&self, _timestamp: Timestamp) -> Transaction {
-        unimplemented!()
-    }
-
-    /// Get a [`Snapshot`](Snapshot) using the timestamp from [`current_timestamp`](Client::current_timestamp).
+    /// Gets the latest [`Snapshot`](Snapshot).
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
@@ -85,7 +65,25 @@ impl Client {
         unimplemented!()
     }
 
-    /// Retrieve the current [`Timestamp`](Timestamp).
+    /// Gets a [`Snapshot`](Snapshot) at the given point in time.
+    ///
+    /// ```rust,no_run
+    /// # #![feature(async_await)]
+    /// use tikv_client::{Config, transaction::{Client, Timestamp}};
+    /// use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// let connect = Client::connect(Config::default());
+    /// let client = connect.await.unwrap();
+    /// let timestamp = Timestamp { physical: 1564474902, logical: 1 };
+    /// let snapshot = client.snapshot_at(timestamp);
+    /// // ... Issue some commands.
+    /// # });
+    /// ```
+    pub fn snapshot_at(&self, _timestamp: Timestamp) -> Snapshot {
+        unimplemented!()
+    }
+
+    /// Retrieves the current [`Timestamp`](Timestamp).
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
