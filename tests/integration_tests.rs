@@ -9,7 +9,7 @@ use tikv_client::{transaction::*, Config, Result};
 
 #[test]
 fn get_timestamp() -> Fallible<()> {
-    const COUNT: usize = 1 << 12;
+    const COUNT: usize = 1 << 16;
     let mut pool = ThreadPool::new()?;
     let config = Config::new(pd_addrs());
     let fut = async {
@@ -20,7 +20,7 @@ fn get_timestamp() -> Fallible<()> {
     let mut versions = pool
         .run(fut)?
         .into_iter()
-        .map(|res| res.map(|ts| ts.physical << 18 + ts.logical))
+        .map(|res| res.map(|ts| (ts.physical << 18) + ts.logical))
         .collect::<Result<Vec<_>>>()?;
 
     // Each version should be unique
