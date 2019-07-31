@@ -14,7 +14,9 @@ This is an open source (Apache 2) project hosted by the Cloud Native Computing F
 
 ## Using the client
 
-The TiKV client is a Rust library (crate). It requires a nightly Rust compiler with async/await support.
+The TiKV client is a Rust library (crate). It uses async/await internally and exposes some `async fn` APIs as well.
+
+Async/await is a new feature in Rust and is currently unstable. To use it you'll need to add the feature flag `#![async_await]` to your crate and use a nightly compiler (see below).
 
 To use this crate in your project, add it as a dependency in your `Cargo.toml`:
 
