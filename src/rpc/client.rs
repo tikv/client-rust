@@ -20,7 +20,7 @@ use crate::{
     kv::BoundRange,
     raw::ColumnFamily,
     rpc::{
-        pd::{PdClient, Region, RegionId, RetryClient, StoreId},
+        pd::{PdClient, Region, RegionId, RetryClient, StoreId, Timestamp},
         security::SecurityManager,
         tikv::KvClient,
         Address, RawContext, Store, TxnContext,
@@ -223,6 +223,10 @@ impl<PdC: PdClient> RpcClient<PdC> {
         _cf: Option<ColumnFamily>,
     ) -> impl Future<Output = Result<Vec<KvPair>>> {
         future::err(Error::unimplemented())
+    }
+
+    pub fn get_timestamp(self: Arc<Self>) -> impl Future<Output = Result<Timestamp>> {
+        Arc::clone(&self.pd).get_timestamp()
     }
 
     // Returns a Steam which iterates over the contexts for each region covered by range.

@@ -6,7 +6,7 @@ os:
   # - windows # TODO: https://github.com/pingcap/kvproto/issues/355
   - osx
 rust:
-  # Requires nightly for now, stable can be re-enabled when 1.36 is stable.
+  # Requires nightly for now, stable can be re-enabled when async/await is stable.
   # - stable
   - nightly
 env:

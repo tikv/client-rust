@@ -13,7 +13,7 @@ use tikv_client::{
 };
 
 async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
-    let mut txn = client.begin();
+    let mut txn = client.begin().await.expect("Could not begin a transaction");
     future::join_all(
         pairs
             .into_iter()
@@ -28,7 +28,7 @@ async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>
 }
 
 async fn get(client: &Client, key: Key) -> Value {
-    let txn = client.begin();
+    let txn = client.begin().await.expect("Could not begin a transaction");
     txn.get(key).await.expect("Could not get value")
 }
 
@@ -37,6 +37,8 @@ async fn get(client: &Client, key: Key) -> Value {
 async fn scan(client: &Client, range: impl RangeBounds<Key>, mut limit: usize) {
     client
         .begin()
+        .await
+        .expect("Could not begin a transaction")
         .scan(range)
         .into_stream()
         .take_while(move |r| {
@@ -53,7 +55,7 @@ async fn scan(client: &Client, range: impl RangeBounds<Key>, mut limit: usize) {
 }
 
 async fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {
-    let mut txn = client.begin();
+    let mut txn = client.begin().await.expect("Could not begin a transaction");
     txn.set_isolation_level(IsolationLevel::ReadCommitted);
     let _: Vec<()> = stream::iter(keys.into_iter())
         .then(|p| {
