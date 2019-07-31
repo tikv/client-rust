@@ -7,23 +7,14 @@ mod common;
 use crate::common::parse_args;
 use futures::prelude::*;
 use std::ops::RangeBounds;
-use tikv_client::{
-    transaction::{Client, IsolationLevel},
-    Config, Key, KvPair, Value,
-};
+use tikv_client::{transaction::Client, Config, Key, KvPair, Value};
 
 async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
     let mut txn = client.begin().await.expect("Could not begin a transaction");
-    future::join_all(
-        pairs
-            .into_iter()
-            .map(Into::into)
-            .map(|p| txn.set(p.key().clone(), p.value().clone())),
-    )
-    .await
-    .into_iter()
-    .collect::<Result<Vec<()>, _>>()
-    .expect("Could not set key value pairs");
+    for pair in pairs {
+        let (key, value) = pair.into().into();
+        txn.set(key, value);
+    }
     txn.commit().await.expect("Could not commit transaction");
 }
 
@@ -56,14 +47,9 @@ async fn scan(client: &Client, range: impl RangeBounds<Key>, mut limit: usize) {
 
 async fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {
     let mut txn = client.begin().await.expect("Could not begin a transaction");
-    txn.set_isolation_level(IsolationLevel::ReadCommitted);
-    let _: Vec<()> = stream::iter(keys.into_iter())
-        .then(|p| {
-            txn.delete(p)
-                .unwrap_or_else(|e| panic!("error in delete: {:?}", e))
-        })
-        .collect()
-        .await;
+    for key in keys {
+        txn.delete(key);
+    }
     txn.commit().await.expect("Could not commit transaction");
 }
 

@@ -87,7 +87,7 @@ impl Region {
     }
 }
 
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone, Copy)]
 pub struct Timestamp {
     pub physical: i64,
     pub logical: i64,

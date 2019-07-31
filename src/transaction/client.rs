@@ -42,14 +42,15 @@ impl Client {
     /// # futures::executor::block_on(async {
     /// let connect = Client::connect(Config::default());
     /// let client = connect.await.unwrap();
-    /// let transaction = client.begin().await.unwrap();
+    /// let mut transaction = client.begin().await.unwrap();
     /// // ... Issue some commands.
     /// let commit = transaction.commit();
     /// let result: () = commit.await.unwrap();
     /// # });
     /// ```
     pub async fn begin(&self) -> Result<Transaction> {
-        unimplemented!()
+        let snapshot = self.snapshot().await?;
+        Ok(Transaction::new(snapshot))
     }
 
     /// Gets the latest [`Snapshot`](Snapshot).
@@ -66,7 +67,8 @@ impl Client {
     /// # });
     /// ```
     pub async fn snapshot(&self) -> Result<Snapshot> {
-        unimplemented!()
+        let timestamp = self.current_timestamp().await?;
+        self.snapshot_at(timestamp).await
     }
 
     /// Gets a [`Snapshot`](Snapshot) at the given point in time.
@@ -83,8 +85,8 @@ impl Client {
     /// // ... Issue some commands.
     /// # });
     /// ```
-    pub async fn snapshot_at(&self, _timestamp: Timestamp) -> Result<Snapshot> {
-        unimplemented!()
+    pub async fn snapshot_at(&self, timestamp: Timestamp) -> Result<Snapshot> {
+        Ok(Snapshot::new(timestamp))
     }
 
     /// Retrieves the current [`Timestamp`](Timestamp).
