@@ -1,6 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::{arb_batch, pd_addr};
+use super::{arb_batch, pd_addrs};
 use crate::{raw::Client, Config, KvPair, Value};
 use futures::executor::block_on;
 use proptest::{arbitrary::any, proptest};
@@ -12,7 +12,7 @@ proptest! {
     fn point(
         pair in any::<KvPair>(),
     ) {
-        let client = block_on(Client::connect(Config::new(pd_addr()))).unwrap();
+        let client = block_on(Client::connect(Config::new(pd_addrs()))).unwrap();
 
         block_on(
             client.put(pair.key().clone(), pair.value().clone())
@@ -36,7 +36,7 @@ proptest! {
     fn batch(
         kvs in arb_batch(any::<KvPair>(), None),
     ) {
-        let client = block_on(Client::connect(Config::new(pd_addr()))).unwrap();
+        let client = block_on(Client::connect(Config::new(pd_addrs()))).unwrap();
         let keys = kvs.iter().map(|kv| kv.key()).cloned().collect::<Vec<_>>();
 
         block_on(
