@@ -22,22 +22,22 @@ const MAX_PENDING_COUNT: usize = 64;
 
 /// The timestamp oracle which provides monotonically increasing timestamps.
 #[derive(Clone)]
-pub struct Tso {
-    /// The transmitter of a bounded channel which transports the sender of an oneshot channel to
+pub struct TimestampOracle {
+    /// The transmitter of a bounded channel which transports the sender of a oneshot channel to
     /// the TSO working thread.
     /// In the working thread, the `oneshot::Sender` is used to send back timestamp results.
     result_sender_tx: mpsc::Sender<oneshot::Sender<Timestamp>>,
 }
 
-impl Tso {
-    pub fn new(cluster_id: u64, pd_client: &PdClient) -> Result<Tso> {
+impl TimestampOracle {
+    pub fn new(cluster_id: u64, pd_client: &PdClient) -> Result<TimestampOracle> {
         let (result_sender_tx, result_sender_rx) = mpsc::channel(MAX_PENDING_COUNT);
 
         // Start a background thread to handle TSO requests and responses
         let worker = TsoWorker::new(cluster_id, pd_client, result_sender_rx)?;
         thread::spawn(move || block_on(worker.run()));
 
-        Ok(Tso { result_sender_tx })
+        Ok(TimestampOracle { result_sender_tx })
     }
 
     pub async fn get_timestamp(mut self) -> Result<Timestamp> {
@@ -75,7 +75,6 @@ impl TsoWorker {
 
     async fn run(mut self) {
         let ctx = Rc::new(RefCell::new(TsoContext {
-            cluster_id: self.cluster_id,
             pending_queue: VecDeque::with_capacity(MAX_PENDING_COUNT),
             waker: None,
         }));
@@ -83,6 +82,7 @@ impl TsoWorker {
         let result_sender_rx = self.result_sender_rx;
         pin_mut!(result_sender_rx);
         let mut request_stream = TsoRequestStream {
+            cluster_id: self.cluster_id,
             result_sender_rx,
             ctx: ctx.clone(),
         };
@@ -106,6 +106,7 @@ impl TsoWorker {
 }
 
 struct TsoRequestStream<'a> {
+    cluster_id: u64,
     result_sender_rx: Pin<&'a mut mpsc::Receiver<oneshot::Sender<Timestamp>>>,
     ctx: Rc<RefCell<TsoContext>>,
 }
@@ -138,7 +139,7 @@ impl<'a> Stream for TsoRequestStream<'a> {
         if count > 0 {
             let req = TsoRequest {
                 header: Some(RequestHeader {
-                    cluster_id: ctx.cluster_id,
+                    cluster_id: self.cluster_id,
                 }),
                 count,
             };
@@ -151,7 +152,6 @@ impl<'a> Stream for TsoRequestStream<'a> {
 }
 
 struct TsoContext {
-    cluster_id: u64,
     pending_queue: VecDeque<oneshot::Sender<Timestamp>>,
     waker: Option<Waker>,
 }
@@ -165,7 +165,7 @@ impl TsoContext {
             .timestamp
             .as_ref()
             .ok_or_else(|| Error::internal_error("No timestamp in TsoResponse"))?;
-        let mut offset = resp.count as i64;
+        let mut offset = i64::from(resp.count);
         while offset > 0 {
             offset -= 1;
             if let Some(sender) = self.pending_queue.pop_front() {
@@ -177,9 +177,9 @@ impl TsoContext {
                 // It doesn't matter if the receiver of the channel is dropped.
                 let _ = sender.send(ts);
             } else {
-                Err(Error::internal_error(
+                return Err(Error::internal_error(
                     "PD gives more timestamps than expected",
-                ))?
+                ));
             }
         }
         Ok(())

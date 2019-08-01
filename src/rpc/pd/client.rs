@@ -16,8 +16,8 @@ use kvproto::{metapb, pdpb};
 use crate::{
     rpc::{
         pd::{
-            context::request_context, request::retry_request, timestamp::Tso, Region, RegionId,
-            StoreId, Timestamp,
+            context::request_context, request::retry_request, timestamp::TimestampOracle, Region,
+            RegionId, StoreId, Timestamp,
         },
         security::SecurityManager,
     },
@@ -143,7 +143,7 @@ pub struct Cluster {
     pub id: u64,
     pub(super) client: pdpb::PdClient,
     members: pdpb::GetMembersResponse,
-    tso: Tso,
+    tso: TimestampOracle,
 }
 
 // These methods make a single attempt to make a request.
@@ -282,7 +282,7 @@ impl Connection {
         let (client, members) = self.try_connect_leader(&members, timeout)?;
 
         let id = members.get_header().get_cluster_id();
-        let tso = Tso::new(id, &client)?;
+        let tso = TimestampOracle::new(id, &client)?;
         let cluster = Cluster {
             id,
             members,
@@ -307,7 +307,7 @@ impl Connection {
         warn!("updating pd client, blocking the tokio core");
         let start = Instant::now();
         let (client, members) = self.try_connect_leader(&old_cluster.members, timeout)?;
-        let tso = Tso::new(old_cluster.id, &client)?;
+        let tso = TimestampOracle::new(old_cluster.id, &client)?;
 
         let cluster = Cluster {
             id: old_cluster.id,
