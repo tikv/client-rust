@@ -20,7 +20,7 @@ use std::{cell::RefCell, collections::VecDeque, pin::Pin, rc::Rc, thread};
 
 const MAX_PENDING_COUNT: usize = 64;
 
-/// The timestamp oracle which provides monotonically increasing timestamps.
+/// The timestamp oracle (TSO) which provides monotonically increasing timestamps.
 #[derive(Clone)]
 pub struct TimestampOracle {
     /// The transmitter of a bounded channel which transports the sender of a oneshot channel to
