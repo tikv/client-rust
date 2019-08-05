@@ -17,7 +17,7 @@ use crate::{
         tikv::context::{request_context, RequestContext},
         Store, TxnContext,
     },
-    transaction::{Mutation, TxnInfo},
+    transaction::TxnInfo,
     Error, ErrorKind, Key, KvPair, Result, Value,
 };
 
@@ -178,32 +178,6 @@ macro_rules! txn_request {
     }};
 }
 
-impl From<Mutation> for kvrpcpb::Mutation {
-    fn from(mutation: Mutation) -> kvrpcpb::Mutation {
-        let mut pb = kvrpcpb::Mutation::default();
-        match mutation {
-            Mutation::Put(k, v) => {
-                pb.set_op(kvrpcpb::Op::Put);
-                pb.set_key(k.into());
-                pb.set_value(v.into());
-            }
-            Mutation::Del(k) => {
-                pb.set_op(kvrpcpb::Op::Del);
-                pb.set_key(k.into());
-            }
-            Mutation::Lock(k) => {
-                pb.set_op(kvrpcpb::Op::Lock);
-                pb.set_key(k.into());
-            }
-            Mutation::Rollback(k) => {
-                pb.set_op(kvrpcpb::Op::Rollback);
-                pb.set_key(k.into());
-            }
-        };
-        pb
-    }
-}
-
 impl From<TxnInfo> for kvrpcpb::TxnInfo {
     fn from(txn_info: TxnInfo) -> kvrpcpb::TxnInfo {
         let mut pb = kvrpcpb::TxnInfo::default();
@@ -274,14 +248,14 @@ impl KvClient {
     pub(in crate::rpc) fn kv_prewrite(
         &self,
         context: TxnContext,
-        mutations: impl Iterator<Item = Mutation>,
+        mutations: impl Iterator<Item = kvrpcpb::Mutation>,
         primary_lock: Key,
         start_version: u64,
         lock_ttl: u64,
         skip_constraint_check: bool,
     ) -> impl Future<Output = Result<kvrpcpb::PrewriteResponse>> {
         let mut req = txn_request!(context, kvrpcpb::PrewriteRequest);
-        req.set_mutations(mutations.map(Into::into).collect());
+        req.set_mutations(mutations.collect());
         req.set_primary_lock(primary_lock.into());
         req.set_start_version(start_version);
         req.set_lock_ttl(lock_ttl);
@@ -317,11 +291,11 @@ impl KvClient {
 
     pub(in crate::rpc) fn kv_import(
         &self,
-        mutations: impl Iterator<Item = Mutation>,
+        mutations: impl Iterator<Item = kvrpcpb::Mutation>,
         commit_version: u64,
     ) -> impl Future<Output = Result<kvrpcpb::ImportResponse>> {
         let mut req = kvrpcpb::ImportRequest::default();
-        req.set_mutations(mutations.map(Into::into).collect());
+        req.set_mutations(mutations.collect());
         req.set_commit_version(commit_version);
 
         self.execute(

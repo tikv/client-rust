@@ -14,6 +14,8 @@ pub use self::requests::Scanner;
 pub use self::transaction::{Snapshot, Transaction, TxnInfo};
 pub use super::rpc::Timestamp;
 
+use kvproto::kvrpcpb;
+
 use crate::{Key, Value};
 
 mod client;
@@ -22,8 +24,27 @@ mod requests;
 mod transaction;
 
 pub enum Mutation {
-    Put(Key, Value),
-    Del(Key),
-    Lock(Key),
-    Rollback(Key),
+    Put(Value),
+    Del,
+    Lock,
+    Rollback,
+}
+
+impl Mutation {
+    fn with_key(self, key: impl Into<Key>) -> kvrpcpb::Mutation {
+        let mut pb = kvrpcpb::Mutation {
+            key: key.into().into(),
+            ..Default::default()
+        };
+        match self {
+            Mutation::Put(v) => {
+                pb.set_op(kvrpcpb::Op::Put);
+                pb.set_value(v.into());
+            }
+            Mutation::Del => pb.set_op(kvrpcpb::Op::Del),
+            Mutation::Lock => pb.set_op(kvrpcpb::Op::Lock),
+            Mutation::Rollback => pb.set_op(kvrpcpb::Op::Rollback),
+        };
+        pb
+    }
 }

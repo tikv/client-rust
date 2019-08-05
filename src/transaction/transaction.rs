@@ -1,9 +1,10 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::{Scanner, Timestamp};
+use super::{Mutation, Scanner, Timestamp};
 use crate::{Key, KvPair, Result, Value};
 
 use derive_new::new;
+use std::collections::BTreeMap;
 use std::ops::RangeBounds;
 
 /// A undo-able set of actions on the dataset.
@@ -28,6 +29,8 @@ use std::ops::RangeBounds;
 #[derive(new)]
 pub struct Transaction {
     snapshot: Snapshot,
+    #[new(default)]
+    mutations: BTreeMap<Key, Mutation>,
 }
 
 impl Transaction {
@@ -101,8 +104,9 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub fn set(&mut self, _key: impl Into<Key>, _value: impl Into<Value>) {
-        unimplemented!()
+    pub fn set(&mut self, key: impl Into<Key>, value: impl Into<Value>) {
+        self.mutations
+            .insert(key.into(), Mutation::Put(value.into()));
     }
 
     /// Deletes the given key.
@@ -121,8 +125,8 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub fn delete(&mut self, _key: impl Into<Key>) {
-        unimplemented!()
+    pub fn delete(&mut self, key: impl Into<Key>) {
+        self.mutations.insert(key.into(), Mutation::Del);
     }
 
     /// Locks the given keys.
@@ -140,8 +144,9 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub fn lock_keys(&mut self, _keys: impl IntoIterator<Item = impl Into<Key>>) {
-        unimplemented!()
+    pub fn lock_keys(&mut self, keys: impl IntoIterator<Item = impl Into<Key>>) {
+        self.mutations
+            .extend(keys.into_iter().map(|key| (key.into(), Mutation::Lock)));
     }
 
     /// Commits the actions of the transaction.
@@ -160,7 +165,11 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn commit(&mut self) -> Result<()> {
-        unimplemented!()
+        self.prewrite().await?;
+        self.commit_primary().await?;
+        // FIXME: return from this method once the primary key is committed
+        let _ = self.commit_secondary().await;
+        Ok(())
     }
 
     /// Returns the timestamp which the transaction started at.
@@ -197,6 +206,18 @@ impl Transaction {
     /// ```
     pub fn snapshot(&self) -> &Snapshot {
         &self.snapshot
+    }
+
+    async fn prewrite(&mut self) -> Result<()> {
+        unimplemented!()
+    }
+
+    async fn commit_primary(&mut self) -> Result<()> {
+        unimplemented!()
+    }
+
+    async fn commit_secondary(&mut self) -> Result<()> {
+        unimplemented!()
     }
 }
 
