@@ -226,7 +226,7 @@ impl<PdC: PdClient> RpcClient<PdC> {
     }
 
     pub fn get_timestamp(self: Arc<Self>) -> impl Future<Output = Result<Timestamp>> {
-        Arc::clone(&self.pd).get_timestamp()
+        self.pd.clone().get_timestamp()
     }
 
     // Returns a Steam which iterates over the contexts for each region covered by range.

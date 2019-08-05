@@ -45,4 +45,4 @@ script:
   - if [[ $TRAVIS_OS_NAME == "linux" ]]; then docker ps; fi
   - if [[ $TRAVIS_OS_NAME == "linux" ]]; then docker logs pd; fi
   - if [[ $TRAVIS_OS_NAME == "linux" ]]; then docker logs kv; fi
-  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then PD_ADDR="127.0.0.1:2379" cargo test --all --features integration-tests -- --nocapture; fi
+  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then PD_ADDRS="127.0.0.1:2379" cargo test --all --features integration-tests -- --nocapture; fi

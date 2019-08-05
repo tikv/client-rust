@@ -102,7 +102,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn current_timestamp(&self) -> Result<Timestamp> {
-        Arc::clone(&self.rpc).get_timestamp().await
+        self.rpc.clone().get_timestamp().await
     }
 }
 
