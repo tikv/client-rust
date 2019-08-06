@@ -6,10 +6,10 @@
 //! Once a `TimestampOracle` is created, there will be two futures running in a background working
 //! thread created automatically. The `get_timestamp` method creates a oneshot channel whose
 //! transmitter is served as a `TimestampRequest`. `TimestampRequest`s are sent to the working
-//! thread through a bounded multi-producer, single-consumer channel. The first future tries to
-//! exhaust the channel to get as many requests as possible and sends a single `TsoRequest` to the
-//! PD server. The other future receives `TsoResponse`s from the PD server and allocates timestamps
-//! for the requests.
+//! thread through a bounded multi-producer, single-consumer channel. Every time the first future
+//! is polled, it tries to exhaust the channel to get as many requests as possible and sends a
+//! single `TsoRequest` to the PD server. The other future receives `TsoResponse`s from the PD
+//! server and allocates timestamps for the requests.
 
 use super::Timestamp;
 use crate::{Error, Result};
@@ -23,7 +23,7 @@ use futures::{
     task::{AtomicWaker, Context, Poll},
 };
 use grpcio::WriteFlags;
-use kvproto::pdpb::{PdClient, *};
+use kvproto::pdpb::*;
 use std::{cell::RefCell, collections::VecDeque, pin::Pin, rc::Rc, thread};
 
 /// It is an empirical value.
