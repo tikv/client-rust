@@ -10,8 +10,8 @@
 //!
 
 pub use self::client::{Client, Connect};
-pub use self::requests::{BatchGet, Commit, Delete, Get, LockKeys, Rollback, Scanner, Set};
-pub use self::transaction::{IsolationLevel, Snapshot, Transaction, TxnInfo};
+pub use self::requests::Scanner;
+pub use self::transaction::{Snapshot, Transaction, TxnInfo};
 pub use super::rpc::Timestamp;
 
 use crate::{Key, Value};
