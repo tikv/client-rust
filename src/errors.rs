@@ -198,8 +198,10 @@ impl Error {
         })
     }
 
-    pub(crate) fn internal_error(message: String) -> Self {
-        Error::from(ErrorKind::InternalError { message })
+    pub(crate) fn internal_error(message: impl Into<String>) -> Self {
+        Error::from(ErrorKind::InternalError {
+            message: message.into(),
+        })
     }
 }
 

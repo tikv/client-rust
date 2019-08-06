@@ -16,7 +16,7 @@ use kvproto::{metapb, pdpb};
 use crate::{
     rpc::{
         pd::{
-            context::request_context, request::retry_request, timestamp::PdReactor, Region,
+            context::request_context, request::retry_request, timestamp::TimestampOracle, Region,
             RegionId, StoreId, Timestamp,
         },
         security::SecurityManager,
@@ -108,6 +108,7 @@ impl PdClient for RetryClient {
     }
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
+        // FIXME: retry or reconnect on error
         Box::pin(self.cluster.read().unwrap().get_timestamp())
     }
 }
@@ -142,7 +143,7 @@ pub struct Cluster {
     pub id: u64,
     pub(super) client: pdpb::PdClient,
     members: pdpb::GetMembersResponse,
-    reactor: Arc<RwLock<PdReactor>>,
+    tso: TimestampOracle,
 }
 
 // These methods make a single attempt to make a request.
@@ -256,7 +257,7 @@ impl Cluster {
     }
 
     fn get_timestamp(&self) -> impl Future<Output = Result<Timestamp>> {
-        self.reactor.write().unwrap().get_timestamp()
+        self.tso.clone().get_timestamp()
     }
 }
 
@@ -281,14 +282,13 @@ impl Connection {
         let (client, members) = self.try_connect_leader(&members, timeout)?;
 
         let id = members.get_header().get_cluster_id();
+        let tso = TimestampOracle::new(id, &client)?;
         let cluster = Cluster {
             id,
             members,
             client,
-            reactor: Arc::new(RwLock::new(PdReactor::new())),
+            tso,
         };
-
-        PdReactor::start(cluster.reactor.clone(), &cluster);
         Ok(cluster)
     }
 
@@ -307,14 +307,14 @@ impl Connection {
         warn!("updating pd client, blocking the tokio core");
         let start = Instant::now();
         let (client, members) = self.try_connect_leader(&old_cluster.members, timeout)?;
+        let tso = TimestampOracle::new(old_cluster.id, &client)?;
 
         let cluster = Cluster {
             id: old_cluster.id,
             client,
             members,
-            reactor: old_cluster.reactor.clone(),
+            tso,
         };
-        PdReactor::start(cluster.reactor.clone(), &cluster);
         *self.last_update.write().unwrap() = Instant::now();
 
         warn!("updating PD client done, spent {:?}", start.elapsed());

@@ -2,227 +2,193 @@
 
 //! This module is the low-level mechanisms for getting timestamps from a PD
 //! cluster. It should be used via the `get_timestamp` API in `PdClient`.
+//!
+//! Once a `TimestampOracle` is created, there will be two futures running in a background working
+//! thread created automatically. The `get_timestamp` method creates a oneshot channel whose
+//! transmitter is served as a `TimestampRequest`. `TimestampRequest`s are sent to the working
+//! thread through a bounded multi-producer, single-consumer channel. Every time the first future
+//! is polled, it tries to exhaust the channel to get as many requests as possible and sends a
+//! single `TsoRequest` to the PD server. The other future receives `TsoResponse`s from the PD
+//! server and allocates timestamps for the requests.
 
-use std::{
-    sync::{Arc, RwLock},
-    thread::{self, JoinHandle},
-};
+use super::Timestamp;
+use crate::{Error, Result};
 
-use futures::channel::{
-    mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender},
-    oneshot,
+use futures::{
+    channel::{mpsc, oneshot},
+    compat::*,
+    executor::block_on,
+    join, pin_mut,
+    prelude::*,
+    task::{AtomicWaker, Context, Poll},
 };
-use futures::compat::{Compat01As03, Compat01As03Sink};
-use futures::future::TryFutureExt;
-use futures::prelude::*;
 use grpcio::WriteFlags;
-use kvproto::pdpb;
-use tokio_core::reactor::{Core, Handle as TokioHandle};
+use kvproto::pdpb::*;
+use std::{cell::RefCell, collections::VecDeque, pin::Pin, rc::Rc, thread};
 
-use crate::{
-    compat::SinkCompat,
-    rpc::pd::{
-        client::Cluster,
-        context::{observe_tso_batch, request_context},
-        Timestamp,
-    },
-    Result,
-};
+/// It is an empirical value.
+const MAX_BATCH_SIZE: usize = 64;
 
-type TsoChannel = oneshot::Sender<Timestamp>;
+/// TODO: This value should be adjustable.
+const MAX_PENDING_COUNT: usize = 1 << 16;
 
-enum Task {
-    Init,
-    Request,
-    Response(Vec<oneshot::Sender<Timestamp>>, pdpb::TsoResponse),
+type TimestampRequest = oneshot::Sender<Timestamp>;
+
+/// The timestamp oracle (TSO) which provides monotonically increasing timestamps.
+#[derive(Clone)]
+pub struct TimestampOracle {
+    /// The transmitter of a bounded channel which transports requests of getting a single
+    /// timestamp to the TSO working thread. A bounded channel is used to prevent using
+    /// too much memory unexpectedly.
+    /// In the working thread, the `TimestampRequest`, which is actually a one channel sender,
+    /// is used to send back the timestamp result.
+    request_tx: mpsc::Sender<TimestampRequest>,
 }
 
-impl Task {
-    fn dispatch(
-        self,
-        reactor: Arc<RwLock<PdReactor>>,
-        cluster_id: u64,
-        pd_client: &pdpb::PdClient,
-        handle: &TokioHandle,
-    ) {
-        match self {
-            Task::Request => reactor.write().unwrap().tso_request(cluster_id),
-            Task::Response(requests, response) => {
-                reactor.write().unwrap().tso_response(requests, response)
+impl TimestampOracle {
+    pub fn new(cluster_id: u64, pd_client: &PdClient) -> Result<TimestampOracle> {
+        let (request_tx, request_rx) = mpsc::channel(MAX_BATCH_SIZE);
+        // FIXME: use tso_opt
+        let (rpc_sender, rpc_receiver) = pd_client.tso()?;
+
+        // Start a background thread to handle TSO requests and responses
+        thread::spawn(move || {
+            block_on(run_tso(
+                cluster_id,
+                rpc_sender.sink_compat().sink_err_into(),
+                rpc_receiver.compat().err_into(),
+                request_rx,
+            ))
+        });
+
+        Ok(TimestampOracle { request_tx })
+    }
+
+    pub async fn get_timestamp(mut self) -> Result<Timestamp> {
+        let (request, response) = oneshot::channel();
+        self.request_tx
+            .send(request)
+            .await
+            .map_err(|_| Error::internal_error("TimestampRequest channel is closed"))?;
+        Ok(response.await?)
+    }
+}
+
+async fn run_tso(
+    cluster_id: u64,
+    mut rpc_sender: impl Sink<(TsoRequest, WriteFlags), Error = Error> + Unpin,
+    mut rpc_receiver: impl Stream<Item = Result<TsoResponse>> + Unpin,
+    request_rx: mpsc::Receiver<TimestampRequest>,
+) {
+    // The `TimestampRequest`s which are waiting for the responses from the PD server
+    let pending_requests = Rc::new(RefCell::new(VecDeque::with_capacity(MAX_PENDING_COUNT)));
+
+    // When there are too many pending requests, the `send_request` future will refuse to fetch
+    // more requests from the bounded channel. This waker is used to wake up the sending future
+    // if the queue containing pending requests is no longer full.
+    let sending_future_waker = Rc::new(AtomicWaker::new());
+
+    pin_mut!(request_rx);
+    let mut request_stream = TsoRequestStream {
+        cluster_id,
+        request_rx,
+        pending_requests: pending_requests.clone(),
+        self_waker: sending_future_waker.clone(),
+    };
+
+    let send_requests = rpc_sender.send_all(&mut request_stream);
+
+    let receive_and_handle_responses = async move {
+        while let Some(Ok(resp)) = rpc_receiver.next().await {
+            let mut pending_requests = pending_requests.borrow_mut();
+
+            // Wake up the sending future blocked by too many pending requests as we are consuming
+            // some of them here.
+            if pending_requests.len() == MAX_PENDING_COUNT {
+                sending_future_waker.wake();
             }
-            Task::Init => PdReactor::init(reactor, pd_client, handle),
+
+            allocate_timestamps(&resp, &mut pending_requests)?;
         }
-    }
+        Err(Error::internal_error("TSO stream terminated"))
+    };
+
+    let (send_res, recv_res): (_, Result<()>) = join!(send_requests, receive_and_handle_responses);
+    error!("TSO send error: {:?}", send_res);
+    error!("TSO receive error: {:?}", recv_res);
 }
 
-/// A special-purpose event loop for asynchronously requesting timestamps. This is
-/// more complex than just sending a request since requests are batched on the client.
-pub(super) struct PdReactor {
-    // These fields are for communicating internally within the reactor to initialize
-    // it and send communicate between threads.
-    task_tx: Option<UnboundedSender<Task>>,
-    tso_tx: Sender<pdpb::TsoRequest>,
-    tso_rx: Option<Receiver<pdpb::TsoRequest>>,
-
-    // These fields are for communicating with the PD cluster to get batches of timestamps.
-    handle: Option<JoinHandle<()>>,
-    tso_pending: Option<Vec<TsoChannel>>,
-    tso_buffer: Option<Vec<TsoChannel>>,
-    tso_batch: Vec<TsoChannel>,
+struct TsoRequestStream<'a> {
+    cluster_id: u64,
+    request_rx: Pin<&'a mut mpsc::Receiver<oneshot::Sender<Timestamp>>>,
+    pending_requests: Rc<RefCell<VecDeque<TimestampRequest>>>,
+    self_waker: Rc<AtomicWaker>,
 }
 
-impl Drop for PdReactor {
-    fn drop(&mut self) {
-        if let Some(handle) = self.handle.take() {
-            handle.join().unwrap();
-        }
-    }
-}
+impl<'a> Stream for TsoRequestStream<'a> {
+    type Item = (TsoRequest, WriteFlags);
 
-impl PdReactor {
-    pub(super) fn new() -> Self {
-        let (tso_tx, tso_rx) = mpsc::channel(1);
-        PdReactor {
-            task_tx: None,
-            tso_tx,
-            tso_rx: Some(tso_rx),
-            handle: None,
-            tso_buffer: Some(Vec::with_capacity(8)),
-            tso_batch: Vec::with_capacity(8),
-            tso_pending: None,
-        }
-    }
-
-    /// Startup the reactor, including the communication thread if necessary.
-    pub(super) fn start(r: Arc<RwLock<Self>>, cluster: &Cluster) {
-        let reactor = &mut r.write().unwrap();
-        if reactor.handle.is_none() {
-            info!("starting pd reactor thread");
-            let (task_tx, task_rx) = mpsc::unbounded();
-            task_tx.unbounded_send(Task::Init).unwrap();
-            let pd_client = cluster.client.clone();
-            let cluster_id = cluster.id;
-            reactor.task_tx = Some(task_tx);
-            let r2 = r.clone();
-            reactor.handle = Some(
-                thread::Builder::new()
-                    .name("dispatcher thread".to_owned())
-                    .spawn(move || PdReactor::poll(r2, cluster_id, pd_client, task_rx))
-                    .unwrap(),
-            )
-        } else {
-            warn!("tso sender and receiver are stale, refreshing...");
-            let (tso_tx, tso_rx) = mpsc::channel(1);
-            reactor.tso_tx = tso_tx;
-            reactor.tso_rx = Some(tso_rx);
-            reactor.schedule(Task::Init);
-        }
-    }
-
-    fn poll(
-        r: Arc<RwLock<Self>>,
-        cluster_id: u64,
-        pd_client: pdpb::PdClient,
-        task_rx: UnboundedReceiver<Task>,
-    ) {
-        let mut core = Core::new().unwrap();
-        let handle = core.handle();
-
-        let f = task_rx
-            .map(|t| {
-                t.dispatch(r.clone(), cluster_id, &pd_client, &handle);
-            })
-            .collect::<Vec<()>>();
-        core.run(TryFutureExt::compat(f.unit_error())).unwrap();
-    }
-
-    // Initialise client for communicating with the PD cluster.
-    fn init(r: Arc<RwLock<Self>>, pd_client: &pdpb::PdClient, handle: &TokioHandle) {
-        let (tx, rx) = pd_client.tso().unwrap();
-        let tx = Compat01As03Sink::new(tx);
-        let rx = Compat01As03::new(rx);
-        let tso_rx = r.write().unwrap().tso_rx.take().unwrap(); // Receiver<TsoRequest>: Stream
-
-        handle.spawn(
-            tx.sink_map_err(Into::into)
-                .send_all_compat(tso_rx.map(|r| (r, WriteFlags::default())))
-                .map(|r: Result<_>| match r {
-                    Ok((_sender, _)) => {
-                        // FIXME(#54) the previous code doesn't work because we can't get mutable
-                        // access to the underlying StreamingCallSink to call `cancel`. But I think
-                        // that is OK because it will be canceled when it is dropped.
-                        //
-                        // _sender.get_mut().get_ref().cancel();
-                        Ok(())
-                    }
-                    Err(e) => {
-                        error!("failed to send tso requests: {:?}", e);
-                        Err(())
-                    }
-                })
-                .compat(),
-        );
-
-        handle.spawn(
-            rx.try_for_each(move |resp| {
-                let reactor = &mut r.write().unwrap();
-                let tso_pending = reactor.tso_pending.take().unwrap();
-                reactor.schedule(Task::Response(tso_pending, resp));
-                if !reactor.tso_batch.is_empty() {
-                    // Schedule another tso_batch of request
-                    reactor.schedule(Task::Request);
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        let pending_requests = self.pending_requests.clone();
+        let mut pending_requests = pending_requests.borrow_mut();
+        let mut count = 0;
+        while count < MAX_BATCH_SIZE && pending_requests.len() < MAX_PENDING_COUNT {
+            match self.request_rx.as_mut().poll_next(cx) {
+                Poll::Ready(Some(sender)) => {
+                    pending_requests.push_back(sender);
+                    count += 1;
                 }
-                future::ready(Ok(()))
-            })
-            .map_err(|e| panic!("unexpected error: {:?}", e))
-            .compat(),
-        );
-    }
-
-    fn tso_request(&mut self, cluster_id: u64) {
-        let mut tso_batch = self.tso_buffer.take().unwrap();
-        tso_batch.extend(self.tso_batch.drain(..));
-        let mut request = pd_request!(cluster_id, pdpb::TsoRequest);
-        let batch_size = tso_batch.len();
-        observe_tso_batch(batch_size);
-        request.count = batch_size as u32;
-        self.tso_pending = Some(tso_batch);
-        self.tso_tx
-            .try_send(request)
-            .expect("channel can never be full");
-    }
-
-    fn tso_response(&mut self, mut requests: Vec<TsoChannel>, response: pdpb::TsoResponse) {
-        let timestamp = response.get_timestamp();
-        for (offset, request) in requests.drain(..).enumerate() {
-            request
-                .send(Timestamp {
-                    physical: timestamp.physical,
-                    logical: timestamp.logical + offset as i64,
-                })
-                .unwrap();
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Pending => break,
+            }
         }
-        self.tso_buffer = Some(requests);
-    }
 
-    fn schedule(&self, task: Task) {
-        self.task_tx
-            .as_ref()
-            .unwrap()
-            .unbounded_send(task)
-            .expect("unbounded send should never fail");
-    }
-
-    pub fn get_timestamp(&mut self) -> impl Future<Output = Result<Timestamp>> {
-        let context = request_context("get_ts");
-        let (tx, rx) = oneshot::channel::<Timestamp>();
-        self.tso_batch.push(tx);
-        if self.tso_pending.is_none() {
-            // Schedule tso request to run.
-            self.schedule(Task::Request);
+        if count > 0 {
+            let req = TsoRequest {
+                header: Some(RequestHeader {
+                    cluster_id: self.cluster_id,
+                }),
+                count: count as u32,
+            };
+            let write_flags = WriteFlags::default().buffer_hint(false);
+            Poll::Ready(Some((req, write_flags)))
+        } else {
+            // Set the waker to the context, then the stream can be waked up after the pending queue
+            // is no longer full.
+            self.self_waker.register(cx.waker());
+            Poll::Pending
         }
-        rx.map_err(Into::into)
-            .into_future()
-            .map(move |r| context.done(r))
     }
+}
+
+fn allocate_timestamps(
+    resp: &TsoResponse,
+    pending_requests: &mut VecDeque<TimestampRequest>,
+) -> Result<()> {
+    // PD returns the timestamp with the biggest logical value. We can send back timestamps
+    // whose logical value is from `logical - count + 1` to `logical` using the senders
+    // in `pending`.
+    let tail_ts = resp
+        .timestamp
+        .as_ref()
+        .ok_or_else(|| Error::internal_error("No timestamp in TsoResponse"))?;
+
+    let mut offset = i64::from(resp.count);
+    while offset > 0 {
+        offset -= 1;
+        if let Some(sender) = pending_requests.pop_front() {
+            let ts = Timestamp {
+                physical: tail_ts.physical,
+                logical: tail_ts.logical - offset,
+            };
+
+            // It doesn't matter if the receiver of the channel is dropped.
+            let _ = sender.send(ts);
+        } else {
+            return Err(Error::internal_error(
+                "PD gives more timestamps than expected",
+            ));
+        }
+    }
+    Ok(())
 }

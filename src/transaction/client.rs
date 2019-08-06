@@ -78,7 +78,7 @@ impl Client {
     /// # futures::executor::block_on(async {
     /// let connect = Client::connect(Config::default());
     /// let client = connect.await.unwrap();
-    /// let timestamp = Timestamp { physical: 1564474902, logical: 1 };
+    /// let timestamp = Timestamp { physical: 1564481750172, logical: 1 };
     /// let snapshot = client.snapshot_at(timestamp);
     /// // ... Issue some commands.
     /// # });
@@ -127,7 +127,10 @@ impl Future for Connect {
     type Output = Result<Client>;
 
     fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
-        let _config = &self.config;
-        unimplemented!()
+        let config = &self.config;
+        // TODO: RpcClient::connect currently uses a blocking implementation.
+        //       Make it asynchronous later.
+        let rpc = Arc::new(RpcClient::connect(config)?);
+        Poll::Ready(Ok(Client { rpc }))
     }
 }
