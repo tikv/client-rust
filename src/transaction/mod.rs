@@ -23,11 +23,11 @@ mod requests;
 #[allow(clippy::module_inception)]
 mod transaction;
 
+#[derive(Debug, Clone)]
 pub enum Mutation {
     Put(Value),
     Del,
     Lock,
-    Rollback,
 }
 
 impl Mutation {
@@ -43,8 +43,16 @@ impl Mutation {
             }
             Mutation::Del => pb.set_op(kvrpcpb::Op::Del),
             Mutation::Lock => pb.set_op(kvrpcpb::Op::Lock),
-            Mutation::Rollback => pb.set_op(kvrpcpb::Op::Rollback),
         };
         pb
+    }
+
+    /// Returns a `Some` if the value can be determined by this mutation. Otherwise, returns `None`.
+    fn get_value(&self) -> Option<Value> {
+        match self {
+            Mutation::Put(value) => Some(value.clone()),
+            Mutation::Del => Some(Value::default()),
+            Mutation::Lock => None,
+        }
     }
 }
