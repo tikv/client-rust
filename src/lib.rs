@@ -5,6 +5,7 @@
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::type_complexity)]
 #![feature(async_await)]
+#![cfg_attr(test, feature(specialization))]
 
 //! This crate provides a clean, ready to use client for [TiKV](https://github.com/tikv/tikv), a
 //! distributed transactional Key-Value database written in Rust.

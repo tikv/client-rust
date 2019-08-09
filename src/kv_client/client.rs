@@ -338,33 +338,3 @@ where
         })
         .map(move |r| context.done(r))
 }
-
-// #[cfg(test)]
-// pub mod test {
-//     use super::*;
-
-//     pub struct MockTikvClient {
-//         pub address: String,
-//     }
-
-//     impl AbstractTikvClient for MockTikvClient {
-//         fn raw_scan_async_opt(
-//             &self,
-//             _req: &kvrpcpb::RawScanRequest,
-//             _opt: ::grpcio::CallOption,
-//         ) -> ::grpcio::Result<::grpcio::ClientUnaryReceiver<kvrpcpb::RawScanResponse>> {
-//             match &*self.address {
-//                 "store-address-41" => Ok(::grpcio::ClientUnaryReceiver::new()),
-//                 "store-address-42" => Ok(::grpcio::ClientUnaryReceiver::new()),
-//                 _ => panic!(),
-//             }
-//         }
-//     }
-
-//     impl KvConnect for MockTikvClient {
-//         type TikvClient = MockTikvClient;
-//         fn connect(&self, address: &str) -> Result<Arc<MockTikvClient>> {
-//             Ok(Arc::new(MockTikvClient { address: address.to_owned() }))
-//         }
-//     }
-// }

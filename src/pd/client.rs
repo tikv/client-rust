@@ -66,7 +66,7 @@ pub trait PdClient: Send + Sync + 'static {
             if let Some(key) = keys.next() {
                 Either::Left(self.region_for_key(key.as_ref()).map_ok(move |region| {
                     let id = region.id();
-                    let mut grouped = Vec::new();
+                    let mut grouped = vec![key];
                     while let Some(key) = keys.peek() {
                         if !region.contains(key.as_ref()) {
                             break;
@@ -202,17 +202,19 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdRpcClient<KvC> {
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
     use super::*;
-    use crate::raw::RawRequest;
+    use crate::raw::{MockDispatch, RawRequest, RawScan};
     use crate::Error;
 
-    // use futures::executor;
+    use futures::executor;
     use futures::future::{ready, BoxFuture};
     use grpcio::CallOption;
+    use kvproto::kvrpcpb;
     use kvproto::metapb;
 
-    struct MockKvClient;
+    // FIXME move all the mocks to their own module
+    pub struct MockKvClient;
 
     impl KvClient for MockKvClient {
         fn dispatch<T: RawRequest>(
@@ -220,25 +222,49 @@ mod test {
             _request: &T::RpcRequest,
             _opt: CallOption,
         ) -> BoxFuture<'static, Result<T::RpcResponse>> {
-            unimplemented!();
+            unreachable!()
         }
     }
 
-    struct MockPdClient;
+    impl MockDispatch for RawScan {
+        fn mock_dispatch(
+            &self,
+            request: &kvrpcpb::RawScanRequest,
+            _opt: CallOption,
+        ) -> Option<BoxFuture<'static, Result<kvrpcpb::RawScanResponse>>> {
+            assert!(request.key_only);
+            assert_eq!(request.limit, 10);
+
+            let mut resp = kvrpcpb::RawScanResponse::default();
+            for i in request.start_key[0]..request.end_key[0] {
+                let mut kv = kvrpcpb::KvPair::default();
+                kv.key = vec![i];
+                resp.kvs.push(kv);
+            }
+
+            Some(Box::pin(ready(Ok(resp))))
+        }
+    }
+
+    pub struct MockPdClient;
 
     impl PdClient for MockPdClient {
         type KvClient = MockKvClient;
 
         fn map_region_to_store(
             self: Arc<Self>,
-            _region: Region,
+            region: Region,
         ) -> BoxFuture<'static, Result<Store<Self::KvClient>>> {
-            unimplemented!()
+            Box::pin(ready(Ok(Store::new(
+                region,
+                MockKvClient,
+                Duration::from_secs(60),
+            ))))
         }
 
         fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>> {
             let bytes: &[_] = key.into();
-            let region = if bytes.len() <= 1 {
+            let region = if bytes.is_empty() || bytes[0] < 10 {
                 Self::region1()
             } else {
                 Self::region2()
@@ -272,7 +298,7 @@ mod test {
             let mut region = Region::default();
             region.region.id = 1;
             region.region.set_start_key(vec![0]);
-            region.region.set_end_key(vec![4]);
+            region.region.set_end_key(vec![10]);
 
             let mut leader = metapb::Peer::default();
             leader.store_id = 41;
@@ -284,8 +310,8 @@ mod test {
         fn region2() -> Region {
             let mut region = Region::default();
             region.region.id = 2;
-            region.region.set_start_key(vec![4]);
-            region.region.set_end_key(vec![8]);
+            region.region.set_start_key(vec![10]);
+            region.region.set_end_key(vec![250, 250]);
 
             let mut leader = metapb::Peer::default();
             leader.store_id = 42;
@@ -295,6 +321,7 @@ mod test {
         }
     }
 
+    // TODO needs us to mock out the KvConnect in PdRpcClient
     // #[test]
     // fn test_kv_client() {
     //     let client = MockPdClient;
@@ -308,41 +335,37 @@ mod test {
     //     assert_eq!(&*kv2 as *const _, &*kv3 as *const _);
     // }
 
-    // #[test]
-    // fn test_group_keys_by_region() {
-    //     let client = MockPdClient;
+    #[test]
+    fn test_group_keys_by_region() {
+        let client = MockPdClient;
 
-    //     let tasks: Vec<Key> = vec![
-    //         vec![1].into(),
-    //         vec![2].into(),
-    //         vec![3].into(),
-    //         vec![5, 1].into(),
-    //         vec![5, 2].into(),
-    //     ];
+        // FIXME This only works if the keys are in order of regions. Not sure if
+        // that is a reasonable constraint.
+        let tasks: Vec<Key> = vec![
+            vec![1].into(),
+            vec![2].into(),
+            vec![3].into(),
+            vec![5, 2].into(),
+            vec![12].into(),
+            vec![11, 4].into(),
+        ];
 
-    //     let stream = Arc::new(client).group_keys_by_region(tasks.into_iter());
-    //     let mut stream = executor::block_on_stream(stream);
+        let stream = Arc::new(client).group_keys_by_region(tasks.into_iter());
+        let mut stream = executor::block_on_stream(stream);
 
-    //     assert_eq!(
-    //         stream.next().unwrap().unwrap().1,
-    //         vec![vec![1].into(), vec![2].into(), vec![3].into()]
-    //     );
-    //     assert_eq!(
-    //         stream.next().unwrap().unwrap().1,
-    //         vec![vec![5, 1].into(), vec![5, 2].into()]
-    //     );
-    //     assert!(stream.next().is_none());
-    // }
-
-    // #[test]
-    // fn test_raw_scan() {
-    //     let client = Arc::new(mock_rpc_client());
-    //     // TODO two regions with kvs across both
-    //     let start: Key = vec![1].into();
-    //     let end: Key = vec![3].into();
-    //     let scan = client.raw_scan((start..end).into(), 10, true, None);
-    //     let scan = executor::block_on(scan).unwrap();
-
-    //     assert_eq!(scan.len(), 10);
-    // }
+        assert_eq!(
+            stream.next().unwrap().unwrap().1,
+            vec![
+                vec![1].into(),
+                vec![2].into(),
+                vec![3].into(),
+                vec![5, 2].into()
+            ]
+        );
+        assert_eq!(
+            stream.next().unwrap().unwrap().1,
+            vec![vec![12].into(), vec![11, 4].into()]
+        );
+        assert!(stream.next().is_none());
+    }
 }

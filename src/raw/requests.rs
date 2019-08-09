@@ -10,6 +10,7 @@ use crate::{
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::BoxStream;
+use grpcio::CallOption;
 use kvproto::kvrpcpb;
 use kvproto::tikvpb::TikvClient;
 use std::mem;
@@ -32,7 +33,8 @@ pub trait RawRequest: Sync + Send + 'static + Sized + Clone {
             stores
                 .and_then(move |(key, store)| {
                     let request = self.clone().into_request(key, &store);
-                    store.dispatch::<Self>(&request, store.call_options())
+                    self.mock_dispatch(&request, store.call_options())
+                        .unwrap_or_else(|| store.dispatch::<Self>(&request, store.call_options()))
                 })
                 .map_ok(move |r| Self::map_result(r))
                 .boxed(),
@@ -56,6 +58,19 @@ pub trait RawRequest: Sync + Send + 'static + Sized + Clone {
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>>;
 }
+
+/// Permits easy mocking of rpc calls.
+pub trait MockDispatch: RawRequest {
+    fn mock_dispatch(
+        &self,
+        _request: &Self::RpcRequest,
+        _opt: CallOption,
+    ) -> Option<BoxFuture<'static, Result<Self::RpcResponse>>> {
+        None
+    }
+}
+
+impl<T: RawRequest> MockDispatch for T {}
 
 #[derive(Clone)]
 pub struct RawGet {
@@ -582,5 +597,31 @@ impl RawRequest for RawBatchScan {
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
         results.try_concat().boxed()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::pd::MockPdClient;
+    use futures::executor;
+
+    #[test]
+    #[ignore]
+    fn test_raw_scan() {
+        let client = Arc::new(MockPdClient);
+
+        let start: Key = vec![1].into();
+        let end: Key = vec![50].into();
+        let scan = RawScan {
+            range: (start, end).into(),
+            limit: 10,
+            key_only: true,
+            cf: None,
+        };
+        let scan = executor::block_on(scan.execute(client)).unwrap();
+
+        assert_eq!(scan.len(), 10);
+        // TODO test the keys returned.
     }
 }

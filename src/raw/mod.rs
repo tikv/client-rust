@@ -12,6 +12,8 @@
 
 pub use self::client::Client;
 pub(crate) use requests::RawRequest;
+#[cfg(test)]
+pub use requests::*;
 
 use std::fmt;
 
