@@ -18,7 +18,7 @@ macro_rules! internal_err {
 /// make a thread name with additional tag inheriting from current thread.
 macro_rules! thread_name {
     ($name:expr) => {{
-        $crate::rpc::util::get_tag_from_thread_name()
+        $crate::util::get_tag_from_thread_name()
             .map(|tag| format!("{}::{}", $name, tag))
             .unwrap_or_else(|| $name.to_owned())
     }};

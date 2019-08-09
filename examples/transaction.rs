@@ -7,7 +7,7 @@ mod common;
 use crate::common::parse_args;
 use futures::prelude::*;
 use std::ops::RangeBounds;
-use tikv_client::{transaction::Client, Config, Key, KvPair, Value};
+use tikv_client::{Config, Key, KvPair, TransactionClient as Client, Value};
 
 async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
     let mut txn = client.begin().await.expect("Could not begin a transaction");

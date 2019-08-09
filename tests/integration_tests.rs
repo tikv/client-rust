@@ -5,7 +5,7 @@ use failure::Fallible;
 use futures::executor::ThreadPool;
 use futures::prelude::*;
 use std::env;
-use tikv_client::{transaction::*, Config, Result};
+use tikv_client::{Config, Result, TransactionClient};
 
 #[test]
 fn get_timestamp() -> Fallible<()> {
@@ -13,7 +13,7 @@ fn get_timestamp() -> Fallible<()> {
     let mut pool = ThreadPool::new()?;
     let config = Config::new(pd_addrs());
     let fut = async {
-        let client = Client::connect(config).await?;
+        let client = TransactionClient::connect(config).await?;
         Result::Ok(future::join_all((0..COUNT).map(|_| client.current_timestamp())).await)
     };
     // Calculate each version of retrieved timestamp
