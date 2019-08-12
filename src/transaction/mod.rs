@@ -12,10 +12,13 @@
 pub use self::client::{Client, Connect};
 pub use self::requests::Scanner;
 
-use crate::{Key, KvPair, Result, Value};
+use crate::{Key, Result, Value};
 use derive_new::new;
 use kvproto::kvrpcpb;
-use std::{collections::BTreeMap, ops::RangeBounds};
+use std::{
+    collections::{BTreeMap, HashMap},
+    ops::RangeBounds,
+};
 
 mod client;
 pub(crate) mod requests;
@@ -27,16 +30,16 @@ pub struct Timestamp {
 }
 
 #[derive(Debug, Clone)]
-pub enum Mutation {
+enum Mutation {
     Put(Value),
     Del,
     Lock,
 }
 
 impl Mutation {
-    fn with_key(self, key: impl Into<Key>) -> kvrpcpb::Mutation {
+    fn with_key(self, key: Key) -> kvrpcpb::Mutation {
         let mut pb = kvrpcpb::Mutation {
-            key: key.into().into(),
+            key: key.into(),
             ..Default::default()
         };
         match self {
@@ -51,13 +54,18 @@ impl Mutation {
     }
 
     /// Returns a `Some` if the value can be determined by this mutation. Otherwise, returns `None`.
-    fn get_value(&self) -> Option<Value> {
+    fn get_value(&self) -> MutationValue {
         match self {
-            Mutation::Put(value) => Some(value.clone()),
-            Mutation::Del => Some(Value::default()),
-            Mutation::Lock => None,
+            Mutation::Put(value) => MutationValue::Determined(Some(value.clone())),
+            Mutation::Del => MutationValue::Determined(None),
+            Mutation::Lock => MutationValue::Undetermined,
         }
     }
+}
+
+enum MutationValue {
+    Determined(Option<Value>),
+    Undetermined,
 }
 
 /// A undo-able set of actions on the dataset.
@@ -104,16 +112,16 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn get(&self, key: impl Into<Key>) -> Result<Value> {
+    pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
         let key = key.into();
-        if let Some(value) = self.get_from_mutations(&key) {
-            Ok(value)
-        } else {
-            self.snapshot.get(key).await
+        match self.get_from_mutations(&key) {
+            MutationValue::Determined(value) => Ok(value),
+            MutationValue::Undetermined => self.snapshot.get(key).await,
         }
     }
 
-    /// Gets the values associated with the given keys.
+    /// Gets the values associated with the given keys. Non-existent keys are not included in the
+    /// result.
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
@@ -125,7 +133,7 @@ impl Transaction {
     /// let mut txn = connected_client.begin().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let req = txn.batch_get(keys);
-    /// let result: Vec<KvPair> = req.await.unwrap();
+    /// let result: Result<HashMap<Key, Value>> = req.await.unwrap();
     /// // Finish the transaction...
     /// txn.commit().await.unwrap();
     /// # });
@@ -133,36 +141,24 @@ impl Transaction {
     pub async fn batch_get(
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
-    ) -> Result<Vec<KvPair>> {
-        let mut result = Vec::new();
+    ) -> Result<HashMap<Key, Value>> {
+        let mut result = HashMap::new();
         let mut keys_from_snapshot = Vec::new();
-        let mut result_indices_from_snapshot = Vec::new();
 
-        // Try to fill the result vector from mutations
+        // Try to get the result from buffered mutations first
         for key in keys {
             let key = key.into();
-            if let Some(value) = self.get_from_mutations(&key) {
-                result.push((key, value).into());
-            } else {
-                keys_from_snapshot.push(key);
-                result_indices_from_snapshot.push(result.len());
-                // Push a placeholder
-                result.push(KvPair::default());
+            match self.get_from_mutations(&key) {
+                MutationValue::Determined(Some(value)) => {
+                    result.insert(key, value);
+                }
+                MutationValue::Determined(None) => {}
+                MutationValue::Undetermined => keys_from_snapshot.push(key),
             }
         }
 
         // Get others from snapshot
-        let kv_pairs_from_snapshot = self
-            .snapshot
-            .batch_get(keys_from_snapshot.into_iter())
-            .await?;
-        for (kv_pair, index) in kv_pairs_from_snapshot
-            .into_iter()
-            .zip(result_indices_from_snapshot)
-        {
-            result[index] = kv_pair;
-        }
-
+        result.extend(self.snapshot.batch_get(keys_from_snapshot).await?);
         Ok(result)
     }
 
@@ -316,8 +312,11 @@ impl Transaction {
         unimplemented!()
     }
 
-    fn get_from_mutations(&self, key: &Key) -> Option<Value> {
-        self.mutations.get(key).and_then(Mutation::get_value)
+    fn get_from_mutations(&self, key: &Key) -> MutationValue {
+        self.mutations
+            .get(key)
+            .map(Mutation::get_value)
+            .unwrap_or(MutationValue::Undetermined)
     }
 }
 
@@ -348,11 +347,12 @@ impl Snapshot {
     /// let result: Value = req.await.unwrap();
     /// # });
     /// ```
-    pub async fn get(&self, _key: impl Into<Key>) -> Result<Value> {
+    pub async fn get(&self, _key: impl Into<Key>) -> Result<Option<Value>> {
         unimplemented!()
     }
 
-    /// Gets the values associated with the given keys.
+    /// Gets the values associated with the given keys. Non-existent keys are not included in the
+    /// result.
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
@@ -364,7 +364,7 @@ impl Snapshot {
     /// let mut txn = connected_client.begin().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let req = txn.batch_get(keys);
-    /// let result: Vec<KvPair> = req.await.unwrap();
+    /// let result: Result<HashMap<Key, Value>> = req.await.unwrap();
     /// // Finish the transaction...
     /// txn.commit().await.unwrap();
     /// # });
@@ -372,7 +372,7 @@ impl Snapshot {
     pub async fn batch_get(
         &self,
         _keys: impl IntoIterator<Item = impl Into<Key>>,
-    ) -> Result<Vec<KvPair>> {
+    ) -> Result<HashMap<Key, Value>> {
         unimplemented!()
     }
 
