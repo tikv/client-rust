@@ -38,7 +38,7 @@ features = ["push", "process"]
 [dev-dependencies]
 clap = "2.32"
 tempdir = "0.3"
-runtime = "0.3.0-alpha.3"
-runtime-tokio = "0.3.0-alpha.3"
+runtime = { version = "0.3.0-alpha.6", default-features = false }
+runtime-tokio = "0.3.0-alpha.5"
 proptest = "0.9"
 proptest-derive = "0.1.0"

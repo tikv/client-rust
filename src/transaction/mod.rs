@@ -106,8 +106,7 @@ impl Transaction {
     /// # let connected_client = connecting_client.await.unwrap();
     /// let mut txn = connected_client.begin().await.unwrap();
     /// let key = "TiKV".to_owned();
-    /// let req = txn.get(key);
-    /// let result: Value = req.await.unwrap();
+    /// let result: Option<Value> = txn.get(key).await.unwrap();
     /// // Finish the transaction...
     /// txn.commit().await.unwrap();
     /// # });
@@ -125,15 +124,15 @@ impl Transaction {
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// # use tikv_client::{KvPair, Config, transaction::Client};
+    /// # use tikv_client::{Key, Value, Config, transaction::Client};
     /// # use futures::prelude::*;
+    /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
     /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
     /// let mut txn = connected_client.begin().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
-    /// let req = txn.batch_get(keys);
-    /// let result: Result<HashMap<Key, Value>> = req.await.unwrap();
+    /// let result: HashMap<Key, Value> = txn.batch_get(keys).await.unwrap();
     /// // Finish the transaction...
     /// txn.commit().await.unwrap();
     /// # });
@@ -343,8 +342,7 @@ impl Snapshot {
     /// # let connected_client = connecting_client.await.unwrap();
     /// let snapshot = connected_client.snapshot().await.unwrap();
     /// let key = "TiKV".to_owned();
-    /// let req = snapshot.get(key);
-    /// let result: Value = req.await.unwrap();
+    /// let result: Option<Value> = snapshot.get(key).await.unwrap();
     /// # });
     /// ```
     pub async fn get(&self, _key: impl Into<Key>) -> Result<Option<Value>> {
@@ -356,17 +354,15 @@ impl Snapshot {
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// # use tikv_client::{KvPair, Config, TransactionClient};
+    /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
+    /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
     /// # let connecting_client = TransactionClient::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
     /// # let connected_client = connecting_client.await.unwrap();
-    /// let mut txn = connected_client.begin().await.unwrap();
+    /// let snapshot = connected_client.snapshot().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
-    /// let req = txn.batch_get(keys);
-    /// let result: Result<HashMap<Key, Value>> = req.await.unwrap();
-    /// // Finish the transaction...
-    /// txn.commit().await.unwrap();
+    /// let result: HashMap<Key, Value> = snapshot.batch_get(keys).await.unwrap();
     /// # });
     /// ```
     pub async fn batch_get(
