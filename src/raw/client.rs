@@ -1,128 +1,46 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::ColumnFamily;
-use crate::{rpc::RpcClient, BoundRange, Config, Error, Key, KvPair, Result, Value};
+use super::{
+    requests::{
+        RawBatchDelete, RawBatchGet, RawBatchPut, RawBatchScan, RawDelete, RawDeleteRange, RawGet,
+        RawPut, RawRequest, RawScan,
+    },
+    ColumnFamily,
+};
+use crate::{pd::PdRpcClient, BoundRange, Config, Error, Key, KvPair, Result, Value};
 
-use derive_new::new;
 use futures::future::Either;
 use futures::prelude::*;
-use futures::task::{Context, Poll};
-use std::{pin::Pin, sync::Arc, u32};
+use std::{sync::Arc, u32};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
 /// The TiKV raw [`Client`](Client) is used to issue requests to the TiKV server and PD cluster.
 #[derive(Clone)]
 pub struct Client {
-    rpc: Arc<RpcClient>,
+    rpc: Arc<PdRpcClient>,
     cf: Option<ColumnFamily>,
     key_only: bool,
 }
 
-// The macros below make writing `impl Client` concise and hopefully easy to
-// read. Otherwise, the important bits get lost in boilerplate.
-
-// `request` and `scan_request` define public functions which return a future for
-// a request. When using them, supply the name of the function and the names of
-// arguments, the name of the function on the RPC client, and the `Output` type
-// of the returned future.
-macro_rules! request {
-    ($fn_name:ident ($($args:ident),*), $rpc_name:ident, $output:ty) => {
-        pub fn $fn_name(
-            &self,
-            $($args: arg_type!($args),)*
-        ) -> impl Future<Output = Result<$output>> {
-            let this = self.clone();
-            this.rpc.$rpc_name($(arg_convert!($args, $args)),*, this.cf)
-        }
-    }
-}
-
-macro_rules! scan_request {
-    ($fn_name:ident ($($args:ident),*), $rpc_name:ident, $output:ty) => {
-        pub fn $fn_name(
-            &self,
-            $($args: arg_type!($args),)*
-            limit: u32,
-        ) -> impl Future<Output = Result<$output>> {
-            if limit > MAX_RAW_KV_SCAN_LIMIT {
-                Either::Right(future::err(Error::max_scan_limit_exceeded(
-                    limit,
-                    MAX_RAW_KV_SCAN_LIMIT,
-                )))
-            } else {
-                let this = self.clone();
-                Either::Left(this.rpc.$rpc_name($(arg_convert!($args, $args)),*, limit, this.key_only, this.cf))
-            }
-        }
-    }
-}
-
-// The following macros are used by the above macros to understand how arguments
-// should be treated. `self` and `limit` (in scan requests) are treated separately.
-// Skip to the use of `args!` to see the definitions.
-//
-// When using arguments in the `request` macros, we need to use their name, type,
-// and be able to convert them for the RPC client functions. There are two kinds
-// of argument - individual values, and collections of values. In the first case
-// we always use `Into`, and in the second we take an iterator which we also
-// also transform using `Into::into`. This gives users maximum flexibility.
-//
-// `arg_type` defines the type for values (`into`) and collections (`iter`).
-// Likewise, `arg_convert` rule defines how to convert the argument into the more
-// concrete type required by the RPC client. Both macros are created by `args`.
-
-macro_rules! arg_type_rule {
-    (into<$ty:ty>) => (impl Into<$ty>);
-    (iter<$ty:ty>) => (impl IntoIterator<Item = impl Into<$ty>>);
-}
-
-macro_rules! arg_convert_rule {
-    (into $id:ident) => {
-        $id.into()
-    };
-    (iter $id:ident) => {
-        $id.into_iter().map(Into::into).collect()
-    };
-}
-
-// `$i` is the name of the argument (e.g, `key`)
-// `$kind` is either `iter` or `into`.
-// `$ty` is the concrete type of the argument.
-macro_rules! args {
-    ($($i:ident: $kind:ident<$ty:ty>;)*) => {
-        macro_rules! arg_type {
-            $(($i) => (arg_type_rule!($kind<$ty>));)*
-        }
-        macro_rules! arg_convert {
-            $(($i, $id : ident) => (arg_convert_rule!($kind $id));)*
-        }
-    }
-}
-
-args! {
-    key: into<Key>;
-    keys: iter<Key>;
-    value: into<Value>;
-    pairs: iter<KvPair>;
-    range: into<BoundRange>;
-    ranges: iter<BoundRange>;
-}
-
 impl Client {
-    /// Create a new [`Client`](Client) once the [`Connect`](Connect) resolves.
+    /// Create a new [`Client`](Client).
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// # use tikv_client::{Config, raw::Client};
+    /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = Client::connect(Config::default());
-    /// let client = connect.await.unwrap();
+    /// let client = RawClient::new(Config::default()).unwrap();
     /// # });
     /// ```
-    pub fn connect(config: Config) -> Connect {
-        Connect::new(config)
+    pub fn new(config: Config) -> Result<Client> {
+        let rpc = Arc::new(PdRpcClient::connect(&config)?);
+        Ok(Client {
+            rpc,
+            cf: None,
+            key_only: false,
+        })
     }
 
     /// Set the column family of requests.
@@ -132,11 +50,10 @@ impl Client {
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// # use tikv_client::{Config, raw::Client};
+    /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = Client::connect(Config::default());
-    /// let client = connect.await.unwrap();
+    /// let client = RawClient::new(Config::default()).unwrap();
     /// let get_request = client.with_cf("write").get("foo".to_owned());
     /// # });
     /// ```
@@ -157,11 +74,10 @@ impl Client {
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// # use tikv_client::{Config, raw::Client, ToOwnedRange};
+    /// # use tikv_client::{Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = Client::connect(Config::default());
-    /// let client = connect.await.unwrap();
+    /// let client = RawClient::new(Config::default()).unwrap();
     /// let scan_request = client.with_key_only(true).scan(("TiKV"..="TiDB").to_owned(), 2);
     /// # });
     /// ```
@@ -173,205 +89,254 @@ impl Client {
         }
     }
 
-    /// Create a new get request.
+    /// Create a new 'get' request.
     ///
     /// Once resolved this request will result in the fetching of the value associated with the
     /// given key.
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// # use tikv_client::{Value, Config, raw::Client};
+    /// # use tikv_client::{Value, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.await.unwrap();
-    /// let key = "TiKV";
-    /// let req = connected_client.get(key);
+    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// let key = "TiKV".to_owned();
+    /// let req = client.get(key);
     /// let result: Option<Value> = req.await.unwrap();
     /// # });
     /// ```
-    request!(get(key), raw_get, Option<Value>);
+    pub fn get(&self, key: impl Into<Key>) -> impl Future<Output = Result<Option<Value>>> {
+        RawGet {
+            key: key.into(),
+            cf: self.cf.clone(),
+        }
+        .execute(self.rpc.clone())
+    }
 
-    /// Create a new batch get request.
+    /// Create a new 'batch get' request.
     ///
     /// Once resolved this request will result in the fetching of the values associated with the
     /// given keys.
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// # use tikv_client::{KvPair, Config, raw::Client};
+    /// # use tikv_client::{KvPair, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.await.unwrap();
-    /// let keys = vec!["TiKV", "TiDB"];
-    /// let req = connected_client.batch_get(keys);
+    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
+    /// let req = client.batch_get(keys);
     /// let result: Vec<KvPair> = req.await.unwrap();
     /// # });
     /// ```
-    request!(batch_get(keys), raw_batch_get, Vec<KvPair>);
+    pub fn batch_get(
+        &self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> impl Future<Output = Result<Vec<KvPair>>> {
+        RawBatchGet {
+            keys: keys.into_iter().map(Into::into).collect(),
+            cf: self.cf.clone(),
+        }
+        .execute(self.rpc.clone())
+    }
 
-    /// Create a new [`Put`](Put) request.
+    /// Create a new 'put' request.
     ///
     /// Once resolved this request will result in the setting of the value associated with the given key.
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// # use tikv_client::{Key, Value, Config, raw::Client};
+    /// # use tikv_client::{Key, Value, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.await.unwrap();
-    /// let key = "TiKV";
-    /// let val = "TiKV";
-    /// let req = connected_client.put(key, val);
+    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// let key = "TiKV".to_owned();
+    /// let val = "TiKV".to_owned();
+    /// let req = client.put(key, val);
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
-    request!(put(key, value), raw_put, ());
+    pub fn put(
+        &self,
+        key: impl Into<Key>,
+        value: impl Into<Value>,
+    ) -> impl Future<Output = Result<()>> {
+        let rpc = self.rpc.clone();
+        future::ready(RawPut::new(key, value, &self.cf)).and_then(|put| put.execute(rpc))
+    }
 
-    /// Create a new [`BatchPut`](BatchPut) request.
+    /// Create a new 'batch put' request.
     ///
     /// Once resolved this request will result in the setting of the value associated with the given key.
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// # use tikv_client::{Error, Result, KvPair, Key, Value, Config, raw::Client};
+    /// # use tikv_client::{Error, Result, KvPair, Key, Value, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.await.unwrap();
-    /// let kvpair1 = ("PD", "Go");
-    /// let kvpair2 = ("TiKV", "Rust");
+    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// let kvpair1 = ("PD".to_owned(), "Go".to_owned());
+    /// let kvpair2 = ("TiKV".to_owned(), "Rust".to_owned());
     /// let iterable = vec![kvpair1, kvpair2];
-    /// let req = connected_client.batch_put(iterable);
+    /// let req = client.batch_put(iterable);
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
-    request!(batch_put(pairs), raw_batch_put, ());
+    pub fn batch_put(
+        &self,
+        pairs: impl IntoIterator<Item = impl Into<KvPair>>,
+    ) -> impl Future<Output = Result<()>> {
+        let rpc = self.rpc.clone();
+        future::ready(RawBatchPut::new(pairs, &self.cf)).and_then(|put| put.execute(rpc))
+    }
 
-    /// Create a new [`Delete`](Delete) request.
+    /// Create a new 'delete' request.
     ///
     /// Once resolved this request will result in the deletion of the given key.
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// # use tikv_client::{Key, Config, raw::Client};
+    /// # use tikv_client::{Key, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.await.unwrap();
-    /// let key = "TiKV";
-    /// let req = connected_client.delete(key);
+    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// let key = "TiKV".to_owned();
+    /// let req = client.delete(key);
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
-    request!(delete(key), raw_delete, ());
+    pub fn delete(&self, key: impl Into<Key>) -> impl Future<Output = Result<()>> {
+        RawDelete {
+            key: key.into(),
+            cf: self.cf.clone(),
+        }
+        .execute(self.rpc.clone())
+    }
 
-    /// Create a new [`BatchDelete`](BatchDelete) request.
+    /// Create a new 'batch delete' request.
     ///
     /// Once resolved this request will result in the deletion of the given keys.
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// # use tikv_client::{Config, raw::Client};
+    /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.await.unwrap();
-    /// let keys = vec!["TiKV", "TiDB"];
-    /// let req = connected_client.batch_delete(keys);
+    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
+    /// let req = client.batch_delete(keys);
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
-    request!(batch_delete(keys), raw_batch_delete, ());
+    pub fn batch_delete(
+        &self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> impl Future<Output = Result<()>> {
+        RawBatchDelete {
+            keys: keys.into_iter().map(Into::into).collect(),
+            cf: self.cf.clone(),
+        }
+        .execute(self.rpc.clone())
+    }
 
-    /// Create a new [`Scan`](Scan) request.
-    ///
-    /// Once resolved this request will result in a scanner over the given keys.
-    ///
-    /// ```rust,no_run
-    /// # #![feature(async_await)]
-    /// # use tikv_client::{KvPair, Config, raw::Client};
-    /// # use futures::prelude::*;
-    /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.await.unwrap();
-    /// let inclusive_range = "TiKV"..="TiDB";
-    /// let req = connected_client.scan(inclusive_range, 2);
-    /// let result: Vec<KvPair> = req.await.unwrap();
-    /// # });
-    /// ```
-    scan_request!(scan(range), raw_scan, Vec<KvPair>);
-
-    /// Create a new [`BatchScan`](BatchScan) request.
-    ///
-    /// Once resolved this request will result in a set of scanners over the given keys.
-    ///
-    /// ```rust,no_run
-    /// # #![feature(async_await)]
-    /// # use tikv_client::{Key, Config, raw::Client};
-    /// # use futures::prelude::*;
-    /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.await.unwrap();
-    /// let inclusive_range1 = "TiDB"..="TiKV";
-    /// let inclusive_range2 = "TiKV"..="TiSpark";
-    /// let iterable = vec![inclusive_range1, inclusive_range2];
-    /// let req = connected_client.batch_scan(iterable, 2);
-    /// let result = req.await;
-    /// # });
-    /// ```
-    scan_request!(batch_scan(ranges), raw_batch_scan, Vec<KvPair>);
-
-    /// Create a new [`DeleteRange`](DeleteRange) request.
+    /// Create a new 'delete range' request.
     ///
     /// Once resolved this request will result in the deletion of all keys over the given range.
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
-    /// # use tikv_client::{Key, Config, raw::Client};
+    /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.await.unwrap();
+    /// # let client = RawClient::new(Config::default()).unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
-    /// let req = connected_client.delete_range(inclusive_range);
+    /// let req = client.delete_range(inclusive_range.to_owned());
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
-    request!(delete_range(range), raw_delete_range, ());
-}
+    pub fn delete_range(&self, range: impl Into<BoundRange>) -> impl Future<Output = Result<()>> {
+        RawDeleteRange {
+            range: range.into(),
+            cf: self.cf.clone(),
+        }
+        .execute(self.rpc.clone())
+    }
 
-/// An unresolved [`Client`](Client) connection to a TiKV cluster.
-///
-/// Once resolved it will result in a connected [`Client`](Client).
-///
-/// ```rust,no_run
-/// # #![feature(async_await)]
-/// use tikv_client::{Config, raw::{Client, Connect}};
-/// use futures::prelude::*;
-///
-/// # futures::executor::block_on(async {
-/// let connect: Connect = Client::connect(Config::default());
-/// let client: Client = connect.await.unwrap();
-/// # });
-/// ```
-#[derive(new)]
-pub struct Connect {
-    config: Config,
-}
+    /// Create a new 'scan' request.
+    ///
+    /// Once resolved this request will result in a scanner over the given keys.
+    ///
+    /// ```rust,no_run
+    /// # #![feature(async_await)]
+    /// # use tikv_client::{KvPair, Config, RawClient, ToOwnedRange};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// let inclusive_range = "TiKV"..="TiDB";
+    /// let req = client.scan(inclusive_range.to_owned(), 2);
+    /// let result: Vec<KvPair> = req.await.unwrap();
+    /// # });
+    /// ```
+    pub fn scan(
+        &self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> impl Future<Output = Result<Vec<KvPair>>> {
+        if limit > MAX_RAW_KV_SCAN_LIMIT {
+            Either::Right(future::err(Error::max_scan_limit_exceeded(
+                limit,
+                MAX_RAW_KV_SCAN_LIMIT,
+            )))
+        } else {
+            Either::Left(
+                RawScan {
+                    range: range.into(),
+                    limit,
+                    key_only: self.key_only,
+                    cf: self.cf.clone(),
+                }
+                .execute(self.rpc.clone()),
+            )
+        }
+    }
 
-impl Future for Connect {
-    type Output = Result<Client>;
-
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
-        let config = &self.config;
-        let rpc = Arc::new(RpcClient::connect(config)?);
-        Poll::Ready(Ok(Client {
-            rpc,
-            cf: None,
-            key_only: false,
-        }))
+    /// Create a new 'batch scan' request.
+    ///
+    /// Once resolved this request will result in a set of scanners over the given keys.
+    ///
+    /// ```rust,no_run
+    /// # #![feature(async_await)]
+    /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// let inclusive_range1 = "TiDB"..="TiKV";
+    /// let inclusive_range2 = "TiKV"..="TiSpark";
+    /// let iterable = vec![inclusive_range1.to_owned(), inclusive_range2.to_owned()];
+    /// let req = client.batch_scan(iterable, 2);
+    /// let result = req.await;
+    /// # });
+    /// ```
+    pub fn batch_scan(
+        &self,
+        ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
+        each_limit: u32,
+    ) -> impl Future<Output = Result<Vec<KvPair>>> {
+        if each_limit > MAX_RAW_KV_SCAN_LIMIT {
+            Either::Right(future::err(Error::max_scan_limit_exceeded(
+                each_limit,
+                MAX_RAW_KV_SCAN_LIMIT,
+            )))
+        } else {
+            Either::Left(
+                RawBatchScan {
+                    ranges: ranges.into_iter().map(Into::into).collect(),
+                    each_limit,
+                    key_only: self.key_only,
+                    cf: self.cf.clone(),
+                }
+                .execute(self.rpc.clone()),
+            )
+        }
     }
 }

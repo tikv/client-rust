@@ -1,26 +1,24 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
+// FIXME: Remove this when txn is done.
+#![allow(dead_code)]
+
 use std::{
     collections::HashSet,
-    fmt,
     sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 
 use futures::compat::Compat01As03;
-use futures::future::BoxFuture;
 use futures::prelude::*;
 use grpcio::{CallOption, Environment};
 use kvproto::{metapb, pdpb};
 
 use crate::{
-    rpc::{
-        pd::{
-            context::request_context, request::retry_request, timestamp::TimestampOracle, Region,
-            RegionId, StoreId, Timestamp,
-        },
-        security::SecurityManager,
-    },
+    pd::{timestamp::TimestampOracle, Region, RegionId, StoreId},
+    security::SecurityManager,
+    stats::pd_stats,
+    transaction::Timestamp,
     Error, Result,
 };
 
@@ -34,110 +32,6 @@ macro_rules! pd_request {
     }};
 }
 
-pub trait PdClient: Sized {
-    fn connect(
-        env: Arc<Environment>,
-        endpoints: &[String],
-        security_mgr: Arc<SecurityManager>,
-        timeout: Duration,
-    ) -> Result<Self>;
-
-    fn get_region(self: Arc<Self>, key: &[u8]) -> BoxFuture<'static, Result<Region>>;
-
-    fn get_region_by_id(self: Arc<Self>, id: RegionId) -> BoxFuture<'static, Result<Region>>;
-
-    fn get_store(self: Arc<Self>, id: StoreId) -> BoxFuture<'static, Result<metapb::Store>>;
-
-    fn get_all_stores(self: Arc<Self>) -> BoxFuture<'static, Result<Vec<metapb::Store>>>;
-
-    /// Request a timestamp from the PD cluster.
-    fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>>;
-}
-
-/// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
-pub struct RetryClient {
-    cluster: RwLock<Cluster>,
-    connection: Connection,
-    timeout: Duration,
-}
-
-impl PdClient for RetryClient {
-    fn connect(
-        env: Arc<Environment>,
-        endpoints: &[String],
-        security_mgr: Arc<SecurityManager>,
-        timeout: Duration,
-    ) -> Result<RetryClient> {
-        let connection = Connection::new(env, security_mgr);
-        let cluster = RwLock::new(connection.connect_cluster(endpoints, timeout)?);
-        Ok(RetryClient {
-            cluster,
-            connection,
-            timeout,
-        })
-    }
-
-    // These get_* functions will try multiple times to make a request, reconnecting as necessary.
-    fn get_region(self: Arc<Self>, key: &[u8]) -> BoxFuture<'static, Result<Region>> {
-        let key = key.to_owned();
-        let timeout = self.timeout;
-        Box::pin(retry_request(self, move |cluster| {
-            cluster.get_region(key.clone(), timeout)
-        }))
-    }
-
-    fn get_region_by_id(self: Arc<Self>, id: RegionId) -> BoxFuture<'static, Result<Region>> {
-        let timeout = self.timeout;
-        Box::pin(retry_request(self, move |cluster| {
-            cluster.get_region_by_id(id, timeout)
-        }))
-    }
-
-    fn get_store(self: Arc<Self>, id: StoreId) -> BoxFuture<'static, Result<metapb::Store>> {
-        let timeout = self.timeout;
-        Box::pin(retry_request(self, move |cluster| {
-            cluster.get_store(id, timeout)
-        }))
-    }
-
-    fn get_all_stores(self: Arc<Self>) -> BoxFuture<'static, Result<Vec<metapb::Store>>> {
-        let timeout = self.timeout;
-        Box::pin(retry_request(self, move |cluster| {
-            cluster.get_all_stores(timeout)
-        }))
-    }
-
-    fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
-        // FIXME: retry or reconnect on error
-        Box::pin(self.cluster.read().unwrap().get_timestamp())
-    }
-}
-
-impl RetryClient {
-    pub fn reconnect(&self, interval: u64) -> Result<()> {
-        if let Some(cluster) =
-            self.connection
-                .reconnect(&self.cluster.read().unwrap(), interval, self.timeout)?
-        {
-            *self.cluster.write().unwrap() = cluster;
-        }
-        Ok(())
-    }
-
-    pub fn with_cluster<T, F: Fn(&Cluster) -> T>(&self, f: F) -> T {
-        f(&self.cluster.read().unwrap())
-    }
-}
-
-impl fmt::Debug for RetryClient {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("pd::RetryClient")
-            .field("cluster_id", &self.cluster.read().unwrap().id)
-            .field("timeout", &self.timeout)
-            .finish()
-    }
-}
-
 /// A PD cluster.
 pub struct Cluster {
     pub id: u64,
@@ -148,8 +42,12 @@ pub struct Cluster {
 
 // These methods make a single attempt to make a request.
 impl Cluster {
-    fn get_region(&self, key: Vec<u8>, timeout: Duration) -> impl Future<Output = Result<Region>> {
-        let context = request_context("get_region");
+    pub fn get_region(
+        &self,
+        key: Vec<u8>,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<Region>> {
+        let context = pd_stats("get_region");
         let option = CallOption::default().timeout(timeout);
 
         let mut req = pd_request!(self.id, pdpb::GetRegionRequest);
@@ -175,12 +73,12 @@ impl Cluster {
             })
     }
 
-    fn get_region_by_id(
+    pub fn get_region_by_id(
         &self,
         id: RegionId,
         timeout: Duration,
     ) -> impl Future<Output = Result<Region>> {
-        let context = request_context("get_region_by_id");
+        let context = pd_stats("get_region_by_id");
         let option = CallOption::default().timeout(timeout);
 
         let mut req = pd_request!(self.id, pdpb::GetRegionByIdRequest);
@@ -204,12 +102,12 @@ impl Cluster {
             })
     }
 
-    fn get_store(
+    pub fn get_store(
         &self,
         id: StoreId,
         timeout: Duration,
     ) -> impl Future<Output = Result<metapb::Store>> {
-        let context = request_context("get_store");
+        let context = pd_stats("get_store");
         let option = CallOption::default().timeout(timeout);
 
         let mut req = pd_request!(self.id, pdpb::GetStoreRequest);
@@ -231,11 +129,11 @@ impl Cluster {
             })
     }
 
-    fn get_all_stores(
+    pub fn get_all_stores(
         &self,
         timeout: Duration,
     ) -> impl Future<Output = Result<Vec<metapb::Store>>> {
-        let context = request_context("get_all_stores");
+        let context = pd_stats("get_all_stores");
         let option = CallOption::default().timeout(timeout);
 
         let req = pd_request!(self.id, pdpb::GetAllStoresRequest);
@@ -256,20 +154,20 @@ impl Cluster {
             })
     }
 
-    fn get_timestamp(&self) -> impl Future<Output = Result<Timestamp>> {
+    pub fn get_timestamp(&self) -> impl Future<Output = Result<Timestamp>> {
         self.tso.clone().get_timestamp()
     }
 }
 
 /// An object for connecting and reconnecting to a PD cluster.
-struct Connection {
+pub struct Connection {
     env: Arc<Environment>,
     security_mgr: Arc<SecurityManager>,
     last_update: RwLock<Instant>,
 }
 
 impl Connection {
-    fn new(env: Arc<Environment>, security_mgr: Arc<SecurityManager>) -> Connection {
+    pub fn new(env: Arc<Environment>, security_mgr: Arc<SecurityManager>) -> Connection {
         Connection {
             env,
             security_mgr,
@@ -277,7 +175,7 @@ impl Connection {
         }
     }
 
-    fn connect_cluster(&self, endpoints: &[String], timeout: Duration) -> Result<Cluster> {
+    pub fn connect_cluster(&self, endpoints: &[String], timeout: Duration) -> Result<Cluster> {
         let members = self.validate_endpoints(endpoints, timeout)?;
         let (client, members) = self.try_connect_leader(&members, timeout)?;
 
@@ -293,7 +191,7 @@ impl Connection {
     }
 
     // Re-establish connection with PD leader in synchronized fashion.
-    fn reconnect(
+    pub fn reconnect(
         &self,
         old_cluster: &Cluster,
         interval: u64,

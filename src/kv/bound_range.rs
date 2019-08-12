@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::Key;
+use kvproto::kvrpcpb;
 #[cfg(test)]
 use proptest_derive::Arbitrary;
 use std::borrow::Borrow;
@@ -179,6 +180,17 @@ impl<T: Into<Key> + Eq> TryFrom<(Bound<T>, Bound<T>)> for BoundRange {
                 convert_to_bound_key(bounds.1),
             ))
         }
+    }
+}
+
+impl Into<kvrpcpb::KeyRange> for BoundRange {
+    fn into(self) -> kvrpcpb::KeyRange {
+        let (start, end) = self.into_keys();
+        let mut range = kvrpcpb::KeyRange::default();
+        range.set_start_key(start.into());
+        // FIXME handle end = None rather than unwrapping
+        end.map(|k| range.set_end_key(k.into())).unwrap();
+        range
     }
 }
 

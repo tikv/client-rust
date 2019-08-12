@@ -10,11 +10,15 @@
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 //!
 
-pub use self::client::{Client, Connect};
+pub use self::client::Client;
+pub(crate) use requests::RawRequest;
+#[cfg(test)]
+pub use requests::*;
 
 use std::fmt;
 
 mod client;
+mod requests;
 
 /// A [`ColumnFamily`](ColumnFamily) is an optional parameter for [`raw::Client`](Client) requests.
 ///
@@ -31,7 +35,7 @@ mod client;
 /// The best (and only) way to create a [`ColumnFamily`](ColumnFamily) is via the `From` implementation:
 ///
 /// ```rust
-/// # use tikv_client::raw::ColumnFamily;
+/// # use tikv_client::ColumnFamily;
 ///
 /// let cf = ColumnFamily::from("write");
 /// let cf = ColumnFamily::from(String::from("write"));

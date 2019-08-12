@@ -111,6 +111,12 @@ impl<'a> Into<&'a [u8]> for &'a Key {
     }
 }
 
+impl AsRef<Key> for Key {
+    fn as_ref(&self) -> &Key {
+        self
+    }
+}
+
 impl fmt::Debug for Key {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Key({})", HexRepr(&self.0))

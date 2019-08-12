@@ -1,18 +1,18 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-// TODO: Remove this when txn is done.
-#![allow(dead_code)]
-
 use derive_new::new;
 use kvproto::{kvrpcpb, metapb, pdpb};
 
-pub use crate::rpc::pd::client::{PdClient, RetryClient};
 use crate::{Error, Key, Result};
+#[cfg(test)]
+pub use client::test::{MockKvClient, MockPdClient};
+pub use client::{PdClient, PdRpcClient};
+pub use retry::RetryClient;
 
-#[macro_use]
 mod client;
-mod context;
-mod request;
+#[macro_use]
+mod cluster;
+mod retry;
 mod timestamp;
 
 pub type RegionId = u64;
@@ -32,6 +32,7 @@ pub struct Region {
 }
 
 impl Region {
+    #[allow(dead_code)]
     pub fn switch_peer(&mut self, _to: StoreId) -> Result<()> {
         unimplemented!()
     }
@@ -56,14 +57,19 @@ impl Region {
             })
     }
 
-    pub fn start_key(&self) -> &[u8] {
-        self.region.get_start_key()
+    pub fn start_key(&self) -> Key {
+        self.region.get_start_key().to_vec().into()
     }
 
-    pub fn end_key(&self) -> &[u8] {
-        self.region.get_end_key()
+    pub fn end_key(&self) -> Key {
+        self.region.get_end_key().to_vec().into()
     }
 
+    pub fn range(&self) -> (Key, Key) {
+        (self.start_key(), self.end_key())
+    }
+
+    #[allow(dead_code)]
     pub fn ver_id(&self) -> RegionVerId {
         let region = &self.region;
         let epoch = region.get_region_epoch();
@@ -78,19 +84,13 @@ impl Region {
         self.region.get_id()
     }
 
-    pub fn peer(&self) -> Result<metapb::Peer> {
+    pub fn get_store_id(&self) -> Result<StoreId> {
         self.leader
             .as_ref()
-            .map(Clone::clone)
-            .map(Into::into)
+            .cloned()
             .ok_or_else(|| Error::stale_epoch(None))
+            .map(|s| s.get_store_id())
     }
-}
-
-#[derive(Eq, PartialEq, Debug, Clone, Copy)]
-pub struct Timestamp {
-    pub physical: i64,
-    pub logical: i64,
 }
 
 trait PdResponse {

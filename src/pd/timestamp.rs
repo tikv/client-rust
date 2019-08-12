@@ -11,8 +11,7 @@
 //! single `TsoRequest` to the PD server. The other future receives `TsoResponse`s from the PD
 //! server and allocates timestamps for the requests.
 
-use super::Timestamp;
-use crate::{Error, Result};
+use crate::{transaction::Timestamp, Error, Result};
 
 use futures::{
     channel::{mpsc, oneshot},
