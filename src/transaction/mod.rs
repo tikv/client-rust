@@ -399,3 +399,48 @@ impl Snapshot {
         unimplemented!()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::executor::block_on;
+
+    #[test]
+    fn set_and_get_from_buffer() {
+        let mut txn = mock_txn();
+        txn.set(b"key1".to_vec(), b"value1".to_vec());
+        txn.set(b"key2".to_vec(), b"value2".to_vec());
+        assert_eq!(
+            block_on(txn.get(b"key1".to_vec())).unwrap().unwrap(),
+            b"value1".to_vec().into()
+        );
+
+        txn.delete(b"key2".to_vec());
+        txn.set(b"key1".to_vec(), b"value".to_vec());
+        assert_eq!(
+            block_on(txn.batch_get(vec![b"key2".to_vec(), b"key1".to_vec()]))
+                .unwrap()
+                .collect::<Vec<_>>(),
+            vec![
+                (Key::from(b"key2".to_vec()), None),
+                (
+                    Key::from(b"key1".to_vec()),
+                    Some(Value::from(b"value".to_vec()))
+                ),
+            ]
+        );
+    }
+
+    fn mock_txn() -> Transaction {
+        let snapshot = Snapshot {
+            timestamp: Timestamp {
+                physical: 0,
+                logical: 0,
+            },
+        };
+        Transaction {
+            snapshot,
+            mutations: Default::default(),
+        }
+    }
+}
