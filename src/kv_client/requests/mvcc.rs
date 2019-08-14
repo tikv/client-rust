@@ -12,12 +12,12 @@ use std::mem;
 use std::sync::Arc;
 
 #[derive(Clone)]
-pub struct Get {
+pub struct MvccGet {
     pub key: Key,
     pub version: u64,
 }
 
-impl KvRequest for Get {
+impl KvRequest for MvccGet {
     type Result = Option<Value>;
     type RpcRequest = kvrpcpb::GetRequest;
     type RpcResponse = kvrpcpb::GetResponse;
@@ -68,12 +68,12 @@ impl KvRequest for Get {
 }
 
 #[derive(Clone)]
-pub struct BatchGet {
+pub struct MvccBatchGet {
     pub keys: Vec<Key>,
     pub version: u64,
 }
 
-impl KvRequest for BatchGet {
+impl KvRequest for MvccBatchGet {
     type Result = Vec<KvPair>;
     type RpcRequest = kvrpcpb::BatchGetRequest;
     type RpcResponse = kvrpcpb::BatchGetResponse;
@@ -124,7 +124,7 @@ impl KvRequest for BatchGet {
 }
 
 #[derive(Clone)]
-pub struct Scan {
+pub struct MvccScan {
     pub range: BoundRange,
     // TODO this limit is currently treated as a per-region limit, not a total
     // limit.
@@ -134,7 +134,7 @@ pub struct Scan {
     pub version: u64,
 }
 
-impl KvRequest for Scan {
+impl KvRequest for MvccScan {
     type Result = Vec<KvPair>;
     type RpcRequest = kvrpcpb::ScanRequest;
     type RpcResponse = kvrpcpb::ScanResponse;
