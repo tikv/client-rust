@@ -50,7 +50,6 @@ impl Mutation {
         pb
     }
 
-    /// Returns a `Some` if the value can be determined by this mutation. Otherwise, returns `None`.
     fn get_value(&self) -> MutationValue {
         match self {
             Mutation::Put(value) => MutationValue::Determined(Some(value.clone())),
