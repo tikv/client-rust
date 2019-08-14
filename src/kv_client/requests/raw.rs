@@ -1,76 +1,18 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    kv_client::{HasError, KvClient, KvRawRequest, RpcFnType, Store},
+    kv_client::{requests::KvRequest, KvClient, RpcFnType, Store},
     pd::PdClient,
     raw::ColumnFamily,
     BoundRange, Error, Key, KvPair, Result, Value,
 };
-
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::BoxStream;
-use grpcio::CallOption;
 use kvproto::kvrpcpb;
 use kvproto::tikvpb::TikvClient;
 use std::mem;
 use std::sync::Arc;
-
-pub trait RawRequest: Sync + Send + 'static + Sized + Clone {
-    type Result;
-    type RpcRequest;
-    type RpcResponse: HasError + Clone + Send + 'static;
-    type KeyType;
-    const REQUEST_NAME: &'static str;
-    const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse>;
-
-    fn execute(
-        mut self,
-        pd_client: Arc<impl PdClient>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
-        let stores = self.store_stream(pd_client);
-        Self::reduce(
-            stores
-                .and_then(move |(key, store)| {
-                    let request = self.clone().into_request(key, &store);
-                    self.mock_dispatch(&request, store.call_options())
-                        .unwrap_or_else(|| store.dispatch::<Self>(&request, store.call_options()))
-                })
-                .map_ok(move |r| Self::map_result(r))
-                .boxed(),
-        )
-    }
-
-    fn store_stream<PdC: PdClient>(
-        &mut self,
-        pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyType, Store<PdC::KvClient>)>>;
-
-    fn into_request<KvC: KvClient>(
-        self,
-        key: Self::KeyType,
-        store: &Store<KvC>,
-    ) -> Self::RpcRequest;
-
-    fn map_result(result: Self::RpcResponse) -> Self::Result;
-
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>>;
-}
-
-/// Permits easy mocking of rpc calls.
-pub trait MockDispatch: RawRequest {
-    fn mock_dispatch(
-        &self,
-        _request: &Self::RpcRequest,
-        _opt: CallOption,
-    ) -> Option<BoxFuture<'static, Result<Self::RpcResponse>>> {
-        None
-    }
-}
-
-impl<T: RawRequest> MockDispatch for T {}
 
 #[derive(Clone)]
 pub struct RawGet {
@@ -78,7 +20,7 @@ pub struct RawGet {
     pub cf: Option<ColumnFamily>,
 }
 
-impl RawRequest for RawGet {
+impl KvRequest for RawGet {
     type Result = Option<Value>;
     type RpcRequest = kvrpcpb::RawGetRequest;
     type RpcResponse = kvrpcpb::RawGetResponse;
@@ -135,7 +77,7 @@ pub struct RawBatchGet {
     pub cf: Option<ColumnFamily>,
 }
 
-impl RawRequest for RawBatchGet {
+impl KvRequest for RawBatchGet {
     type Result = Vec<KvPair>;
     type RpcRequest = kvrpcpb::RawBatchGetRequest;
     type RpcResponse = kvrpcpb::RawBatchGetResponse;
@@ -213,7 +155,7 @@ impl RawPut {
     }
 }
 
-impl RawRequest for RawPut {
+impl KvRequest for RawPut {
     type Result = ();
     type RpcRequest = kvrpcpb::RawPutRequest;
     type RpcResponse = kvrpcpb::RawPutResponse;
@@ -281,7 +223,7 @@ impl RawBatchPut {
     }
 }
 
-impl RawRequest for RawBatchPut {
+impl KvRequest for RawBatchPut {
     type Result = ();
     type RpcRequest = kvrpcpb::RawBatchPutRequest;
     type RpcResponse = kvrpcpb::RawBatchPutResponse;
@@ -336,7 +278,7 @@ pub struct RawDelete {
     pub cf: Option<ColumnFamily>,
 }
 
-impl RawRequest for RawDelete {
+impl KvRequest for RawDelete {
     type Result = ();
     type RpcRequest = kvrpcpb::RawDeleteRequest;
     type RpcResponse = kvrpcpb::RawDeleteResponse;
@@ -386,7 +328,7 @@ pub struct RawBatchDelete {
     pub cf: Option<ColumnFamily>,
 }
 
-impl RawRequest for RawBatchDelete {
+impl KvRequest for RawBatchDelete {
     type Result = ();
     type RpcRequest = kvrpcpb::RawBatchDeleteRequest;
     type RpcResponse = kvrpcpb::RawBatchDeleteResponse;
@@ -441,7 +383,7 @@ pub struct RawDeleteRange {
     pub cf: Option<ColumnFamily>,
 }
 
-impl RawRequest for RawDeleteRange {
+impl KvRequest for RawDeleteRange {
     type Result = ();
     type RpcRequest = kvrpcpb::RawDeleteRangeRequest;
     type RpcResponse = kvrpcpb::RawDeleteRangeResponse;
@@ -501,7 +443,7 @@ pub struct RawScan {
     pub cf: Option<ColumnFamily>,
 }
 
-impl RawRequest for RawScan {
+impl KvRequest for RawScan {
     type Result = Vec<KvPair>;
     type RpcRequest = kvrpcpb::RawScanRequest;
     type RpcResponse = kvrpcpb::RawScanResponse;
@@ -559,7 +501,7 @@ pub struct RawBatchScan {
     pub cf: Option<ColumnFamily>,
 }
 
-impl RawRequest for RawBatchScan {
+impl KvRequest for RawBatchScan {
     type Result = Vec<KvPair>;
     type RpcRequest = kvrpcpb::RawBatchScanRequest;
     type RpcResponse = kvrpcpb::RawBatchScanResponse;
@@ -599,6 +541,36 @@ impl RawRequest for RawBatchScan {
         results.try_concat().boxed()
     }
 }
+
+trait RawRpcRequest {
+    fn set_cf(&mut self, cf: String);
+
+    fn maybe_set_cf(&mut self, cf: Option<ColumnFamily>) {
+        if let Some(cf) = cf {
+            self.set_cf(cf.to_string());
+        }
+    }
+}
+
+macro_rules! impl_raw_rpc_request {
+    ($name: ident) => {
+        impl RawRpcRequest for kvrpcpb::$name {
+            fn set_cf(&mut self, cf: String) {
+                self.set_cf(cf);
+            }
+        }
+    };
+}
+
+impl_raw_rpc_request!(RawGetRequest);
+impl_raw_rpc_request!(RawBatchGetRequest);
+impl_raw_rpc_request!(RawPutRequest);
+impl_raw_rpc_request!(RawBatchPutRequest);
+impl_raw_rpc_request!(RawDeleteRequest);
+impl_raw_rpc_request!(RawBatchDeleteRequest);
+impl_raw_rpc_request!(RawScanRequest);
+impl_raw_rpc_request!(RawBatchScanRequest);
+impl_raw_rpc_request!(RawDeleteRangeRequest);
 
 #[cfg(test)]
 mod test {

@@ -13,7 +13,10 @@ use kvproto::tikvpb::TikvClient;
 use std::{sync::Arc, time::Duration};
 
 use crate::{
-    kv_client::HasError, pd::Region, raw::RawRequest, stats::tikv_stats, transaction::TxnInfo,
+    kv_client::{requests::KvRequest, HasError},
+    pd::Region,
+    stats::tikv_stats,
+    transaction::TxnInfo,
     ErrorKind, Key, Result,
 };
 
@@ -25,7 +28,7 @@ pub struct KvRpcClient {
 }
 
 impl super::KvClient for KvRpcClient {
-    fn dispatch<T: RawRequest>(
+    fn dispatch<T: KvRequest>(
         &self,
         request: &T::RpcRequest,
         opt: CallOption,

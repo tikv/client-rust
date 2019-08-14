@@ -204,7 +204,10 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdRpcClient<KvC> {
 #[cfg(test)]
 pub mod test {
     use super::*;
-    use crate::raw::{MockDispatch, RawRequest, RawScan};
+    use crate::kv_client::{
+        requests::{KvRequest, MockDispatch, RawScan},
+        KvClient,
+    };
     use crate::Error;
 
     use futures::executor;
@@ -217,7 +220,7 @@ pub mod test {
     pub struct MockKvClient;
 
     impl KvClient for MockKvClient {
-        fn dispatch<T: RawRequest>(
+        fn dispatch<T: KvRequest>(
             &self,
             _request: &T::RpcRequest,
             _opt: CallOption,

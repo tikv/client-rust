@@ -11,14 +11,10 @@
 //!
 
 pub use self::client::Client;
-pub(crate) use requests::RawRequest;
-#[cfg(test)]
-pub use requests::*;
 
 use std::fmt;
 
 mod client;
-mod requests;
 
 /// A [`ColumnFamily`](ColumnFamily) is an optional parameter for [`raw::Client`](Client) requests.
 ///
