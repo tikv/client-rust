@@ -20,9 +20,9 @@ name = "tikv_client"
 [dependencies]
 derive-new = "0.5"
 failure = "0.1"
-futures-preview = { version = "0.3.0-alpha.17", features = ["compat", "async-await", "nightly"] }
+futures-preview = { version = "0.3.0-alpha.18", features = ["compat", "async-await", "nightly"] }
 grpcio = { version = "0.5.0-alpha", features = [ "secure", "prost-codec" ], default-features = false }
-kvproto = { git = "https://github.com/pingcap/kvproto.git", rev = "ec9df5f208a768074c28d04bfb8b90e5321d2f69", features = [ "prost-codec" ], default-features = false }
+kvproto = { git = "https://github.com/pingcap/kvproto.git", rev = "81e0c4635c2e28462fa0ad82c39f126448976de7", features = [ "prost-codec" ], default-features = false }
 lazy_static = "1"
 log = "0.3.9"
 regex = "1"
@@ -38,7 +38,7 @@ features = ["push", "process"]
 [dev-dependencies]
 clap = "2.32"
 tempdir = "0.3"
-runtime = "0.3.0-alpha.3"
-runtime-tokio = "0.3.0-alpha.3"
+runtime = { version = "0.3.0-alpha.6", default-features = false }
+runtime-tokio = "0.3.0-alpha.5"
 proptest = "0.9"
 proptest-derive = "0.1.0"

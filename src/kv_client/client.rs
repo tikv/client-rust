@@ -13,11 +13,7 @@ use kvproto::tikvpb::TikvClient;
 use std::{sync::Arc, time::Duration};
 
 use crate::{
-    kv_client::HasError,
-    pd::Region,
-    raw::RawRequest,
-    stats::tikv_stats,
-    transaction::{Mutation, TxnInfo},
+    kv_client::HasError, pd::Region, raw::RawRequest, stats::tikv_stats, transaction::TxnInfo,
     ErrorKind, Key, Result,
 };
 
@@ -52,32 +48,6 @@ macro_rules! txn_request {
         req.set_context($region.context().unwrap());
         req
     }};
-}
-
-impl From<Mutation> for kvrpcpb::Mutation {
-    fn from(mutation: Mutation) -> kvrpcpb::Mutation {
-        let mut pb = kvrpcpb::Mutation::default();
-        match mutation {
-            Mutation::Put(k, v) => {
-                pb.set_op(kvrpcpb::Op::Put);
-                pb.set_key(k.into());
-                pb.set_value(v.into());
-            }
-            Mutation::Del(k) => {
-                pb.set_op(kvrpcpb::Op::Del);
-                pb.set_key(k.into());
-            }
-            Mutation::Lock(k) => {
-                pb.set_op(kvrpcpb::Op::Lock);
-                pb.set_key(k.into());
-            }
-            Mutation::Rollback(k) => {
-                pb.set_op(kvrpcpb::Op::Rollback);
-                pb.set_key(k.into());
-            }
-        };
-        pb
-    }
 }
 
 impl From<TxnInfo> for kvrpcpb::TxnInfo {
@@ -132,14 +102,14 @@ impl TransactionRegionClient {
 
     pub fn kv_prewrite(
         &self,
-        mutations: impl Iterator<Item = Mutation>,
+        mutations: impl Iterator<Item = kvrpcpb::Mutation>,
         primary_lock: Key,
         start_version: u64,
         lock_ttl: u64,
         skip_constraint_check: bool,
     ) -> impl Future<Output = Result<kvrpcpb::PrewriteResponse>> {
         let mut req = txn_request!(self.region, kvrpcpb::PrewriteRequest);
-        req.set_mutations(mutations.map(Into::into).collect());
+        req.set_mutations(mutations.collect());
         req.set_primary_lock(primary_lock.into());
         req.set_start_version(start_version);
         req.set_lock_ttl(lock_ttl);
@@ -174,11 +144,11 @@ impl TransactionRegionClient {
 
     pub fn kv_import(
         &self,
-        mutations: impl Iterator<Item = Mutation>,
+        mutations: impl Iterator<Item = kvrpcpb::Mutation>,
         commit_version: u64,
     ) -> impl Future<Output = Result<kvrpcpb::ImportResponse>> {
         let mut req = kvrpcpb::ImportRequest::default();
-        req.set_mutations(mutations.map(Into::into).collect());
+        req.set_mutations(mutations.collect());
         req.set_commit_version(commit_version);
 
         map_errors_and_trace(

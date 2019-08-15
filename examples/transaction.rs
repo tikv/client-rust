@@ -18,7 +18,7 @@ async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>
     txn.commit().await.expect("Could not commit transaction");
 }
 
-async fn get(client: &Client, key: Key) -> Value {
+async fn get(client: &Client, key: Key) -> Option<Value> {
     let txn = client.begin().await.expect("Could not begin a transaction");
     txn.get(key).await.expect("Could not get value")
 }
