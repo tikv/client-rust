@@ -86,7 +86,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn snapshot_at(&self, timestamp: Timestamp) -> Result<Snapshot> {
-        Ok(Snapshot::new(timestamp))
+        Ok(Snapshot::new(self.pd.clone(), timestamp))
     }
 
     /// Retrieves the current [`Timestamp`](Timestamp).

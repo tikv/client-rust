@@ -10,20 +10,31 @@
 //!
 
 pub use self::client::{Client, Connect};
-pub use self::requests::Scanner;
 
-use crate::{Key, Result, Value};
+use crate::{
+    kv_client::requests::{mvcc::*, KvRequest},
+    pd::{PdClient, PdRpcClient},
+    Key, KvPair, Result, Value,
+};
 use derive_new::new;
+use futures::stream::BoxStream;
 use kvproto::kvrpcpb;
-use std::{collections::BTreeMap, ops::RangeBounds};
+use std::{collections::BTreeMap, ops::RangeBounds, sync::Arc};
 
 mod client;
-pub(crate) mod requests;
 
 #[derive(Eq, PartialEq, Debug, Clone, Copy)]
 pub struct Timestamp {
     pub physical: i64,
     pub logical: i64,
+}
+
+impl Timestamp {
+    pub fn version(&self) -> u64 {
+        assert!(self.logical > 0 && self.logical < (1 << 18));
+        // `physical` is the current millis since Epoch so we don't need to care about overflow
+        ((self.physical << 18) + self.logical) as u64
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -84,13 +95,13 @@ enum MutationValue {
 /// # });
 /// ```
 #[derive(new)]
-pub struct Transaction {
-    snapshot: Snapshot,
+pub struct Transaction<Pd: PdClient = PdRpcClient> {
+    snapshot: Snapshot<Pd>,
     #[new(default)]
     mutations: BTreeMap<Key, Mutation>,
 }
 
-impl Transaction {
+impl<Pd: PdClient> Transaction<Pd> {
     /// Gets the value associated with the given key.
     ///
     /// ```rust,no_run
@@ -166,11 +177,11 @@ impl Transaction {
             }))
     }
 
-    pub fn scan(&self, _range: impl RangeBounds<Key>) -> Scanner {
+    pub fn scan(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
         unimplemented!()
     }
 
-    pub fn scan_reverse(&self, _range: impl RangeBounds<Key>) -> Scanner {
+    pub fn scan_reverse(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
         unimplemented!()
     }
 
@@ -294,7 +305,7 @@ impl Transaction {
     /// let snap: &Snapshot = txn.snapshot();
     /// # });
     /// ```
-    pub fn snapshot(&self) -> &Snapshot {
+    pub fn snapshot(&self) -> &Snapshot<Pd> {
         &self.snapshot
     }
 
@@ -331,11 +342,12 @@ pub struct TxnInfo {
 
 /// A snapshot of dataset at a particular point in time.
 #[derive(new)]
-pub struct Snapshot {
+pub struct Snapshot<Pd: PdClient = PdRpcClient> {
+    pd: Arc<Pd>,
     timestamp: Timestamp,
 }
 
-impl Snapshot {
+impl<Pd: PdClient> Snapshot<Pd> {
     /// Gets the value associated with the given key.
     ///
     /// ```rust,no_run
@@ -350,8 +362,16 @@ impl Snapshot {
     /// let result: Option<Value> = snapshot.get(key).await.unwrap();
     /// # });
     /// ```
-    pub async fn get(&self, _key: impl Into<Key>) -> Result<Option<Value>> {
-        unimplemented!()
+    pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
+        // Note: Here we use batch_get to implement get because we cannot distinguish an empty
+        // value from a non-existent key using the kv_get interface.
+        // See: https://github.com/tikv/client-rust/issues/99
+        Ok(self
+            .batch_get(std::iter::once(key))
+            .await?
+            .next()
+            .map(|(_, v)| v)
+            .expect("no result from batch_get"))
     }
 
     /// Gets the values associated with the given keys. The returned iterator is in the same order
@@ -376,17 +396,42 @@ impl Snapshot {
     /// ```
     pub async fn batch_get(
         &self,
-        _keys: impl IntoIterator<Item = impl Into<Key>>,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = (Key, Option<Value>)>> {
-        Ok(std::iter::repeat_with(|| unimplemented!()))
+        let keys: Vec<_> = keys.into_iter().map(Into::into).collect();
+        let mut result_pairs = MvccBatchGet {
+            keys: keys.clone(),
+            version: self.timestamp.version(),
+        }
+        .execute(self.pd.clone())
+        .await?
+        .into_iter()
+        .peekable();
+
+        let mut keys = keys.into_iter();
+        Ok(std::iter::from_fn(move || {
+            // BatchGet does not return pairs whose key does not exist but the order is retained.
+            // Here we keep two pointers: one points to the supplied keys and the other points to
+            // the result pairs. Every time the first pointer moves forward, we check if the second
+            // pointer points the same key. If so, we return the pair and moves forward the second
+            // pointer. Otherwise, `None` is returned as the value since the current key does not
+            // exist in the snapshot.
+            let key = keys.next()?;
+            match result_pairs.peek() {
+                Some(KvPair(result_key, _)) if &key == result_key => result_pairs
+                    .next()
+                    .map(|KvPair(key, value)| (key, Some(value))),
+                _ => Some((key, None)),
+            }
+        }))
     }
 
-    pub fn scan(&self, range: impl RangeBounds<Key>) -> Scanner {
+    pub fn scan(&self, range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
         drop(range);
         unimplemented!()
     }
 
-    pub fn scan_reverse(&self, range: impl RangeBounds<Key>) -> Scanner {
+    pub fn scan_reverse(&self, range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
         drop(range);
         unimplemented!()
     }
@@ -395,6 +440,7 @@ impl Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pd::MockPdClient;
     use futures::executor::block_on;
 
     #[test]
@@ -423,8 +469,9 @@ mod tests {
         );
     }
 
-    fn mock_txn() -> Transaction {
+    fn mock_txn() -> Transaction<MockPdClient> {
         let snapshot = Snapshot {
+            pd: Arc::new(MockPdClient),
             timestamp: Timestamp {
                 physical: 0,
                 logical: 0,

@@ -1,7 +1,5 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-pub use raw::*;
-
 use crate::{
     kv_client::{HasError, KvClient, RpcFnType, Store},
     pd::PdClient,
@@ -15,8 +13,8 @@ use grpcio::CallOption;
 use kvproto::kvrpcpb;
 use std::sync::Arc;
 
-mod mvcc;
-mod raw;
+pub mod mvcc;
+pub mod raw;
 
 pub trait KvRequest: Sync + Send + 'static + Sized + Clone {
     type Result;

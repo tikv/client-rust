@@ -205,7 +205,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdRpcClient<KvC> {
 pub mod test {
     use super::*;
     use crate::kv_client::{
-        requests::{KvRequest, MockDispatch, RawScan},
+        requests::{raw::RawScan, KvRequest, MockDispatch},
         KvClient,
     };
     use crate::Error;
