@@ -32,6 +32,7 @@ impl KvRequest for MvccGet {
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
         req.set_key(key.into());
+        req.set_version(self.version);
 
         req
     }
@@ -50,7 +51,7 @@ impl KvRequest for MvccGet {
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
         let result: Value = resp.take_value().into();
-        if result.is_empty() {
+        if resp.not_found {
             None
         } else {
             Some(result)
@@ -89,6 +90,7 @@ impl KvRequest for MvccBatchGet {
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
         req.set_keys(keys.into_iter().map(Into::into).collect());
+        req.set_version(self.version);
 
         req
     }
@@ -152,6 +154,7 @@ impl KvRequest for MvccScan {
         req.set_end_key(end_key.into());
         req.set_limit(self.limit);
         req.set_key_only(self.key_only);
+        req.set_version(self.version);
 
         req
     }
