@@ -13,14 +13,14 @@ use grpcio::CallOption;
 use kvproto::kvrpcpb;
 use std::sync::Arc;
 
-pub trait KvRequest: Sync + Send + 'static + Sized + Clone {
+pub trait KvRequest: Sync + Send + 'static + Sized {
     type Result;
     type RpcRequest;
     type RpcResponse: HasError + Clone + Send + 'static;
     /// A single `KvRequest` can be divided into a number of RPC requests because the keys span
     /// several regions or a single RPC request is too large. Most of the fields in these requests
-    /// share the same content while `Payload` is the part which differs among the requests.
-    type Payload;
+    /// share the same content while `Entries` is the part which differs among the requests.
+    type Entries;
     const REQUEST_NAME: &'static str;
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse>;
 
@@ -32,7 +32,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized + Clone {
         Self::reduce(
             stores
                 .and_then(move |(key, store)| {
-                    let request = self.into_request(key, &store);
+                    let request = self.make_rpc_request(key, &store);
                     self.mock_dispatch(&request, store.call_options())
                         .unwrap_or_else(|| store.dispatch::<Self>(&request, store.call_options()))
                 })
@@ -44,11 +44,11 @@ pub trait KvRequest: Sync + Send + 'static + Sized + Clone {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::Payload, Store<PdC::KvClient>)>>;
+    ) -> BoxStream<'static, Result<(Self::Entries, Store<PdC::KvClient>)>>;
 
-    fn into_request<KvC: KvClient>(
+    fn make_rpc_request<KvC: KvClient>(
         &self,
-        payload: Self::Payload,
+        entries: Self::Entries,
         store: &Store<KvC>,
     ) -> Self::RpcRequest;
 

@@ -1,5 +1,5 @@
 use crate::{
-    kv_client::{KvRequest, KvClient, RpcFnType, Store},
+    kv_client::{KvClient, KvRequest, RpcFnType, Store},
     pd::PdClient,
     BoundRange, Error, Key, KvPair, Result, Value,
 };
@@ -11,8 +11,8 @@ use kvproto::tikvpb::TikvClient;
 use std::mem;
 use std::sync::Arc;
 
-#[derive(Clone)]
-pub struct MvccGet {
+#[allow(dead_code)]
+pub(super) struct MvccGet {
     pub key: Key,
     pub version: u64,
 }
@@ -21,13 +21,13 @@ impl KvRequest for MvccGet {
     type Result = Option<Value>;
     type RpcRequest = kvrpcpb::GetRequest;
     type RpcResponse = kvrpcpb::GetResponse;
-    type Payload = Key;
+    type Entries = Key;
     const REQUEST_NAME: &'static str = "kv_get";
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse> = TikvClient::kv_get_async_opt;
 
-    fn into_request<KvC: KvClient>(
+    fn make_rpc_request<KvC: KvClient>(
         &self,
-        key: Self::Payload,
+        key: Self::Entries,
         store: &Store<KvC>,
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
@@ -40,7 +40,7 @@ impl KvRequest for MvccGet {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::Payload, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::Entries, Store<PdC::KvClient>)>> {
         let key = self.key.clone();
         pd_client
             .store_for_key(&self.key)
@@ -68,8 +68,8 @@ impl KvRequest for MvccGet {
     }
 }
 
-#[derive(Clone)]
-pub struct MvccBatchGet {
+#[allow(dead_code)]
+pub(super) struct MvccBatchGet {
     pub keys: Vec<Key>,
     pub version: u64,
 }
@@ -78,14 +78,14 @@ impl KvRequest for MvccBatchGet {
     type Result = Vec<KvPair>;
     type RpcRequest = kvrpcpb::BatchGetRequest;
     type RpcResponse = kvrpcpb::BatchGetResponse;
-    type Payload = Vec<Key>;
+    type Entries = Vec<Key>;
     const REQUEST_NAME: &'static str = "kv_batch_get";
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse> =
         TikvClient::kv_batch_get_async_opt;
 
-    fn into_request<KvC: KvClient>(
+    fn make_rpc_request<KvC: KvClient>(
         &self,
-        keys: Self::Payload,
+        keys: Self::Entries,
         store: &Store<KvC>,
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
@@ -98,7 +98,7 @@ impl KvRequest for MvccBatchGet {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::Payload, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::Entries, Store<PdC::KvClient>)>> {
         let mut keys = Vec::new();
         mem::swap(&mut keys, &mut self.keys);
 
@@ -125,8 +125,8 @@ impl KvRequest for MvccBatchGet {
     }
 }
 
-#[derive(Clone)]
-pub struct MvccScan {
+#[allow(dead_code)]
+pub(super) struct MvccScan {
     pub range: BoundRange,
     // TODO this limit is currently treated as a per-region limit, not a total
     // limit.
@@ -140,13 +140,13 @@ impl KvRequest for MvccScan {
     type Result = Vec<KvPair>;
     type RpcRequest = kvrpcpb::ScanRequest;
     type RpcResponse = kvrpcpb::ScanResponse;
-    type Payload = (Key, Key);
+    type Entries = (Key, Key);
     const REQUEST_NAME: &'static str = "kv_scan";
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse> = TikvClient::kv_scan_async_opt;
 
-    fn into_request<KvC: KvClient>(
+    fn make_rpc_request<KvC: KvClient>(
         &self,
-        (start_key, end_key): Self::Payload,
+        (start_key, end_key): Self::Entries,
         store: &Store<KvC>,
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
@@ -162,7 +162,7 @@ impl KvRequest for MvccScan {
     fn store_stream<PdC: PdClient>(
         &mut self,
         _pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::Payload, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::Entries, Store<PdC::KvClient>)>> {
         future::err(Error::unimplemented()).into_stream().boxed()
     }
 
