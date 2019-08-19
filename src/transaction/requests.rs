@@ -21,13 +21,13 @@ impl KvRequest for MvccGet {
     type Result = Option<Value>;
     type RpcRequest = kvrpcpb::GetRequest;
     type RpcResponse = kvrpcpb::GetResponse;
-    type Entries = Key;
+    type KeyData = Key;
     const REQUEST_NAME: &'static str = "kv_get";
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse> = TikvClient::kv_get_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(
         &self,
-        key: Self::Entries,
+        key: Self::KeyData,
         store: &Store<KvC>,
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
@@ -40,7 +40,7 @@ impl KvRequest for MvccGet {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::Entries, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let key = self.key.clone();
         pd_client
             .store_for_key(&self.key)
@@ -78,14 +78,14 @@ impl KvRequest for MvccBatchGet {
     type Result = Vec<KvPair>;
     type RpcRequest = kvrpcpb::BatchGetRequest;
     type RpcResponse = kvrpcpb::BatchGetResponse;
-    type Entries = Vec<Key>;
+    type KeyData = Vec<Key>;
     const REQUEST_NAME: &'static str = "kv_batch_get";
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse> =
         TikvClient::kv_batch_get_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(
         &self,
-        keys: Self::Entries,
+        keys: Self::KeyData,
         store: &Store<KvC>,
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
@@ -98,7 +98,7 @@ impl KvRequest for MvccBatchGet {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::Entries, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let mut keys = Vec::new();
         mem::swap(&mut keys, &mut self.keys);
 
@@ -140,13 +140,13 @@ impl KvRequest for MvccScan {
     type Result = Vec<KvPair>;
     type RpcRequest = kvrpcpb::ScanRequest;
     type RpcResponse = kvrpcpb::ScanResponse;
-    type Entries = (Key, Key);
+    type KeyData = (Key, Key);
     const REQUEST_NAME: &'static str = "kv_scan";
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse> = TikvClient::kv_scan_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(
         &self,
-        (start_key, end_key): Self::Entries,
+        (start_key, end_key): Self::KeyData,
         store: &Store<KvC>,
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
@@ -162,7 +162,7 @@ impl KvRequest for MvccScan {
     fn store_stream<PdC: PdClient>(
         &mut self,
         _pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::Entries, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         future::err(Error::unimplemented()).into_stream().boxed()
     }
 
