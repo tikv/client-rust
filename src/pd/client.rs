@@ -10,13 +10,13 @@ use futures::future::BoxFuture;
 use futures::future::{ready, Either};
 use futures::prelude::*;
 use futures::stream::BoxStream;
-use grpcio::EnvBuilder;
+use grpcio::{EnvBuilder, Environment};
 
 use crate::{
     compat::{stream_fn, ClientFutureExt},
     kv::BoundRange,
     kv_client::{KvClient, KvConnect, Store, TikvConnect},
-    pd::{Region, RegionId, RetryClient},
+    pd::{cluster::Cluster, Region, RegionId, RetryClient},
     security::SecurityManager,
     transaction::Timestamp,
     Config, Key, Result,
@@ -112,8 +112,8 @@ pub trait PdClient: Send + Sync + 'static {
 
 /// This client converts requests for the logical TiKV cluster into requests
 /// for a single TiKV store using PD and internal logic.
-pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect> {
-    pd: Arc<RetryClient>,
+pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl = Cluster> {
+    pd: Arc<RetryClient<Cl>>,
     kv_connect: KvC,
     kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
     timeout: Duration,
@@ -150,8 +150,28 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     }
 }
 
-impl PdRpcClient<TikvConnect> {
+impl PdRpcClient<TikvConnect, Cluster> {
     pub fn connect(config: &Config) -> Result<PdRpcClient> {
+        PdRpcClient::new(
+            config,
+            |env, security_mgr| TikvConnect::new(env, security_mgr),
+            |env, security_mgr| {
+                RetryClient::connect(env, &config.pd_endpoints, security_mgr, config.timeout)
+            },
+        )
+    }
+}
+
+impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
+    fn new<MakeKvC, MakePd>(
+        config: &Config,
+        kv_connect: MakeKvC,
+        pd: MakePd,
+    ) -> Result<PdRpcClient<KvC, Cl>>
+    where
+        MakeKvC: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> KvC,
+        MakePd: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> Result<RetryClient<Cl>>,
+    {
         let env = Arc::new(
             EnvBuilder::new()
                 .cq_count(CQ_COUNT)
@@ -168,24 +188,16 @@ impl PdRpcClient<TikvConnect> {
             },
         );
 
-        let pd = Arc::new(RetryClient::connect(
-            env.clone(),
-            &config.pd_endpoints,
-            security_mgr.clone(),
-            config.timeout,
-        )?);
+        let pd = Arc::new(pd(env.clone(), security_mgr.clone())?);
         let kv_client_cache = Default::default();
-        let kv_connect = TikvConnect::new(env, security_mgr);
         Ok(PdRpcClient {
             pd,
             kv_client_cache,
-            kv_connect,
+            kv_connect: kv_connect(env, security_mgr),
             timeout: config.timeout,
         })
     }
-}
 
-impl<KvC: KvConnect + Send + Sync + 'static> PdRpcClient<KvC> {
     fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
         if let Some(client) = self.kv_client_cache.read().unwrap().get(address) {
             return Ok(client.clone());
@@ -213,7 +225,10 @@ pub mod test {
     use kvproto::metapb;
 
     // FIXME move all the mocks to their own module
-    pub struct MockKvClient;
+    #[derive(Clone, Eq, PartialEq, Debug)]
+    pub struct MockKvClient {
+        addr: String,
+    }
 
     impl KvClient for MockKvClient {
         fn dispatch<T: KvRequest>(
@@ -224,6 +239,20 @@ pub mod test {
             unreachable!()
         }
     }
+
+    pub struct MockKvConnect;
+
+    impl KvConnect for MockKvConnect {
+        type KvClient = MockKvClient;
+
+        fn connect(&self, address: &str) -> Result<Self::KvClient> {
+            Ok(MockKvClient {
+                addr: address.to_owned(),
+            })
+        }
+    }
+
+    pub struct MockCluster;
 
     pub struct MockPdClient;
 
@@ -236,7 +265,9 @@ pub mod test {
         ) -> BoxFuture<'static, Result<Store<Self::KvClient>>> {
             Box::pin(ready(Ok(Store::new(
                 region,
-                MockKvClient,
+                MockKvClient {
+                    addr: String::new(),
+                },
                 Duration::from_secs(60),
             ))))
         }
@@ -266,12 +297,6 @@ pub mod test {
         }
     }
 
-    // fn get_store(self: Arc<Self>, id: StoreId) -> BoxFuture<'static, Result<metapb::Store>> {
-    //     let mut result = metapb::Store::default();
-    //     result.set_address(format!("store-address-{}", id));
-    //     Box::pin(ready(Ok(result)))
-    // }
-
     impl MockPdClient {
         fn region1() -> Region {
             let mut region = Region::default();
@@ -300,19 +325,36 @@ pub mod test {
         }
     }
 
-    // TODO needs us to mock out the KvConnect in PdRpcClient
-    // #[test]
-    // fn test_kv_client() {
-    //     let client = MockPdClient;
-    //     let addr1 = "foo";
-    //     let addr2 = "bar";
+    fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
+        let config = Config::default();
+        PdRpcClient::new(
+            &config,
+            |_, _| MockKvConnect,
+            |e, sm| {
+                Ok(RetryClient::new_with_cluster(
+                    e,
+                    sm,
+                    config.timeout,
+                    MockCluster,
+                ))
+            },
+        )
+        .unwrap()
+    }
 
-    //     let kv1 = client.kv_client(&addr1).unwrap();
-    //     let kv2 = client.kv_client(&addr2).unwrap();
-    //     let kv3 = client.kv_client(&addr2).unwrap();
-    //     assert!(&*kv1 as *const _ != &*kv2 as *const _);
-    //     assert_eq!(&*kv2 as *const _, &*kv3 as *const _);
-    // }
+    #[test]
+    fn test_kv_client() {
+        let client = pd_rpc_client();
+
+        let addr1 = "foo";
+        let addr2 = "bar";
+
+        let kv1 = client.kv_client(&addr1).unwrap();
+        let kv2 = client.kv_client(&addr2).unwrap();
+        let kv3 = client.kv_client(&addr2).unwrap();
+        assert!(kv1 != kv2);
+        assert_eq!(kv2, kv3);
+    }
 
     #[test]
     fn test_group_keys_by_region() {
