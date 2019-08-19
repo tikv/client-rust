@@ -24,18 +24,18 @@ impl KvRequest for RawGet {
     type Result = Option<Value>;
     type RpcRequest = kvrpcpb::RawGetRequest;
     type RpcResponse = kvrpcpb::RawGetResponse;
-    type KeyType = Key;
+    type Payload = Key;
     const REQUEST_NAME: &'static str = "raw_get";
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse> = TikvClient::raw_get_async_opt;
 
     fn into_request<KvC: KvClient>(
-        self,
-        key: Self::KeyType,
+        &self,
+        key: Self::Payload,
         store: &Store<KvC>,
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
         req.set_key(key.into());
-        req.maybe_set_cf(self.cf);
+        req.maybe_set_cf(self.cf.clone());
 
         req
     }
@@ -43,7 +43,7 @@ impl KvRequest for RawGet {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyType, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::Payload, Store<PdC::KvClient>)>> {
         let key = self.key.clone();
         pd_client
             .store_for_key(&self.key)
@@ -81,19 +81,19 @@ impl KvRequest for RawBatchGet {
     type Result = Vec<KvPair>;
     type RpcRequest = kvrpcpb::RawBatchGetRequest;
     type RpcResponse = kvrpcpb::RawBatchGetResponse;
-    type KeyType = Vec<Key>;
+    type Payload = Vec<Key>;
     const REQUEST_NAME: &'static str = "raw_batch_get";
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse> =
         TikvClient::raw_batch_get_async_opt;
 
     fn into_request<KvC: KvClient>(
-        self,
-        keys: Self::KeyType,
+        &self,
+        keys: Self::Payload,
         store: &Store<KvC>,
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
         req.set_keys(keys.into_iter().map(Into::into).collect());
-        req.maybe_set_cf(self.cf);
+        req.maybe_set_cf(self.cf.clone());
 
         req
     }
@@ -101,7 +101,7 @@ impl KvRequest for RawBatchGet {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyType, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::Payload, Store<PdC::KvClient>)>> {
         let mut keys = Vec::new();
         mem::swap(&mut keys, &mut self.keys);
 
@@ -159,19 +159,19 @@ impl KvRequest for RawPut {
     type Result = ();
     type RpcRequest = kvrpcpb::RawPutRequest;
     type RpcResponse = kvrpcpb::RawPutResponse;
-    type KeyType = KvPair;
+    type Payload = KvPair;
     const REQUEST_NAME: &'static str = "raw_put";
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse> = TikvClient::raw_put_async_opt;
 
     fn into_request<KvC: KvClient>(
-        self,
-        key: Self::KeyType,
+        &self,
+        key: Self::Payload,
         store: &Store<KvC>,
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
         req.set_key(key.0.into());
         req.set_value(key.1.into());
-        req.maybe_set_cf(self.cf);
+        req.maybe_set_cf(self.cf.clone());
 
         req
     }
@@ -179,7 +179,7 @@ impl KvRequest for RawPut {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyType, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::Payload, Store<PdC::KvClient>)>> {
         let kv = (self.key.clone(), self.value.clone()).into();
         pd_client
             .store_for_key(&self.key)
@@ -227,19 +227,19 @@ impl KvRequest for RawBatchPut {
     type Result = ();
     type RpcRequest = kvrpcpb::RawBatchPutRequest;
     type RpcResponse = kvrpcpb::RawBatchPutResponse;
-    type KeyType = Vec<KvPair>;
+    type Payload = Vec<KvPair>;
     const REQUEST_NAME: &'static str = "raw_batch_put";
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse> =
         TikvClient::raw_batch_put_async_opt;
 
     fn into_request<KvC: KvClient>(
-        self,
-        pairs: Self::KeyType,
+        &self,
+        pairs: Self::Payload,
         store: &Store<KvC>,
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
         req.set_pairs(pairs.into_iter().map(Into::into).collect());
-        req.maybe_set_cf(self.cf);
+        req.maybe_set_cf(self.cf.clone());
 
         req
     }
@@ -247,7 +247,7 @@ impl KvRequest for RawBatchPut {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyType, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::Payload, Store<PdC::KvClient>)>> {
         let mut pairs = Vec::new();
         mem::swap(&mut pairs, &mut self.pairs);
 
@@ -282,18 +282,18 @@ impl KvRequest for RawDelete {
     type Result = ();
     type RpcRequest = kvrpcpb::RawDeleteRequest;
     type RpcResponse = kvrpcpb::RawDeleteResponse;
-    type KeyType = Key;
+    type Payload = Key;
     const REQUEST_NAME: &'static str = "raw_delete";
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse> = TikvClient::raw_delete_async_opt;
 
     fn into_request<KvC: KvClient>(
-        self,
-        key: Self::KeyType,
+        &self,
+        key: Self::Payload,
         store: &Store<KvC>,
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
         req.set_key(key.into());
-        req.maybe_set_cf(self.cf);
+        req.maybe_set_cf(self.cf.clone());
 
         req
     }
@@ -301,7 +301,7 @@ impl KvRequest for RawDelete {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyType, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::Payload, Store<PdC::KvClient>)>> {
         let key = self.key.clone();
         pd_client
             .store_for_key(&self.key)
@@ -332,19 +332,19 @@ impl KvRequest for RawBatchDelete {
     type Result = ();
     type RpcRequest = kvrpcpb::RawBatchDeleteRequest;
     type RpcResponse = kvrpcpb::RawBatchDeleteResponse;
-    type KeyType = Vec<Key>;
+    type Payload = Vec<Key>;
     const REQUEST_NAME: &'static str = "raw_batch_delete";
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse> =
         TikvClient::raw_batch_delete_async_opt;
 
     fn into_request<KvC: KvClient>(
-        self,
-        keys: Self::KeyType,
+        &self,
+        keys: Self::Payload,
         store: &Store<KvC>,
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
         req.set_keys(keys.into_iter().map(Into::into).collect());
-        req.maybe_set_cf(self.cf);
+        req.maybe_set_cf(self.cf.clone());
 
         req
     }
@@ -352,7 +352,7 @@ impl KvRequest for RawBatchDelete {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyType, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::Payload, Store<PdC::KvClient>)>> {
         let mut keys = Vec::new();
         mem::swap(&mut keys, &mut self.keys);
 
@@ -387,20 +387,20 @@ impl KvRequest for RawDeleteRange {
     type Result = ();
     type RpcRequest = kvrpcpb::RawDeleteRangeRequest;
     type RpcResponse = kvrpcpb::RawDeleteRangeResponse;
-    type KeyType = (Key, Key);
+    type Payload = (Key, Key);
     const REQUEST_NAME: &'static str = "raw_delete_range";
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse> =
         TikvClient::raw_delete_range_async_opt;
 
     fn into_request<KvC: KvClient>(
-        self,
-        (start_key, end_key): Self::KeyType,
+        &self,
+        (start_key, end_key): Self::Payload,
         store: &Store<KvC>,
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
         req.set_start_key(start_key.into());
         req.set_end_key(end_key.into());
-        req.maybe_set_cf(self.cf);
+        req.maybe_set_cf(self.cf.clone());
 
         req
     }
@@ -408,7 +408,7 @@ impl KvRequest for RawDeleteRange {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyType, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::Payload, Store<PdC::KvClient>)>> {
         let range = self.range.clone();
         pd_client
             .stores_for_range(range)
@@ -447,13 +447,13 @@ impl KvRequest for RawScan {
     type Result = Vec<KvPair>;
     type RpcRequest = kvrpcpb::RawScanRequest;
     type RpcResponse = kvrpcpb::RawScanResponse;
-    type KeyType = (Key, Key);
+    type Payload = (Key, Key);
     const REQUEST_NAME: &'static str = "raw_scan";
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse> = TikvClient::raw_scan_async_opt;
 
     fn into_request<KvC: KvClient>(
-        self,
-        (start_key, end_key): Self::KeyType,
+        &self,
+        (start_key, end_key): Self::Payload,
         store: &Store<KvC>,
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
@@ -461,7 +461,7 @@ impl KvRequest for RawScan {
         req.set_end_key(end_key.into());
         req.set_limit(self.limit);
         req.set_key_only(self.key_only);
-        req.maybe_set_cf(self.cf);
+        req.maybe_set_cf(self.cf.clone());
 
         req
     }
@@ -469,7 +469,7 @@ impl KvRequest for RawScan {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyType, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::Payload, Store<PdC::KvClient>)>> {
         let range = self.range.clone();
         pd_client
             .stores_for_range(range)
@@ -505,21 +505,21 @@ impl KvRequest for RawBatchScan {
     type Result = Vec<KvPair>;
     type RpcRequest = kvrpcpb::RawBatchScanRequest;
     type RpcResponse = kvrpcpb::RawBatchScanResponse;
-    type KeyType = Vec<BoundRange>;
+    type Payload = Vec<BoundRange>;
     const REQUEST_NAME: &'static str = "raw_batch_scan";
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse> =
         TikvClient::raw_batch_scan_async_opt;
 
     fn into_request<KvC: KvClient>(
-        self,
-        ranges: Self::KeyType,
+        &self,
+        ranges: Self::Payload,
         store: &Store<KvC>,
     ) -> Self::RpcRequest {
         let mut req = store.request::<Self::RpcRequest>();
         req.set_ranges(ranges.into_iter().map(Into::into).collect());
         req.set_each_limit(self.each_limit);
         req.set_key_only(self.key_only);
-        req.maybe_set_cf(self.cf);
+        req.maybe_set_cf(self.cf.clone());
 
         req
     }
@@ -527,7 +527,7 @@ impl KvRequest for RawBatchScan {
     fn store_stream<PdC: PdClient>(
         &mut self,
         _pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyType, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::Payload, Store<PdC::KvClient>)>> {
         future::err(Error::unimplemented()).into_stream().boxed()
     }
 

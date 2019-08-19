@@ -22,7 +22,10 @@ pub trait KvRequest: Sync + Send + 'static + Sized + Clone {
     type Result;
     type RpcRequest;
     type RpcResponse: HasError + Clone + Send + 'static;
-    type KeyType;
+    /// A single `KvRequest` can be divided into a number of RPC requests because the keys span
+    /// several regions or a single RPC request is too large. Most of the fields in these requests
+    /// share the same content while `Payload` is the part which differs among the requests.
+    type Payload;
     const REQUEST_NAME: &'static str;
     const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse>;
 
@@ -34,7 +37,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized + Clone {
         Self::reduce(
             stores
                 .and_then(move |(key, store)| {
-                    let request = self.clone().into_request(key, &store);
+                    let request = self.into_request(key, &store);
                     self.mock_dispatch(&request, store.call_options())
                         .unwrap_or_else(|| store.dispatch::<Self>(&request, store.call_options()))
                 })
@@ -46,11 +49,11 @@ pub trait KvRequest: Sync + Send + 'static + Sized + Clone {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyType, Store<PdC::KvClient>)>>;
+    ) -> BoxStream<'static, Result<(Self::Payload, Store<PdC::KvClient>)>>;
 
     fn into_request<KvC: KvClient>(
-        self,
-        key: Self::KeyType,
+        &self,
+        payload: Self::Payload,
         store: &Store<KvC>,
     ) -> Self::RpcRequest;
 
