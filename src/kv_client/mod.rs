@@ -2,13 +2,14 @@
 
 mod client;
 mod errors;
-pub mod requests;
+mod request;
 
 pub use self::client::KvRpcClient;
 pub use self::errors::HasError;
+pub use self::request::{KvRequest, MockDispatch};
 pub use kvproto::tikvpb::TikvClient;
 
-use self::requests::{KvRequest, KvRpcRequest};
+use self::request::KvRpcRequest;
 use crate::pd::Region;
 use crate::security::SecurityManager;
 use crate::Result;

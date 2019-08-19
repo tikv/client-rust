@@ -13,7 +13,7 @@ use kvproto::tikvpb::TikvClient;
 use std::sync::Arc;
 
 use crate::{
-    kv_client::{requests::KvRequest, HasError},
+    kv_client::{request::KvRequest, HasError},
     stats::tikv_stats,
     transaction::TxnInfo,
     ErrorKind, Result,

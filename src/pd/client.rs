@@ -204,16 +204,12 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdRpcClient<KvC> {
 #[cfg(test)]
 pub mod test {
     use super::*;
-    use crate::kv_client::{
-        requests::{KvRequest, MockDispatch, RawScan},
-        KvClient,
-    };
+    use crate::kv_client::{KvClient, KvRequest};
     use crate::Error;
 
     use futures::executor;
     use futures::future::{ready, BoxFuture};
     use grpcio::CallOption;
-    use kvproto::kvrpcpb;
     use kvproto::metapb;
 
     // FIXME move all the mocks to their own module
@@ -226,26 +222,6 @@ pub mod test {
             _opt: CallOption,
         ) -> BoxFuture<'static, Result<T::RpcResponse>> {
             unreachable!()
-        }
-    }
-
-    impl MockDispatch for RawScan {
-        fn mock_dispatch(
-            &self,
-            request: &kvrpcpb::RawScanRequest,
-            _opt: CallOption,
-        ) -> Option<BoxFuture<'static, Result<kvrpcpb::RawScanResponse>>> {
-            assert!(request.key_only);
-            assert_eq!(request.limit, 10);
-
-            let mut resp = kvrpcpb::RawScanResponse::default();
-            for i in request.start_key[0]..request.end_key[0] {
-                let mut kv = kvrpcpb::KvPair::default();
-                kv.key = vec![i];
-                resp.kvs.push(kv);
-            }
-
-            Some(Box::pin(ready(Ok(resp))))
         }
     }
 

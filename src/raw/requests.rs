@@ -1,7 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    kv_client::{requests::KvRequest, KvClient, RpcFnType, Store},
+    kv_client::{KvClient, KvRequest, RpcFnType, Store},
     pd::PdClient,
     raw::ColumnFamily,
     BoundRange, Error, Key, KvPair, Result, Value,
@@ -575,8 +575,32 @@ impl_raw_rpc_request!(RawDeleteRangeRequest);
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::kv_client::{KvRequest, MockDispatch};
     use crate::pd::MockPdClient;
     use futures::executor;
+    use futures::future::{ready, BoxFuture};
+    use grpcio::CallOption;
+    use kvproto::kvrpcpb;
+
+    impl MockDispatch for RawScan {
+        fn mock_dispatch(
+            &self,
+            request: &kvrpcpb::RawScanRequest,
+            _opt: CallOption,
+        ) -> Option<BoxFuture<'static, Result<kvrpcpb::RawScanResponse>>> {
+            assert!(request.key_only);
+            assert_eq!(request.limit, 10);
+
+            let mut resp = kvrpcpb::RawScanResponse::default();
+            for i in request.start_key[0]..request.end_key[0] {
+                let mut kv = kvrpcpb::KvPair::default();
+                kv.key = vec![i];
+                resp.kvs.push(kv);
+            }
+
+            Some(Box::pin(ready(Ok(resp))))
+        }
+    }
 
     #[test]
     #[ignore]

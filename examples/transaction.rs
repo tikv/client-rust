@@ -26,11 +26,8 @@ async fn get(client: &Client, key: Key) -> Option<Value> {
 // Ignore a spurious warning from rustc (https://github.com/rust-lang/rust/issues/60566).
 #[allow(unused_mut)]
 async fn scan(client: &Client, range: impl RangeBounds<Key>, mut limit: usize) {
-    client
-        .begin()
-        .await
-        .expect("Could not begin a transaction")
-        .scan(range)
+    let mut txn = client.begin().await.expect("Could not begin a transaction");
+    txn.scan(range)
         .into_stream()
         .take_while(move |r| {
             assert!(r.is_ok(), "Could not scan keys");

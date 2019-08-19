@@ -10,11 +10,13 @@
 //!
 
 pub use self::client::{Client, Connect};
-pub use self::requests::Scanner;
 
-use crate::{Key, Result, Value};
+use crate::{Key, KvPair, Result, Value};
+
 use derive_new::new;
+use futures::stream::BoxStream;
 use kvproto::kvrpcpb;
+
 use std::{collections::BTreeMap, ops::RangeBounds};
 
 mod client;
@@ -166,11 +168,11 @@ impl Transaction {
             }))
     }
 
-    pub fn scan(&self, _range: impl RangeBounds<Key>) -> Scanner {
+    pub fn scan(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
         unimplemented!()
     }
 
-    pub fn scan_reverse(&self, _range: impl RangeBounds<Key>) -> Scanner {
+    pub fn scan_reverse(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
         unimplemented!()
     }
 
@@ -381,12 +383,12 @@ impl Snapshot {
         Ok(std::iter::repeat_with(|| unimplemented!()))
     }
 
-    pub fn scan(&self, range: impl RangeBounds<Key>) -> Scanner {
+    pub fn scan(&self, range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
         drop(range);
         unimplemented!()
     }
 
-    pub fn scan_reverse(&self, range: impl RangeBounds<Key>) -> Scanner {
+    pub fn scan_reverse(&self, range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
         drop(range);
         unimplemented!()
     }
