@@ -1,11 +1,13 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    kv_client::{KvClient, KvRequest, RpcFnType, Store},
+    kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
     raw::ColumnFamily,
+    request::KvRequest,
     BoundRange, Error, Key, KvPair, Result, Value,
 };
+
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::BoxStream;
@@ -14,7 +16,7 @@ use kvproto::tikvpb::TikvClient;
 use std::mem;
 use std::sync::Arc;
 
-pub(super) struct RawGet {
+pub struct RawGet {
     pub key: Key,
     pub cf: Option<ColumnFamily>,
 }
@@ -70,7 +72,7 @@ impl KvRequest for RawGet {
     }
 }
 
-pub(super) struct RawBatchGet {
+pub struct RawBatchGet {
     pub keys: Vec<Key>,
     pub cf: Option<ColumnFamily>,
 }
@@ -126,7 +128,7 @@ impl KvRequest for RawBatchGet {
     }
 }
 
-pub(super) struct RawPut {
+pub struct RawPut {
     pub key: Key,
     pub value: Value,
     pub cf: Option<ColumnFamily>,
@@ -197,7 +199,7 @@ impl KvRequest for RawPut {
     }
 }
 
-pub(super) struct RawBatchPut {
+pub struct RawBatchPut {
     pub pairs: Vec<KvPair>,
     pub cf: Option<ColumnFamily>,
 }
@@ -268,7 +270,7 @@ impl KvRequest for RawBatchPut {
     }
 }
 
-pub(super) struct RawDelete {
+pub struct RawDelete {
     pub key: Key,
     pub cf: Option<ColumnFamily>,
 }
@@ -317,7 +319,7 @@ impl KvRequest for RawDelete {
     }
 }
 
-pub(super) struct RawBatchDelete {
+pub struct RawBatchDelete {
     pub keys: Vec<Key>,
     pub cf: Option<ColumnFamily>,
 }
@@ -371,7 +373,7 @@ impl KvRequest for RawBatchDelete {
     }
 }
 
-pub(super) struct RawDeleteRange {
+pub struct RawDeleteRange {
     pub range: BoundRange,
     pub cf: Option<ColumnFamily>,
 }
@@ -426,7 +428,7 @@ impl KvRequest for RawDeleteRange {
     }
 }
 
-pub(super) struct RawScan {
+pub struct RawScan {
     pub range: BoundRange,
     // TODO this limit is currently treated as a per-region limit, not a total
     // limit.
@@ -485,7 +487,7 @@ impl KvRequest for RawScan {
     }
 }
 
-pub(super) struct RawBatchScan {
+pub struct RawBatchScan {
     pub ranges: Vec<BoundRange>,
     pub each_limit: u32,
     pub key_only: bool,
@@ -566,8 +568,10 @@ impl_raw_rpc_request!(RawDeleteRangeRequest);
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::kv_client::MockDispatch;
+
     use crate::mock::MockPdClient;
+    use crate::request::MockDispatch;
+
     use futures::executor;
     use futures::future::{ready, BoxFuture};
     use grpcio::CallOption;
