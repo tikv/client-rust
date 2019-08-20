@@ -570,15 +570,15 @@ mod test {
     use super::*;
 
     use crate::mock::MockPdClient;
-    use crate::request::MockDispatch;
+    use crate::request::DispatchHook;
 
     use futures::executor;
     use futures::future::{ready, BoxFuture};
     use grpcio::CallOption;
     use kvproto::kvrpcpb;
 
-    impl MockDispatch for RawScan {
-        fn mock_dispatch(
+    impl DispatchHook for RawScan {
+        fn dispatch_hook(
             &self,
             request: &kvrpcpb::RawScanRequest,
             _opt: CallOption,
