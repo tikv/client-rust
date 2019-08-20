@@ -566,8 +566,8 @@ impl_raw_rpc_request!(RawDeleteRangeRequest);
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::kv_client::{KvRequest, MockDispatch};
-    use crate::pd::MockPdClient;
+    use crate::kv_client::MockDispatch;
+    use crate::mock::MockPdClient;
     use futures::executor;
     use futures::future::{ready, BoxFuture};
     use grpcio::CallOption;

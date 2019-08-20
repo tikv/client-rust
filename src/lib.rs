@@ -92,6 +92,8 @@ mod stats;
 pub mod transaction;
 
 #[cfg(test)]
+mod mock;
+#[cfg(test)]
 mod proptests;
 
 #[macro_use]
