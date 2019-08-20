@@ -1,12 +1,12 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    kv_client::{HasError, KvClient, RpcFnType, Store},
+    kv_client::{HasError, HasRegionError, KvClient, RpcFnType, Store},
     pd::PdClient,
     Result,
 };
 
-use futures::future::BoxFuture;
+use futures::future::{BoxFuture, Either};
 use futures::prelude::*;
 use futures::stream::BoxStream;
 use grpcio::CallOption;
@@ -15,7 +15,6 @@ use std::sync::Arc;
 
 pub trait KvRequest: Sync + Send + 'static + Sized {
     type Result;
-    type RpcRequest;
     type RpcResponse: HasError + Clone + Send + 'static;
     /// A single `KvRequest` can be divided into a number of RPC requests because the keys span
     /// several regions or a single RPC request is too large. Most of the fields in these requests
@@ -23,23 +22,41 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
     /// is the part which differs among the requests.
     type KeyData;
     const REQUEST_NAME: &'static str;
-    const RPC_FN: RpcFnType<Self::RpcRequest, Self::RpcResponse>;
+    const RPC_FN: RpcFnType<Self, Self::RpcResponse>;
 
-    fn execute(
-        mut self,
-        pd_client: Arc<impl PdClient>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
-        let stores = self.store_stream(pd_client);
+    fn execute(self, pd_client: Arc<impl PdClient>) -> BoxFuture<'static, Result<Self::Result>> {
         Self::reduce(
-            stores
-                .and_then(move |(key, store)| {
-                    let request = self.make_rpc_request(key, &store);
-                    self.mock_dispatch(&request, store.call_options())
-                        .unwrap_or_else(|| store.dispatch::<Self>(&request, store.call_options()))
+            self.response_stream(pd_client)
+                .and_then(|mut response| match response.error() {
+                    Some(e) => future::err(e),
+                    None => future::ok(response),
                 })
-                .map_ok(move |r| Self::map_result(r))
+                .map_ok(Self::map_result)
                 .boxed(),
         )
+    }
+
+    fn response_stream(
+        mut self,
+        pd_client: Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<Self::RpcResponse>> {
+        let stores = self.store_stream(pd_client.clone());
+        stores
+            .and_then(move |(key_data, store)| {
+                let request = self.make_rpc_request(key_data, &store);
+                self.mock_dispatch(&request, store.call_options())
+                    .unwrap_or_else(|| store.dispatch::<Self>(&request, store.call_options()))
+                    .map_ok(move |response| (request, response))
+            })
+            .map_ok(
+                // Retry on region errors
+                move |(request, mut response)| match response.region_error() {
+                    Some(_) => Either::Left(request.response_stream(pd_client.clone())),
+                    None => Either::Right(stream::once(future::ok(response))),
+                },
+            )
+            .try_flatten()
+            .boxed()
     }
 
     fn store_stream<PdC: PdClient>(
@@ -47,11 +64,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>>;
 
-    fn make_rpc_request<KvC: KvClient>(
-        &self,
-        key_data: Self::KeyData,
-        store: &Store<KvC>,
-    ) -> Self::RpcRequest;
+    fn make_rpc_request<KvC: KvClient>(&self, key_data: Self::KeyData, store: &Store<KvC>) -> Self;
 
     fn map_result(result: Self::RpcResponse) -> Self::Result;
 
@@ -64,7 +77,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
 pub trait MockDispatch: KvRequest {
     fn mock_dispatch(
         &self,
-        _request: &Self::RpcRequest,
+        _request: &Self,
         _opt: CallOption,
     ) -> Option<BoxFuture<'static, Result<Self::RpcResponse>>> {
         None

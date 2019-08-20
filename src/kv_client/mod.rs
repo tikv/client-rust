@@ -5,7 +5,7 @@ mod errors;
 mod request;
 
 pub use self::client::KvRpcClient;
-pub use self::errors::HasError;
+pub use self::errors::{HasError, HasRegionError};
 pub use self::request::{KvRequest, MockDispatch};
 pub use kvproto::tikvpb::TikvClient;
 
@@ -55,7 +55,7 @@ impl KvConnect for TikvConnect {
 pub trait KvClient {
     fn dispatch<T: KvRequest>(
         &self,
-        request: &T::RpcRequest,
+        request: &T,
         opt: CallOption,
     ) -> BoxFuture<'static, Result<T::RpcResponse>>;
 }
@@ -85,7 +85,7 @@ impl<Client: KvClient> Store<Client> {
 
     pub fn dispatch<T: KvRequest>(
         &self,
-        request: &T::RpcRequest,
+        request: &T,
         opt: CallOption,
     ) -> BoxFuture<'static, Result<T::RpcResponse>> {
         self.client.dispatch::<T>(request, opt)

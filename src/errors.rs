@@ -147,10 +147,6 @@ impl Error {
         Error::from(ErrorKind::InvalidKeyRange)
     }
 
-    pub(crate) fn empty_value() -> Self {
-        Error::from(ErrorKind::EmptyValue)
-    }
-
     pub(crate) fn max_scan_limit_exceeded(limit: u32, max_limit: u32) -> Self {
         Error::from(ErrorKind::MaxScanLimitExceeded { limit, max_limit })
     }

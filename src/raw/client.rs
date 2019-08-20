@@ -1,12 +1,13 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::{requests::*, ColumnFamily};
+use super::ColumnFamily;
 use crate::{
     kv_client::KvRequest, pd::PdRpcClient, BoundRange, Config, Error, Key, KvPair, Result, Value,
 };
 
 use futures::future::Either;
 use futures::prelude::*;
+use kvproto::kvrpcpb;
 use std::{sync::Arc, u32};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
@@ -102,9 +103,9 @@ impl Client {
     /// # });
     /// ```
     pub fn get(&self, key: impl Into<Key>) -> impl Future<Output = Result<Option<Value>>> {
-        RawGet {
-            key: key.into(),
-            cf: self.cf.clone(),
+        kvrpcpb::RawGetRequest {
+            key: key.into().into(),
+            ..self.new_request_with_cf()
         }
         .execute(self.rpc.clone())
     }
@@ -129,9 +130,9 @@ impl Client {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> impl Future<Output = Result<Vec<KvPair>>> {
-        RawBatchGet {
-            keys: keys.into_iter().map(Into::into).collect(),
-            cf: self.cf.clone(),
+        kvrpcpb::RawBatchGetRequest {
+            keys: keys.into_iter().map(Into::into).map(Into::into).collect(),
+            ..self.new_request_with_cf()
         }
         .execute(self.rpc.clone())
     }
@@ -157,8 +158,12 @@ impl Client {
         key: impl Into<Key>,
         value: impl Into<Value>,
     ) -> impl Future<Output = Result<()>> {
-        let rpc = self.rpc.clone();
-        future::ready(RawPut::new(key, value, &self.cf)).and_then(|put| put.execute(rpc))
+        kvrpcpb::RawPutRequest {
+            key: key.into().into(),
+            value: value.into().into(),
+            ..self.new_request_with_cf()
+        }
+        .execute(self.rpc.clone())
     }
 
     /// Create a new 'batch put' request.
@@ -182,8 +187,11 @@ impl Client {
         &self,
         pairs: impl IntoIterator<Item = impl Into<KvPair>>,
     ) -> impl Future<Output = Result<()>> {
-        let rpc = self.rpc.clone();
-        future::ready(RawBatchPut::new(pairs, &self.cf)).and_then(|put| put.execute(rpc))
+        kvrpcpb::RawBatchPutRequest {
+            pairs: pairs.into_iter().map(Into::into).map(Into::into).collect(),
+            ..self.new_request_with_cf()
+        }
+        .execute(self.rpc.clone())
     }
 
     /// Create a new 'delete' request.
@@ -202,9 +210,9 @@ impl Client {
     /// # });
     /// ```
     pub fn delete(&self, key: impl Into<Key>) -> impl Future<Output = Result<()>> {
-        RawDelete {
-            key: key.into(),
-            cf: self.cf.clone(),
+        kvrpcpb::RawDeleteRequest {
+            key: key.into().into(),
+            ..self.new_request_with_cf()
         }
         .execute(self.rpc.clone())
     }
@@ -228,9 +236,9 @@ impl Client {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> impl Future<Output = Result<()>> {
-        RawBatchDelete {
-            keys: keys.into_iter().map(Into::into).collect(),
-            cf: self.cf.clone(),
+        kvrpcpb::RawBatchDeleteRequest {
+            keys: keys.into_iter().map(Into::into).map(Into::into).collect(),
+            ..self.new_request_with_cf()
         }
         .execute(self.rpc.clone())
     }
@@ -251,9 +259,11 @@ impl Client {
     /// # });
     /// ```
     pub fn delete_range(&self, range: impl Into<BoundRange>) -> impl Future<Output = Result<()>> {
-        RawDeleteRange {
-            range: range.into(),
-            cf: self.cf.clone(),
+        let (start_key, end_key) = range.into().into_keys();
+        kvrpcpb::RawDeleteRangeRequest {
+            start_key: start_key.into(),
+            end_key: end_key.unwrap_or(Key::default()).into(),
+            ..self.new_request_with_cf()
         }
         .execute(self.rpc.clone())
     }
@@ -284,12 +294,14 @@ impl Client {
                 MAX_RAW_KV_SCAN_LIMIT,
             )))
         } else {
+            let (start_key, end_key) = range.into().into_keys();
             Either::Left(
-                RawScan {
-                    range: range.into(),
+                kvrpcpb::RawScanRequest {
+                    start_key: start_key.into(),
+                    end_key: end_key.unwrap_or(Key::default()).into(),
                     limit,
                     key_only: self.key_only,
-                    cf: self.cf.clone(),
+                    ..self.new_request_with_cf()
                 }
                 .execute(self.rpc.clone()),
             )
@@ -325,14 +337,50 @@ impl Client {
             )))
         } else {
             Either::Left(
-                RawBatchScan {
-                    ranges: ranges.into_iter().map(Into::into).collect(),
+                kvrpcpb::RawBatchScanRequest {
+                    ranges: ranges.into_iter().map(Into::into).map(Into::into).collect(),
                     each_limit,
                     key_only: self.key_only,
-                    cf: self.cf.clone(),
+                    ..self.new_request_with_cf()
                 }
                 .execute(self.rpc.clone()),
             )
         }
     }
+
+    fn new_request_with_cf<T: RawRpcRequest>(&self) -> T {
+        let mut req = T::default();
+        req.maybe_set_cf(self.cf.clone());
+        req
+    }
 }
+
+trait RawRpcRequest: Default {
+    fn set_cf(&mut self, cf: String);
+
+    fn maybe_set_cf(&mut self, cf: Option<ColumnFamily>) {
+        if let Some(cf) = cf {
+            self.set_cf(cf.to_string());
+        }
+    }
+}
+
+macro_rules! impl_raw_rpc_request {
+    ($name: ident) => {
+        impl RawRpcRequest for kvrpcpb::$name {
+            fn set_cf(&mut self, cf: String) {
+                self.set_cf(cf);
+            }
+        }
+    };
+}
+
+impl_raw_rpc_request!(RawGetRequest);
+impl_raw_rpc_request!(RawBatchGetRequest);
+impl_raw_rpc_request!(RawPutRequest);
+impl_raw_rpc_request!(RawBatchPutRequest);
+impl_raw_rpc_request!(RawDeleteRequest);
+impl_raw_rpc_request!(RawBatchDeleteRequest);
+impl_raw_rpc_request!(RawScanRequest);
+impl_raw_rpc_request!(RawBatchScanRequest);
+impl_raw_rpc_request!(RawDeleteRangeRequest);
