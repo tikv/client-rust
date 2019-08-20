@@ -60,7 +60,17 @@ impl Mutation {
     }
 }
 
+#[derive(Eq, PartialEq, Debug)]
 enum MutationValue {
     Determined(Option<Value>),
     Undetermined,
+}
+
+impl MutationValue {
+    fn unwrap(self) -> Option<Value> {
+        match self {
+            MutationValue::Determined(v) => v,
+            MutationValue::Undetermined => unreachable!(),
+        }
+    }
 }

@@ -87,34 +87,28 @@ impl Transaction {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = (Key, Option<Value>)>> {
-        let mut undetermined_keys = Vec::new();
-        let mut results_in_buffer = Vec::new();
-        for key in keys {
-            let key = key.into();
-            let mutation_value = self.get_from_mutations(&key);
-            // If the value cannot be determined according to the buffered mutations, we need to
-            // query from the store.
-            if let MutationValue::Undetermined = mutation_value {
-                undetermined_keys.push(key.clone());
-            }
-            results_in_buffer.push((key, mutation_value));
-        }
-        let mut results_from_db = self.batch_get_snap(undetermined_keys).await?;
-        Ok(results_in_buffer
+        // Partition the keys into those we have buffered and those we have to
+        // get from the store.
+        let (undetermined_keys, cached_results): (Vec<(Key, MutationValue)>, _) = keys
             .into_iter()
-            .map(move |(key, mutation_value)| match mutation_value {
-                MutationValue::Determined(value) => (key, value),
-                // `results_from_db` should contain all undetermined keys. If not, there's a bug.
-                MutationValue::Undetermined => results_from_db
-                    .next()
-                    .expect("not enough results from store"),
-            }))
+            .map(|k| {
+                let key = k.into();
+                let value = self.get_from_mutations(&key);
+                (key, value)
+            })
+            .partition(|(_, v)| *v == MutationValue::Undetermined);
+
+        let cached_results = cached_results.into_iter().map(|(k, v)| (k, v.unwrap()));
+        let undetermined_keys = undetermined_keys.into_iter().map(|(k, _)| k);
+        let fetched_results = self.batch_get_snap(undetermined_keys).await?;
+        let results = cached_results.chain(fetched_results);
+        Ok(results)
     }
     async fn batch_get_snap(
         &self,
         _keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = (Key, Option<Value>)>> {
-        Ok(std::iter::repeat_with(|| unimplemented!()))
+        Ok(::std::iter::empty())
     }
 
     pub fn scan(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
