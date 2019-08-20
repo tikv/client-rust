@@ -1,10 +1,19 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::transaction::{Mutation, MutationValue, Timestamp};
-use crate::{Key, KvPair, Result, Value};
+use crate::{
+    pd::PdRpcClient,
+    request::KvRequest,
+    transaction::{
+        requests::{MvccBatchGet, MvccGet},
+        Mutation, MutationValue, Timestamp,
+    },
+    Key, KvPair, Result, Value,
+};
 
 use derive_new::new;
 use futures::stream::BoxStream;
+use std::future::Future;
+use std::sync::{Arc, Mutex};
 use std::{collections::BTreeMap, ops::RangeBounds};
 
 /// A undo-able set of actions on the dataset.
@@ -30,7 +39,92 @@ use std::{collections::BTreeMap, ops::RangeBounds};
 pub struct Transaction {
     pub timestamp: Timestamp,
     #[new(default)]
-    mutations: BTreeMap<Key, Mutation>,
+    buffer: Buffer,
+    rpc: Arc<PdRpcClient>,
+}
+
+#[derive(Default)]
+struct Buffer {
+    mutations: Mutex<BTreeMap<Key, Mutation>>,
+}
+
+impl Buffer {
+    async fn get_or_else<F, Fut>(&self, key: Key, f: F) -> Result<Option<Value>>
+    where
+        F: FnOnce(Key) -> Fut,
+        Fut: Future<Output = Result<Option<Value>>>,
+    {
+        match self.get_from_mutations(&key) {
+            MutationValue::Determined(value) => Ok(value),
+            MutationValue::Undetermined => {
+                let value = f(key.clone()).await?;
+                let mut mutations = self.mutations.lock().unwrap();
+                mutations.insert(key, Mutation::Cached(value.clone()));
+                Ok(value)
+            }
+        }
+    }
+
+    async fn batch_get_or_else<F, Fut, Iter>(
+        &self,
+        keys: impl Iterator<Item = Key>,
+        f: F,
+    ) -> Result<impl Iterator<Item = (Key, Option<Value>)>>
+    where
+        F: FnOnce(Vec<Key>) -> Fut,
+        Fut: Future<Output = Result<Iter>>,
+        Iter: Iterator<Item = (Key, Option<Value>)>,
+    {
+        let mutations = self.mutations.lock().unwrap();
+        // Partition the keys into those we have buffered and those we have to
+        // get from the store.
+        let (undetermined_keys, cached_results): (Vec<(Key, MutationValue)>, _) = keys
+            .map(|key| {
+                let value = mutations
+                    .get(&key)
+                    .map(Mutation::get_value)
+                    .unwrap_or(MutationValue::Undetermined);
+                (key, value)
+            })
+            .partition(|(_, v)| *v == MutationValue::Undetermined);
+
+        let cached_results = cached_results.into_iter().map(|(k, v)| (k, v.unwrap()));
+
+        let undetermined_keys = undetermined_keys.into_iter().map(|(k, _)| k).collect();
+        let fetched_results = f(undetermined_keys).await?;
+
+        let results = cached_results.chain(fetched_results);
+        Ok(results)
+    }
+
+    fn get_from_mutations(&self, key: &Key) -> MutationValue {
+        self.mutations
+            .lock()
+            .unwrap()
+            .get(&key)
+            .map(Mutation::get_value)
+            .unwrap_or(MutationValue::Undetermined)
+    }
+
+    fn lock(&self, key: Key) {
+        self.mutations
+            .lock()
+            .unwrap()
+            // Mutated keys don't need a lock.
+            .entry(key)
+            .or_insert(Mutation::Lock);
+    }
+
+    fn put(&self, key: Key, value: Value) {
+        self.mutations
+            .lock()
+            .unwrap()
+            .insert(key, Mutation::Put(value));
+    }
+
+    fn delete(&self, key: Key) {
+        self.mutations.lock().unwrap().insert(key, Mutation::Del);
+    }
 }
 
 impl Transaction {
@@ -52,13 +146,16 @@ impl Transaction {
     /// ```
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
         let key = key.into();
-        match self.get_from_mutations(&key) {
-            MutationValue::Determined(value) => Ok(value),
-            MutationValue::Undetermined => self.get_snap(key).await,
-        }
-    }
-    async fn get_snap(&self, _key: impl Into<Key>) -> Result<Option<Value>> {
-        unimplemented!()
+        self.buffer
+            .get_or_else(key, async move |key| {
+                MvccGet {
+                    key,
+                    version: self.timestamp.into_version(),
+                }
+                .execute(self.rpc.clone())
+                .await
+            })
+            .await
     }
 
     /// Gets the values associated with the given keys. The returned iterator is in the same order
@@ -87,28 +184,17 @@ impl Transaction {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = (Key, Option<Value>)>> {
-        // Partition the keys into those we have buffered and those we have to
-        // get from the store.
-        let (undetermined_keys, cached_results): (Vec<(Key, MutationValue)>, _) = keys
-            .into_iter()
-            .map(|k| {
-                let key = k.into();
-                let value = self.get_from_mutations(&key);
-                (key, value)
+        let version = self.timestamp.into_version();
+        let rpc = self.rpc.clone();
+        self.buffer
+            .batch_get_or_else(keys.into_iter().map(|k| k.into()), async move |keys| {
+                Ok(MvccBatchGet { keys, version }
+                    .execute(rpc)
+                    .await?
+                    .into_iter()
+                    .map(|p| (p.0, Some(p.1))))
             })
-            .partition(|(_, v)| *v == MutationValue::Undetermined);
-
-        let cached_results = cached_results.into_iter().map(|(k, v)| (k, v.unwrap()));
-        let undetermined_keys = undetermined_keys.into_iter().map(|(k, _)| k);
-        let fetched_results = self.batch_get_snap(undetermined_keys).await?;
-        let results = cached_results.chain(fetched_results);
-        Ok(results)
-    }
-    async fn batch_get_snap(
-        &self,
-        _keys: impl IntoIterator<Item = impl Into<Key>>,
-    ) -> Result<impl Iterator<Item = (Key, Option<Value>)>> {
-        Ok(::std::iter::empty())
+            .await
     }
 
     pub fn scan(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
@@ -136,9 +222,8 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub fn set(&mut self, key: impl Into<Key>, value: impl Into<Value>) {
-        self.mutations
-            .insert(key.into(), Mutation::Put(value.into()));
+    pub fn set(&self, key: impl Into<Key>, value: impl Into<Value>) {
+        self.buffer.put(key.into(), value.into());
     }
 
     /// Deletes the given key.
@@ -157,8 +242,8 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub fn delete(&mut self, key: impl Into<Key>) {
-        self.mutations.insert(key.into(), Mutation::Del);
+    pub fn delete(&self, key: impl Into<Key>) {
+        self.buffer.delete(key.into());
     }
 
     /// Locks the given keys.
@@ -176,11 +261,9 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub fn lock_keys(&mut self, keys: impl IntoIterator<Item = impl Into<Key>>) {
+    pub fn lock_keys(&self, keys: impl IntoIterator<Item = impl Into<Key>>) {
         for key in keys {
-            let key = key.into();
-            // Mutated keys don't need a lock.
-            self.mutations.entry(key).or_insert(Mutation::Lock);
+            self.buffer.lock(key.into());
         }
     }
 
@@ -208,12 +291,6 @@ impl Transaction {
     }
 
     async fn prewrite(&mut self) -> Result<()> {
-        // TODO: Too many clones. Consider using bytes::Byte.
-        let _rpc_mutations: Vec<_> = self
-            .mutations
-            .iter()
-            .map(|(k, v)| v.clone().into_proto_with_key(k.clone()))
-            .collect();
         unimplemented!()
     }
 
@@ -224,13 +301,6 @@ impl Transaction {
     async fn commit_secondary(&mut self) -> Result<()> {
         unimplemented!()
     }
-
-    fn get_from_mutations(&self, key: &Key) -> MutationValue {
-        self.mutations
-            .get(key)
-            .map(Mutation::get_value)
-            .unwrap_or(MutationValue::Undetermined)
-    }
 }
 
 #[cfg(test)]
@@ -240,20 +310,25 @@ mod tests {
 
     #[test]
     fn set_and_get_from_buffer() {
-        let mut txn = mock_txn();
-        txn.set(b"key1".to_vec(), b"value1".to_vec());
-        txn.set(b"key2".to_vec(), b"value2".to_vec());
+        let buffer = Buffer::default();
+        buffer.put(b"key1".to_vec().into(), b"value1".to_vec().into());
+        buffer.put(b"key2".to_vec().into(), b"value2".to_vec().into());
         assert_eq!(
-            block_on(txn.get(b"key1".to_vec())).unwrap().unwrap(),
+            block_on(buffer.get_or_else(b"key1".to_vec().into(), async move |_| panic!()))
+                .unwrap()
+                .unwrap(),
             b"value1".to_vec().into()
         );
 
-        txn.delete(b"key2".to_vec());
-        txn.set(b"key1".to_vec(), b"value".to_vec());
+        buffer.delete(b"key2".to_vec().into());
+        buffer.put(b"key1".to_vec().into(), b"value".to_vec().into());
         assert_eq!(
-            block_on(txn.batch_get(vec![b"key2".to_vec(), b"key1".to_vec()]))
-                .unwrap()
-                .collect::<Vec<_>>(),
+            block_on(buffer.batch_get_or_else(
+                vec![b"key2".to_vec().into(), b"key1".to_vec().into()].into_iter(),
+                async move |_| Ok(::std::iter::empty())
+            ))
+            .unwrap()
+            .collect::<Vec<_>>(),
             vec![
                 (Key::from(b"key2".to_vec()), None),
                 (
@@ -262,16 +337,5 @@ mod tests {
                 ),
             ]
         );
-    }
-
-    fn mock_txn() -> Transaction {
-        let timestamp = Timestamp {
-            physical: 0,
-            logical: 0,
-        };
-        Transaction {
-            timestamp,
-            mutations: Default::default(),
-        }
     }
 }

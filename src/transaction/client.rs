@@ -50,7 +50,7 @@ impl Client {
     /// ```
     pub async fn begin(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
-        Ok(Transaction::new(timestamp))
+        Ok(Transaction::new(timestamp, self.pd.clone()))
     }
 
     /// Retrieves the current [`Timestamp`](Timestamp).
