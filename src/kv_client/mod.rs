@@ -10,7 +10,6 @@ use crate::{
     request::{KvRequest, KvRpcRequest},
     security::SecurityManager,
     stats::tikv_stats,
-    transaction::TxnInfo,
     ErrorKind, Result,
 };
 
@@ -20,7 +19,6 @@ use futures::future::BoxFuture;
 use futures::prelude::*;
 use grpcio::CallOption;
 use grpcio::Environment;
-use kvproto::kvrpcpb;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -105,15 +103,6 @@ where
             }
         })
         .map(move |r| context.done(r))
-}
-
-impl From<TxnInfo> for kvrpcpb::TxnInfo {
-    fn from(txn_info: TxnInfo) -> kvrpcpb::TxnInfo {
-        let mut pb = kvrpcpb::TxnInfo::default();
-        pb.set_txn(txn_info.txn);
-        pb.set_status(txn_info.status);
-        pb
-    }
 }
 
 #[derive(new)]
