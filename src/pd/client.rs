@@ -389,4 +389,22 @@ pub mod test {
         );
         assert!(stream.next().is_none());
     }
+
+    #[test]
+    fn test_stores_for_range() {
+        let client = Arc::new(MockPdClient);
+        let k1: Key = vec![1].into();
+        let k2: Key = vec![5, 2].into();
+        let k3: Key = vec![11, 4].into();
+        let range1 = (k1, k2.clone()).into();
+        let mut stream = executor::block_on_stream(client.clone().stores_for_range(range1));
+        assert_eq!(stream.next().unwrap().unwrap().region.id(), 1);
+        assert!(stream.next().is_none());
+
+        let range2 = (k2, k3).into();
+        let mut stream = executor::block_on_stream(client.stores_for_range(range2));
+        assert_eq!(stream.next().unwrap().unwrap().region.id(), 1);
+        assert_eq!(stream.next().unwrap().unwrap().region.id(), 2);
+        assert!(stream.next().is_none());
+    }
 }
