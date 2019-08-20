@@ -2,20 +2,22 @@
 
 mod client;
 mod errors;
+mod request;
 
 pub use self::client::KvRpcClient;
 pub use self::errors::HasError;
+pub use self::request::{KvRequest, MockDispatch};
 pub use kvproto::tikvpb::TikvClient;
 
+use self::request::KvRpcRequest;
 use crate::pd::Region;
-use crate::raw::{ColumnFamily, RawRequest};
 use crate::security::SecurityManager;
 use crate::Result;
+
 use derive_new::new;
 use futures::future::BoxFuture;
 use grpcio::CallOption;
 use grpcio::Environment;
-use kvproto::kvrpcpb;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -51,7 +53,7 @@ impl KvConnect for TikvConnect {
 }
 
 pub trait KvClient {
-    fn dispatch<T: RawRequest>(
+    fn dispatch<T: KvRequest>(
         &self,
         request: &T::RpcRequest,
         opt: CallOption,
@@ -70,7 +72,7 @@ impl<Client: KvClient> Store<Client> {
         CallOption::default().timeout(self.timeout)
     }
 
-    pub fn request<T: KvRawRequest>(&self) -> T {
+    pub fn request<T: KvRpcRequest>(&self) -> T {
         let mut request = T::default();
         // FIXME propagate the error instead of using `expect`
         request.set_context(
@@ -81,7 +83,7 @@ impl<Client: KvClient> Store<Client> {
         request
     }
 
-    pub fn dispatch<T: RawRequest>(
+    pub fn dispatch<T: KvRequest>(
         &self,
         request: &T::RpcRequest,
         opt: CallOption,
@@ -89,37 +91,3 @@ impl<Client: KvClient> Store<Client> {
         self.client.dispatch::<T>(request, opt)
     }
 }
-
-pub trait KvRawRequest: Default {
-    fn set_cf(&mut self, cf: String);
-    fn set_context(&mut self, context: kvrpcpb::Context);
-
-    fn maybe_set_cf(&mut self, cf: Option<ColumnFamily>) {
-        if let Some(cf) = cf {
-            self.set_cf(cf.to_string());
-        }
-    }
-}
-
-macro_rules! impl_raw_request {
-    ($name: ident) => {
-        impl KvRawRequest for kvrpcpb::$name {
-            fn set_cf(&mut self, cf: String) {
-                self.set_cf(cf);
-            }
-            fn set_context(&mut self, context: kvrpcpb::Context) {
-                self.set_context(context);
-            }
-        }
-    };
-}
-
-impl_raw_request!(RawGetRequest);
-impl_raw_request!(RawBatchGetRequest);
-impl_raw_request!(RawPutRequest);
-impl_raw_request!(RawBatchPutRequest);
-impl_raw_request!(RawDeleteRequest);
-impl_raw_request!(RawBatchDeleteRequest);
-impl_raw_request!(RawScanRequest);
-impl_raw_request!(RawBatchScanRequest);
-impl_raw_request!(RawDeleteRangeRequest);
