@@ -221,7 +221,7 @@ pub mod test {
     use futures::executor;
 
     #[test]
-    fn test_kv_client() {
+    fn test_kv_client_caching() {
         let client = pd_rpc_client();
 
         let addr1 = "foo";

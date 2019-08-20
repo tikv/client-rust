@@ -1,5 +1,10 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+//! Various mock versions of the various clients and other objects.
+//!
+//! The goal is to be able to test functionality independently of the rest of
+//! the system, in particular without requiring a TiKV or PD server, or RPC layer.
+
 use crate::{
     kv_client::{KvClient, KvConnect, Store},
     pd::{PdClient, PdRpcClient, Region, RegionId, RetryClient},
@@ -14,6 +19,8 @@ use grpcio::CallOption;
 use kvproto::metapb;
 use std::{sync::Arc, time::Duration};
 
+/// Create a `PdRpcClient` with it's internals replaced with mocks so that the
+/// client can be tested without doing any RPC calls.
 pub fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
     let config = Config::default();
     PdRpcClient::new(
