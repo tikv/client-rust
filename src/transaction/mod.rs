@@ -10,7 +10,6 @@
 //!
 
 pub use client::{Client, Connect};
-pub use snapshot::Snapshot;
 pub use transaction::Transaction;
 
 use crate::{Key, Value};
@@ -19,7 +18,6 @@ use kvproto::kvrpcpb;
 
 mod client;
 mod requests;
-mod snapshot;
 #[allow(clippy::module_inception)]
 mod transaction;
 

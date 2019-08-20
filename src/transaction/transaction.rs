@@ -1,6 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::transaction::{snapshot::Snapshot, Mutation, MutationValue, Timestamp};
+use crate::transaction::{Mutation, MutationValue, Timestamp};
 use crate::{Key, KvPair, Result, Value};
 
 use derive_new::new;
@@ -14,7 +14,7 @@ use std::{collections::BTreeMap, ops::RangeBounds};
 ///
 /// Once a transaction is commited, a new commit timestamp is obtained from the placement driver.
 ///
-/// Create a new transaction from a snapshot using `new`.
+/// Create a new transaction from a timestamp using `new`.
 ///
 /// ```rust,no_run
 /// # #![feature(async_await)]
@@ -28,7 +28,7 @@ use std::{collections::BTreeMap, ops::RangeBounds};
 /// ```
 #[derive(new)]
 pub struct Transaction {
-    pub snapshot: Snapshot,
+    pub timestamp: Timestamp,
     #[new(default)]
     mutations: BTreeMap<Key, Mutation>,
 }
@@ -54,8 +54,11 @@ impl Transaction {
         let key = key.into();
         match self.get_from_mutations(&key) {
             MutationValue::Determined(value) => Ok(value),
-            MutationValue::Undetermined => self.snapshot.get(key).await,
+            MutationValue::Undetermined => self.get_snap(key).await,
         }
+    }
+    async fn get_snap(&self, _key: impl Into<Key>) -> Result<Option<Value>> {
+        unimplemented!()
     }
 
     /// Gets the values associated with the given keys. The returned iterator is in the same order
@@ -90,23 +93,28 @@ impl Transaction {
             let key = key.into();
             let mutation_value = self.get_from_mutations(&key);
             // If the value cannot be determined according to the buffered mutations, we need to
-            // query from the snapshot.
+            // query from the store.
             if let MutationValue::Undetermined = mutation_value {
                 undetermined_keys.push(key.clone());
             }
             results_in_buffer.push((key, mutation_value));
         }
-        let mut results_from_snapshot = self.snapshot.batch_get(undetermined_keys).await?;
+        let mut results_from_db = self.batch_get_snap(undetermined_keys).await?;
         Ok(results_in_buffer
             .into_iter()
             .map(move |(key, mutation_value)| match mutation_value {
                 MutationValue::Determined(value) => (key, value),
-                // `results_from_snapshot` should contain all undetermined keys. If not, it's a bug
-                // in `Snapshot::batch_get`.
-                MutationValue::Undetermined => results_from_snapshot
+                // `results_from_db` should contain all undetermined keys. If not, there's a bug.
+                MutationValue::Undetermined => results_from_db
                     .next()
-                    .expect("not enough results from snapshot"),
+                    .expect("not enough results from store"),
             }))
+    }
+    async fn batch_get_snap(
+        &self,
+        _keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> Result<impl Iterator<Item = (Key, Option<Value>)>> {
+        Ok(std::iter::repeat_with(|| unimplemented!()))
     }
 
     pub fn scan(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
@@ -205,42 +213,6 @@ impl Transaction {
         Ok(())
     }
 
-    /// Returns the timestamp which the transaction started at.
-    ///
-    /// ```rust,no_run
-    /// # #![feature(async_await)]
-    /// # use tikv_client::{Config, transaction::{Client, Timestamp}};
-    /// # use futures::prelude::*;
-    /// # futures::executor::block_on(async {
-    /// # let connect = Client::connect(Config::default());
-    /// # let connected_client = connect.await.unwrap();
-    /// let txn = connected_client.begin().await.unwrap();
-    /// // ... Do some actions.
-    /// let ts: Timestamp = txn.start_ts();
-    /// # });
-    /// ```
-    pub fn start_ts(&self) -> Timestamp {
-        self.snapshot().timestamp
-    }
-
-    /// Gets the `Snapshot` the transaction is operating on.
-    ///
-    /// ```rust,no_run
-    /// # #![feature(async_await)]
-    /// # use tikv_client::{Config, transaction::{Client, Snapshot}};
-    /// # use futures::prelude::*;
-    /// # futures::executor::block_on(async {
-    /// # let connect = Client::connect(Config::default());
-    /// # let connected_client = connect.await.unwrap();
-    /// let txn = connected_client.begin().await.unwrap();
-    /// // ... Do some actions.
-    /// let snap: &Snapshot = txn.snapshot();
-    /// # });
-    /// ```
-    pub fn snapshot(&self) -> &Snapshot {
-        &self.snapshot
-    }
-
     async fn prewrite(&mut self) -> Result<()> {
         // TODO: Too many clones. Consider using bytes::Byte.
         let _rpc_mutations: Vec<_> = self
@@ -299,14 +271,12 @@ mod tests {
     }
 
     fn mock_txn() -> Transaction {
-        let snapshot = Snapshot {
-            timestamp: Timestamp {
-                physical: 0,
-                logical: 0,
-            },
+        let timestamp = Timestamp {
+            physical: 0,
+            logical: 0,
         };
         Transaction {
-            snapshot,
+            timestamp,
             mutations: Default::default(),
         }
     }

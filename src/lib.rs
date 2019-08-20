@@ -117,6 +117,4 @@ pub use crate::kv::{BoundRange, Key, KvPair, ToOwnedRange, Value};
 #[doc(inline)]
 pub use crate::raw::{Client as RawClient, ColumnFamily};
 #[doc(inline)]
-pub use crate::transaction::{
-    Client as TransactionClient, Connect, Snapshot, Timestamp, Transaction,
-};
+pub use crate::transaction::{Client as TransactionClient, Connect, Timestamp, Transaction};
