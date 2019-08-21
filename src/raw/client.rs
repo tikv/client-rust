@@ -1,8 +1,10 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::{requests::*, ColumnFamily};
 use crate::{
-    kv_client::KvRequest, pd::PdRpcClient, BoundRange, Config, Error, Key, KvPair, Result, Value,
+    pd::PdRpcClient,
+    raw::{requests::*, ColumnFamily},
+    request::KvRequest,
+    BoundRange, Config, Error, Key, KvPair, Result, Value,
 };
 
 use futures::future::Either;

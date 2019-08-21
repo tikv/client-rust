@@ -1,8 +1,10 @@
 use crate::{
-    kv_client::{KvClient, KvRequest, RpcFnType, Store},
+    kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
+    request::KvRequest,
     BoundRange, Error, Key, KvPair, Result, Value,
 };
+
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::BoxStream;
@@ -12,7 +14,7 @@ use std::mem;
 use std::sync::Arc;
 
 #[allow(dead_code)]
-pub(super) struct MvccGet {
+pub struct MvccGet {
     pub key: Key,
     pub version: u64,
 }
@@ -69,7 +71,7 @@ impl KvRequest for MvccGet {
 }
 
 #[allow(dead_code)]
-pub(super) struct MvccBatchGet {
+pub struct MvccBatchGet {
     pub keys: Vec<Key>,
     pub version: u64,
 }
@@ -126,7 +128,7 @@ impl KvRequest for MvccBatchGet {
 }
 
 #[allow(dead_code)]
-pub(super) struct MvccScan {
+pub struct MvccScan {
     pub range: BoundRange,
     // TODO this limit is currently treated as a per-region limit, not a total
     // limit.

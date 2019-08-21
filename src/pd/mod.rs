@@ -4,8 +4,6 @@ use derive_new::new;
 use kvproto::{kvrpcpb, metapb, pdpb};
 
 use crate::{Error, Key, Result};
-#[cfg(test)]
-pub use client::test::{MockKvClient, MockPdClient};
 pub use client::{PdClient, PdRpcClient};
 pub use retry::RetryClient;
 
