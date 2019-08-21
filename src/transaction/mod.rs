@@ -10,6 +10,7 @@
 //!
 
 pub use client::{Client, Connect};
+pub use snapshot::Snapshot;
 pub use transaction::Transaction;
 
 use std::convert::TryInto;
@@ -17,6 +18,7 @@ use std::convert::TryInto;
 mod buffer;
 mod client;
 mod requests;
+mod snapshot;
 #[allow(clippy::module_inception)]
 mod transaction;
 
