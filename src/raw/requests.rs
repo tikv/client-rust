@@ -1,10 +1,12 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    kv_client::{KvClient, KvRequest, RpcFnType, Store},
+    kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
+    request::KvRequest,
     BoundRange, Error, Key, KvPair, Result, Value,
 };
+
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::BoxStream;
@@ -407,15 +409,17 @@ impl KvRequest for kvrpcpb::RawBatchScanRequest {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::kv_client::{KvRequest, MockDispatch};
-    use crate::pd::MockPdClient;
+
+    use crate::mock::MockPdClient;
+    use crate::request::DispatchHook;
+
     use futures::executor;
     use futures::future::{ready, BoxFuture};
     use grpcio::CallOption;
     use kvproto::kvrpcpb;
 
-    impl MockDispatch for kvrpcpb::RawScanRequest {
-        fn mock_dispatch(
+    impl DispatchHook for kvrpcpb::RawScanRequest {
+        fn dispatch_hook(
             &self,
             request: &Self,
             _opt: CallOption,

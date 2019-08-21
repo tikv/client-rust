@@ -34,13 +34,30 @@ const MAX_REQUEST_COUNT: usize = 3;
 const LEADER_CHANGE_RETRY: usize = 10;
 
 /// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
-pub struct RetryClient {
-    cluster: RwLock<Cluster>,
+pub struct RetryClient<Cl = Cluster> {
+    cluster: RwLock<Cl>,
     connection: Connection,
     timeout: Duration,
 }
 
-impl RetryClient {
+impl<Cl> RetryClient<Cl> {
+    #[cfg(test)]
+    pub fn new_with_cluster(
+        env: Arc<Environment>,
+        security_mgr: Arc<SecurityManager>,
+        timeout: Duration,
+        cluster: Cl,
+    ) -> RetryClient<Cl> {
+        let connection = Connection::new(env, security_mgr);
+        RetryClient {
+            cluster: RwLock::new(cluster),
+            connection,
+            timeout,
+        }
+    }
+}
+
+impl RetryClient<Cluster> {
     pub fn connect(
         env: Arc<Environment>,
         endpoints: &[String],

@@ -87,10 +87,13 @@ mod kv;
 mod kv_client;
 mod pd;
 pub mod raw;
+mod request;
 mod security;
 mod stats;
 pub mod transaction;
 
+#[cfg(test)]
+mod mock;
 #[cfg(test)]
 mod proptests;
 

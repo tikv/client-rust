@@ -2,7 +2,9 @@
 
 use super::ColumnFamily;
 use crate::{
-    kv_client::KvRequest, pd::PdRpcClient, BoundRange, Config, Error, Key, KvPair, Result, Value,
+    pd::PdRpcClient,
+    request::KvRequest,
+    BoundRange, Config, Error, Key, KvPair, Result, Value,
 };
 
 use futures::future::Either;

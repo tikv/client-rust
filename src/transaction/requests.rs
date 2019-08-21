@@ -1,8 +1,10 @@
 use crate::{
-    kv_client::{KvClient, KvRequest, RpcFnType, Store},
+    kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
     Error, Key, KvPair, Result, Value,
+    request::KvRequest,
 };
+
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::BoxStream;

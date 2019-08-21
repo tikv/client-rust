@@ -1,21 +1,22 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-mod client;
 mod errors;
-mod request;
 
-pub use self::client::KvRpcClient;
 pub use self::errors::{HasError, HasRegionError};
-pub use self::request::{KvRequest, MockDispatch};
 pub use kvproto::tikvpb::TikvClient;
 
-use self::request::KvRpcRequest;
-use crate::pd::Region;
-use crate::security::SecurityManager;
-use crate::Result;
+use crate::{
+    pd::Region,
+    request::{KvRequest, KvRpcRequest},
+    security::SecurityManager,
+    stats::tikv_stats,
+    ErrorKind, Result,
+};
 
 use derive_new::new;
+use futures::compat::Compat01As03;
 use futures::future::BoxFuture;
+use futures::prelude::*;
 use grpcio::CallOption;
 use grpcio::Environment;
 use std::sync::Arc;
@@ -58,6 +59,50 @@ pub trait KvClient {
         request: &T,
         opt: CallOption,
     ) -> BoxFuture<'static, Result<T::RpcResponse>>;
+}
+
+/// This client handles requests for a single TiKV node. It converts the data
+/// types and abstractions of the client program into the grpc data types.
+#[derive(new, Clone)]
+pub struct KvRpcClient {
+    rpc_client: Arc<TikvClient>,
+}
+
+impl KvClient for KvRpcClient {
+    fn dispatch<T: KvRequest>(
+        &self,
+        request: &T,
+        opt: CallOption,
+    ) -> BoxFuture<'static, Result<T::RpcResponse>> {
+        map_errors_and_trace(T::REQUEST_NAME, T::RPC_FN(&self.rpc_client, request, opt)).boxed()
+    }
+}
+
+fn map_errors_and_trace<Resp, RpcFuture>(
+    request_name: &'static str,
+    fut: ::grpcio::Result<RpcFuture>,
+) -> impl Future<Output = Result<Resp>>
+where
+    Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
+    Resp: HasError + Sized + Clone + Send + 'static,
+{
+    let context = tikv_stats(request_name);
+
+    // FIXME should handle the error, not unwrap.
+    Compat01As03::new(fut.unwrap())
+        .map(|r| match r {
+            Err(e) => Err(ErrorKind::Grpc(e).into()),
+            Ok(mut r) => {
+                if let Some(e) = r.region_error() {
+                    Err(e)
+                } else if let Some(e) = r.error() {
+                    Err(e)
+                } else {
+                    Ok(r)
+                }
+            }
+        })
+        .map(move |r| context.done(r))
 }
 
 #[derive(new)]

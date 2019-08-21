@@ -44,7 +44,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         stores
             .and_then(move |(key_data, store)| {
                 let request = self.make_rpc_request(key_data, &store);
-                self.mock_dispatch(&request, store.call_options())
+                self.dispatch_hook(&request, store.call_options())
                     .unwrap_or_else(|| store.dispatch::<Self>(&request, store.call_options()))
                     .map_ok(move |response| (request, response))
             })
@@ -74,8 +74,8 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
 }
 
 /// Permits easy mocking of rpc calls.
-pub trait MockDispatch: KvRequest {
-    fn mock_dispatch(
+pub trait DispatchHook: KvRequest {
+    fn dispatch_hook(
         &self,
         _request: &Self,
         _opt: CallOption,
@@ -84,7 +84,7 @@ pub trait MockDispatch: KvRequest {
     }
 }
 
-impl<T: KvRequest> MockDispatch for T {}
+impl<T: KvRequest> DispatchHook for T {}
 
 pub trait KvRpcRequest: Default {
     fn set_context(&mut self, context: kvrpcpb::Context);
