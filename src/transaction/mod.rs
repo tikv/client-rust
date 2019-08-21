@@ -12,11 +12,9 @@
 pub use client::{Client, Connect};
 pub use transaction::Transaction;
 
-use crate::{Key, Value};
-
-use kvproto::kvrpcpb;
 use std::convert::TryInto;
 
+mod buffer;
 mod client;
 mod requests;
 #[allow(clippy::module_inception)]
@@ -35,57 +33,5 @@ impl Timestamp {
         ((self.physical << PHYSICAL_SHIFT_BITS) + self.logical)
             .try_into()
             .expect("Overflow converting timestamp to version")
-    }
-}
-
-#[derive(Debug, Clone)]
-enum Mutation {
-    Cached(Option<Value>),
-    Put(Value),
-    Del,
-    Lock,
-}
-
-impl Mutation {
-    #[allow(dead_code)]
-    fn into_proto_with_key(self, key: Key) -> Option<kvrpcpb::Mutation> {
-        let mut pb = kvrpcpb::Mutation {
-            key: key.into(),
-            ..Default::default()
-        };
-        match self {
-            Mutation::Cached(_) => return None,
-            Mutation::Put(v) => {
-                pb.set_op(kvrpcpb::Op::Put);
-                pb.set_value(v.into());
-            }
-            Mutation::Del => pb.set_op(kvrpcpb::Op::Del),
-            Mutation::Lock => pb.set_op(kvrpcpb::Op::Lock),
-        };
-        Some(pb)
-    }
-
-    fn get_value(&self) -> MutationValue {
-        match self {
-            Mutation::Cached(value) => MutationValue::Determined(value.clone()),
-            Mutation::Put(value) => MutationValue::Determined(Some(value.clone())),
-            Mutation::Del => MutationValue::Determined(None),
-            Mutation::Lock => MutationValue::Undetermined,
-        }
-    }
-}
-
-#[derive(Eq, PartialEq, Debug)]
-enum MutationValue {
-    Determined(Option<Value>),
-    Undetermined,
-}
-
-impl MutationValue {
-    fn unwrap(self) -> Option<Value> {
-        match self {
-            MutationValue::Determined(v) => v,
-            MutationValue::Undetermined => unreachable!(),
-        }
     }
 }

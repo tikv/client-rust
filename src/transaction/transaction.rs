@@ -4,17 +4,17 @@ use crate::{
     pd::PdRpcClient,
     request::KvRequest,
     transaction::{
-        requests::{MvccBatchGet, MvccGet},
-        Mutation, MutationValue, Timestamp,
+        buffer::Buffer,
+        requests::{new_mvcc_get_batch_request, new_mvcc_get_request},
+        Timestamp,
     },
     Key, KvPair, Result, Value,
 };
 
 use derive_new::new;
 use futures::stream::BoxStream;
-use std::future::Future;
-use std::sync::{Arc, Mutex};
-use std::{collections::BTreeMap, ops::RangeBounds};
+use std::ops::RangeBounds;
+use std::sync::Arc;
 
 /// A undo-able set of actions on the dataset.
 ///
@@ -37,104 +37,10 @@ use std::{collections::BTreeMap, ops::RangeBounds};
 /// ```
 #[derive(new)]
 pub struct Transaction {
-    pub timestamp: Timestamp,
+    timestamp: Timestamp,
     #[new(default)]
     buffer: Buffer,
     rpc: Arc<PdRpcClient>,
-}
-
-#[derive(Default)]
-struct Buffer {
-    mutations: Mutex<BTreeMap<Key, Mutation>>,
-}
-
-impl Buffer {
-    async fn get_or_else<F, Fut>(&self, key: Key, f: F) -> Result<Option<Value>>
-    where
-        F: FnOnce(Key) -> Fut,
-        Fut: Future<Output = Result<Option<Value>>>,
-    {
-        match self.get_from_mutations(&key) {
-            MutationValue::Determined(value) => Ok(value),
-            MutationValue::Undetermined => {
-                let value = f(key.clone()).await?;
-                let mut mutations = self.mutations.lock().unwrap();
-                mutations.insert(key, Mutation::Cached(value.clone()));
-                Ok(value)
-            }
-        }
-    }
-
-    async fn batch_get_or_else<F, Fut>(
-        &self,
-        keys: impl Iterator<Item = Key>,
-        f: F,
-    ) -> Result<impl Iterator<Item = (Key, Option<Value>)>>
-    where
-        F: FnOnce(Vec<Key>) -> Fut,
-        Fut: Future<Output = Result<Vec<KvPair>>>,
-    {
-        let (cached_results, undetermined_keys) = {
-            let mutations = self.mutations.lock().unwrap();
-            // Partition the keys into those we have buffered and those we have to
-            // get from the store.
-            let (undetermined_keys, cached_results): (Vec<(Key, MutationValue)>, _) = keys
-                .map(|key| {
-                    let value = mutations
-                        .get(&key)
-                        .map(Mutation::get_value)
-                        .unwrap_or(MutationValue::Undetermined);
-                    (key, value)
-                })
-                .partition(|(_, v)| *v == MutationValue::Undetermined);
-
-            let cached_results = cached_results.into_iter().map(|(k, v)| (k, v.unwrap()));
-
-            let undetermined_keys = undetermined_keys.into_iter().map(|(k, _)| k).collect();
-            (cached_results, undetermined_keys)
-        };
-
-        let fetched_results = f(undetermined_keys).await?;
-        let mut mutations = self.mutations.lock().unwrap();
-        for pair in &fetched_results {
-            mutations.insert(pair.0.clone(), Mutation::Cached(Some(pair.1.clone())));
-        }
-
-        let results = cached_results.chain(fetched_results.into_iter().map(|p| (p.0, Some(p.1))));
-        Ok(results)
-    }
-
-    fn get_from_mutations(&self, key: &Key) -> MutationValue {
-        self.mutations
-            .lock()
-            .unwrap()
-            .get(&key)
-            .map(Mutation::get_value)
-            .unwrap_or(MutationValue::Undetermined)
-    }
-
-    fn lock(&self, key: Key) {
-        let mut mutations = self.mutations.lock().unwrap();
-        let value = mutations
-            .entry(key)
-            // Mutated keys don't need a lock.
-            .or_insert(Mutation::Lock);
-        // But values which we have only read, but not written, do.
-        if let Mutation::Cached(_) = value {
-            *value = Mutation::Lock
-        }
-    }
-
-    fn put(&self, key: Key, value: Value) {
-        self.mutations
-            .lock()
-            .unwrap()
-            .insert(key, Mutation::Put(value));
-    }
-
-    fn delete(&self, key: Key) {
-        self.mutations.lock().unwrap().insert(key, Mutation::Del);
-    }
 }
 
 impl Transaction {
@@ -157,19 +63,13 @@ impl Transaction {
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
         let key = key.into();
         self.buffer
-            .get_or_else(key, async move |key| {
-                MvccGet {
-                    key,
-                    version: self.timestamp.into_version(),
-                }
-                .execute(self.rpc.clone())
-                .await
+            .get_or_else(key, |key| {
+                new_mvcc_get_request(key, self.timestamp).execute(self.rpc.clone())
             })
             .await
     }
 
-    /// Gets the values associated with the given keys. The returned iterator is in the same order
-    /// as the given keys.
+    /// Gets the values associated with the given keys.
     ///
     /// ```rust,no_run
     /// # #![feature(async_await)]
@@ -194,11 +94,11 @@ impl Transaction {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = (Key, Option<Value>)>> {
-        let version = self.timestamp.into_version();
+        let timestamp = self.timestamp;
         let rpc = self.rpc.clone();
         self.buffer
-            .batch_get_or_else(keys.into_iter().map(|k| k.into()), async move |keys| {
-                MvccBatchGet { keys, version }.execute(rpc).await
+            .batch_get_or_else(keys.into_iter().map(|k| k.into()), move |keys| {
+                new_mvcc_get_batch_request(keys, timestamp).execute(rpc)
             })
             .await
     }
@@ -306,89 +206,5 @@ impl Transaction {
 
     async fn commit_secondary(&mut self) -> Result<()> {
         unimplemented!()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use futures::executor::block_on;
-
-    #[test]
-    fn set_and_get_from_buffer() {
-        let buffer = Buffer::default();
-        buffer.put(b"key1".to_vec().into(), b"value1".to_vec().into());
-        buffer.put(b"key2".to_vec().into(), b"value2".to_vec().into());
-        assert_eq!(
-            block_on(buffer.get_or_else(b"key1".to_vec().into(), async move |_| panic!()))
-                .unwrap()
-                .unwrap(),
-            b"value1".to_vec().into()
-        );
-
-        buffer.delete(b"key2".to_vec().into());
-        buffer.put(b"key1".to_vec().into(), b"value".to_vec().into());
-        assert_eq!(
-            block_on(buffer.batch_get_or_else(
-                vec![b"key2".to_vec().into(), b"key1".to_vec().into()].into_iter(),
-                async move |_| Ok(vec![]),
-            ))
-            .unwrap()
-            .collect::<Vec<_>>(),
-            vec![
-                (Key::from(b"key2".to_vec()), None),
-                (
-                    Key::from(b"key1".to_vec()),
-                    Some(Value::from(b"value".to_vec()))
-                ),
-            ]
-        );
-    }
-
-    #[test]
-    fn repeat_reads_are_cached() {
-        let k1: Key = b"key1".to_vec().into();
-        let k1_ = k1.clone();
-        let k2: Key = b"key2".to_vec().into();
-        let k2_ = k2.clone();
-        let v1: Value = b"value1".to_vec().into();
-        let v1_ = v1.clone();
-        let v1__ = v1.clone();
-        let v2: Value = b"value2".to_vec().into();
-        let v2_ = v2.clone();
-
-        let buffer = Buffer::default();
-        let r1 = block_on(buffer.get_or_else(k1.clone(), async move |_| Ok(Some(v1_))));
-        let r2 = block_on(buffer.get_or_else(k1.clone(), async move |_| panic!()));
-        assert_eq!(r1.unwrap().unwrap(), v1.clone());
-        assert_eq!(r2.unwrap().unwrap(), v1.clone());
-
-        let buffer = Buffer::default();
-        let r1 = block_on(
-            buffer.batch_get_or_else(vec![k1.clone(), k2.clone()].into_iter(), async move |_| {
-                Ok(vec![(k1_, v1__).into(), (k2_, v2_).into()])
-            }),
-        );
-        let r2 = block_on(buffer.get_or_else(k2.clone(), async move |_| panic!()));
-        let r3 = block_on(
-            buffer.batch_get_or_else(vec![k1.clone(), k2.clone()].into_iter(), async move |_| {
-                Ok(vec![])
-            }),
-        );
-        assert_eq!(
-            r1.unwrap().collect::<Vec<_>>(),
-            vec![
-                (k1.clone(), Some(v1.clone())),
-                (k2.clone(), Some(v2.clone()))
-            ]
-        );
-        assert_eq!(r2.unwrap().unwrap(), v2.clone());
-        assert_eq!(
-            r3.unwrap().collect::<Vec<_>>(),
-            vec![
-                (k1.clone(), Some(v1.clone())),
-                (k2.clone(), Some(v2.clone()))
-            ]
-        );
     }
 }
