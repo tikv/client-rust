@@ -1,10 +1,9 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::ColumnFamily;
+use super::RawRpcRequest;
 use crate::{
-    pd::PdRpcClient,
-    request::KvRequest,
-    BoundRange, Config, Error, Key, KvPair, Result, Value,
+    pd::PdRpcClient, request::KvRequest, BoundRange, ColumnFamily, Config, Error, Key, KvPair,
+    Result, Value,
 };
 
 use futures::future::Either;
@@ -264,7 +263,7 @@ impl Client {
         let (start_key, end_key) = range.into().into_keys();
         kvrpcpb::RawDeleteRangeRequest {
             start_key: start_key.into(),
-            end_key: end_key.unwrap_or(Key::default()).into(),
+            end_key: end_key.unwrap_or_default().into(),
             ..self.new_request_with_cf()
         }
         .execute(self.rpc.clone())
@@ -300,7 +299,7 @@ impl Client {
             Either::Left(
                 kvrpcpb::RawScanRequest {
                     start_key: start_key.into(),
-                    end_key: end_key.unwrap_or(Key::default()).into(),
+                    end_key: end_key.unwrap_or_default().into(),
                     limit,
                     key_only: self.key_only,
                     ..self.new_request_with_cf()
@@ -356,33 +355,3 @@ impl Client {
         req
     }
 }
-
-trait RawRpcRequest: Default {
-    fn set_cf(&mut self, cf: String);
-
-    fn maybe_set_cf(&mut self, cf: Option<ColumnFamily>) {
-        if let Some(cf) = cf {
-            self.set_cf(cf.to_string());
-        }
-    }
-}
-
-macro_rules! impl_raw_rpc_request {
-    ($name: ident) => {
-        impl RawRpcRequest for kvrpcpb::$name {
-            fn set_cf(&mut self, cf: String) {
-                self.set_cf(cf);
-            }
-        }
-    };
-}
-
-impl_raw_rpc_request!(RawGetRequest);
-impl_raw_rpc_request!(RawBatchGetRequest);
-impl_raw_rpc_request!(RawPutRequest);
-impl_raw_rpc_request!(RawBatchPutRequest);
-impl_raw_rpc_request!(RawDeleteRequest);
-impl_raw_rpc_request!(RawBatchDeleteRequest);
-impl_raw_rpc_request!(RawScanRequest);
-impl_raw_rpc_request!(RawBatchScanRequest);
-impl_raw_rpc_request!(RawDeleteRangeRequest);

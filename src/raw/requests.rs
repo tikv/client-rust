@@ -1,5 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use super::RawRpcRequest;
 use crate::{
     kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
@@ -405,6 +406,26 @@ impl KvRequest for kvrpcpb::RawBatchScanRequest {
         results.try_concat().boxed()
     }
 }
+
+macro_rules! impl_raw_rpc_request {
+    ($name: ident) => {
+        impl RawRpcRequest for kvrpcpb::$name {
+            fn set_cf(&mut self, cf: String) {
+                self.set_cf(cf);
+            }
+        }
+    };
+}
+
+impl_raw_rpc_request!(RawGetRequest);
+impl_raw_rpc_request!(RawBatchGetRequest);
+impl_raw_rpc_request!(RawPutRequest);
+impl_raw_rpc_request!(RawBatchPutRequest);
+impl_raw_rpc_request!(RawDeleteRequest);
+impl_raw_rpc_request!(RawBatchDeleteRequest);
+impl_raw_rpc_request!(RawScanRequest);
+impl_raw_rpc_request!(RawBatchScanRequest);
+impl_raw_rpc_request!(RawDeleteRangeRequest);
 
 #[cfg(test)]
 mod test {

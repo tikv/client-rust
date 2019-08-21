@@ -56,3 +56,13 @@ impl fmt::Display for ColumnFamily {
         self.0.fmt(f)
     }
 }
+
+trait RawRpcRequest: Default {
+    fn set_cf(&mut self, cf: String);
+
+    fn maybe_set_cf(&mut self, cf: Option<ColumnFamily>) {
+        if let Some(cf) = cf {
+            self.set_cf(cf.to_string());
+        }
+    }
+}

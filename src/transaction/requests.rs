@@ -1,8 +1,8 @@
 use crate::{
     kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
-    Error, Key, KvPair, Result, Value,
     request::KvRequest,
+    Error, Key, KvPair, Result, Value,
 };
 
 use futures::future::BoxFuture;
