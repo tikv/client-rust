@@ -65,35 +65,42 @@ impl Buffer {
         }
     }
 
-    async fn batch_get_or_else<F, Fut, Iter>(
+    async fn batch_get_or_else<F, Fut>(
         &self,
         keys: impl Iterator<Item = Key>,
         f: F,
     ) -> Result<impl Iterator<Item = (Key, Option<Value>)>>
     where
         F: FnOnce(Vec<Key>) -> Fut,
-        Fut: Future<Output = Result<Iter>>,
-        Iter: Iterator<Item = (Key, Option<Value>)>,
+        Fut: Future<Output = Result<Vec<KvPair>>>,
     {
-        let mutations = self.mutations.lock().unwrap();
-        // Partition the keys into those we have buffered and those we have to
-        // get from the store.
-        let (undetermined_keys, cached_results): (Vec<(Key, MutationValue)>, _) = keys
-            .map(|key| {
-                let value = mutations
-                    .get(&key)
-                    .map(Mutation::get_value)
-                    .unwrap_or(MutationValue::Undetermined);
-                (key, value)
-            })
-            .partition(|(_, v)| *v == MutationValue::Undetermined);
+        let (cached_results, undetermined_keys) = {
+            let mutations = self.mutations.lock().unwrap();
+            // Partition the keys into those we have buffered and those we have to
+            // get from the store.
+            let (undetermined_keys, cached_results): (Vec<(Key, MutationValue)>, _) = keys
+                .map(|key| {
+                    let value = mutations
+                        .get(&key)
+                        .map(Mutation::get_value)
+                        .unwrap_or(MutationValue::Undetermined);
+                    (key, value)
+                })
+                .partition(|(_, v)| *v == MutationValue::Undetermined);
 
-        let cached_results = cached_results.into_iter().map(|(k, v)| (k, v.unwrap()));
+            let cached_results = cached_results.into_iter().map(|(k, v)| (k, v.unwrap()));
 
-        let undetermined_keys = undetermined_keys.into_iter().map(|(k, _)| k).collect();
+            let undetermined_keys = undetermined_keys.into_iter().map(|(k, _)| k).collect();
+            (cached_results, undetermined_keys)
+        };
+
         let fetched_results = f(undetermined_keys).await?;
+        let mut mutations = self.mutations.lock().unwrap();
+        for pair in &fetched_results {
+            mutations.insert(pair.0.clone(), Mutation::Cached(Some(pair.1.clone())));
+        }
 
-        let results = cached_results.chain(fetched_results);
+        let results = cached_results.chain(fetched_results.into_iter().map(|p| (p.0, Some(p.1))));
         Ok(results)
     }
 
@@ -107,12 +114,15 @@ impl Buffer {
     }
 
     fn lock(&self, key: Key) {
-        self.mutations
-            .lock()
-            .unwrap()
-            // Mutated keys don't need a lock.
+        let mut mutations = self.mutations.lock().unwrap();
+        let value = mutations
             .entry(key)
+            // Mutated keys don't need a lock.
             .or_insert(Mutation::Lock);
+        // But values which we have only read, but not written, do.
+        if let Mutation::Cached(_) = value {
+            *value = Mutation::Lock
+        }
     }
 
     fn put(&self, key: Key, value: Value) {
@@ -188,11 +198,7 @@ impl Transaction {
         let rpc = self.rpc.clone();
         self.buffer
             .batch_get_or_else(keys.into_iter().map(|k| k.into()), async move |keys| {
-                Ok(MvccBatchGet { keys, version }
-                    .execute(rpc)
-                    .await?
-                    .into_iter()
-                    .map(|p| (p.0, Some(p.1))))
+                MvccBatchGet { keys, version }.execute(rpc).await
             })
             .await
     }
@@ -325,7 +331,7 @@ mod tests {
         assert_eq!(
             block_on(buffer.batch_get_or_else(
                 vec![b"key2".to_vec().into(), b"key1".to_vec().into()].into_iter(),
-                async move |_| Ok(::std::iter::empty())
+                async move |_| Ok(vec![]),
             ))
             .unwrap()
             .collect::<Vec<_>>(),
@@ -335,6 +341,53 @@ mod tests {
                     Key::from(b"key1".to_vec()),
                     Some(Value::from(b"value".to_vec()))
                 ),
+            ]
+        );
+    }
+
+    #[test]
+    fn repeat_reads_are_cached() {
+        let k1: Key = b"key1".to_vec().into();
+        let k1_ = k1.clone();
+        let k2: Key = b"key2".to_vec().into();
+        let k2_ = k2.clone();
+        let v1: Value = b"value1".to_vec().into();
+        let v1_ = v1.clone();
+        let v1__ = v1.clone();
+        let v2: Value = b"value2".to_vec().into();
+        let v2_ = v2.clone();
+
+        let buffer = Buffer::default();
+        let r1 = block_on(buffer.get_or_else(k1.clone(), async move |_| Ok(Some(v1_))));
+        let r2 = block_on(buffer.get_or_else(k1.clone(), async move |_| panic!()));
+        assert_eq!(r1.unwrap().unwrap(), v1.clone());
+        assert_eq!(r2.unwrap().unwrap(), v1.clone());
+
+        let buffer = Buffer::default();
+        let r1 = block_on(
+            buffer.batch_get_or_else(vec![k1.clone(), k2.clone()].into_iter(), async move |_| {
+                Ok(vec![(k1_, v1__).into(), (k2_, v2_).into()])
+            }),
+        );
+        let r2 = block_on(buffer.get_or_else(k2.clone(), async move |_| panic!()));
+        let r3 = block_on(
+            buffer.batch_get_or_else(vec![k1.clone(), k2.clone()].into_iter(), async move |_| {
+                Ok(vec![])
+            }),
+        );
+        assert_eq!(
+            r1.unwrap().collect::<Vec<_>>(),
+            vec![
+                (k1.clone(), Some(v1.clone())),
+                (k2.clone(), Some(v2.clone()))
+            ]
+        );
+        assert_eq!(r2.unwrap().unwrap(), v2.clone());
+        assert_eq!(
+            r3.unwrap().collect::<Vec<_>>(),
+            vec![
+                (k1.clone(), Some(v1.clone())),
+                (k2.clone(), Some(v2.clone()))
             ]
         );
     }

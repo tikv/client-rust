@@ -47,6 +47,7 @@ enum Mutation {
 }
 
 impl Mutation {
+    #[allow(dead_code)]
     fn into_proto_with_key(self, key: Key) -> Option<kvrpcpb::Mutation> {
         let mut pb = kvrpcpb::Mutation {
             key: key.into(),
