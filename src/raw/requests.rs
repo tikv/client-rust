@@ -5,7 +5,7 @@ use crate::{
     kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
     request::KvRequest,
-    BoundRange, Error, Key, KvPair, Result, Value,
+    BoundRange, ColumnFamily, Error, Key, KvPair, Result, Value,
 };
 
 use futures::future::BoxFuture;
@@ -62,6 +62,17 @@ impl KvRequest for kvrpcpb::RawGetRequest {
     }
 }
 
+pub fn new_raw_get_request(
+    key: impl Into<Key>,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawGetRequest {
+    let mut req = kvrpcpb::RawGetRequest::default();
+    req.set_key(key.into().into());
+    req.maybe_set_cf(cf);
+
+    req
+}
+
 impl KvRequest for kvrpcpb::RawBatchGetRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::RawBatchGetResponse;
@@ -106,6 +117,17 @@ impl KvRequest for kvrpcpb::RawBatchGetRequest {
     }
 }
 
+pub fn new_raw_batch_get_request(
+    keys: impl IntoIterator<Item = impl Into<Key>>,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawBatchGetRequest {
+    let mut req = kvrpcpb::RawBatchGetRequest::default();
+    req.set_keys(keys.into_iter().map(Into::into).map(Into::into).collect());
+    req.maybe_set_cf(cf);
+
+    req
+}
+
 impl KvRequest for kvrpcpb::RawPutRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawPutResponse;
@@ -146,6 +168,19 @@ impl KvRequest for kvrpcpb::RawPutRequest {
             .map(|(f, _)| f.expect("no results should be impossible"))
             .boxed()
     }
+}
+
+pub fn new_raw_put_request(
+    key: impl Into<Key>,
+    value: impl Into<Value>,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawPutRequest {
+    let mut req = kvrpcpb::RawPutRequest::default();
+    req.set_key(key.into().into());
+    req.set_value(value.into().into());
+    req.maybe_set_cf(cf);
+
+    req
 }
 
 impl KvRequest for kvrpcpb::RawBatchPutRequest {
@@ -190,6 +225,17 @@ impl KvRequest for kvrpcpb::RawBatchPutRequest {
     }
 }
 
+pub fn new_raw_batch_put_request(
+    pairs: impl IntoIterator<Item = impl Into<KvPair>>,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawBatchPutRequest {
+    let mut req = kvrpcpb::RawBatchPutRequest::default();
+    req.set_pairs(pairs.into_iter().map(Into::into).map(Into::into).collect());
+    req.maybe_set_cf(cf);
+
+    req
+}
+
 impl KvRequest for kvrpcpb::RawDeleteRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawDeleteResponse;
@@ -227,6 +273,17 @@ impl KvRequest for kvrpcpb::RawDeleteRequest {
             .map(|(f, _)| f.expect("no results should be impossible"))
             .boxed()
     }
+}
+
+pub fn new_raw_delete_request(
+    key: impl Into<Key>,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawDeleteRequest {
+    let mut req = kvrpcpb::RawDeleteRequest::default();
+    req.set_key(key.into().into());
+    req.maybe_set_cf(cf);
+
+    req
 }
 
 impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
@@ -269,6 +326,17 @@ impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
     ) -> BoxFuture<'static, Result<Self::Result>> {
         results.try_collect().boxed()
     }
+}
+
+pub fn new_raw_batch_delete_request(
+    keys: impl IntoIterator<Item = impl Into<Key>>,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawBatchDeleteRequest {
+    let mut req = kvrpcpb::RawBatchDeleteRequest::default();
+    req.set_keys(keys.into_iter().map(Into::into).map(Into::into).collect());
+    req.maybe_set_cf(cf);
+
+    req
 }
 
 impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
@@ -319,6 +387,19 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
             .map(|(f, _)| f.expect("no results should be impossible"))
             .boxed()
     }
+}
+
+pub fn new_raw_delete_range_request(
+    range: impl Into<BoundRange>,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawDeleteRangeRequest {
+    let (start_key, end_key) = range.into().into_keys();
+    let mut req = kvrpcpb::RawDeleteRangeRequest::default();
+    req.set_start_key(start_key.into());
+    req.set_end_key(end_key.unwrap_or_default().into());
+    req.maybe_set_cf(cf);
+
+    req
 }
 
 impl KvRequest for kvrpcpb::RawScanRequest {
@@ -372,6 +453,23 @@ impl KvRequest for kvrpcpb::RawScanRequest {
     }
 }
 
+pub fn new_raw_scan_request(
+    range: impl Into<BoundRange>,
+    limit: u32,
+    key_only: bool,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawScanRequest {
+    let (start_key, end_key) = range.into().into_keys();
+    let mut req = kvrpcpb::RawScanRequest::default();
+    req.set_start_key(start_key.into());
+    req.set_end_key(end_key.unwrap_or_default().into());
+    req.set_limit(limit);
+    req.set_key_only(key_only);
+    req.maybe_set_cf(cf);
+
+    req
+}
+
 impl KvRequest for kvrpcpb::RawBatchScanRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::RawBatchScanResponse;
@@ -405,6 +503,21 @@ impl KvRequest for kvrpcpb::RawBatchScanRequest {
     ) -> BoxFuture<'static, Result<Self::Result>> {
         results.try_concat().boxed()
     }
+}
+
+pub fn new_raw_batch_scan_request(
+    ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
+    each_limit: u32,
+    key_only: bool,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawBatchScanRequest {
+    let mut req = kvrpcpb::RawBatchScanRequest::default();
+    req.set_ranges(ranges.into_iter().map(Into::into).map(Into::into).collect());
+    req.set_each_limit(each_limit);
+    req.set_key_only(key_only);
+    req.maybe_set_cf(cf);
+
+    req
 }
 
 macro_rules! impl_raw_rpc_request {

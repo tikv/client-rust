@@ -1,6 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::RawRpcRequest;
+use super::requests;
 use crate::{
     pd::PdRpcClient, request::KvRequest, BoundRange, ColumnFamily, Config, Error, Key, KvPair,
     Result, Value,
@@ -8,7 +8,6 @@ use crate::{
 
 use futures::future::Either;
 use futures::prelude::*;
-use kvproto::kvrpcpb;
 use std::{sync::Arc, u32};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
@@ -104,11 +103,7 @@ impl Client {
     /// # });
     /// ```
     pub fn get(&self, key: impl Into<Key>) -> impl Future<Output = Result<Option<Value>>> {
-        kvrpcpb::RawGetRequest {
-            key: key.into().into(),
-            ..self.new_request_with_cf()
-        }
-        .execute(self.rpc.clone())
+        requests::new_raw_get_request(key, self.cf.clone()).execute(self.rpc.clone())
     }
 
     /// Create a new 'batch get' request.
@@ -131,11 +126,7 @@ impl Client {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> impl Future<Output = Result<Vec<KvPair>>> {
-        kvrpcpb::RawBatchGetRequest {
-            keys: keys.into_iter().map(Into::into).map(Into::into).collect(),
-            ..self.new_request_with_cf()
-        }
-        .execute(self.rpc.clone())
+        requests::new_raw_batch_get_request(keys, self.cf.clone()).execute(self.rpc.clone())
     }
 
     /// Create a new 'put' request.
@@ -159,12 +150,7 @@ impl Client {
         key: impl Into<Key>,
         value: impl Into<Value>,
     ) -> impl Future<Output = Result<()>> {
-        kvrpcpb::RawPutRequest {
-            key: key.into().into(),
-            value: value.into().into(),
-            ..self.new_request_with_cf()
-        }
-        .execute(self.rpc.clone())
+        requests::new_raw_put_request(key, value, self.cf.clone()).execute(self.rpc.clone())
     }
 
     /// Create a new 'batch put' request.
@@ -188,11 +174,7 @@ impl Client {
         &self,
         pairs: impl IntoIterator<Item = impl Into<KvPair>>,
     ) -> impl Future<Output = Result<()>> {
-        kvrpcpb::RawBatchPutRequest {
-            pairs: pairs.into_iter().map(Into::into).map(Into::into).collect(),
-            ..self.new_request_with_cf()
-        }
-        .execute(self.rpc.clone())
+        requests::new_raw_batch_put_request(pairs, self.cf.clone()).execute(self.rpc.clone())
     }
 
     /// Create a new 'delete' request.
@@ -211,11 +193,7 @@ impl Client {
     /// # });
     /// ```
     pub fn delete(&self, key: impl Into<Key>) -> impl Future<Output = Result<()>> {
-        kvrpcpb::RawDeleteRequest {
-            key: key.into().into(),
-            ..self.new_request_with_cf()
-        }
-        .execute(self.rpc.clone())
+        requests::new_raw_delete_request(key, self.cf.clone()).execute(self.rpc.clone())
     }
 
     /// Create a new 'batch delete' request.
@@ -237,11 +215,7 @@ impl Client {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> impl Future<Output = Result<()>> {
-        kvrpcpb::RawBatchDeleteRequest {
-            keys: keys.into_iter().map(Into::into).map(Into::into).collect(),
-            ..self.new_request_with_cf()
-        }
-        .execute(self.rpc.clone())
+        requests::new_raw_batch_delete_request(keys, self.cf.clone()).execute(self.rpc.clone())
     }
 
     /// Create a new 'delete range' request.
@@ -260,13 +234,7 @@ impl Client {
     /// # });
     /// ```
     pub fn delete_range(&self, range: impl Into<BoundRange>) -> impl Future<Output = Result<()>> {
-        let (start_key, end_key) = range.into().into_keys();
-        kvrpcpb::RawDeleteRangeRequest {
-            start_key: start_key.into(),
-            end_key: end_key.unwrap_or_default().into(),
-            ..self.new_request_with_cf()
-        }
-        .execute(self.rpc.clone())
+        requests::new_raw_delete_range_request(range, self.cf.clone()).execute(self.rpc.clone())
     }
 
     /// Create a new 'scan' request.
@@ -295,16 +263,9 @@ impl Client {
                 MAX_RAW_KV_SCAN_LIMIT,
             )))
         } else {
-            let (start_key, end_key) = range.into().into_keys();
             Either::Left(
-                kvrpcpb::RawScanRequest {
-                    start_key: start_key.into(),
-                    end_key: end_key.unwrap_or_default().into(),
-                    limit,
-                    key_only: self.key_only,
-                    ..self.new_request_with_cf()
-                }
-                .execute(self.rpc.clone()),
+                requests::new_raw_scan_request(range, limit, self.key_only, self.cf.clone())
+                    .execute(self.rpc.clone()),
             )
         }
     }
@@ -338,20 +299,14 @@ impl Client {
             )))
         } else {
             Either::Left(
-                kvrpcpb::RawBatchScanRequest {
-                    ranges: ranges.into_iter().map(Into::into).map(Into::into).collect(),
+                requests::new_raw_batch_scan_request(
+                    ranges,
                     each_limit,
-                    key_only: self.key_only,
-                    ..self.new_request_with_cf()
-                }
+                    self.key_only,
+                    self.cf.clone(),
+                )
                 .execute(self.rpc.clone()),
             )
         }
-    }
-
-    fn new_request_with_cf<T: RawRpcRequest>(&self) -> T {
-        let mut req = T::default();
-        req.maybe_set_cf(self.cf.clone());
-        req
     }
 }
