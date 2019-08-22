@@ -20,7 +20,7 @@ impl Snapshot {
         self.transaction.get(key).await
     }
 
-    /// Gets the values associated with the given keys. The returned iterator is in the same order
+    /// Gets the values associated with the given keys.
     pub async fn batch_get(
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
