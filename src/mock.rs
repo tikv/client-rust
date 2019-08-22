@@ -50,7 +50,7 @@ pub struct MockPdClient;
 impl KvClient for MockKvClient {
     fn dispatch<T: KvRequest>(
         &self,
-        _request: &T::RpcRequest,
+        _request: &T,
         _opt: CallOption,
     ) -> BoxFuture<'static, Result<T::RpcResponse>> {
         unreachable!()

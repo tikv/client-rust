@@ -2,7 +2,7 @@
 
 mod errors;
 
-pub use errors::HasError;
+pub use self::errors::{HasError, HasRegionError};
 pub use kvproto::tikvpb::TikvClient;
 
 use crate::{
@@ -56,7 +56,7 @@ impl KvConnect for TikvConnect {
 pub trait KvClient {
     fn dispatch<T: KvRequest>(
         &self,
-        request: &T::RpcRequest,
+        request: &T,
         opt: CallOption,
     ) -> BoxFuture<'static, Result<T::RpcResponse>>;
 }
@@ -71,7 +71,7 @@ pub struct KvRpcClient {
 impl KvClient for KvRpcClient {
     fn dispatch<T: KvRequest>(
         &self,
-        request: &T::RpcRequest,
+        request: &T,
         opt: CallOption,
     ) -> BoxFuture<'static, Result<T::RpcResponse>> {
         map_errors_and_trace(T::REQUEST_NAME, T::RPC_FN(&self.rpc_client, request, opt)).boxed()
@@ -130,7 +130,7 @@ impl<Client: KvClient> Store<Client> {
 
     pub fn dispatch<T: KvRequest>(
         &self,
-        request: &T::RpcRequest,
+        request: &T,
         opt: CallOption,
     ) -> BoxFuture<'static, Result<T::RpcResponse>> {
         self.client.dispatch::<T>(request, opt)
