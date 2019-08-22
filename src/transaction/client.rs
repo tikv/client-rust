@@ -1,6 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::{Snapshot, Timestamp, Transaction};
+use super::{Timestamp, Transaction};
 use crate::pd::{PdClient, PdRpcClient};
 use crate::{Config, Result};
 
@@ -49,44 +49,8 @@ impl Client {
     /// # });
     /// ```
     pub async fn begin(&self) -> Result<Transaction> {
-        let snapshot = self.snapshot().await?;
-        Ok(Transaction::new(snapshot))
-    }
-
-    /// Gets the latest [`Snapshot`](Snapshot).
-    ///
-    /// ```rust,no_run
-    /// # #![feature(async_await)]
-    /// use tikv_client::{Config, TransactionClient};
-    /// use futures::prelude::*;
-    /// # futures::executor::block_on(async {
-    /// let connect = TransactionClient::connect(Config::default());
-    /// let client = connect.await.unwrap();
-    /// let snapshot = client.snapshot().await.unwrap();
-    /// // ... Issue some commands.
-    /// # });
-    /// ```
-    pub async fn snapshot(&self) -> Result<Snapshot> {
         let timestamp = self.current_timestamp().await?;
-        self.snapshot_at(timestamp).await
-    }
-
-    /// Gets a [`Snapshot`](Snapshot) at the given point in time.
-    ///
-    /// ```rust,no_run
-    /// # #![feature(async_await)]
-    /// use tikv_client::{Config, TransactionClient, Timestamp};
-    /// use futures::prelude::*;
-    /// # futures::executor::block_on(async {
-    /// let connect = TransactionClient::connect(Config::default());
-    /// let client = connect.await.unwrap();
-    /// let timestamp = Timestamp { physical: 1564481750172, logical: 1 };
-    /// let snapshot = client.snapshot_at(timestamp);
-    /// // ... Issue some commands.
-    /// # });
-    /// ```
-    pub async fn snapshot_at(&self, timestamp: Timestamp) -> Result<Snapshot> {
-        Ok(Snapshot::new(timestamp))
+        Ok(Transaction::new(timestamp, self.pd.clone()))
     }
 
     /// Retrieves the current [`Timestamp`](Timestamp).

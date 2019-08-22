@@ -5,6 +5,7 @@ use kvproto::{kvrpcpb, metapb, pdpb};
 
 use crate::{Error, Key, Result};
 pub use client::{PdClient, PdRpcClient};
+pub use cluster::Cluster;
 pub use retry::RetryClient;
 
 mod client;

@@ -2,6 +2,7 @@ use crate::{
     kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
     request::KvRequest,
+    transaction::Timestamp,
     Error, Key, KvPair, Result, Value,
 };
 
@@ -59,6 +60,13 @@ impl KvRequest for kvrpcpb::GetRequest {
     }
 }
 
+pub fn new_mvcc_get_request(key: impl Into<Key>, timestamp: Timestamp) -> kvrpcpb::GetRequest {
+    let mut req = kvrpcpb::GetRequest::default();
+    req.set_key(key.into().into());
+    req.set_version(timestamp.into_version());
+    req
+}
+
 impl KvRequest for kvrpcpb::BatchGetRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::BatchGetResponse;
@@ -101,6 +109,16 @@ impl KvRequest for kvrpcpb::BatchGetRequest {
     ) -> BoxFuture<'static, Result<Self::Result>> {
         results.try_concat().boxed()
     }
+}
+
+pub fn new_mvcc_get_batch_request(
+    keys: Vec<Key>,
+    timestamp: Timestamp,
+) -> kvrpcpb::BatchGetRequest {
+    let mut req = kvrpcpb::BatchGetRequest::default();
+    req.set_keys(keys.into_iter().map(Into::into).collect());
+    req.set_version(timestamp.into_version());
+    req
 }
 
 impl KvRequest for kvrpcpb::ScanRequest {
