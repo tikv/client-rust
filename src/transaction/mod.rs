@@ -11,6 +11,7 @@
 
 pub use client::{Client, Connect};
 pub use lock::{resolve_locks, HasLocks};
+pub use snapshot::Snapshot;
 pub use transaction::Transaction;
 
 use std::convert::TryInto;
@@ -20,6 +21,7 @@ mod client;
 #[macro_use]
 mod lock;
 mod requests;
+mod snapshot;
 #[allow(clippy::module_inception)]
 mod transaction;
 

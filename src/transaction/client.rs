@@ -1,8 +1,10 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::{Timestamp, Transaction};
-use crate::pd::{PdClient, PdRpcClient};
-use crate::{Config, Result};
+use crate::{
+    pd::{PdClient, PdRpcClient},
+    transaction::{Snapshot, Timestamp, Transaction},
+    Config, Result,
+};
 
 use derive_new::new;
 use futures::prelude::*;
@@ -51,6 +53,11 @@ impl Client {
     pub async fn begin(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
         Ok(Transaction::new(timestamp, self.pd.clone()))
+    }
+
+    /// Creates a new [`Snapshot`](Snapshot) at the given time.
+    pub fn snapshot(&self, timestamp: Timestamp) -> Snapshot {
+        Snapshot::new(Transaction::new(timestamp, self.pd.clone()))
     }
 
     /// Retrieves the current [`Timestamp`](Timestamp).
