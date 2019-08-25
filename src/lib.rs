@@ -79,6 +79,8 @@
 
 #[macro_use]
 mod util;
+#[macro_use]
+pub mod transaction;
 
 mod compat;
 mod config;
@@ -90,7 +92,6 @@ pub mod raw;
 mod request;
 mod security;
 mod stats;
-pub mod transaction;
 
 #[cfg(test)]
 mod mock;

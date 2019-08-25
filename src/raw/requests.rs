@@ -540,6 +540,16 @@ impl_raw_rpc_request!(RawScanRequest);
 impl_raw_rpc_request!(RawBatchScanRequest);
 impl_raw_rpc_request!(RawDeleteRangeRequest);
 
+dummy_impl_has_locks!(RawGetResponse);
+dummy_impl_has_locks!(RawBatchGetResponse);
+dummy_impl_has_locks!(RawPutResponse);
+dummy_impl_has_locks!(RawBatchPutResponse);
+dummy_impl_has_locks!(RawDeleteResponse);
+dummy_impl_has_locks!(RawBatchDeleteResponse);
+dummy_impl_has_locks!(RawScanResponse);
+dummy_impl_has_locks!(RawBatchScanResponse);
+dummy_impl_has_locks!(RawDeleteRangeResponse);
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -555,14 +565,13 @@ mod test {
     impl DispatchHook for kvrpcpb::RawScanRequest {
         fn dispatch_hook(
             &self,
-            request: &Self,
             _opt: CallOption,
         ) -> Option<BoxFuture<'static, Result<kvrpcpb::RawScanResponse>>> {
-            assert!(request.key_only);
-            assert_eq!(request.limit, 10);
+            assert!(self.key_only);
+            assert_eq!(self.limit, 10);
 
             let mut resp = kvrpcpb::RawScanResponse::default();
-            for i in request.start_key[0]..request.end_key[0] {
+            for i in self.start_key[0]..self.end_key[0] {
                 let mut kv = kvrpcpb::KvPair::default();
                 kv.key = vec![i];
                 resp.kvs.push(kv);

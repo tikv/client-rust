@@ -12,34 +12,8 @@ pub trait HasError: HasRegionError {
 }
 
 impl From<errorpb::Error> for Error {
-    fn from(mut e: errorpb::Error) -> Error {
-        let message = e.take_message();
-        if e.has_not_leader() {
-            let e = e.get_not_leader();
-            let message = format!("{}. Leader: {:?}", message, e.get_leader());
-            Error::not_leader(e.get_region_id(), Some(message))
-        } else if e.has_region_not_found() {
-            Error::region_not_found(e.get_region_not_found().get_region_id(), Some(message))
-        } else if e.has_key_not_in_region() {
-            let e = e.take_key_not_in_region();
-            Error::key_not_in_region(e)
-        } else if e.has_epoch_not_match() {
-            Error::stale_epoch(Some(format!(
-                "{}. New epoch: {:?}",
-                message,
-                e.get_epoch_not_match().get_current_regions()
-            )))
-        } else if e.has_server_is_busy() {
-            Error::server_is_busy(e.take_server_is_busy())
-        } else if e.has_stale_command() {
-            Error::stale_command(message)
-        } else if e.has_store_not_match() {
-            Error::store_not_match(e.take_store_not_match(), message)
-        } else if e.has_raft_entry_too_large() {
-            Error::raft_entry_too_large(e.take_raft_entry_too_large(), message)
-        } else {
-            Error::internal_error(message)
-        }
+    fn from(e: errorpb::Error) -> Error {
+        Error::region_error(e)
     }
 }
 

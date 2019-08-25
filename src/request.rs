@@ -3,10 +3,11 @@
 use crate::{
     kv_client::{HasError, HasRegionError, KvClient, RpcFnType, Store},
     pd::PdClient,
-    Result,
+    transaction::{resolve_locks, HasLocks},
+    Error, Result,
 };
 
-use futures::future::{BoxFuture, Either};
+use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::BoxStream;
 use grpcio::CallOption;
@@ -15,7 +16,7 @@ use std::sync::Arc;
 
 pub trait KvRequest: Sync + Send + 'static + Sized {
     type Result;
-    type RpcResponse: HasError + Clone + Send + 'static;
+    type RpcResponse: HasError + HasLocks + Clone + Send + 'static;
     /// A single `KvRequest` can be divided into a number of RPC requests because the keys span
     /// several regions or a single RPC request is too large. Most of the fields in these requests
     /// share the same content while `KeyData`, which contains keys (and associated data if any),
@@ -44,19 +45,37 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         stores
             .and_then(move |(key_data, store)| {
                 let request = self.make_rpc_request(key_data, &store);
-                self.dispatch_hook(&request, store.call_options())
+                self.dispatch_hook(store.call_options())
                     .unwrap_or_else(|| store.dispatch::<Self>(&request, store.call_options()))
                     .map_ok(move |response| (request, response))
             })
-            .map_ok(
-                // Retry on region errors
-                move |(request, mut response)| match response.region_error() {
-                    Some(_) => Either::Left(request.response_stream(pd_client.clone())),
-                    None => Either::Right(stream::once(future::ok(response))),
-                },
-            )
+            .map_ok(move |(request, mut response)| {
+                if let Some(region_error) = response.region_error() {
+                    return request.on_region_error(region_error, pd_client.clone());
+                }
+                // Resolve locks
+                let locks = response.take_locks();
+                if !locks.is_empty() {
+                    let pd_client = pd_client.clone();
+                    return resolve_locks(locks, pd_client.clone())
+                        .map_ok(move |_| request.response_stream(pd_client))
+                        .try_flatten_stream()
+                        .boxed();
+                }
+                stream::once(future::ok(response)).boxed()
+            })
             .try_flatten()
             .boxed()
+    }
+
+    fn on_region_error(
+        self,
+        _region_error: Error,
+        pd_client: Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<Self::RpcResponse>> {
+        // Retry on region errors by default
+        // TODO: Add backoff and retry limit
+        self.response_stream(pd_client.clone())
     }
 
     fn store_stream<PdC: PdClient>(
@@ -77,7 +96,6 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
 pub trait DispatchHook: KvRequest {
     fn dispatch_hook(
         &self,
-        _request: &Self,
         _opt: CallOption,
     ) -> Option<BoxFuture<'static, Result<Self::RpcResponse>>> {
         None

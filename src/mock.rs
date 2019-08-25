@@ -126,7 +126,7 @@ impl PdClient for MockPdClient {
         let result = match id {
             1 => Ok(Self::region1()),
             2 => Ok(Self::region2()),
-            _ => Err(Error::region_not_found(id, None)),
+            _ => Err(Error::region_not_found(id)),
         };
 
         Box::pin(ready(result))
