@@ -189,6 +189,9 @@ impl HasLocks for kvrpcpb::ScanResponse {
     }
 }
 
+// For a ResolveLockRequest, it does not contain enough information about which region it should be
+// sent to. Therefore, the context must be specified every time the request is created and we don't
+// retry the request automatically on region errors.
 impl KvRequest for kvrpcpb::ResolveLockRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::ResolveLockResponse;
@@ -235,7 +238,7 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
             .boxed()
     }
 
-    fn map_result(_resp: Self::RpcResponse) -> Self::Result {}
+    fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
     fn reduce(
         results: BoxStream<'static, Result<Self::Result>>,
@@ -259,6 +262,8 @@ pub fn new_resolve_lock_request(
 
     req
 }
+
+// TODO: Add lite resolve lock (resolve specified locks only)
 
 impl KvRequest for kvrpcpb::CleanupRequest {
     /// Commit version if the key is commiitted, 0 otherwise.
