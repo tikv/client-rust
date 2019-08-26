@@ -8,15 +8,15 @@
 use crate::{
     kv_client::{KvClient, KvConnect, Store},
     pd::{PdClient, PdRpcClient, Region, RegionId, RetryClient},
-    request::KvRequest,
+    request::{DispatchHook, KvRequest},
     transaction::Timestamp,
     Config, Error, Key, Result,
 };
 
-use futures::future::ready;
-use futures::future::BoxFuture;
+use fail::fail_point;
+use futures::future::{ready, BoxFuture, FutureExt};
 use grpcio::CallOption;
-use kvproto::metapb;
+use kvproto::{errorpb, kvrpcpb, metapb};
 use std::{sync::Arc, time::Duration};
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
@@ -68,7 +68,7 @@ impl KvConnect for MockKvConnect {
 }
 
 impl MockPdClient {
-    fn region1() -> Region {
+    pub fn region1() -> Region {
         let mut region = Region::default();
         region.region.id = 1;
         region.region.set_start_key(vec![0]);
@@ -81,7 +81,7 @@ impl MockPdClient {
         region
     }
 
-    fn region2() -> Region {
+    pub fn region2() -> Region {
         let mut region = Region::default();
         region.region.id = 2;
         region.region.set_start_key(vec![10]);
@@ -134,5 +134,19 @@ impl PdClient for MockPdClient {
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
         unimplemented!()
+    }
+}
+
+impl DispatchHook for kvrpcpb::ResolveLockRequest {
+    fn dispatch_hook(
+        &self,
+        _opt: CallOption,
+    ) -> Option<BoxFuture<'static, Result<kvrpcpb::ResolveLockResponse>>> {
+        fail_point!("region-error", |_| {
+            let mut resp = kvrpcpb::ResolveLockResponse::default();
+            resp.region_error = Some(errorpb::Error::default());
+            Some(ready(Ok(resp)).boxed())
+        });
+        Some(ready(Ok(kvrpcpb::ResolveLockResponse::default())).boxed())
     }
 }
