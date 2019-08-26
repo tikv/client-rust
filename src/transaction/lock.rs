@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 
-/// _Resolves_ the given locks.
+/// _Resolves_ the given locks. Returns whether all the given locks are resolved.
 ///
 /// If a key has a lock, the latest status of the key is unknown. We need to "resolve" the lock,
 /// which means the key is finally either committed or rolled back, before we read the value of
@@ -19,10 +19,16 @@ const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 pub async fn resolve_locks(
     locks: Vec<kvrpcpb::LockInfo>,
     pd_client: Arc<impl PdClient>,
-) -> Result<()> {
+) -> Result<bool> {
     let ts = pd_client.clone().get_timestamp().await?;
+    let mut has_live_locks = false;
     let expired_locks = locks.into_iter().filter(|lock| {
-        ts.physical - Timestamp::from_version(lock.lock_version).physical >= lock.lock_ttl as i64
+        let expired = ts.physical - Timestamp::from_version(lock.lock_version).physical
+            >= lock.lock_ttl as i64;
+        if !expired {
+            has_live_locks = true;
+        }
+        expired
     });
 
     // records the commit version of each primary lock (representing the status of the transaction)
@@ -63,7 +69,7 @@ pub async fn resolve_locks(
             .or_insert_with(HashSet::new)
             .insert(cleaned_region);
     }
-    Ok(())
+    Ok(has_live_locks)
 }
 
 async fn resolve_lock_with_retry(

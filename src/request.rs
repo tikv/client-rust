@@ -13,6 +13,9 @@ use futures::stream::BoxStream;
 use grpcio::CallOption;
 use kvproto::kvrpcpb;
 use std::sync::Arc;
+use std::time::Duration;
+
+const LOCK_RETRY_DELAY_MS: u64 = 10;
 
 pub trait KvRequest: Sync + Send + 'static + Sized {
     type Result;
@@ -58,6 +61,11 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
                 if !locks.is_empty() {
                     let pd_client = pd_client.clone();
                     return resolve_locks(locks, pd_client.clone())
+                        .map_ok(|resolved| {
+                            // TODO: backoff
+                            let delay_ms = if resolved { 0 } else { LOCK_RETRY_DELAY_MS };
+                            futures_timer::Delay::new(Duration::from_millis(delay_ms))
+                        })
                         .map_ok(move |_| request.response_stream(pd_client))
                         .try_flatten_stream()
                         .boxed();
