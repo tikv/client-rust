@@ -26,7 +26,6 @@ use std::sync::Arc;
 /// Create a new transaction from a timestamp using `new`.
 ///
 /// ```rust,no_run
-/// # #![feature(async_await)]
 /// use tikv_client::{Config, TransactionClient};
 /// use futures::prelude::*;
 /// # futures::executor::block_on(async {
@@ -47,7 +46,6 @@ impl Transaction {
     /// Gets the value associated with the given key.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{Value, Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -72,7 +70,6 @@ impl Transaction {
     /// Gets the values associated with the given keys.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Value, Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
@@ -114,7 +111,6 @@ impl Transaction {
     /// Sets the value associated with the given key.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Value, Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -135,7 +131,6 @@ impl Transaction {
     /// Deletes the given key.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -155,7 +150,6 @@ impl Transaction {
     /// Locks the given keys.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -176,7 +170,6 @@ impl Transaction {
     /// Commits the actions of the transaction.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
