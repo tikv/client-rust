@@ -352,6 +352,15 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
     }
 }
 
+impl HasLocks for kvrpcpb::PrewriteResponse {
+    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+        self.errors
+            .iter_mut()
+            .filter_map(|error| error.locked.take())
+            .collect()
+    }
+}
+
 pub fn new_prewrite_request(
     mutations: Vec<kvrpcpb::Mutation>,
     primary_lock: Key,
@@ -482,7 +491,6 @@ pub fn new_batch_rollback_request(
     req
 }
 
-dummy_impl_has_locks!(PrewriteResponse);
 dummy_impl_has_locks!(CommitResponse);
 dummy_impl_has_locks!(CleanupResponse);
 dummy_impl_has_locks!(BatchRollbackResponse);
