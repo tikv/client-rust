@@ -1,15 +1,16 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    pd::PdRpcClient,
+    pd::{PdClient, PdRpcClient},
     request::KvRequest,
     transaction::{buffer::Buffer, requests::*, Timestamp},
-    Key, KvPair, Result, Value,
+    ErrorKind, Key, KvPair, Result, Value,
 };
 
 use derive_new::new;
 use futures::stream::BoxStream;
 use kvproto::kvrpcpb;
+use std::mem;
 use std::ops::RangeBounds;
 use std::sync::Arc;
 
@@ -179,37 +180,92 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn commit(&mut self) -> Result<()> {
+        TwoPhaseCommitter::new(
+            self.buffer.to_proto_mutations(),
+            self.timestamp.into_version(),
+            self.rpc.clone(),
+        )
+        .commit()
+        .await
+    }
+}
+
+#[derive(new)]
+struct TwoPhaseCommitter {
+    mutations: Vec<kvrpcpb::Mutation>,
+    start_version: u64,
+    rpc: Arc<PdRpcClient>,
+}
+
+impl TwoPhaseCommitter {
+    async fn commit(mut self) -> Result<()> {
+        if self.mutations.is_empty() {
+            return Ok(());
+        }
         self.prewrite().await?;
-        self.commit_primary().await?;
-        // FIXME: return from this method once the primary key is committed
-        let _ = self.commit_secondary().await;
-        Ok(())
+        match self.commit_primary().await {
+            // FIXME: commit or rollback in background
+            Ok(commit_version) => {
+                let _ = self.commit_secondary(commit_version).await;
+                Ok(())
+            }
+            Err(e) => {
+                match e.kind() {
+                    ErrorKind::Io(_) | ErrorKind::Grpc(_) => {}
+                    _ => {
+                        let _ = self.rollback_secondary().await;
+                    }
+                }
+                Err(e)
+            }
+        }
     }
 
     async fn prewrite(&mut self) -> Result<()> {
-        let mutations = self.buffer.to_proto_mutations();
-        if mutations.is_empty() {
-            return Ok(());
-        }
-
-        let primary_lock = mutations[0].key.clone().into();
-        let lock_ttl = calculate_ttl(&mutations);
-        Ok(new_prewrite_request(
-            mutations,
+        let primary_lock = self.mutations[0].key.clone().into();
+        let lock_ttl = calculate_ttl(&self.mutations);
+        new_prewrite_request(
+            self.mutations.clone(),
             primary_lock,
-            self.timestamp.into_version(),
+            self.start_version,
             lock_ttl,
         )
         .execute(self.rpc.clone())
-        .await?)
+        .await
     }
 
-    async fn commit_primary(&mut self) -> Result<()> {
-        unimplemented!()
+    /// Commits the primary key and returns the commit version
+    async fn commit_primary(&mut self) -> Result<u64> {
+        let primary_key = vec![self.mutations[0].key.clone().into()];
+        let commit_version = self.rpc.clone().get_timestamp().await?.into_version();
+        new_commit_request(primary_key, self.start_version, commit_version)
+            .execute(self.rpc.clone())
+            .await?;
+        Ok(commit_version)
     }
 
-    async fn commit_secondary(&mut self) -> Result<()> {
-        unimplemented!()
+    async fn commit_secondary(&mut self, commit_version: u64) -> Result<()> {
+        let mutations = mem::replace(&mut self.mutations, Vec::default());
+        let keys = mutations
+            .into_iter()
+            .skip(1) // skip primary key
+            .map(|mutation| mutation.key.into())
+            .collect();
+        new_commit_request(keys, self.start_version, commit_version)
+            .execute(self.rpc.clone())
+            .await
+    }
+
+    async fn rollback_secondary(&mut self) -> Result<()> {
+        let mutations = mem::replace(&mut self.mutations, Vec::default());
+        let keys = mutations
+            .into_iter()
+            .skip(1) // skip primary key
+            .map(|mutation| mutation.key.into())
+            .collect();
+        new_batch_rollback_request(keys, self.start_version)
+            .execute(self.rpc.clone())
+            .await
     }
 }
 

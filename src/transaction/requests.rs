@@ -427,6 +427,61 @@ pub fn new_commit_request(
     req
 }
 
+impl KvRequest for kvrpcpb::BatchRollbackRequest {
+    type Result = ();
+    type RpcResponse = kvrpcpb::BatchRollbackResponse;
+    type KeyData = Vec<Vec<u8>>;
+    const REQUEST_NAME: &'static str = "kv_batch_rollback";
+    const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_batch_rollback_async_opt;
+
+    fn make_rpc_request<KvC: KvClient>(&self, keys: Self::KeyData, store: &Store<KvC>) -> Self {
+        let mut req = store.request::<Self>();
+        req.set_keys(keys);
+        req.set_start_version(self.start_version);
+
+        req
+    }
+
+    fn store_stream<PdC: PdClient>(
+        &mut self,
+        pd_client: Arc<PdC>,
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        let keys = mem::replace(&mut self.keys, Vec::default());
+        pd_client
+            .clone()
+            .group_keys_by_region(keys.into_iter())
+            .and_then(move |(region_id, keys)| {
+                pd_client
+                    .clone()
+                    .store_for_id(region_id)
+                    .map_ok(move |store| (keys, store))
+            })
+            .boxed()
+    }
+
+    fn map_result(_: Self::RpcResponse) -> Self::Result {}
+
+    fn reduce(
+        results: BoxStream<'static, Result<Self::Result>>,
+    ) -> BoxFuture<'static, Result<Self::Result>> {
+        results
+            .into_future()
+            .map(|(f, _)| f.expect("no results should be impossible"))
+            .boxed()
+    }
+}
+
+pub fn new_batch_rollback_request(
+    keys: Vec<Key>,
+    start_version: u64,
+) -> kvrpcpb::BatchRollbackRequest {
+    let mut req = kvrpcpb::BatchRollbackRequest::default();
+    req.set_keys(keys.into_iter().map(Into::into).collect());
+    req.set_start_version(start_version);
+
+    req
+}
+
 dummy_impl_has_locks!(PrewriteResponse);
 dummy_impl_has_locks!(CommitResponse);
 dummy_impl_has_locks!(CleanupResponse);
