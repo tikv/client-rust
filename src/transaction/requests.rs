@@ -243,10 +243,7 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
     fn reduce(
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
-        results
-            .into_future()
-            .map(|(f, _)| f.expect("no results should be impossible"))
-            .boxed()
+        results.try_collect().boxed()
     }
 }
 
@@ -266,7 +263,7 @@ pub fn new_resolve_lock_request(
 // TODO: Add lite resolve lock (resolve specified locks only)
 
 impl KvRequest for kvrpcpb::CleanupRequest {
-    /// Commit version if the key is commiitted, 0 otherwise.
+    /// Commit version if the key is committed, 0 otherwise.
     type Result = u64;
     type RpcResponse = kvrpcpb::CleanupResponse;
     type KeyData = Key;
