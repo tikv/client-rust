@@ -3,16 +3,13 @@
 use crate::{
     pd::PdRpcClient,
     request::KvRequest,
-    transaction::{
-        buffer::Buffer,
-        requests::{new_mvcc_get_batch_request, new_mvcc_get_request},
-        Timestamp,
-    },
+    transaction::{buffer::Buffer, requests::*, Timestamp},
     Key, KvPair, Result, Value,
 };
 
 use derive_new::new;
 use futures::stream::BoxStream;
+use kvproto::kvrpcpb;
 use std::ops::RangeBounds;
 use std::sync::Arc;
 
@@ -190,7 +187,21 @@ impl Transaction {
     }
 
     async fn prewrite(&mut self) -> Result<()> {
-        unimplemented!()
+        let mutations = self.buffer.to_proto_mutations();
+        if mutations.is_empty() {
+            return Ok(());
+        }
+
+        let primary_lock = mutations[0].key.clone().into();
+        let lock_ttl = calculate_ttl(&mutations);
+        Ok(new_prewrite_request(
+            mutations,
+            primary_lock,
+            self.timestamp.into_version(),
+            lock_ttl,
+        )
+        .execute(self.rpc.clone())
+        .await?)
     }
 
     async fn commit_primary(&mut self) -> Result<()> {
@@ -200,4 +211,11 @@ impl Transaction {
     async fn commit_secondary(&mut self) -> Result<()> {
         unimplemented!()
     }
+}
+
+fn calculate_ttl(mutations: &[kvrpcpb::Mutation]) -> u64 {
+    mutations
+        .iter()
+        .map(|mutation| mutation.key.len() + mutation.value.len())
+        .sum::<usize>() as u64
 }

@@ -357,14 +357,14 @@ pub fn new_prewrite_request(
     primary_lock: Key,
     start_version: u64,
     lock_ttl: u64,
-    txn_size: u64,
 ) -> kvrpcpb::PrewriteRequest {
     let mut req = kvrpcpb::PrewriteRequest::default();
     req.set_mutations(mutations);
     req.set_primary_lock(primary_lock.into());
     req.set_start_version(start_version);
     req.set_lock_ttl(lock_ttl);
-    req.set_txn_size(txn_size);
+    // TODO: Lite resolve lock is currently disabled
+    req.set_txn_size(std::u64::MAX);
 
     req
 }
