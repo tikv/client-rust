@@ -69,7 +69,7 @@ pub async fn resolve_locks(
             .or_insert_with(HashSet::new)
             .insert(cleaned_region);
     }
-    Ok(has_live_locks)
+    Ok(!has_live_locks)
 }
 
 async fn resolve_lock_with_retry(
