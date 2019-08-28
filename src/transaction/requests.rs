@@ -1,7 +1,7 @@
 use crate::{
     kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
-    request::KvRequest,
+    request::{store_stream_for_key, store_stream_for_keys, KvRequest},
     transaction::{HasLocks, Timestamp},
     Error, Key, KvPair, Result, Value,
 };
@@ -34,11 +34,7 @@ impl KvRequest for kvrpcpb::GetRequest {
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let key = mem::replace(&mut self.key, Vec::default()).into();
-        pd_client
-            .store_for_key(&key)
-            .map_ok(move |store| (key, store))
-            .into_stream()
-            .boxed()
+        store_stream_for_key(key, pd_client)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
@@ -97,17 +93,7 @@ impl KvRequest for kvrpcpb::BatchGetRequest {
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let keys = mem::replace(&mut self.keys, Vec::default());
-
-        pd_client
-            .clone()
-            .group_keys_by_region(keys.into_iter().map(Into::into))
-            .and_then(move |(region_id, key)| {
-                pd_client
-                    .clone()
-                    .store_for_id(region_id)
-                    .map_ok(move |store| (key, store))
-            })
-            .boxed()
+        store_stream_for_keys(keys, pd_client)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
@@ -283,11 +269,7 @@ impl KvRequest for kvrpcpb::CleanupRequest {
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let key = mem::replace(&mut self.key, Default::default()).into();
-        pd_client
-            .store_for_key(&key)
-            .map_ok(move |store| (key, store))
-            .into_stream()
-            .boxed()
+        store_stream_for_key(key, pd_client)
     }
 
     fn map_result(resp: Self::RpcResponse) -> Self::Result {

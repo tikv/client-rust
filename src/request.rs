@@ -4,7 +4,7 @@ use crate::{
     kv_client::{HasError, HasRegionError, KvClient, RpcFnType, Store},
     pd::PdClient,
     transaction::{resolve_locks, HasLocks},
-    Error, Result,
+    BoundRange, Error, Key, Result,
 };
 
 use futures::future::BoxFuture;
@@ -98,6 +98,59 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
     fn reduce(
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>>;
+}
+
+pub fn store_stream_for_key<KeyData, PdC>(
+    key_data: KeyData,
+    pd_client: Arc<PdC>,
+) -> BoxStream<'static, Result<(KeyData, Store<PdC::KvClient>)>>
+where
+    KeyData: AsRef<Key> + Send + 'static,
+    PdC: PdClient,
+{
+    pd_client
+        .store_for_key(key_data.as_ref())
+        .map_ok(move |store| (key_data, store))
+        .into_stream()
+        .boxed()
+}
+
+pub fn store_stream_for_keys<KeyData, IntoKey, I, PdC>(
+    key_data: I,
+    pd_client: Arc<PdC>,
+) -> BoxStream<'static, Result<(Vec<KeyData>, Store<PdC::KvClient>)>>
+where
+    KeyData: AsRef<Key> + Send + Sync + 'static,
+    IntoKey: Into<KeyData> + 'static,
+    I: IntoIterator<Item = IntoKey>,
+    I::IntoIter: Send + Sync + 'static,
+    PdC: PdClient,
+{
+    pd_client
+        .clone()
+        .group_keys_by_region(key_data.into_iter().map(Into::into))
+        .and_then(move |(region_id, key)| {
+            pd_client
+                .clone()
+                .store_for_id(region_id)
+                .map_ok(move |store| (key, store))
+        })
+        .boxed()
+}
+
+pub fn store_stream_for_range<PdC: PdClient>(
+    range: BoundRange,
+    pd_client: Arc<PdC>,
+) -> BoxStream<'static, Result<((Key, Key), Store<PdC::KvClient>)>> {
+    pd_client
+        .stores_for_range(range)
+        .map_ok(move |store| {
+            // FIXME should be bounded by self.range
+            let range = store.region.range();
+            (range, store)
+        })
+        .into_stream()
+        .boxed()
 }
 
 /// Permits easy mocking of rpc calls.
