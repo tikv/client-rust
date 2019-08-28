@@ -96,7 +96,7 @@ impl Cluster {
                         .get_error()
                         .get_message())));
                 }
-                let region = resp.region.ok_or_else(|| Error::region_not_found(id, None));
+                let region = resp.region.ok_or_else(|| Error::region_not_found(id));
                 let leader = resp.leader;
                 future::ready(region.map(move |r| Region::new(r, leader)))
             })

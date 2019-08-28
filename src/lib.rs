@@ -4,7 +4,6 @@
 #![type_length_limit = "16777216"]
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::type_complexity)]
-#![feature(async_await)]
 #![cfg_attr(test, feature(specialization))]
 
 //! This crate provides a clean, ready to use client for [TiKV](https://github.com/tikv/tikv), a
@@ -56,7 +55,6 @@
 //! ([raw](raw::Client), [transactional](transaction::Client)).
 //!
 //! ```rust
-//! # #![feature(async_await)]
 //! # use tikv_client::*;
 //! # use futures::prelude::*;
 //!
@@ -79,6 +77,8 @@
 
 #[macro_use]
 mod util;
+#[macro_use]
+pub mod transaction;
 
 mod compat;
 mod config;
@@ -90,7 +90,6 @@ pub mod raw;
 mod request;
 mod security;
 mod stats;
-pub mod transaction;
 
 #[cfg(test)]
 mod mock;

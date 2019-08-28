@@ -92,15 +92,7 @@ where
     Compat01As03::new(fut.unwrap())
         .map(|r| match r {
             Err(e) => Err(ErrorKind::Grpc(e).into()),
-            Ok(mut r) => {
-                if let Some(e) = r.region_error() {
-                    Err(e)
-                } else if let Some(e) = r.error() {
-                    Err(e)
-                } else {
-                    Ok(r)
-                }
-            }
+            Ok(r) => Ok(r),
         })
         .map(move |r| context.done(r))
 }

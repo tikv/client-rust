@@ -1,5 +1,4 @@
 #![cfg(feature = "integration-tests")]
-#![feature(async_await)]
 
 use failure::Fallible;
 use futures::executor::ThreadPool;

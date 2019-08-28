@@ -24,7 +24,6 @@ impl Client {
     /// Create a new [`Client`](Client).
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -46,7 +45,6 @@ impl Client {
     /// supplied column family constraint. The original `Client` can still be used.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -70,7 +68,6 @@ impl Client {
     /// will be ignored.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -92,7 +89,6 @@ impl Client {
     /// given key.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{Value, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -112,7 +108,6 @@ impl Client {
     /// given keys.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{KvPair, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -134,7 +129,6 @@ impl Client {
     /// Once resolved this request will result in the setting of the value associated with the given key.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Value, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -158,7 +152,6 @@ impl Client {
     /// Once resolved this request will result in the setting of the value associated with the given key.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{Error, Result, KvPair, Key, Value, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -182,7 +175,6 @@ impl Client {
     /// Once resolved this request will result in the deletion of the given key.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -201,7 +193,6 @@ impl Client {
     /// Once resolved this request will result in the deletion of the given keys.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -223,7 +214,6 @@ impl Client {
     /// Once resolved this request will result in the deletion of all keys over the given range.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -242,7 +232,6 @@ impl Client {
     /// Once resolved this request will result in a scanner over the given keys.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{KvPair, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -275,7 +264,6 @@ impl Client {
     /// Once resolved this request will result in a set of scanners over the given keys.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {

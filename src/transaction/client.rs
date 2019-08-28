@@ -21,7 +21,6 @@ impl Client {
     /// Creates a new [`Client`](Client) once the [`Connect`](Connect) resolves.
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -38,7 +37,6 @@ impl Client {
     /// Using the transaction you can issue commands like [`get`](Transaction::get) or [`set`](Transaction::set).
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -63,7 +61,6 @@ impl Client {
     /// Retrieves the current [`Timestamp`](Timestamp).
     ///
     /// ```rust,no_run
-    /// # #![feature(async_await)]
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
@@ -82,7 +79,6 @@ impl Client {
 /// Once resolved it will result in a connected [`Client`](Client).
 ///
 /// ```rust,no_run
-/// # #![feature(async_await)]
 /// use tikv_client::{Config, TransactionClient, Connect};
 /// use futures::prelude::*;
 ///
