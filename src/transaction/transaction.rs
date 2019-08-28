@@ -190,6 +190,9 @@ impl Transaction {
     }
 }
 
+/// The default TTL of a lock in milliseconds
+const DEFAULT_LOCK_TTL: u64 = 3000;
+
 #[derive(new)]
 struct TwoPhaseCommitter {
     mutations: Vec<kvrpcpb::Mutation>,
@@ -225,7 +228,8 @@ impl TwoPhaseCommitter {
 
     async fn prewrite(&mut self) -> Result<()> {
         let primary_lock = self.mutations[0].key.clone().into();
-        let lock_ttl = calculate_ttl(&self.mutations);
+        // TODO: calculate TTL for big transactions
+        let lock_ttl = DEFAULT_LOCK_TTL;
         new_prewrite_request(
             self.mutations.clone(),
             primary_lock,
@@ -279,11 +283,4 @@ impl TwoPhaseCommitter {
             .execute(self.rpc.clone())
             .await
     }
-}
-
-fn calculate_ttl(mutations: &[kvrpcpb::Mutation]) -> u64 {
-    mutations
-        .iter()
-        .map(|mutation| mutation.key.len() + mutation.value.len())
-        .sum::<usize>() as u64
 }
