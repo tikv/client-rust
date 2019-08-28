@@ -121,7 +121,7 @@ impl Buffer {
 
 // The state of a value in the buffer.
 #[derive(Debug, Clone)]
-pub enum Mutation {
+enum Mutation {
     // The value has been read from the server. None means there is no entry.
     Cached(Option<Value>),
     // Value has been written.

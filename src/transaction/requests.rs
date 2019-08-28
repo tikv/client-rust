@@ -328,16 +328,7 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let mutations = mem::replace(&mut self.mutations, Vec::default());
-        pd_client
-            .clone()
-            .group_keys_by_region(mutations.into_iter())
-            .and_then(move |(region_id, mutations)| {
-                pd_client
-                    .clone()
-                    .store_for_id(region_id)
-                    .map_ok(move |store| (mutations, store))
-            })
-            .boxed()
+        store_stream_for_keys(mutations, pd_client)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -399,16 +390,7 @@ impl KvRequest for kvrpcpb::CommitRequest {
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let keys = mem::replace(&mut self.keys, Vec::default());
-        pd_client
-            .clone()
-            .group_keys_by_region(keys.into_iter())
-            .and_then(move |(region_id, keys)| {
-                pd_client
-                    .clone()
-                    .store_for_id(region_id)
-                    .map_ok(move |store| (keys, store))
-            })
-            .boxed()
+        store_stream_for_keys(keys, pd_client)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -456,16 +438,7 @@ impl KvRequest for kvrpcpb::BatchRollbackRequest {
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let keys = mem::replace(&mut self.keys, Vec::default());
-        pd_client
-            .clone()
-            .group_keys_by_region(keys.into_iter())
-            .and_then(move |(region_id, keys)| {
-                pd_client
-                    .clone()
-                    .store_for_id(region_id)
-                    .map_ok(move |store| (keys, store))
-            })
-            .boxed()
+        store_stream_for_keys(keys, pd_client)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
