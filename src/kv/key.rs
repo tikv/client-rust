@@ -120,7 +120,7 @@ impl AsRef<Key> for Key {
 
 impl AsRef<Key> for Vec<u8> {
     fn as_ref(&self) -> &Key {
-        unsafe { std::mem::transmute(self) }
+        unsafe { &*(self as *const Vec<u8> as *const Key) }
     }
 }
 
