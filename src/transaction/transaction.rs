@@ -8,6 +8,8 @@ use crate::{
 };
 
 use derive_new::new;
+use futures::executor::ThreadPool;
+use futures::prelude::*;
 use futures::stream::BoxStream;
 use kvproto::kvrpcpb;
 use std::mem;
@@ -37,6 +39,7 @@ pub struct Transaction {
     timestamp: Timestamp,
     #[new(default)]
     buffer: Buffer,
+    bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
 }
 
@@ -183,6 +186,7 @@ impl Transaction {
         TwoPhaseCommitter::new(
             self.buffer.to_proto_mutations(),
             self.timestamp.into_version(),
+            self.bg_worker.clone(),
             self.rpc.clone(),
         )
         .commit()
@@ -197,7 +201,10 @@ const DEFAULT_LOCK_TTL: u64 = 3000;
 struct TwoPhaseCommitter {
     mutations: Vec<kvrpcpb::Mutation>,
     start_version: u64,
+    bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
+    #[new(default)]
+    committed: bool,
     #[new(default)]
     undetermined: bool,
 }
@@ -208,18 +215,22 @@ impl TwoPhaseCommitter {
             return Ok(());
         }
         self.prewrite().await?;
-        // FIXME: rollback when prewrite fails
-        // FIXME: commit secondary keys in background
         match self.commit_primary().await {
             Ok(commit_version) => {
-                let _ = self.commit_secondary(commit_version).await;
+                self.committed = true;
+                self.bg_worker
+                    .clone()
+                    .spawn_ok(self.commit_secondary(commit_version).map(|res| {
+                        if let Err(e) = res {
+                            warn!("Failed to commit secondary keys: {}", e);
+                        }
+                    }));
                 Ok(())
             }
             Err(e) => {
                 if self.undetermined {
                     Err(Error::undetermined_error(e))
                 } else {
-                    let _ = self.rollback().await;
                     Err(e)
                 }
             }
@@ -261,7 +272,7 @@ impl TwoPhaseCommitter {
         }
     }
 
-    async fn commit_secondary(&mut self, commit_version: u64) -> Result<()> {
+    async fn commit_secondary(mut self, commit_version: u64) -> Result<()> {
         let mutations = mem::replace(&mut self.mutations, Vec::default());
         let keys = mutations
             .into_iter()
@@ -273,14 +284,24 @@ impl TwoPhaseCommitter {
             .await
     }
 
-    async fn rollback(&mut self) -> Result<()> {
+    fn rollback(&mut self) -> impl Future<Output = Result<()>> + 'static {
         let mutations = mem::replace(&mut self.mutations, Vec::default());
         let keys = mutations
             .into_iter()
             .map(|mutation| mutation.key.into())
             .collect();
-        new_batch_rollback_request(keys, self.start_version)
-            .execute(self.rpc.clone())
-            .await
+        new_batch_rollback_request(keys, self.start_version).execute(self.rpc.clone())
+    }
+}
+
+impl Drop for TwoPhaseCommitter {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.bg_worker.clone().spawn_ok(self.rollback().map(|res| {
+                if let Err(e) = res {
+                    warn!("Failed to rollback: {}", e);
+                }
+            }))
+        }
     }
 }
