@@ -12,7 +12,7 @@ fn get_timestamp() -> Fallible<()> {
     let mut pool = ThreadPool::new()?;
     let config = Config::new(pd_addrs());
     let fut = async {
-        let client = TransactionClient::connect(config).await?;
+        let client = TransactionClient::new(config).await?;
         Result::Ok(future::join_all((0..COUNT).map(|_| client.current_timestamp())).await)
     };
     // Calculate each version of retrieved timestamp

@@ -24,7 +24,7 @@ impl Client {
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(Config::default()).await.unwrap;
+    /// let client = TransactionClient::new(Config::default()).await.unwrap();
     /// # });
     /// ```
     pub async fn new(config: Config) -> Result<Client> {
@@ -43,8 +43,7 @@ impl Client {
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = TransactionClient::connect(Config::default());
-    /// let client = connect.await.unwrap();
+    /// let client = TransactionClient::new(Config::default()).await.unwrap();
     /// let mut transaction = client.begin().await.unwrap();
     /// // ... Issue some commands.
     /// let commit = transaction.commit();
@@ -67,8 +66,7 @@ impl Client {
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let connect = TransactionClient::connect(Config::default());
-    /// let client = connect.await.unwrap();
+    /// let client = TransactionClient::new(Config::default()).await.unwrap();
     /// let timestamp = client.current_timestamp().await.unwrap();
     /// # });
     /// ```

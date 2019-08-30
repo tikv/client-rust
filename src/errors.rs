@@ -129,10 +129,6 @@ impl Error {
     pub(crate) fn undetermined_error(error: Error) -> Self {
         Error::from(ErrorKind::UndeterminedError(error))
     }
-
-    pub(crate) fn multiple_errors(errors: Vec<Error>) -> Self {
-        Error::from(ErrorKind::MultipleErrors(errors))
-    }
 }
 
 impl From<ErrorKind> for Error {

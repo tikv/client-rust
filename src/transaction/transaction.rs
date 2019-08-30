@@ -29,8 +29,7 @@ use std::sync::Arc;
 /// use tikv_client::{Config, TransactionClient};
 /// use futures::prelude::*;
 /// # futures::executor::block_on(async {
-/// let connect = TransactionClient::connect(Config::default());
-/// let client = connect.await.unwrap();
+/// let client = TransactionClient::new(Config::default()).await.unwrap();
 /// let txn = client.begin().await.unwrap();
 /// # });
 /// ```
@@ -50,9 +49,8 @@ impl Transaction {
     /// # use tikv_client::{Value, Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.await.unwrap();
-    /// let mut txn = connected_client.begin().await.unwrap();
+    /// # let client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// let mut txn = client.begin().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let result: Option<Value> = txn.get(key).await.unwrap();
     /// // Finish the transaction...
@@ -75,9 +73,8 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.await.unwrap();
-    /// let mut txn = connected_client.begin().await.unwrap();
+    /// # let client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// let mut txn = client.begin().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let result: HashMap<Key, Value> = txn
     ///     .batch_get(keys)
@@ -115,9 +112,8 @@ impl Transaction {
     /// # use tikv_client::{Key, Value, Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.await.unwrap();
-    /// let mut txn = connected_client.begin().await.unwrap();
+    /// # let client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// let mut txn = client.begin().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let val = "TiKV".to_owned();
     /// txn.set(key, val);
@@ -135,9 +131,8 @@ impl Transaction {
     /// # use tikv_client::{Key, Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connecting_client = Client::connect(Config::new(vec!["192.168.0.100", "192.168.0.101"]));
-    /// # let connected_client = connecting_client.await.unwrap();
-    /// let mut txn = connected_client.begin().await.unwrap();
+    /// # let client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// let mut txn = client.begin().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// txn.delete(key);
     /// // Finish the transaction...
@@ -154,9 +149,8 @@ impl Transaction {
     /// # use tikv_client::{Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connect = Client::connect(Config::default());
-    /// # let connected_client = connect.await.unwrap();
-    /// let mut txn = connected_client.begin().await.unwrap();
+    /// # let client = Client::new(Config::default()).await.unwrap();
+    /// let mut txn = client.begin().await.unwrap();
     /// txn.lock_keys(vec!["TiKV".to_owned(), "Rust".to_owned()]);
     /// // ... Do some actions.
     /// txn.commit().await.unwrap();
@@ -174,9 +168,8 @@ impl Transaction {
     /// # use tikv_client::{Config, transaction::Client};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let connect = Client::connect(Config::default());
-    /// # let connected_client = connect.await.unwrap();
-    /// let mut txn = connected_client.begin().await.unwrap();
+    /// # let client = Client::new(Config::default()).await.unwrap();
+    /// let mut txn = client.begin().await.unwrap();
     /// // ... Do some actions.
     /// let req = txn.commit();
     /// let result: () = req.await.unwrap();
