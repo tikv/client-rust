@@ -248,21 +248,18 @@ impl TwoPhaseCommitter {
     async fn commit_primary(&mut self) -> Result<u64> {
         let primary_key = vec![self.mutations[0].key.clone().into()];
         let commit_version = self.rpc.clone().get_timestamp().await?.into_version();
-        match new_commit_request(primary_key, self.start_version, commit_version)
+        new_commit_request(primary_key, self.start_version, commit_version)
             .execute(self.rpc.clone())
-            .await
-        {
-            Ok(_) => Ok(commit_version),
-            Err(e) => {
+            .inspect_err(|e| {
                 // We don't know whether the transaction is committed or not if we fail to receive
                 // the response. Then, we mark the transaction as undetermined and propagate the
                 // error to the user.
                 if let ErrorKind::Grpc(_) = e.kind() {
                     self.undetermined = true;
                 }
-                Err(e)
-            }
-        }
+            })
+            .await?;
+        Ok(commit_version)
     }
 
     async fn commit_secondary(mut self, commit_version: u64) -> Result<()> {
