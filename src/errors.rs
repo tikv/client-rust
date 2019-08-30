@@ -55,6 +55,9 @@ pub enum ErrorKind {
     KvError { message: String },
     #[fail(display = "{}", message)]
     InternalError { message: String },
+    /// Multiple errors
+    #[fail(display = "Multiple errors: {:?}", _0)]
+    MultipleErrors(Vec<Error>),
 }
 
 impl Fail for Error {
@@ -114,6 +117,10 @@ impl Error {
         Error::from(ErrorKind::InternalError {
             message: message.into(),
         })
+    }
+
+    pub(crate) fn multiple_errors(errors: Vec<Error>) -> Self {
+        Error::from(ErrorKind::MultipleErrors(errors))
     }
 }
 

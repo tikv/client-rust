@@ -98,19 +98,49 @@ has_str_error!(kvrpcpb::RawDeleteRangeResponse);
 has_str_error!(kvrpcpb::ImportResponse);
 has_str_error!(kvrpcpb::DeleteRangeResponse);
 
-macro_rules! has_no_error {
-    ($type:ty) => {
-        impl HasError for $type {
-            fn error(&mut self) -> Option<Error> {
-                None
-            }
-        }
-    };
+impl HasError for kvrpcpb::ScanResponse {
+    fn error(&mut self) -> Option<Error> {
+        extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take()))
+    }
 }
 
-has_no_error!(kvrpcpb::ScanResponse);
-has_no_error!(kvrpcpb::PrewriteResponse);
-has_no_error!(kvrpcpb::BatchGetResponse);
-has_no_error!(kvrpcpb::RawBatchGetResponse);
-has_no_error!(kvrpcpb::RawScanResponse);
-has_no_error!(kvrpcpb::RawBatchScanResponse);
+impl HasError for kvrpcpb::BatchGetResponse {
+    fn error(&mut self) -> Option<Error> {
+        extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take()))
+    }
+}
+
+impl HasError for kvrpcpb::RawBatchGetResponse {
+    fn error(&mut self) -> Option<Error> {
+        extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take()))
+    }
+}
+
+impl HasError for kvrpcpb::RawScanResponse {
+    fn error(&mut self) -> Option<Error> {
+        extract_errors(self.kvs.iter_mut().map(|pair| pair.error.take()))
+    }
+}
+
+impl HasError for kvrpcpb::RawBatchScanResponse {
+    fn error(&mut self) -> Option<Error> {
+        extract_errors(self.kvs.iter_mut().map(|pair| pair.error.take()))
+    }
+}
+
+impl HasError for kvrpcpb::PrewriteResponse {
+    fn error(&mut self) -> Option<Error> {
+        extract_errors(self.take_errors().into_iter().map(Some))
+    }
+}
+
+fn extract_errors(error_iter: impl Iterator<Item = Option<kvrpcpb::KeyError>>) -> Option<Error> {
+    let errors: Vec<Error> = error_iter.flatten().map(Into::into).collect();
+    if errors.is_empty() {
+        None
+    } else if errors.len() == 1 {
+        Some(errors.into_iter().next().unwrap())
+    } else {
+        Some(Error::multiple_errors(errors))
+    }
+}
