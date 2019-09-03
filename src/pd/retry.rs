@@ -4,6 +4,7 @@
 
 use std::{
     fmt,
+    pin::Pin,
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -15,7 +16,6 @@ use futures::task::{Context, Poll};
 use futures_timer::Delay;
 use grpcio::Environment;
 use kvproto::metapb;
-use std::pin::Pin;
 
 use crate::{
     pd::{
@@ -24,7 +24,7 @@ use crate::{
     },
     security::SecurityManager,
     transaction::Timestamp,
-    Result,
+    Error, Result,
 };
 
 const RECONNECT_INTERVAL_SEC: u64 = 1;
@@ -33,7 +33,7 @@ const LEADER_CHANGE_RETRY: usize = 10;
 
 /// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
 pub struct RetryClient<Cl = Cluster> {
-    cluster: RwLock<Cl>,
+    cluster: RwLock<Arc<Cl>>,
     connection: Connection,
     timeout: Duration,
 }
@@ -48,7 +48,7 @@ impl<Cl> RetryClient<Cl> {
     ) -> RetryClient<Cl> {
         let connection = Connection::new(env, security_mgr);
         RetryClient {
-            cluster: RwLock::new(cluster),
+            cluster: RwLock::new(Arc::new(cluster)),
             connection,
             timeout,
         }
@@ -63,7 +63,7 @@ impl RetryClient<Cluster> {
         timeout: Duration,
     ) -> Result<RetryClient> {
         let connection = Connection::new(env, security_mgr);
-        let cluster = RwLock::new(connection.connect_cluster(endpoints, timeout)?);
+        let cluster = RwLock::new(Arc::new(connection.connect_cluster(endpoints, timeout)?));
         Ok(RetryClient {
             cluster,
             connection,
@@ -95,11 +95,11 @@ impl RetryClient<Cluster> {
     }
 
     pub fn reconnect(&self, interval: u64) -> Result<()> {
-        if let Some(cluster) =
+        let new_cluster =
             self.connection
-                .reconnect(&self.cluster.read().unwrap(), interval, self.timeout)?
-        {
-            *self.cluster.write().unwrap() = cluster;
+                .reconnect(&self.cluster.read().unwrap(), interval, self.timeout)?;
+        if let Some(cluster) = new_cluster {
+            *self.cluster.write().unwrap() = Arc::new(cluster);
         }
         Ok(())
     }
@@ -116,9 +116,22 @@ impl RetryClient<Cluster> {
         }))
     }
 
-    pub fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
-        // FIXME: retry or reconnect on error
-        Box::pin(self.cluster.read().unwrap().get_timestamp())
+    pub async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
+        for _ in 0..LEADER_CHANGE_RETRY {
+            let tso = self.cluster.read().unwrap().clone();
+            match tso.get_timestamp().await {
+                Ok(ts) => return Ok(ts),
+                Err(e) => {
+                    debug!("reconnect because of {}!", e);
+                    // ATTENTION: this will block the event loop
+                    if let Err(e) = self.reconnect(RECONNECT_INTERVAL_SEC) {
+                        debug!("reconnect failed: {}", e);
+                        Delay::new(Duration::from_secs(RECONNECT_INTERVAL_SEC)).await?;
+                    }
+                }
+            }
+        }
+        Err(Error::internal_error("get_timestamp exceeds retry limit"))
     }
 }
 

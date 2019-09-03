@@ -37,7 +37,7 @@ pub struct Cluster {
     pub id: u64,
     pub(super) client: pdpb::PdClient,
     members: pdpb::GetMembersResponse,
-    tso: TimestampOracle,
+    tso: Arc<RwLock<Option<TimestampOracle>>>,
 }
 
 // These methods make a single attempt to make a request.
@@ -154,8 +154,13 @@ impl Cluster {
             })
     }
 
-    pub fn get_timestamp(&self) -> impl Future<Output = Result<Timestamp>> {
-        self.tso.clone().get_timestamp()
+    pub async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
+        let tso = self.tso.read().unwrap().clone();
+        if let Some(tso) = tso {
+            tso.get_timestamp().await
+        } else {
+            Err(Error::internal_error("TSO thread exited"))
+        }
     }
 }
 
@@ -180,7 +185,8 @@ impl Connection {
         let (client, members) = self.try_connect_leader(&members, timeout)?;
 
         let id = members.get_header().get_cluster_id();
-        let tso = TimestampOracle::new(id, &client)?;
+        let tso = Arc::new(RwLock::new(None));
+        TimestampOracle::init(tso.clone(), id, &client)?;
         let cluster = Cluster {
             id,
             members,
@@ -205,7 +211,8 @@ impl Connection {
         warn!("updating pd client, blocking the tokio core");
         let start = Instant::now();
         let (client, members) = self.try_connect_leader(&old_cluster.members, timeout)?;
-        let tso = TimestampOracle::new(old_cluster.id, &client)?;
+        let tso = Arc::new(RwLock::new(None));
+        TimestampOracle::init(tso.clone(), old_cluster.id, &client)?;
 
         let cluster = Cluster {
             id: old_cluster.id,

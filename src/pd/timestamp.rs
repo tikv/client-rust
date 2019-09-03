@@ -17,13 +17,21 @@ use futures::{
     channel::{mpsc, oneshot},
     compat::*,
     executor::block_on,
-    join, pin_mut,
+    pin_mut,
     prelude::*,
+    select,
     task::{AtomicWaker, Context, Poll},
 };
 use grpcio::WriteFlags;
 use kvproto::pdpb::*;
-use std::{cell::RefCell, collections::VecDeque, pin::Pin, rc::Rc, thread};
+use std::{
+    cell::RefCell,
+    collections::VecDeque,
+    pin::Pin,
+    rc::Rc,
+    sync::{Arc, RwLock},
+    thread,
+};
 
 /// It is an empirical value.
 const MAX_BATCH_SIZE: usize = 64;
@@ -45,10 +53,15 @@ pub struct TimestampOracle {
 }
 
 impl TimestampOracle {
-    pub fn new(cluster_id: u64, pd_client: &PdClient) -> Result<TimestampOracle> {
+    pub fn init(
+        tso: Arc<RwLock<Option<TimestampOracle>>>,
+        cluster_id: u64,
+        pd_client: &PdClient,
+    ) -> Result<()> {
         let (request_tx, request_rx) = mpsc::channel(MAX_BATCH_SIZE);
         // FIXME: use tso_opt
         let (rpc_sender, rpc_receiver) = pd_client.tso()?;
+        *tso.write().unwrap() = Some(TimestampOracle { request_tx });
 
         // Start a background thread to handle TSO requests and responses
         thread::spawn(move || {
@@ -57,10 +70,11 @@ impl TimestampOracle {
                 rpc_sender.sink_compat().sink_err_into(),
                 rpc_receiver.compat().err_into(),
                 request_rx,
-            ))
+            ));
+            *tso.write().unwrap() = None;
         });
 
-        Ok(TimestampOracle { request_tx })
+        Ok(())
     }
 
     pub async fn get_timestamp(mut self) -> Result<Timestamp> {
@@ -95,9 +109,9 @@ async fn run_tso(
         self_waker: sending_future_waker.clone(),
     };
 
-    let send_requests = rpc_sender.send_all(&mut request_stream);
+    let mut send_requests = rpc_sender.send_all(&mut request_stream).fuse();
 
-    let receive_and_handle_responses = async move {
+    let mut receive_and_handle_responses = Box::pin(async move {
         while let Some(Ok(resp)) = rpc_receiver.next().await {
             let mut pending_requests = pending_requests.borrow_mut();
 
@@ -109,12 +123,18 @@ async fn run_tso(
 
             allocate_timestamps(&resp, &mut pending_requests)?;
         }
-        Err(Error::internal_error("TSO stream terminated"))
-    };
+        Result::<()>::Err(Error::internal_error("TSO stream terminated"))
+    })
+    .fuse();
 
-    let (send_res, recv_res): (_, Result<()>) = join!(send_requests, receive_and_handle_responses);
-    error!("TSO send error: {:?}", send_res);
-    error!("TSO receive error: {:?}", recv_res);
+    select! {
+        send_res = send_requests => {
+            error!("TSO send error: {:?}", send_res);
+        },
+        recv_res = receive_and_handle_responses => {
+            error!("TSO receive error: {:?}", recv_res);
+        }
+    };
 }
 
 struct TsoRequestStream<'a> {
