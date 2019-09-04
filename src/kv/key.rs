@@ -34,10 +34,19 @@ use std::{fmt, u8};
 /// let from_bytes = Key::from(bytes);
 /// assert_eq!(from_static_str, from_bytes);
 /// ```
+/// 
+/// In order to get the wrapped value you can use `to_inner`:
+/// 
+/// ```rust
+/// use tikv_client::Key;
+/// 
+/// let buf = "TiKV".as_bytes().to_owned();
+/// let key = Key::from(buf.clone());
+/// assert_eq!(key.to_inner(), buf);
+/// ```
 ///
-/// **But, you should not need to worry about all this:** Many functions which accept a `Key`
-/// accept an `Into<Key>`, which means all of the above types can be passed directly to those
-/// functions.
+/// Many functions which accept a `Key` accept an `Into<Key>`, which means all of the above types
+/// can be passed directly to those functions.
 #[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[cfg_attr(test, derive(Arbitrary))]
 pub struct Key(
@@ -84,6 +93,12 @@ impl Key {
         } else {
             Bound::Excluded(self)
         }
+    }
+        
+    /// Unwrap the key into the byte vector contained within.
+    #[inline]
+    pub fn to_inner(self) -> Vec<u8> {
+        self.0
     }
 }
 

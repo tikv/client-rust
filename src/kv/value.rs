@@ -34,9 +34,18 @@ use std::{fmt, str, u8};
 /// assert_eq!(from_static_str, from_bytes);
 /// ```
 ///
-/// **But, you should not need to worry about all this:** Many functions which accept a `Value`
-/// accept an `Into<Value>`, which means all of the above types can be passed directly to those
-/// functions.
+/// In order to get the wrapped value you can use `to_inner`:
+/// 
+/// ```rust
+/// use tikv_client::Value;
+/// 
+/// let buf = "TiKV".as_bytes().to_owned();
+/// let value = Value::from(buf.clone());
+/// assert_eq!(value.to_inner(), buf);
+/// ```
+///
+/// Many functions which accept a `Value` accept an `Into<Value>`, which means all of the above types
+/// can be passed directly to those functions.
 #[derive(Default, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(test, derive(Arbitrary))]
 pub struct Value(
@@ -53,6 +62,12 @@ impl Value {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+    
+    /// Unwrap the value into the byte vector contained within.
+    #[inline]
+    pub fn to_inner(self) -> Vec<u8> {
+        self.0
     }
 }
 
