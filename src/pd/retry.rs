@@ -5,18 +5,17 @@
 use std::{
     fmt,
     sync::{Arc, RwLock},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-use futures::compat::Compat01As03;
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::ready;
 use futures::task::{Context, Poll};
+use futures_timer::Delay;
 use grpcio::Environment;
 use kvproto::metapb;
 use std::pin::Pin;
-use tokio_timer::timer::Handle;
 
 use crate::{
     pd::{
@@ -25,7 +24,6 @@ use crate::{
     },
     security::SecurityManager,
     transaction::Timestamp,
-    util::GLOBAL_TIMER_HANDLE,
     Result,
 };
 
@@ -164,7 +162,6 @@ struct Request<Func> {
     request_sent: usize,
 
     client: Arc<RetryClient>,
-    timer: Handle,
 
     // A function which makes an async request.
     func: Func,
@@ -202,7 +199,6 @@ where
         Request {
             request_sent: 0,
             client,
-            timer: GLOBAL_TIMER_HANDLE.clone(),
             func,
         }
     }
@@ -219,11 +215,7 @@ where
                 future::Either::Left(future::ok(()))
             }
             Err(_) => future::Either::Right(
-                Compat01As03::new(
-                    self.timer
-                        .delay(Instant::now() + Duration::from_secs(RECONNECT_INTERVAL_SEC)),
-                )
-                .map(|_| Err(())),
+                Delay::new(Duration::from_secs(RECONNECT_INTERVAL_SEC)).map(|_| Err(())),
             ),
         }
     }

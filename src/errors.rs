@@ -26,18 +26,18 @@ pub enum ErrorKind {
     /// Feature is not implemented.
     #[fail(display = "Unimplemented feature")]
     Unimplemented,
-    // No region is found for the given key.
+    /// No region is found for the given key.
     #[fail(display = "Region is not found for key: {:?}", key)]
     RegionForKeyNotFound { key: Vec<u8> },
-    /// The peer is not the leader for the region.
-    #[fail(display = "Peer is not leader for region {}. {}", region_id, message)]
-    NotLeader { region_id: u64, message: String },
-    /// Stale epoch
-    #[fail(display = "Stale epoch. {}", message)]
-    StaleEpoch { message: String },
+    /// Errors caused by changed region information
+    #[fail(display = "Region error: {:?}", _0)]
+    RegionError(kvproto::errorpb::Error),
     /// No region is found for the given id.
-    #[fail(display = "Region {} is not found. {}", region_id, message)]
-    RegionNotFound { region_id: u64, message: String },
+    #[fail(display = "Region {} is not found", region_id)]
+    RegionNotFound { region_id: u64 },
+    /// No region is found for the given id.
+    #[fail(display = "Leader of region {} is not found", region_id)]
+    LeaderNotFound { region_id: u64 },
     /// Invalid key range to scan. Only left bounded intervals are supported.
     #[fail(display = "Only left bounded intervals are supported")]
     InvalidKeyRange,
@@ -53,45 +53,11 @@ pub enum ErrorKind {
     /// A string error returned by TiKV server
     #[fail(display = "Kv error. {}", message)]
     KvError { message: String },
-    /// Reconstructed `kvproto::errorpb::KeyNotInRegion`
-    #[fail(
-        display = "Key {:?} is not in region {}: [{:?}, {:?})",
-        key, region_id, start_key, end_key
-    )]
-    KeyNotInRegion {
-        key: Vec<u8>,
-        region_id: u64,
-        start_key: Vec<u8>,
-        end_key: Vec<u8>,
-    },
-    /// Reconstructed `kvproto::errorpb::ServerIsBusy`
-    #[fail(display = "Server is busy: {}. Backoff {} ms", reason, backoff_ms)]
-    ServerIsBusy { reason: String, backoff_ms: u64 },
-    /// Represents `kvproto::errorpb::StaleCommand` with additional error message
-    #[fail(display = "Stale command. {}", message)]
-    StaleCommand { message: String },
-    /// Represents `kvproto::errorpb::StoreNotMatch` with additional error message
-    #[fail(
-        display = "Requesting store {} when actual store is {}. {}",
-        request_store_id, actual_store_id, message
-    )]
-    StoreNotMatch {
-        request_store_id: u64,
-        actual_store_id: u64,
-        message: String,
-    },
-    /// Represents `kvproto::errorpb::RaftEntryTooLarge` with additional error message
-    #[fail(
-        display = "{} bytes raft entry of region {} is too large. {}",
-        entry_size, region_id, message
-    )]
-    RaftEntryTooLarge {
-        region_id: u64,
-        entry_size: u64,
-        message: String,
-    },
     #[fail(display = "{}", message)]
     InternalError { message: String },
+    /// Multiple errors
+    #[fail(display = "Multiple errors: {:?}", _0)]
+    MultipleErrors(Vec<Error>),
 }
 
 impl Fail for Error {
@@ -123,24 +89,16 @@ impl Error {
         Error::from(ErrorKind::RegionForKeyNotFound { key })
     }
 
-    pub(crate) fn not_leader(region_id: u64, message: Option<String>) -> Self {
-        Error::from(ErrorKind::NotLeader {
-            region_id,
-            message: message.unwrap_or_default(),
-        })
+    pub(crate) fn region_error(error: kvproto::errorpb::Error) -> Self {
+        Error::from(ErrorKind::RegionError(error))
     }
 
-    pub(crate) fn stale_epoch(message: Option<String>) -> Self {
-        Error::from(ErrorKind::StaleEpoch {
-            message: message.unwrap_or_default(),
-        })
+    pub(crate) fn region_not_found(region_id: u64) -> Self {
+        Error::from(ErrorKind::RegionNotFound { region_id })
     }
 
-    pub(crate) fn region_not_found(region_id: u64, message: Option<String>) -> Self {
-        Error::from(ErrorKind::RegionNotFound {
-            region_id,
-            message: message.unwrap_or_default(),
-        })
+    pub(crate) fn leader_not_found(region_id: u64) -> Self {
+        Error::from(ErrorKind::LeaderNotFound { region_id })
     }
 
     pub(crate) fn invalid_key_range() -> Self {
@@ -155,49 +113,14 @@ impl Error {
         Error::from(ErrorKind::KvError { message })
     }
 
-    pub(crate) fn key_not_in_region(mut e: kvproto::errorpb::KeyNotInRegion) -> Self {
-        Error::from(ErrorKind::KeyNotInRegion {
-            key: e.take_key(),
-            region_id: e.get_region_id(),
-            start_key: e.take_start_key(),
-            end_key: e.take_end_key(),
-        })
-    }
-
-    pub(crate) fn server_is_busy(mut e: kvproto::errorpb::ServerIsBusy) -> Self {
-        Error::from(ErrorKind::ServerIsBusy {
-            reason: e.take_reason(),
-            backoff_ms: e.get_backoff_ms(),
-        })
-    }
-
-    pub(crate) fn stale_command(message: String) -> Self {
-        Error::from(ErrorKind::StaleCommand { message })
-    }
-
-    pub(crate) fn store_not_match(e: kvproto::errorpb::StoreNotMatch, message: String) -> Self {
-        Error::from(ErrorKind::StoreNotMatch {
-            request_store_id: e.get_request_store_id(),
-            actual_store_id: e.get_actual_store_id(),
-            message,
-        })
-    }
-
-    pub(crate) fn raft_entry_too_large(
-        e: kvproto::errorpb::RaftEntryTooLarge,
-        message: String,
-    ) -> Self {
-        Error::from(ErrorKind::RaftEntryTooLarge {
-            region_id: e.get_region_id(),
-            entry_size: e.get_entry_size(),
-            message,
-        })
-    }
-
     pub(crate) fn internal_error(message: impl Into<String>) -> Self {
         Error::from(ErrorKind::InternalError {
             message: message.into(),
         })
+    }
+
+    pub(crate) fn multiple_errors(errors: Vec<Error>) -> Self {
+        Error::from(ErrorKind::MultipleErrors(errors))
     }
 }
 

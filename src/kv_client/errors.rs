@@ -12,34 +12,8 @@ pub trait HasError: HasRegionError {
 }
 
 impl From<errorpb::Error> for Error {
-    fn from(mut e: errorpb::Error) -> Error {
-        let message = e.take_message();
-        if e.has_not_leader() {
-            let e = e.get_not_leader();
-            let message = format!("{}. Leader: {:?}", message, e.get_leader());
-            Error::not_leader(e.get_region_id(), Some(message))
-        } else if e.has_region_not_found() {
-            Error::region_not_found(e.get_region_not_found().get_region_id(), Some(message))
-        } else if e.has_key_not_in_region() {
-            let e = e.take_key_not_in_region();
-            Error::key_not_in_region(e)
-        } else if e.has_epoch_not_match() {
-            Error::stale_epoch(Some(format!(
-                "{}. New epoch: {:?}",
-                message,
-                e.get_epoch_not_match().get_current_regions()
-            )))
-        } else if e.has_server_is_busy() {
-            Error::server_is_busy(e.take_server_is_busy())
-        } else if e.has_stale_command() {
-            Error::stale_command(message)
-        } else if e.has_store_not_match() {
-            Error::store_not_match(e.take_store_not_match(), message)
-        } else if e.has_raft_entry_too_large() {
-            Error::raft_entry_too_large(e.take_raft_entry_too_large(), message)
-        } else {
-            Error::internal_error(message)
-        }
+    fn from(e: errorpb::Error) -> Error {
+        Error::region_error(e)
     }
 }
 
@@ -124,19 +98,49 @@ has_str_error!(kvrpcpb::RawDeleteRangeResponse);
 has_str_error!(kvrpcpb::ImportResponse);
 has_str_error!(kvrpcpb::DeleteRangeResponse);
 
-macro_rules! has_no_error {
-    ($type:ty) => {
-        impl HasError for $type {
-            fn error(&mut self) -> Option<Error> {
-                None
-            }
-        }
-    };
+impl HasError for kvrpcpb::ScanResponse {
+    fn error(&mut self) -> Option<Error> {
+        extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take()))
+    }
 }
 
-has_no_error!(kvrpcpb::ScanResponse);
-has_no_error!(kvrpcpb::PrewriteResponse);
-has_no_error!(kvrpcpb::BatchGetResponse);
-has_no_error!(kvrpcpb::RawBatchGetResponse);
-has_no_error!(kvrpcpb::RawScanResponse);
-has_no_error!(kvrpcpb::RawBatchScanResponse);
+impl HasError for kvrpcpb::BatchGetResponse {
+    fn error(&mut self) -> Option<Error> {
+        extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take()))
+    }
+}
+
+impl HasError for kvrpcpb::RawBatchGetResponse {
+    fn error(&mut self) -> Option<Error> {
+        extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take()))
+    }
+}
+
+impl HasError for kvrpcpb::RawScanResponse {
+    fn error(&mut self) -> Option<Error> {
+        extract_errors(self.kvs.iter_mut().map(|pair| pair.error.take()))
+    }
+}
+
+impl HasError for kvrpcpb::RawBatchScanResponse {
+    fn error(&mut self) -> Option<Error> {
+        extract_errors(self.kvs.iter_mut().map(|pair| pair.error.take()))
+    }
+}
+
+impl HasError for kvrpcpb::PrewriteResponse {
+    fn error(&mut self) -> Option<Error> {
+        extract_errors(self.take_errors().into_iter().map(Some))
+    }
+}
+
+fn extract_errors(error_iter: impl Iterator<Item = Option<kvrpcpb::KeyError>>) -> Option<Error> {
+    let errors: Vec<Error> = error_iter.flatten().map(Into::into).collect();
+    if errors.is_empty() {
+        None
+    } else if errors.len() == 1 {
+        Some(errors.into_iter().next().unwrap())
+    } else {
+        Some(Error::multiple_errors(errors))
+    }
+}
