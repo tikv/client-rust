@@ -11,6 +11,7 @@ pub use retry::RetryClient;
 mod client;
 #[macro_use]
 mod cluster;
+mod region_cache;
 mod retry;
 mod timestamp;
 
