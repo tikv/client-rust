@@ -34,14 +34,16 @@ use std::{fmt, str, u8};
 /// assert_eq!(from_static_str, from_bytes);
 /// ```
 ///
-/// In order to get the wrapped value you can use `to_inner`:
-/// 
+/// While `.into()` is usually sufficient for obtaining the buffer itself, sometimes type inference
+/// isn't able to determine the correct type. Notably in the `assert_eq!()` and `==` cases. In
+/// these cases using the fully-qualified-syntax is useful:
+///
 /// ```rust
 /// use tikv_client::Value;
-/// 
+///
 /// let buf = "TiKV".as_bytes().to_owned();
 /// let value = Value::from(buf.clone());
-/// assert_eq!(value.to_inner(), buf);
+/// assert_eq!(Into::<Vec<u8>>::into(value), buf);
 /// ```
 ///
 /// Many functions which accept a `Value` accept an `Into<Value>`, which means all of the above types
@@ -62,12 +64,6 @@ impl Value {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
-    }
-    
-    /// Unwrap the value into the byte vector contained within.
-    #[inline]
-    pub fn to_inner(self) -> Vec<u8> {
-        self.0
     }
 }
 

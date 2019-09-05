@@ -34,15 +34,17 @@ use std::{fmt, u8};
 /// let from_bytes = Key::from(bytes);
 /// assert_eq!(from_static_str, from_bytes);
 /// ```
-/// 
-/// In order to get the wrapped value you can use `to_inner`:
-/// 
+///
+/// While `.into()` is usually sufficient for obtaining the buffer itself, sometimes type inference
+/// isn't able to determine the correct type. Notably in the `assert_eq!()` and `==` cases. In
+/// these cases using the fully-qualified-syntax is useful:
+///
 /// ```rust
 /// use tikv_client::Key;
-/// 
+///
 /// let buf = "TiKV".as_bytes().to_owned();
 /// let key = Key::from(buf.clone());
-/// assert_eq!(key.to_inner(), buf);
+/// assert_eq!(Into::<Vec<u8>>::into(key), buf);
 /// ```
 ///
 /// Many functions which accept a `Key` accept an `Into<Key>`, which means all of the above types
@@ -93,12 +95,6 @@ impl Key {
         } else {
             Bound::Excluded(self)
         }
-    }
-        
-    /// Unwrap the key into the byte vector contained within.
-    #[inline]
-    pub fn to_inner(self) -> Vec<u8> {
-        self.0
     }
 }
 
