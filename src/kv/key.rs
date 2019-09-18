@@ -35,9 +35,20 @@ use std::{fmt, u8};
 /// assert_eq!(from_static_str, from_bytes);
 /// ```
 ///
-/// **But, you should not need to worry about all this:** Many functions which accept a `Key`
-/// accept an `Into<Key>`, which means all of the above types can be passed directly to those
-/// functions.
+/// While `.into()` is usually sufficient for obtaining the buffer itself, sometimes type inference
+/// isn't able to determine the correct type. Notably in the `assert_eq!()` and `==` cases. In
+/// these cases using the fully-qualified-syntax is useful:
+///
+/// ```rust
+/// use tikv_client::Key;
+///
+/// let buf = "TiKV".as_bytes().to_owned();
+/// let key = Key::from(buf.clone());
+/// assert_eq!(Into::<Vec<u8>>::into(key), buf);
+/// ```
+///
+/// Many functions which accept a `Key` accept an `Into<Key>`, which means all of the above types
+/// can be passed directly to those functions.
 #[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[cfg_attr(test, derive(Arbitrary))]
 pub struct Key(

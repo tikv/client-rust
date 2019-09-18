@@ -142,11 +142,12 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     }
 
     fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>> {
-        self.pd.clone().get_region(key.into()).boxed()
+        let key: &[u8] = key.into();
+        self.pd.clone().get_region(key.to_owned()).boxed()
     }
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
-        self.pd.clone().get_timestamp()
+        self.pd.clone().get_timestamp().boxed()
     }
 }
 

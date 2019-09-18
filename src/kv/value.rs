@@ -34,9 +34,20 @@ use std::{fmt, str, u8};
 /// assert_eq!(from_static_str, from_bytes);
 /// ```
 ///
-/// **But, you should not need to worry about all this:** Many functions which accept a `Value`
-/// accept an `Into<Value>`, which means all of the above types can be passed directly to those
-/// functions.
+/// While `.into()` is usually sufficient for obtaining the buffer itself, sometimes type inference
+/// isn't able to determine the correct type. Notably in the `assert_eq!()` and `==` cases. In
+/// these cases using the fully-qualified-syntax is useful:
+///
+/// ```rust
+/// use tikv_client::Value;
+///
+/// let buf = "TiKV".as_bytes().to_owned();
+/// let value = Value::from(buf.clone());
+/// assert_eq!(Into::<Vec<u8>>::into(value), buf);
+/// ```
+///
+/// Many functions which accept a `Value` accept an `Into<Value>`, which means all of the above types
+/// can be passed directly to those functions.
 #[derive(Default, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(test, derive(Arbitrary))]
 pub struct Value(
