@@ -132,8 +132,9 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub fn set(&self, key: impl Into<Key>, value: impl Into<Value>) {
+    pub async fn set(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
         self.buffer.put(key.into(), value.into());
+        Ok(())
     }
 
     /// Deletes the given key.
@@ -150,8 +151,9 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn delete(&self, key: impl Into<Key>) {
+    pub async fn delete(&self, key: impl Into<Key>) -> Result<()> {
         self.buffer.delete(key.into());
+        Ok(())
     }
 
     /// Locks the given keys.
@@ -167,10 +169,11 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn lock_keys(&self, keys: impl IntoIterator<Item = impl Into<Key>>) {
+    pub async fn lock_keys(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
         for key in keys {
             self.buffer.lock(key.into());
         }
+        Ok(())
     }
 
     /// Commits the actions of the transaction.
