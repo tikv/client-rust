@@ -105,7 +105,7 @@ impl Buffer {
             .lock()
             .unwrap()
             .iter()
-            .flat_map(|(key, mutation)| mutation.to_proto_with_key(key))
+            .filter_map(|(key, mutation)| mutation.to_proto_with_key(key))
             .collect()
     }
 
