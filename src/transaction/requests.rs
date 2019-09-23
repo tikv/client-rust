@@ -464,7 +464,7 @@ pub fn new_batch_rollback_request(
     req
 }
 
-dummy_impl_has_locks!(CommitResponse);
-dummy_impl_has_locks!(CleanupResponse);
-dummy_impl_has_locks!(BatchRollbackResponse);
-dummy_impl_has_locks!(ResolveLockResponse);
+impl HasLocks for kvrpcpb::CommitResponse {}
+impl HasLocks for kvrpcpb::CleanupResponse {}
+impl HasLocks for kvrpcpb::BatchRollbackResponse {}
+impl HasLocks for kvrpcpb::ResolveLockResponse {}

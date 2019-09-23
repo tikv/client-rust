@@ -5,6 +5,7 @@ use crate::{
     kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
     request::{store_stream_for_key, store_stream_for_keys, store_stream_for_range, KvRequest},
+    transaction::HasLocks,
     BoundRange, ColumnFamily, Error, Key, KvPair, Result, Value,
 };
 
@@ -482,15 +483,15 @@ impl_raw_rpc_request!(RawScanRequest);
 impl_raw_rpc_request!(RawBatchScanRequest);
 impl_raw_rpc_request!(RawDeleteRangeRequest);
 
-dummy_impl_has_locks!(RawGetResponse);
-dummy_impl_has_locks!(RawBatchGetResponse);
-dummy_impl_has_locks!(RawPutResponse);
-dummy_impl_has_locks!(RawBatchPutResponse);
-dummy_impl_has_locks!(RawDeleteResponse);
-dummy_impl_has_locks!(RawBatchDeleteResponse);
-dummy_impl_has_locks!(RawScanResponse);
-dummy_impl_has_locks!(RawBatchScanResponse);
-dummy_impl_has_locks!(RawDeleteRangeResponse);
+impl HasLocks for kvrpcpb::RawGetResponse {}
+impl HasLocks for kvrpcpb::RawBatchGetResponse {}
+impl HasLocks for kvrpcpb::RawPutResponse {}
+impl HasLocks for kvrpcpb::RawBatchPutResponse {}
+impl HasLocks for kvrpcpb::RawDeleteResponse {}
+impl HasLocks for kvrpcpb::RawBatchDeleteResponse {}
+impl HasLocks for kvrpcpb::RawScanResponse {}
+impl HasLocks for kvrpcpb::RawBatchScanResponse {}
+impl HasLocks for kvrpcpb::RawDeleteRangeResponse {}
 
 #[cfg(test)]
 mod test {

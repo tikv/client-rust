@@ -41,6 +41,7 @@ fn crud() -> Fallible<()> {
         assert_eq!(
             txn.batch_get(vec!["foo".to_owned(), "bar".to_owned()])
                 .await?
+                .filter(|(_, v)| v.is_some())
                 .count(),
             0
         );
