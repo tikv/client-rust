@@ -33,16 +33,27 @@ use std::sync::Arc;
 /// let txn = client.begin().await.unwrap();
 /// # });
 /// ```
-#[derive(new)]
 pub struct Transaction {
     timestamp: Timestamp,
-    #[new(default)]
     buffer: Buffer,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
 }
 
 impl Transaction {
+    pub(crate) fn new(
+        timestamp: Timestamp,
+        bg_worker: ThreadPool,
+        rpc: Arc<PdRpcClient>,
+    ) -> Transaction {
+        Transaction {
+            timestamp,
+            buffer: Default::default(),
+            bg_worker,
+            rpc,
+        }
+    }
+
     /// Gets the value associated with the given key.
     ///
     /// ```rust,no_run
@@ -139,7 +150,7 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub fn delete(&self, key: impl Into<Key>) {
+    pub async fn delete(&self, key: impl Into<Key>) {
         self.buffer.delete(key.into());
     }
 
@@ -156,7 +167,7 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub fn lock_keys(&self, keys: impl IntoIterator<Item = impl Into<Key>>) {
+    pub async fn lock_keys(&self, keys: impl IntoIterator<Item = impl Into<Key>>) {
         for key in keys {
             self.buffer.lock(key.into());
         }
