@@ -68,8 +68,8 @@ fn crud() -> Fallible<()> {
         );
         txn.commit().await?;
 
-        // Read again from TiKV
-        let txn = client.begin().await?;
+        // Read from TiKV then update and delete
+        let mut txn = client.begin().await?;
         assert_eq!(
             txn.get("foo".to_owned()).await?,
             Some("bar".to_owned().into())
@@ -87,6 +87,22 @@ fn crud() -> Fallible<()> {
             batch_get_res.get(&Key::from("bar".to_owned())),
             Some(Value::from("foo".to_owned())).as_ref()
         );
+        txn.set("foo".to_owned(), "foo".to_owned()).await?;
+        txn.delete("bar".to_owned()).await?;
+        txn.commit().await?;
+
+        // Read again from TiKV
+        let txn = client.begin().await?;
+        let batch_get_res: HashMap<Key, Value> = txn
+            .batch_get(vec!["foo".to_owned(), "bar".to_owned()])
+            .await?
+            .filter_map(|(k, v)| v.map(|v| (k, v)))
+            .collect();
+        assert_eq!(
+            batch_get_res.get(&Key::from("foo".to_owned())),
+            Some(Value::from("foo".to_owned())).as_ref()
+        );
+        assert_eq!(batch_get_res.get(&Key::from("bar".to_owned())), None);
         Fallible::Ok(())
     })
 }
