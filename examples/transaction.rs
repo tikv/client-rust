@@ -11,7 +11,7 @@ async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>
     let mut txn = client.begin().await.expect("Could not begin a transaction");
     for pair in pairs {
         let (key, value) = pair.into().into();
-        txn.set(key, value);
+        txn.set(key, value).await.expect("Could not set key value");
     }
     txn.commit().await.expect("Could not commit transaction");
 }
@@ -43,7 +43,7 @@ async fn scan(client: &Client, range: impl RangeBounds<Key>, mut limit: usize) {
 async fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {
     let mut txn = client.begin().await.expect("Could not begin a transaction");
     for key in keys {
-        txn.delete(key);
+        txn.delete(key).await.expect("Could not delete the key");
     }
     txn.commit().await.expect("Could not commit transaction");
 }
@@ -62,7 +62,7 @@ async fn main() {
         Config::new(args.pd)
     };
 
-    let txn = Client::connect(config)
+    let txn = Client::new(config)
         .await
         .expect("Could not connect to tikv");
 

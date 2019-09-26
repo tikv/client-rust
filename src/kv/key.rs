@@ -51,6 +51,7 @@ use std::{fmt, u8};
 /// can be passed directly to those functions.
 #[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[cfg_attr(test, derive(Arbitrary))]
+#[repr(transparent)]
 pub struct Key(
     #[cfg_attr(
         test,
@@ -125,6 +126,12 @@ impl<'a> Into<&'a [u8]> for &'a Key {
 impl AsRef<Key> for Key {
     fn as_ref(&self) -> &Key {
         self
+    }
+}
+
+impl AsRef<Key> for Vec<u8> {
+    fn as_ref(&self) -> &Key {
+        unsafe { &*(self as *const Vec<u8> as *const Key) }
     }
 }
 

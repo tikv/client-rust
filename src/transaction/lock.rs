@@ -111,17 +111,9 @@ async fn resolve_lock_with_retry(
 }
 
 pub trait HasLocks {
-    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo>;
-}
-
-macro_rules! dummy_impl_has_locks {
-    ($t: tt) => {
-        impl crate::transaction::HasLocks for kvrpcpb::$t {
-            fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
-                Vec::new()
-            }
-        }
-    };
+    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+        Vec::new()
+    }
 }
 
 #[cfg(test)]

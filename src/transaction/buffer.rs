@@ -99,6 +99,16 @@ impl Buffer {
         self.mutations.lock().unwrap().insert(key, Mutation::Del);
     }
 
+    /// Converts the buffered mutations to the proto buffer version
+    pub fn to_proto_mutations(&self) -> Vec<kvrpcpb::Mutation> {
+        self.mutations
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(key, mutation)| mutation.to_proto_with_key(key))
+            .collect()
+    }
+
     fn get_from_mutations(&self, key: &Key) -> MutationValue {
         self.mutations
             .lock()
@@ -123,21 +133,18 @@ enum Mutation {
 }
 
 impl Mutation {
-    #[allow(dead_code)]
-    fn into_proto_with_key(self, key: Key) -> Option<kvrpcpb::Mutation> {
-        let mut pb = kvrpcpb::Mutation {
-            key: key.into(),
-            ..Default::default()
-        };
+    fn to_proto_with_key(&self, key: &Key) -> Option<kvrpcpb::Mutation> {
+        let mut pb = kvrpcpb::Mutation::default();
         match self {
             Mutation::Cached(_) => return None,
             Mutation::Put(v) => {
                 pb.set_op(kvrpcpb::Op::Put);
-                pb.set_value(v.into());
+                pb.set_value(v.clone().into());
             }
             Mutation::Del => pb.set_op(kvrpcpb::Op::Del),
             Mutation::Lock => pb.set_op(kvrpcpb::Op::Lock),
         };
+        pb.set_key(key.clone().into());
         Some(pb)
     }
 

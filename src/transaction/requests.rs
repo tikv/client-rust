@@ -294,8 +294,177 @@ pub fn new_cleanup_request(key: impl Into<Key>, start_version: u64) -> kvrpcpb::
     req
 }
 
-dummy_impl_has_locks!(PrewriteResponse);
-dummy_impl_has_locks!(CommitResponse);
-dummy_impl_has_locks!(CleanupResponse);
-dummy_impl_has_locks!(BatchRollbackResponse);
-dummy_impl_has_locks!(ResolveLockResponse);
+impl AsRef<Key> for kvrpcpb::Mutation {
+    fn as_ref(&self) -> &Key {
+        self.key.as_ref()
+    }
+}
+
+impl KvRequest for kvrpcpb::PrewriteRequest {
+    type Result = ();
+    type RpcResponse = kvrpcpb::PrewriteResponse;
+    type KeyData = Vec<kvrpcpb::Mutation>;
+    const REQUEST_NAME: &'static str = "kv_prewrite";
+    const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_prewrite_async_opt;
+
+    fn make_rpc_request<KvC: KvClient>(
+        &self,
+        mutations: Self::KeyData,
+        store: &Store<KvC>,
+    ) -> Self {
+        let mut req = store.request::<Self>();
+        req.set_mutations(mutations);
+        req.set_primary_lock(self.primary_lock.clone());
+        req.set_start_version(self.start_version);
+        req.set_lock_ttl(self.lock_ttl);
+        req.set_skip_constraint_check(self.skip_constraint_check);
+        req.set_txn_size(self.txn_size);
+
+        req
+    }
+
+    fn store_stream<PdC: PdClient>(
+        &mut self,
+        pd_client: Arc<PdC>,
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        let mutations = mem::replace(&mut self.mutations, Vec::default());
+        store_stream_for_keys(mutations, pd_client)
+    }
+
+    fn map_result(_: Self::RpcResponse) -> Self::Result {}
+
+    fn reduce(
+        results: BoxStream<'static, Result<Self::Result>>,
+    ) -> BoxFuture<'static, Result<Self::Result>> {
+        results
+            .into_future()
+            .map(|(f, _)| f.expect("no results should be impossible"))
+            .boxed()
+    }
+}
+
+impl HasLocks for kvrpcpb::PrewriteResponse {
+    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+        self.errors
+            .iter_mut()
+            .filter_map(|error| error.locked.take())
+            .collect()
+    }
+}
+
+pub fn new_prewrite_request(
+    mutations: Vec<kvrpcpb::Mutation>,
+    primary_lock: Key,
+    start_version: u64,
+    lock_ttl: u64,
+) -> kvrpcpb::PrewriteRequest {
+    let mut req = kvrpcpb::PrewriteRequest::default();
+    req.set_mutations(mutations);
+    req.set_primary_lock(primary_lock.into());
+    req.set_start_version(start_version);
+    req.set_lock_ttl(lock_ttl);
+    // TODO: Lite resolve lock is currently disabled
+    req.set_txn_size(std::u64::MAX);
+
+    req
+}
+
+impl KvRequest for kvrpcpb::CommitRequest {
+    type Result = ();
+    type RpcResponse = kvrpcpb::CommitResponse;
+    type KeyData = Vec<Vec<u8>>;
+    const REQUEST_NAME: &'static str = "kv_commit";
+    const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_commit_async_opt;
+
+    fn make_rpc_request<KvC: KvClient>(&self, keys: Self::KeyData, store: &Store<KvC>) -> Self {
+        let mut req = store.request::<Self>();
+        req.set_keys(keys);
+        req.set_start_version(self.start_version);
+        req.set_commit_version(self.commit_version);
+
+        req
+    }
+
+    fn store_stream<PdC: PdClient>(
+        &mut self,
+        pd_client: Arc<PdC>,
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        let keys = mem::replace(&mut self.keys, Vec::default());
+        store_stream_for_keys(keys, pd_client)
+    }
+
+    fn map_result(_: Self::RpcResponse) -> Self::Result {}
+
+    fn reduce(
+        results: BoxStream<'static, Result<Self::Result>>,
+    ) -> BoxFuture<'static, Result<Self::Result>> {
+        results
+            .into_future()
+            .map(|(f, _)| f.expect("no results should be impossible"))
+            .boxed()
+    }
+}
+
+pub fn new_commit_request(
+    keys: Vec<Key>,
+    start_version: u64,
+    commit_version: u64,
+) -> kvrpcpb::CommitRequest {
+    let mut req = kvrpcpb::CommitRequest::default();
+    req.set_keys(keys.into_iter().map(Into::into).collect());
+    req.set_start_version(start_version);
+    req.set_commit_version(commit_version);
+
+    req
+}
+
+impl KvRequest for kvrpcpb::BatchRollbackRequest {
+    type Result = ();
+    type RpcResponse = kvrpcpb::BatchRollbackResponse;
+    type KeyData = Vec<Vec<u8>>;
+    const REQUEST_NAME: &'static str = "kv_batch_rollback";
+    const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_batch_rollback_async_opt;
+
+    fn make_rpc_request<KvC: KvClient>(&self, keys: Self::KeyData, store: &Store<KvC>) -> Self {
+        let mut req = store.request::<Self>();
+        req.set_keys(keys);
+        req.set_start_version(self.start_version);
+
+        req
+    }
+
+    fn store_stream<PdC: PdClient>(
+        &mut self,
+        pd_client: Arc<PdC>,
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        let keys = mem::replace(&mut self.keys, Vec::default());
+        store_stream_for_keys(keys, pd_client)
+    }
+
+    fn map_result(_: Self::RpcResponse) -> Self::Result {}
+
+    fn reduce(
+        results: BoxStream<'static, Result<Self::Result>>,
+    ) -> BoxFuture<'static, Result<Self::Result>> {
+        results
+            .into_future()
+            .map(|(f, _)| f.expect("no results should be impossible"))
+            .boxed()
+    }
+}
+
+pub fn new_batch_rollback_request(
+    keys: Vec<Key>,
+    start_version: u64,
+) -> kvrpcpb::BatchRollbackRequest {
+    let mut req = kvrpcpb::BatchRollbackRequest::default();
+    req.set_keys(keys.into_iter().map(Into::into).collect());
+    req.set_start_version(start_version);
+
+    req
+}
+
+impl HasLocks for kvrpcpb::CommitResponse {}
+impl HasLocks for kvrpcpb::CleanupResponse {}
+impl HasLocks for kvrpcpb::BatchRollbackResponse {}
+impl HasLocks for kvrpcpb::ResolveLockResponse {}

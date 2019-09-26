@@ -9,7 +9,7 @@
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 //!
 
-pub use client::{Client, Connect};
+pub use client::Client;
 pub use lock::{resolve_locks, HasLocks};
 pub use snapshot::Snapshot;
 pub use transaction::Transaction;

@@ -54,7 +54,7 @@
 //! Regardless of which API you choose, you'll need to connect your client
 //! ([raw](raw::Client), [transactional](transaction::Client)).
 //!
-//! ```rust
+//! ```rust,no_run
 //! # use tikv_client::*;
 //! # use futures::prelude::*;
 //!
@@ -65,11 +65,8 @@
 //!     "192.168.0.101:2379",
 //! ]).with_security("root.ca", "internal.cert", "internal.key");
 //!
-//! // Get an unresolved connection.
-//! let connect = TransactionClient::connect(config);
-//!
-//! // Resolve the connection into a client.
-//! let client = connect.into_future().await;
+//! // Get a transactional client.
+//! let client = TransactionClient::new(config).await.unwrap();
 //! # });
 //! ```
 //!
@@ -116,6 +113,4 @@ pub use crate::kv::{BoundRange, Key, KvPair, ToOwnedRange, Value};
 #[doc(inline)]
 pub use crate::raw::{Client as RawClient, ColumnFamily};
 #[doc(inline)]
-pub use crate::transaction::{
-    Client as TransactionClient, Connect, Snapshot, Timestamp, Transaction,
-};
+pub use crate::transaction::{Client as TransactionClient, Snapshot, Timestamp, Transaction};

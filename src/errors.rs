@@ -7,7 +7,7 @@ use std::result;
 
 #[derive(Debug)]
 pub struct Error {
-    inner: Context<ErrorKind>,
+    inner: Box<Context<ErrorKind>>,
 }
 
 /// An error originating from the TiKV client or dependencies.
@@ -38,6 +38,9 @@ pub enum ErrorKind {
     /// No region is found for the given id.
     #[fail(display = "Leader of region {} is not found", region_id)]
     LeaderNotFound { region_id: u64 },
+    /// Whether the transaction is committed or not is undetermined
+    #[fail(display = "Whether the transaction is committed or not is undetermined")]
+    UndeterminedError(#[fail(cause)] Error),
     /// Invalid key range to scan. Only left bounded intervals are supported.
     #[fail(display = "Only left bounded intervals are supported")]
     InvalidKeyRange,
@@ -122,19 +125,25 @@ impl Error {
     pub(crate) fn multiple_errors(errors: Vec<Error>) -> Self {
         Error::from(ErrorKind::MultipleErrors(errors))
     }
+
+    pub(crate) fn undetermined_error(error: Error) -> Self {
+        Error::from(ErrorKind::UndeterminedError(error))
+    }
 }
 
 impl From<ErrorKind> for Error {
     fn from(kind: ErrorKind) -> Error {
         Error {
-            inner: Context::new(kind),
+            inner: Box::new(Context::new(kind)),
         }
     }
 }
 
 impl From<Context<ErrorKind>> for Error {
     fn from(inner: Context<ErrorKind>) -> Error {
-        Error { inner }
+        Error {
+            inner: Box::new(inner),
+        }
     }
 }
 
