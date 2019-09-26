@@ -36,8 +36,8 @@ pub struct RetryClient<Cl = Cluster> {
     timeout: Duration,
 }
 
+#[cfg(test)]
 impl<Cl> RetryClient<Cl> {
-    #[cfg(test)]
     pub fn new_with_cluster(
         env: Arc<Environment>,
         security_mgr: Arc<SecurityManager>,
@@ -95,8 +95,7 @@ impl RetryClient<Cluster> {
     }
 
     pub async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
-        // FIXME: retry or reconnect on error
-        self.cluster.read().unwrap().get_timestamp().await
+        retry_request(self, move |cluster| cluster.get_timestamp()).await
     }
 }
 
