@@ -49,7 +49,14 @@ impl RegionCache {
             }
         }
         for id in to_be_removed {
-            let start_key = self.id_to_start_key.remove(&id).expect("id must exist");
+            let start_key = match self.id_to_start_key.remove(&id) {
+                Some(id) => id,
+                None => {
+                    // Cache must be corrupt, give up and start again.
+                    self.clear();
+                    break;
+                }
+            };
             self.regions.remove(&start_key);
         }
         self.id_to_start_key.insert(region.id(), region.start_key());
@@ -68,6 +75,11 @@ impl RegionCache {
         if let Some(start_key) = self.id_to_start_key.remove(&id) {
             self.regions.remove(&start_key);
         }
+    }
+
+    fn clear(&mut self) {
+        self.regions.clear();
+        self.id_to_start_key.clear();
     }
 }
 
