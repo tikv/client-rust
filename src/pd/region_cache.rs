@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+// Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::{Region, RegionId};
 use crate::Key;
@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 
 #[derive(new)]
 pub struct RegionCache {
-    /// Maps the start_key to the region
+    /// Maps the start_key to the end key and region.
     #[new(default)]
     regions: BTreeMap<Key, Region>,
     #[new(default)]
@@ -78,9 +78,9 @@ mod tests {
     #[test]
     fn test_add_disjoint_regions() {
         let mut cache = RegionCache::new();
-        let region1 = region(vec![], vec![10]);
-        let region2 = region(vec![10], vec![20]);
-        let region3 = region(vec![30], vec![]);
+        let region1 = region(1, vec![], vec![10]);
+        let region2 = region(2, vec![10], vec![20]);
+        let region3 = region(3, vec![30], vec![]);
         cache.add_region(region1.clone());
         cache.add_region(region2.clone());
         cache.add_region(region3.clone());
@@ -95,71 +95,78 @@ mod tests {
     #[test]
     fn test_add_joint_regions() {
         let mut cache = RegionCache::new();
-        cache.add_region(region(vec![], vec![10]));
-        cache.add_region(region(vec![10], vec![20]));
-        cache.add_region(region(vec![30], vec![40]));
-        cache.add_region(region(vec![50], vec![60]));
+        cache.add_region(region(1, vec![], vec![10]));
+        cache.add_region(region(2, vec![10], vec![20]));
+        cache.add_region(region(3, vec![30], vec![40]));
+        cache.add_region(region(4, vec![50], vec![60]));
+        cache.add_region(region(5, vec![20], vec![35]));
 
-        cache.add_region(region(vec![20], vec![35]));
         let mut expected_cache = BTreeMap::new();
-        expected_cache.insert(vec![].into(), region(vec![], vec![10]));
-        expected_cache.insert(vec![10].into(), region(vec![10], vec![20]));
-        expected_cache.insert(vec![20].into(), region(vec![20], vec![35]));
-        expected_cache.insert(vec![50].into(), region(vec![50], vec![60]));
+        expected_cache.insert(vec![].into(), region(1, vec![], vec![10]));
+        expected_cache.insert(vec![10].into(), region(2, vec![10], vec![20]));
+        expected_cache.insert(vec![20].into(), region(5, vec![20], vec![35]));
+        expected_cache.insert(vec![50].into(), region(4, vec![50], vec![60]));
+
         assert_eq!(cache.regions, expected_cache);
 
-        cache.add_region(region(vec![15], vec![25]));
+        cache.add_region(region(6, vec![15], vec![25]));
+
         let mut expected_cache = BTreeMap::new();
-        expected_cache.insert(vec![].into(), region(vec![], vec![10]));
-        expected_cache.insert(vec![15].into(), region(vec![15], vec![25]));
-        expected_cache.insert(vec![50].into(), region(vec![50], vec![60]));
+        expected_cache.insert(vec![].into(), region(1, vec![], vec![10]));
+        expected_cache.insert(vec![15].into(), region(6, vec![15], vec![25]));
+        expected_cache.insert(vec![50].into(), region(4, vec![50], vec![60]));
         assert_eq!(cache.regions, expected_cache);
 
-        cache.add_region(region(vec![20], vec![]));
+        cache.add_region(region(7, vec![20], vec![]));
+
         let mut expected_cache = BTreeMap::new();
-        expected_cache.insert(vec![].into(), region(vec![], vec![10]));
-        expected_cache.insert(vec![20].into(), region(vec![20], vec![]));
+        expected_cache.insert(vec![].into(), region(1, vec![], vec![10]));
+        expected_cache.insert(vec![20].into(), region(7, vec![20], vec![]));
+
         assert_eq!(cache.regions, expected_cache);
 
-        cache.add_region(region(vec![], vec![15]));
+        cache.add_region(region(8, vec![], vec![15]));
+
         let mut expected_cache = BTreeMap::new();
-        expected_cache.insert(vec![].into(), region(vec![], vec![15]));
-        expected_cache.insert(vec![20].into(), region(vec![20], vec![]));
+        expected_cache.insert(vec![].into(), region(8, vec![], vec![15]));
+        expected_cache.insert(vec![20].into(), region(7, vec![20], vec![]));
+
         assert_eq!(cache.regions, expected_cache);
     }
 
     #[test]
     fn test_find_region_by_key() {
         let mut cache = RegionCache::new();
-        cache.add_region(region(vec![], vec![10]));
-        cache.add_region(region(vec![10], vec![20]));
-        cache.add_region(region(vec![30], vec![40]));
-        cache.add_region(region(vec![50], vec![]));
+        cache.add_region(region(1, vec![], vec![10]));
+        cache.add_region(region(2, vec![10], vec![20]));
+        cache.add_region(region(3, vec![30], vec![40]));
+        cache.add_region(region(4, vec![50], vec![]));
 
         assert_eq!(
             cache.find_region_by_key(&vec![].into()),
-            Some(region(vec![], vec![10]))
+            Some(region(1, vec![], vec![10]))
         );
         assert_eq!(
             cache.find_region_by_key(&vec![5].into()),
-            Some(region(vec![], vec![10]))
+            Some(region(1, vec![], vec![10]))
         );
         assert_eq!(
             cache.find_region_by_key(&vec![10].into()),
-            Some(region(vec![10], vec![20]))
+            Some(region(2, vec![10], vec![20]))
         );
         assert_eq!(cache.find_region_by_key(&vec![20].into()), None);
         assert_eq!(cache.find_region_by_key(&vec![25].into()), None);
         assert_eq!(
             cache.find_region_by_key(&vec![60].into()),
-            Some(region(vec![50], vec![]))
+            Some(region(4, vec![50], vec![]))
         );
     }
 
-    fn region(start_key: Vec<u8>, end_key: Vec<u8>) -> Region {
+    fn region(id: u64, start_key: Vec<u8>, end_key: Vec<u8>) -> Region {
         let mut region = Region::default();
         region.region.set_start_key(start_key);
         region.region.set_end_key(end_key);
+        region.region.set_id(id);
         // We don't care about other fields here
 
         region
