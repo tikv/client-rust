@@ -16,6 +16,7 @@ use kvproto::metapb;
 use crate::{
     pd::{
         cluster::{Cluster, Connection},
+        region_cache::RegionCache,
         Region, RegionId, StoreId,
     },
     security::SecurityManager,
@@ -33,6 +34,7 @@ const LEADER_CHANGE_RETRY: usize = 10;
 pub struct RetryClient<Cl = Cluster> {
     cluster: RwLock<Cl>,
     connection: Connection,
+    cache: RegionCache,
     timeout: Duration,
 }
 
@@ -49,6 +51,7 @@ impl<Cl> RetryClient<Cl> {
             cluster: RwLock::new(cluster),
             connection,
             timeout,
+            cache: RegionCache::new(),
         }
     }
 }
@@ -66,6 +69,7 @@ impl RetryClient<Cluster> {
             cluster,
             connection,
             timeout,
+            cache: RegionCache::new(),
         })
     }
 

@@ -40,6 +40,22 @@ pub struct Cluster {
     tso: TimestampOracle,
 }
 
+macro_rules! request {
+    ($cluster: expr, $req_ty: ident $(. $setter: ident ( $arg: expr ))?, $req_name: ident, $timeout: expr) => {{
+        let option = CallOption::default().timeout($timeout);
+
+        #[allow(unused_mut)]
+        let mut req = pd_request!($cluster.id, pdpb::$req_ty);
+        $(req.$setter($arg);)?
+
+        $cluster
+            .client
+            .$req_name(&req, option)
+            .map(Compat01As03::new)
+            .unwrap()
+    }};
+}
+
 // These methods make a single attempt to make a request.
 impl Cluster {
     pub fn get_region(
@@ -48,29 +64,23 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<Region>> {
         let context = pd_stats("get_region");
-        let option = CallOption::default().timeout(timeout);
+        let fut = request!(
+            self,
+            GetRegionRequest.set_region_key(key.clone()),
+            get_region_async_opt,
+            timeout
+        );
 
-        let mut req = pd_request!(self.id, pdpb::GetRegionRequest);
-        req.set_region_key(key.clone());
+        async move {
+            let resp = context.done(fut.await.map_err(|e| e.into()))?;
 
-        self.client
-            .get_region_async_opt(&req, option)
-            .map(Compat01As03::new)
-            .unwrap()
-            .map(move |r| context.done(r.map_err(|e| e.into())))
-            .and_then(move |resp| {
-                if resp.get_header().has_error() {
-                    return future::ready(Err(internal_err!(resp
-                        .get_header()
-                        .get_error()
-                        .get_message())));
-                }
-                let region = resp
-                    .region
-                    .ok_or_else(|| Error::region_for_key_not_found(key));
-                let leader = resp.leader;
-                future::ready(region.map(move |r| Region::new(r, leader)))
-            })
+            check_header_error(resp.get_header())?;
+
+            let region = resp
+                .region
+                .ok_or_else(|| Error::region_for_key_not_found(key))?;
+            Ok(Region::new(region, resp.leader))
+        }
     }
 
     pub fn get_region_by_id(
@@ -79,27 +89,21 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<Region>> {
         let context = pd_stats("get_region_by_id");
-        let option = CallOption::default().timeout(timeout);
+        let fut = request!(
+            self,
+            GetRegionByIdRequest.set_region_id(id),
+            get_region_by_id_async_opt,
+            timeout
+        );
 
-        let mut req = pd_request!(self.id, pdpb::GetRegionByIdRequest);
-        req.set_region_id(id);
+        async move {
+            let resp = context.done(fut.await.map_err(|e| e.into()))?;
 
-        self.client
-            .get_region_by_id_async_opt(&req, option)
-            .map(Compat01As03::new)
-            .unwrap()
-            .map(move |r| context.done(r.map_err(|e| e.into())))
-            .and_then(move |resp| {
-                if resp.get_header().has_error() {
-                    return future::ready(Err(internal_err!(resp
-                        .get_header()
-                        .get_error()
-                        .get_message())));
-                }
-                let region = resp.region.ok_or_else(|| Error::region_not_found(id));
-                let leader = resp.leader;
-                future::ready(region.map(move |r| Region::new(r, leader)))
-            })
+            check_header_error(resp.get_header())?;
+
+            let region = resp.region.ok_or_else(|| Error::region_not_found(id))?;
+            Ok(Region::new(region, resp.leader))
+        }
     }
 
     pub fn get_store(
@@ -108,25 +112,20 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<metapb::Store>> {
         let context = pd_stats("get_store");
-        let option = CallOption::default().timeout(timeout);
+        let fut = request!(
+            self,
+            GetStoreRequest.set_store_id(id),
+            get_store_async_opt,
+            timeout
+        );
 
-        let mut req = pd_request!(self.id, pdpb::GetStoreRequest);
-        req.set_store_id(id);
+        async move {
+            let mut resp = context.done(fut.await.map_err(|e| e.into()))?;
 
-        self.client
-            .get_store_async_opt(&req, option)
-            .map(Compat01As03::new)
-            .unwrap()
-            .map(move |r| context.done(r.map_err(|e| e.into())))
-            .and_then(|mut resp| {
-                if resp.get_header().has_error() {
-                    return future::ready(Err(internal_err!(resp
-                        .get_header()
-                        .get_error()
-                        .get_message())));
-                }
-                future::ready(Ok(resp.take_store()))
-            })
+            check_header_error(resp.get_header())?;
+
+            Ok(resp.take_store())
+        }
     }
 
     pub fn get_all_stores(
@@ -134,29 +133,27 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<Vec<metapb::Store>>> {
         let context = pd_stats("get_all_stores");
-        let option = CallOption::default().timeout(timeout);
+        let fut = request!(self, GetAllStoresRequest, get_all_stores_async_opt, timeout);
 
-        let req = pd_request!(self.id, pdpb::GetAllStoresRequest);
+        async move {
+            let mut resp = context.done(fut.await.map_err(|e| e.into()))?;
 
-        self.client
-            .get_all_stores_async_opt(&req, option)
-            .map(Compat01As03::new)
-            .unwrap()
-            .map(move |r| context.done(r.map_err(|e| e.into())))
-            .and_then(|mut resp| {
-                if resp.get_header().has_error() {
-                    return future::ready(Err(internal_err!(resp
-                        .get_header()
-                        .get_error()
-                        .get_message())));
-                }
-                future::ready(Ok(resp.take_stores().into_iter().map(Into::into).collect()))
-            })
+            check_header_error(resp.get_header())?;
+
+            Ok(resp.take_stores().into_iter().map(Into::into).collect())
+        }
     }
 
     pub fn get_timestamp(&self) -> impl Future<Output = Result<Timestamp>> {
         self.tso.clone().get_timestamp()
     }
+}
+
+fn check_header_error(header: &pdpb::ResponseHeader) -> Result<()> {
+    if header.has_error() {
+        return Err(internal_err!(header.get_error().get_message()));
+    }
+    Ok(())
 }
 
 /// An object for connecting and reconnecting to a PD cluster.
