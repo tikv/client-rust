@@ -32,9 +32,10 @@ impl KvRequest for kvrpcpb::GetRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let key = mem::replace(&mut self.key, Vec::default()).into();
-        store_stream_for_key(key, pd_client)
+        store_stream_for_key(key, pd_client, is_retry)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
@@ -91,9 +92,10 @@ impl KvRequest for kvrpcpb::BatchGetRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let keys = mem::replace(&mut self.keys, Vec::default());
-        store_stream_for_keys(keys, pd_client)
+        store_stream_for_keys(keys, pd_client, is_retry)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
@@ -151,6 +153,7 @@ impl KvRequest for kvrpcpb::ScanRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         _pd_client: Arc<PdC>,
+        _is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         future::err(Error::unimplemented()).into_stream().boxed()
     }
@@ -211,6 +214,7 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let context = self
             .context
@@ -218,7 +222,7 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
             .expect("ResolveLockRequest context must be given ");
         let keys = mem::replace(&mut self.keys, Vec::default());
         pd_client
-            .store_for_id(context.region_id)
+            .store_for_id(context.region_id, is_retry)
             .map_ok(move |store| ((context, keys), store))
             .into_stream()
             .boxed()
@@ -267,9 +271,10 @@ impl KvRequest for kvrpcpb::CleanupRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let key = mem::replace(&mut self.key, Default::default()).into();
-        store_stream_for_key(key, pd_client)
+        store_stream_for_key(key, pd_client, is_retry)
     }
 
     fn map_result(resp: Self::RpcResponse) -> Self::Result {
@@ -326,9 +331,10 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let mutations = mem::replace(&mut self.mutations, Vec::default());
-        store_stream_for_keys(mutations, pd_client)
+        store_stream_for_keys(mutations, pd_client, is_retry)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -388,9 +394,10 @@ impl KvRequest for kvrpcpb::CommitRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let keys = mem::replace(&mut self.keys, Vec::default());
-        store_stream_for_keys(keys, pd_client)
+        store_stream_for_keys(keys, pd_client, is_retry)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -436,9 +443,10 @@ impl KvRequest for kvrpcpb::BatchRollbackRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let keys = mem::replace(&mut self.keys, Vec::default());
-        store_stream_for_keys(keys, pd_client)
+        store_stream_for_keys(keys, pd_client, is_retry)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}

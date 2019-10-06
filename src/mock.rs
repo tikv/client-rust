@@ -111,7 +111,7 @@ impl PdClient for MockPdClient {
         ))))
     }
 
-    fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>> {
+    fn region_for_key(&self, key: &Key, _skip_cache: bool) -> BoxFuture<'static, Result<Region>> {
         let bytes: &[_] = key.into();
         let region = if bytes.is_empty() || bytes[0] < 10 {
             Self::region1()
@@ -122,7 +122,7 @@ impl PdClient for MockPdClient {
         Box::pin(ready(Ok(region)))
     }
 
-    fn region_for_id(&self, id: RegionId) -> BoxFuture<'static, Result<Region>> {
+    fn region_for_id(&self, id: RegionId, _skip_cache: bool) -> BoxFuture<'static, Result<Region>> {
         let result = match id {
             1 => Ok(Self::region1()),
             2 => Ok(Self::region2()),

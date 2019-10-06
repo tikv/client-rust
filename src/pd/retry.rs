@@ -21,7 +21,7 @@ use crate::{
     },
     security::SecurityManager,
     transaction::Timestamp,
-    Result,
+    Key, Result,
 };
 
 // FIXME: these numbers and how they are used are all just cargo-culted in, there
@@ -34,7 +34,7 @@ const LEADER_CHANGE_RETRY: usize = 10;
 pub struct RetryClient<Cl = Cluster> {
     cluster: RwLock<Cl>,
     connection: Connection,
-    cache: RegionCache,
+    cache: RwLock<RegionCache>,
     timeout: Duration,
 }
 
@@ -51,7 +51,7 @@ impl<Cl> RetryClient<Cl> {
             cluster: RwLock::new(cluster),
             connection,
             timeout,
-            cache: RegionCache::new(),
+            cache: RwLock::new(RegionCache::new()),
         }
     }
 }
@@ -69,22 +69,47 @@ impl RetryClient<Cluster> {
             cluster,
             connection,
             timeout,
-            cache: RegionCache::new(),
+            cache: RwLock::new(RegionCache::new()),
         })
     }
 
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
-    pub async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<Region> {
+    pub async fn get_region(self: Arc<Self>, key: Key, skip_cache: bool) -> Result<Region> {
+        if skip_cache {
+            self.cache.write().unwrap().remove_region_by_start_key(&key);
+        } else if let Some(cached) = self.cache.read().unwrap().find_region_by_key(&key) {
+            return Ok(cached);
+        }
+
         let timeout = self.timeout;
-        retry_request(self, move |cluster| {
-            cluster.get_region(key.clone(), timeout)
+        let result = retry_request(self.clone(), move |cluster| {
+            cluster.get_region(key.clone().into(), timeout)
         })
-        .await
+        .await?;
+
+        self.cache.write().unwrap().add_region(result.clone());
+        Ok(result)
     }
 
-    pub async fn get_region_by_id(self: Arc<Self>, id: RegionId) -> Result<Region> {
+    pub async fn get_region_by_id(
+        self: Arc<Self>,
+        id: RegionId,
+        skip_cache: bool,
+    ) -> Result<Region> {
+        if skip_cache {
+            self.cache.write().unwrap().remove_region_by_id(id);
+        } else if let Some(cached) = self.cache.read().unwrap().find_region_by_id(id) {
+            return Ok(cached);
+        }
+
         let timeout = self.timeout;
-        retry_request(self, move |cluster| cluster.get_region_by_id(id, timeout)).await
+        let result = retry_request(self.clone(), move |cluster| {
+            cluster.get_region_by_id(id, timeout)
+        })
+        .await?;
+
+        self.cache.write().unwrap().add_region(result.clone());
+        Ok(result)
     }
 
     pub async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store> {
@@ -115,6 +140,7 @@ impl fmt::Debug for RetryClient {
 // A node-like thing that can be connected to.
 trait Reconnect {
     type Cl;
+
     fn reconnect(&self, interval: u64) -> Result<()>;
     fn with_cluster<T, F: Fn(&Self::Cl) -> T>(&self, f: F) -> T;
 }

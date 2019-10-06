@@ -30,7 +30,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
 
     fn execute(self, pd_client: Arc<impl PdClient>) -> BoxFuture<'static, Result<Self::Result>> {
         Self::reduce(
-            self.response_stream(pd_client)
+            self.response_stream(pd_client, false)
                 .and_then(|mut response| match response.error() {
                     Some(e) => future::err(e),
                     None => future::ok(response),
@@ -43,8 +43,9 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
     fn response_stream(
         mut self,
         pd_client: Arc<impl PdClient>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
-        let stores = self.store_stream(pd_client.clone());
+        let stores = self.store_stream(pd_client.clone(), is_retry);
         stores
             .and_then(move |(key_data, store)| {
                 let request = self.make_rpc_request(key_data, &store);
@@ -66,7 +67,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
                             let delay_ms = if resolved { 0 } else { LOCK_RETRY_DELAY_MS };
                             futures_timer::Delay::new(Duration::from_millis(delay_ms))
                         })
-                        .map_ok(move |_| request.response_stream(pd_client))
+                        .map_ok(move |_| request.response_stream(pd_client, is_retry))
                         .try_flatten_stream()
                         .boxed();
                 }
@@ -83,12 +84,13 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         // Retry on region errors by default
         // TODO: Add backoff and retry limit
-        self.response_stream(pd_client.clone())
+        self.response_stream(pd_client.clone(), true)
     }
 
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>>;
 
     fn make_rpc_request<KvC: KvClient>(&self, key_data: Self::KeyData, store: &Store<KvC>) -> Self;
@@ -103,13 +105,14 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
 pub fn store_stream_for_key<KeyData, PdC>(
     key_data: KeyData,
     pd_client: Arc<PdC>,
+    is_retry: bool,
 ) -> BoxStream<'static, Result<(KeyData, Store<PdC::KvClient>)>>
 where
     KeyData: AsRef<Key> + Send + 'static,
     PdC: PdClient,
 {
     pd_client
-        .store_for_key(key_data.as_ref())
+        .store_for_key(key_data.as_ref(), is_retry)
         .map_ok(move |store| (key_data, store))
         .into_stream()
         .boxed()
@@ -118,6 +121,7 @@ where
 pub fn store_stream_for_keys<KeyData, IntoKey, I, PdC>(
     key_data: I,
     pd_client: Arc<PdC>,
+    is_retry: bool,
 ) -> BoxStream<'static, Result<(Vec<KeyData>, Store<PdC::KvClient>)>>
 where
     KeyData: AsRef<Key> + Send + Sync + 'static,
@@ -128,11 +132,11 @@ where
 {
     pd_client
         .clone()
-        .group_keys_by_region(key_data.into_iter().map(Into::into))
+        .group_keys_by_region(key_data.into_iter().map(Into::into), is_retry)
         .and_then(move |(region_id, key)| {
             pd_client
                 .clone()
-                .store_for_id(region_id)
+                .store_for_id(region_id, is_retry)
                 .map_ok(move |store| (key, store))
         })
         .boxed()
@@ -141,9 +145,10 @@ where
 pub fn store_stream_for_range<PdC: PdClient>(
     range: BoundRange,
     pd_client: Arc<PdC>,
+    is_retry: bool,
 ) -> BoxStream<'static, Result<((Key, Key), Store<PdC::KvClient>)>> {
     pd_client
-        .stores_for_range(range)
+        .stores_for_range(range, is_retry)
         .map_ok(move |store| {
             // FIXME should be bounded by self.range
             let range = store.region.range();

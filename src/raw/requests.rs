@@ -35,9 +35,10 @@ impl KvRequest for kvrpcpb::RawGetRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let key = mem::replace(&mut self.key, Default::default()).into();
-        store_stream_for_key(key, pd_client)
+        store_stream_for_key(key, pd_client, is_retry)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
@@ -88,9 +89,10 @@ impl KvRequest for kvrpcpb::RawBatchGetRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let keys = mem::replace(&mut self.keys, Default::default());
-        store_stream_for_keys(keys, pd_client)
+        store_stream_for_keys(keys, pd_client, is_retry)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
@@ -134,11 +136,12 @@ impl KvRequest for kvrpcpb::RawPutRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let key = mem::replace(&mut self.key, Default::default());
         let value = mem::replace(&mut self.value, Default::default());
         let pair = KvPair::new(key, value);
-        store_stream_for_key(pair, pd_client)
+        store_stream_for_key(pair, pd_client, is_retry)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -184,9 +187,10 @@ impl KvRequest for kvrpcpb::RawBatchPutRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let pairs = mem::replace(&mut self.pairs, Default::default());
-        store_stream_for_keys(pairs, pd_client)
+        store_stream_for_keys(pairs, pd_client, is_retry)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -227,9 +231,10 @@ impl KvRequest for kvrpcpb::RawDeleteRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let key = mem::replace(&mut self.key, Default::default()).into();
-        store_stream_for_key(key, pd_client)
+        store_stream_for_key(key, pd_client, is_retry)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -273,9 +278,10 @@ impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let keys = mem::replace(&mut self.keys, Default::default());
-        store_stream_for_keys(keys, pd_client)
+        store_stream_for_keys(keys, pd_client, is_retry)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -321,11 +327,12 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let start_key = mem::replace(&mut self.start_key, Default::default());
         let end_key = mem::replace(&mut self.end_key, Default::default());
         let range = BoundRange::from((start_key, end_key));
-        store_stream_for_range(range, pd_client)
+        store_stream_for_range(range, pd_client, is_retry)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -378,11 +385,12 @@ impl KvRequest for kvrpcpb::RawScanRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let start_key = mem::replace(&mut self.start_key, Default::default());
         let end_key = mem::replace(&mut self.end_key, Default::default());
         let range = BoundRange::from((start_key, end_key));
-        store_stream_for_range(range, pd_client)
+        store_stream_for_range(range, pd_client, is_retry)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
@@ -433,6 +441,7 @@ impl KvRequest for kvrpcpb::RawBatchScanRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         _pd_client: Arc<PdC>,
+        _is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         future::err(Error::unimplemented()).into_stream().boxed()
     }

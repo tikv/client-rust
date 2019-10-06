@@ -36,7 +36,12 @@ pub async fn resolve_locks(
     let mut clean_regions: HashMap<u64, HashSet<RegionVerId>> = HashMap::new();
     for lock in expired_locks {
         let primary_key: Key = lock.primary_lock.into();
-        let region_ver_id = pd_client.region_for_key(&primary_key).await?.ver_id();
+        let region_ver_id = pd_client
+            // FIXME: this always skips the region cache, we can use the region cache
+            // if we add retry logic (I think).
+            .region_for_key(&primary_key, true)
+            .await?
+            .ver_id();
         // skip if the region is cleaned
         if clean_regions
             .get(&lock.lock_version)
@@ -80,8 +85,10 @@ async fn resolve_lock_with_retry(
 ) -> Result<RegionVerId> {
     // TODO: Add backoff
     let mut error = None;
+    let mut invalidate_cache = false;
+
     for _ in 0..RESOLVE_LOCK_RETRY_LIMIT {
-        let region = pd_client.region_for_key(&key).await?;
+        let region = pd_client.region_for_key(&key, invalidate_cache).await?;
         let context = match region.context() {
             Ok(context) => context,
             Err(e) => {
@@ -101,6 +108,9 @@ async fn resolve_lock_with_retry(
                 ErrorKind::RegionError(_) => {
                     // Retry on region error
                     error = Some(e);
+                    // If there was a region error, then next time around invalidate the
+                    // key in the region cache and try again without caching.
+                    invalidate_cache = true;
                     continue;
                 }
                 _ => return Err(e),
