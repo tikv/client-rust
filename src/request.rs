@@ -83,7 +83,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         // Retry on region errors by default
         // TODO: Add backoff and retry limit
-        self.response_stream(pd_client.clone())
+        self.response_stream(pd_client)
     }
 
     fn store_stream<PdC: PdClient>(
@@ -162,7 +162,6 @@ pub trait DispatchHook: KvRequest {
         None
     }
 }
-
 
 impl<T: KvRequest> DispatchHook for T {
     #[cfg(test)]
