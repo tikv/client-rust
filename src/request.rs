@@ -163,7 +163,16 @@ pub trait DispatchHook: KvRequest {
     }
 }
 
-impl<T: KvRequest> DispatchHook for T {}
+
+impl<T: KvRequest> DispatchHook for T {
+    #[cfg(test)]
+    default fn dispatch_hook(
+        &self,
+        _opt: CallOption,
+    ) -> Option<BoxFuture<'static, Result<Self::RpcResponse>>> {
+        None
+    }
+}
 
 pub trait KvRpcRequest: Default {
     fn set_context(&mut self, context: kvrpcpb::Context);
