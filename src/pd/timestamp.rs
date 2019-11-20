@@ -93,7 +93,7 @@ async fn run_tso(
         request_rx,
         pending_requests: pending_requests.clone(),
         self_waker: sending_future_waker.clone(),
-    };
+    }.map(Ok);
 
     let send_requests = rpc_sender.send_all(&mut request_stream);
 
@@ -125,7 +125,7 @@ struct TsoRequestStream<'a> {
 }
 
 impl<'a> Stream for TsoRequestStream<'a> {
-    type Item = Result<(TsoRequest, WriteFlags)>;
+    type Item = (TsoRequest, WriteFlags);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let pending_requests = self.pending_requests.clone();
@@ -150,7 +150,7 @@ impl<'a> Stream for TsoRequestStream<'a> {
                 count: count as u32,
             };
             let write_flags = WriteFlags::default().buffer_hint(false);
-            Poll::Ready(Some(Ok((req, write_flags))))
+            Poll::Ready(Some((req, write_flags)))
         } else {
             // Set the waker to the context, then the stream can be waked up after the pending queue
             // is no longer full.
