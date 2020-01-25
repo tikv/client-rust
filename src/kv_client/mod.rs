@@ -78,23 +78,27 @@ impl KvClient for KvRpcClient {
     }
 }
 
-fn map_errors_and_trace<Resp, RpcFuture>(
+async fn map_errors_and_trace<Resp, RpcFuture>(
     request_name: &'static str,
     fut: ::grpcio::Result<RpcFuture>,
-) -> impl Future<Output = Result<Resp>>
+) -> Result<Resp>
 where
     Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
     Resp: HasError + Sized + Clone + Send + 'static,
 {
     let context = tikv_stats(request_name);
 
-    // FIXME should handle the error, not unwrap.
-    Compat01As03::new(fut.unwrap())
-        .map(|r| match r {
-            Err(e) => Err(ErrorKind::Grpc(e).into()),
-            Ok(r) => Ok(r),
-        })
-        .map(move |r| context.done(r))
+    let fut = match fut {
+        Err(e) => return context.done(Err(ErrorKind::Grpc(e).into())),
+        Ok(f) => f,
+    };
+
+    let res = match Compat01As03::new(fut).await {
+        Err(e) => Err(ErrorKind::Grpc(e).into()),
+        Ok(r) => Ok(r),
+    };
+
+    context.done(res)
 }
 
 #[derive(new)]

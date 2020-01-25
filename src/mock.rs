@@ -14,7 +14,7 @@ use crate::{
 };
 
 use fail::fail_point;
-use futures::future::{ready, BoxFuture, FutureExt};
+use futures::future::{BoxFuture, FutureExt};
 use grpcio::CallOption;
 use kvproto::{errorpb, kvrpcpb, metapb};
 use std::{sync::Arc, time::Duration};
@@ -102,13 +102,16 @@ impl PdClient for MockPdClient {
         self: Arc<Self>,
         region: Region,
     ) -> BoxFuture<'static, Result<Store<Self::KvClient>>> {
-        Box::pin(ready(Ok(Store::new(
+        let store = Store::new(
             region,
             MockKvClient {
                 addr: String::new(),
             },
             Duration::from_secs(60),
-        ))))
+        );
+
+        let future = async move { Ok(store) };
+        future.boxed()
     }
 
     fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>> {
@@ -119,7 +122,8 @@ impl PdClient for MockPdClient {
             Self::region2()
         };
 
-        Box::pin(ready(Ok(region)))
+        let future = async move { Ok(region) };
+        future.boxed()
     }
 
     fn region_for_id(&self, id: RegionId) -> BoxFuture<'static, Result<Region>> {
@@ -129,7 +133,8 @@ impl PdClient for MockPdClient {
             _ => Err(Error::region_not_found(id)),
         };
 
-        Box::pin(ready(result))
+        let future = async move { result };
+        future.boxed()
     }
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
@@ -145,8 +150,11 @@ impl DispatchHook for kvrpcpb::ResolveLockRequest {
         fail_point!("region-error", |_| {
             let mut resp = kvrpcpb::ResolveLockResponse::default();
             resp.region_error = Some(errorpb::Error::default());
-            Some(ready(Ok(resp)).boxed())
+            let future = async move { Ok(resp) };
+            Some(future.boxed())
         });
-        Some(ready(Ok(kvrpcpb::ResolveLockResponse::default())).boxed())
+
+        let future = async { Ok(kvrpcpb::ResolveLockResponse::default()) };
+        Some(future.boxed())
     }
 }
