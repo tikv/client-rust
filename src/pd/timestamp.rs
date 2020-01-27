@@ -93,7 +93,8 @@ async fn run_tso(
         request_rx,
         pending_requests: pending_requests.clone(),
         self_waker: sending_future_waker.clone(),
-    };
+    }
+    .map(Ok);
 
     let send_requests = rpc_sender.send_all(&mut request_stream);
 

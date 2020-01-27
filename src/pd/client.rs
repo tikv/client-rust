@@ -44,7 +44,7 @@ pub trait PdClient: Send + Sync + 'static {
         key: &Key,
     ) -> BoxFuture<'static, Result<Store<Self::KvClient>>> {
         self.region_for_key(key)
-            .and_then(move |region| self.clone().map_region_to_store(region))
+            .and_then(move |region| self.map_region_to_store(region))
             .boxed()
     }
 
@@ -53,7 +53,7 @@ pub trait PdClient: Send + Sync + 'static {
         id: RegionId,
     ) -> BoxFuture<'static, Result<Store<Self::KvClient>>> {
         self.region_for_id(id)
-            .and_then(move |region| self.clone().map_region_to_store(region).boxed())
+            .and_then(move |region| self.map_region_to_store(region).boxed())
             .boxed()
     }
 
