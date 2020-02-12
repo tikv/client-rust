@@ -86,19 +86,13 @@ where
     Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
     Resp: HasError + Sized + Clone + Send + 'static,
 {
+    let res = match fut {
+        Ok(f) => Compat01As03::new(f).await,
+        Err(e) => Err(e),
+    };
+
     let context = tikv_stats(request_name);
-
-    let fut = match fut {
-        Err(e) => return context.done(Err(ErrorKind::Grpc(e).into())),
-        Ok(f) => f,
-    };
-
-    let res = match Compat01As03::new(fut).await {
-        Err(e) => Err(ErrorKind::Grpc(e).into()),
-        Ok(r) => Ok(r),
-    };
-
-    context.done(res)
+    context.done(res.map_err(|e| ErrorKind::Grpc(e).into()))
 }
 
 #[derive(new)]

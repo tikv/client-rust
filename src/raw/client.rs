@@ -6,8 +6,6 @@ use crate::{
     Result, Value,
 };
 
-use futures::future::Either;
-use futures::prelude::future;
 use std::{sync::Arc, u32};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
@@ -249,19 +247,13 @@ impl Client {
     /// # });
     /// ```
     pub async fn scan(&self, range: impl Into<BoundRange>, limit: u32) -> Result<Vec<KvPair>> {
-        let request = if limit > MAX_RAW_KV_SCAN_LIMIT {
-            Either::Right(future::err(Error::max_scan_limit_exceeded(
-                limit,
-                MAX_RAW_KV_SCAN_LIMIT,
-            )))
-        } else {
-            Either::Left(
-                requests::new_raw_scan_request(range, limit, self.key_only, self.cf.clone())
-                    .execute(self.rpc.clone()),
-            )
-        };
+        if limit > MAX_RAW_KV_SCAN_LIMIT {
+            return Err(Error::max_scan_limit_exceeded(limit, MAX_RAW_KV_SCAN_LIMIT));
+        }
 
-        request.await
+        requests::new_raw_scan_request(range, limit, self.key_only, self.cf.clone())
+            .execute(self.rpc.clone())
+            .await
     }
 
     /// Create a new 'batch scan' request.
@@ -285,23 +277,15 @@ impl Client {
         ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
         each_limit: u32,
     ) -> Result<Vec<KvPair>> {
-        let request = if each_limit > MAX_RAW_KV_SCAN_LIMIT {
-            Either::Right(future::err(Error::max_scan_limit_exceeded(
+        if each_limit > MAX_RAW_KV_SCAN_LIMIT {
+            return Err(Error::max_scan_limit_exceeded(
                 each_limit,
                 MAX_RAW_KV_SCAN_LIMIT,
-            )))
-        } else {
-            Either::Left(
-                requests::new_raw_batch_scan_request(
-                    ranges,
-                    each_limit,
-                    self.key_only,
-                    self.cf.clone(),
-                )
-                .execute(self.rpc.clone()),
-            )
-        };
+            ));
+        }
 
-        request.await
+        requests::new_raw_batch_scan_request(ranges, each_limit, self.key_only, self.cf.clone())
+            .execute(self.rpc.clone())
+            .await
     }
 }
