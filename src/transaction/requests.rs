@@ -1,7 +1,7 @@
 use crate::{
     kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
-    request::{store_stream_for_key, store_stream_for_keys, KvRequest},
+    request::{store_stream_for_key, store_stream_for_keys, KvRequest, RetryState},
     transaction::{HasLocks, Timestamp},
     Error, Key, KvPair, Result, Value,
 };
@@ -204,6 +204,7 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
         self,
         region_error: Error,
         _pd_client: Arc<impl PdClient>,
+        _retry_state: RetryState,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         stream::once(future::err(region_error)).boxed()
     }
