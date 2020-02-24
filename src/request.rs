@@ -22,7 +22,6 @@ const REGION_RETRY_MAX_COUNT: usize = 3;
 #[derive(Clone, Copy)]
 pub struct RetryState {
     region_retry_count: usize,
-    region_retry_delay_ms: u64,
 }
 
 pub trait KvRequest: Sync + Send + 'static + Sized {
@@ -56,7 +55,6 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
             pd_client,
             RetryState {
                 region_retry_count: REGION_RETRY_MAX_COUNT,
-                region_retry_delay_ms: REGION_RETRY_DEFAULT_DELAY_MS,
             },
         )
     }
@@ -109,9 +107,8 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
             return stream::once(future::err(region_error)).boxed();
         }
 
-        let retry_delay_ms = retry_state.region_retry_delay_ms;
         let fut = async move {
-            futures_timer::Delay::new(Duration::from_millis(retry_delay_ms)).await;
+            futures_timer::Delay::new(Duration::from_millis(REGION_RETRY_DEFAULT_DELAY_MS)).await;
             Ok(())
         };
 
@@ -120,7 +117,6 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
                 pd_client,
                 RetryState {
                     region_retry_count: retry_count - 1,
-                    region_retry_delay_ms: retry_state.region_retry_delay_ms,
                 },
             )
         })
@@ -342,7 +338,6 @@ mod test {
         let pd_client = Arc::new(MockPdClient);
         let retry_state = RetryState {
             region_retry_count: 3,
-            region_retry_delay_ms: 1,
         };
         let stream = request.retry_response_stream(pd_client, retry_state);
 
