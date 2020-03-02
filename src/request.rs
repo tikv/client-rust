@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
+    backoff::{Backoff, BackoffState, NoJitterBackoff},
     kv_client::{HasError, HasRegionError, KvClient, RpcFnType, Store},
     pd::PdClient,
     transaction::{resolve_locks, HasLocks},
@@ -16,13 +17,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const LOCK_RETRY_DELAY_MS: u64 = 10;
-const REGION_RETRY_DEFAULT_DELAY_MS: u64 = 500;
-const REGION_RETRY_MAX_COUNT: usize = 3;
-
-#[derive(Clone, Copy)]
-pub struct RetryState {
-    region_retry_count: usize,
-}
+const REGION_RETRY_BASE_DELAY_MS: u64 = 2;
+const REGION_RETRY_MAX_DELAY_MS: u64 = 500;
+const REGION_RETRY_ATTEMPTS: u32 = 10;
 
 pub trait KvRequest: Sync + Send + 'static + Sized {
     type Result;
@@ -51,18 +48,23 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         self,
         pd_client: Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
-        self.retry_response_stream(
-            pd_client,
-            RetryState {
-                region_retry_count: REGION_RETRY_MAX_COUNT,
-            },
-        )
+        let backoff_state = BackoffState::new(
+            REGION_RETRY_BASE_DELAY_MS,
+            REGION_RETRY_MAX_DELAY_MS,
+            REGION_RETRY_ATTEMPTS,
+        );
+
+        let backoff = Arc::new(NoJitterBackoff {
+            state: backoff_state,
+        });
+
+        self.retry_response_stream(pd_client, backoff)
     }
 
     fn retry_response_stream(
         mut self,
         pd_client: Arc<impl PdClient>,
-        retry_state: RetryState,
+        backoff: Arc<impl Backoff>,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         let stores = self.store_stream(pd_client.clone());
         stores
@@ -74,7 +76,11 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
             })
             .map_ok(move |(request, mut response)| {
                 if let Some(region_error) = response.region_error() {
-                    return request.on_region_error(region_error, pd_client.clone(), retry_state);
+                    return request.on_region_error(
+                        region_error,
+                        pd_client.clone(),
+                        backoff.clone(),
+                    );
                 }
                 // Resolve locks
                 let locks = response.take_locks();
@@ -100,28 +106,23 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         self,
         region_error: Error,
         pd_client: Arc<impl PdClient>,
-        retry_state: RetryState,
+        backoff: Arc<impl Backoff>,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
-        let retry_count = retry_state.region_retry_count;
-        if retry_count == 0 {
-            return stream::once(future::err(region_error)).boxed();
-        }
+        let mut backoff = *backoff;
 
-        let fut = async move {
-            futures_timer::Delay::new(Duration::from_millis(REGION_RETRY_DEFAULT_DELAY_MS)).await;
-            Ok(())
-        };
+        backoff.next_delay_ms().map_or(
+            stream::once(future::err(region_error)).boxed(),
+            move |delay_ms| {
+                let fut = async move {
+                    futures_timer::Delay::new(Duration::from_millis(delay_ms)).await;
+                    Ok(())
+                };
 
-        fut.map_ok(move |_| {
-            self.retry_response_stream(
-                pd_client,
-                RetryState {
-                    region_retry_count: retry_count - 1,
-                },
-            )
-        })
-        .try_flatten_stream()
-        .boxed()
+                fut.map_ok(move |_| self.retry_response_stream(pd_client, Arc::new(backoff)))
+                    .try_flatten_stream()
+                    .boxed()
+            },
+        )
     }
 
     fn store_stream<PdC: PdClient>(
@@ -336,10 +337,13 @@ mod test {
         };
 
         let pd_client = Arc::new(MockPdClient);
-        let retry_state = RetryState {
-            region_retry_count: 3,
-        };
-        let stream = request.retry_response_stream(pd_client, retry_state);
+
+        let backoff_state = BackoffState::new(1, 1, 3);
+        let backoff = Arc::new(NoJitterBackoff {
+            state: backoff_state,
+        });
+
+        let stream = request.retry_response_stream(pd_client, backoff);
 
         executor::block_on(async { stream.collect::<Vec<Result<MockRpcResponse>>>().await });
 
