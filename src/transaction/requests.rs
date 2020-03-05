@@ -1,7 +1,7 @@
 use crate::{
     kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
-    request::{store_stream_for_key, store_stream_for_keys, KvRequest},
+    request::{store_stream_for_key, store_stream_for_keys, store_stream_for_range, KvRequest},
     transaction::{HasLocks, Timestamp},
     BoundRange, Error, Key, KvPair, Result, Value,
 };
@@ -128,7 +128,7 @@ impl KvRequest for kvrpcpb::ScanRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::ScanResponse;
     type KeyData = (Key, Key);
-    type Response = BoxFuture<'static, Result<Self::Result>>;
+    type Response = BoxStream<'static, Result<KvPair>>;
     const REQUEST_NAME: &'static str = "kv_scan";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_scan_async_opt;
 
@@ -149,20 +149,42 @@ impl KvRequest for kvrpcpb::ScanRequest {
 
     fn store_stream<PdC: PdClient>(
         &mut self,
-        _pd_client: Arc<PdC>,
+        pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        future::err(Error::unimplemented()).into_stream().boxed()
+        let start_key = mem::take(&mut self.start_key);
+        let end_key = mem::take(&mut self.end_key);
+        let range = BoundRange::from((start_key, end_key));
+        store_stream_for_range(range, pd_client)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
         resp.take_pairs().into_iter().map(Into::into).collect()
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> Self::Response {
-        results.try_concat().boxed()
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response {
+        results
+            .map_ok(|vec| stream::iter(vec.into_iter().map(Ok)))
+            .try_flatten()
+            .boxed()
     }
+}
+
+pub fn new_mvcc_scan_request(
+    range: impl Into<BoundRange>,
+    timestamp: Timestamp,
+) -> kvrpcpb::ScanRequest {
+    let (start_key, end_key) = range.into().into_keys();
+    let mut req = kvrpcpb::ScanRequest::default();
+    req.set_start_key(start_key.into());
+    req.set_end_key(end_key.unwrap_or_default().into());
+    // TODO: determine the params
+    // - limit
+    // - key_only
+    // req.set_limit(limit);
+    // req.set_key_only(key_only);
+    req.set_version(timestamp.into_version());
+
+    req
 }
 
 impl HasLocks for kvrpcpb::ScanResponse {

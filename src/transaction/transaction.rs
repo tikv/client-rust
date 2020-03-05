@@ -4,13 +4,13 @@ use crate::{
     pd::{PdClient, PdRpcClient},
     request::KvRequest,
     transaction::{buffer::Buffer, requests::*, Timestamp},
-    Error, ErrorKind, Key, KvPair, Result, Value,
+    BoundRange, Error, ErrorKind, Key, KvPair, Result, Value,
 };
 
 use derive_new::new;
 use futures::executor::ThreadPool;
 use futures::prelude::*;
-use futures::stream::BoxStream;
+use futures::stream::{BoxStream, Stream};
 use kvproto::kvrpcpb;
 use std::mem;
 use std::ops::RangeBounds;
@@ -109,8 +109,29 @@ impl Transaction {
             .await
     }
 
-    pub fn scan(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
-        unimplemented!()
+    /// Scan queries continuous key-value pairs in range.
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Value, Config, transaction::Client};
+    /// # use futures::prelude::*;
+    /// # use std::collections::HashMap;
+    /// # futures::executor::block_on(async {
+    /// # let client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// let mut txn = client.begin().await.unwrap();
+    /// let key1: Key = b"TiKV".to_vec().into();
+    /// let key2: Key = b"TiDB".to_vec().into();
+    /// let result = txn
+    ///     .scan(key1..key2)
+    ///     .collect::<Vec<_>>()
+    ///     .await;
+    /// // Finish the transaction...
+    /// txn.commit().await.unwrap();
+    /// # });
+    /// ```
+    pub fn scan(&self, range: impl Into<BoundRange>) -> impl Stream<Item = Result<KvPair>> {
+        let timestamp = self.timestamp;
+        let rpc = self.rpc.clone();
+        new_mvcc_scan_request(range, timestamp).execute(rpc)
     }
 
     pub fn scan_reverse(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
