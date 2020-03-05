@@ -4,8 +4,7 @@ mod common;
 
 use crate::common::parse_args;
 use futures::prelude::*;
-use std::ops::RangeBounds;
-use tikv_client::{Config, Key, KvPair, TransactionClient as Client, Value};
+use tikv_client::{BoundRange, Config, Key, KvPair, TransactionClient as Client, Value};
 
 async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
     let mut txn = client.begin().await.expect("Could not begin a transaction");
@@ -23,7 +22,7 @@ async fn get(client: &Client, key: Key) -> Option<Value> {
 
 // Ignore a spurious warning from rustc (https://github.com/rust-lang/rust/issues/60566).
 #[allow(unused_mut)]
-async fn scan(client: &Client, range: impl RangeBounds<Key>, mut limit: usize) {
+async fn scan(client: &Client, range: impl Into<BoundRange>, mut limit: usize) {
     let mut txn = client.begin().await.expect("Could not begin a transaction");
     txn.scan(range)
         .into_stream()
