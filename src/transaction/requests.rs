@@ -3,7 +3,7 @@ use crate::{
     pd::PdClient,
     request::{store_stream_for_key, store_stream_for_keys, KvRequest},
     transaction::{HasLocks, Timestamp},
-    Error, Key, KvPair, Result, Value,
+    BoundRange, Error, Key, KvPair, Result, Value,
 };
 
 use futures::future::BoxFuture;
@@ -18,6 +18,7 @@ impl KvRequest for kvrpcpb::GetRequest {
     type Result = Option<Value>;
     type RpcResponse = kvrpcpb::GetResponse;
     type KeyData = Key;
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "kv_get";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_get_async_opt;
 
@@ -46,9 +47,7 @@ impl KvRequest for kvrpcpb::GetRequest {
         }
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response {
         results
             .into_future()
             .map(|(f, _)| f.expect("no results should be impossible"))
@@ -77,6 +76,7 @@ impl KvRequest for kvrpcpb::BatchGetRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::BatchGetResponse;
     type KeyData = Vec<Key>;
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "kv_batch_get";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_batch_get_async_opt;
 
@@ -100,9 +100,7 @@ impl KvRequest for kvrpcpb::BatchGetRequest {
         resp.take_pairs().into_iter().map(Into::into).collect()
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response {
         results.try_concat().boxed()
     }
 }
@@ -130,6 +128,7 @@ impl KvRequest for kvrpcpb::ScanRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::ScanResponse;
     type KeyData = (Key, Key);
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "kv_scan";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_scan_async_opt;
 
@@ -161,7 +160,7 @@ impl KvRequest for kvrpcpb::ScanRequest {
 
     fn reduce(
         results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    ) -> Self::Response {
         results.try_concat().boxed()
     }
 }
@@ -182,6 +181,7 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::ResolveLockResponse;
     type KeyData = (kvrpcpb::Context, Vec<Vec<u8>>);
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "kv_resolve_lock";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_resolve_lock_async_opt;
 
@@ -226,9 +226,7 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response {
         results.try_collect().boxed()
     }
 }
@@ -253,6 +251,7 @@ impl KvRequest for kvrpcpb::CleanupRequest {
     type Result = u64;
     type RpcResponse = kvrpcpb::CleanupResponse;
     type KeyData = Key;
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "kv_cleanup";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_cleanup_async_opt;
 
@@ -276,9 +275,7 @@ impl KvRequest for kvrpcpb::CleanupRequest {
         resp.commit_version
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response {
         results
             .into_future()
             .map(|(f, _)| f.expect("no results should be impossible"))
@@ -304,6 +301,7 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::PrewriteResponse;
     type KeyData = Vec<kvrpcpb::Mutation>;
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "kv_prewrite";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_prewrite_async_opt;
 
@@ -333,9 +331,7 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response {
         results
             .into_future()
             .map(|(f, _)| f.expect("no results should be impossible"))
@@ -373,6 +369,7 @@ impl KvRequest for kvrpcpb::CommitRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::CommitResponse;
     type KeyData = Vec<Vec<u8>>;
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "kv_commit";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_commit_async_opt;
 
@@ -395,9 +392,7 @@ impl KvRequest for kvrpcpb::CommitRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response {
         results
             .into_future()
             .map(|(f, _)| f.expect("no results should be impossible"))
@@ -422,6 +417,7 @@ impl KvRequest for kvrpcpb::BatchRollbackRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::BatchRollbackResponse;
     type KeyData = Vec<Vec<u8>>;
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "kv_batch_rollback";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_batch_rollback_async_opt;
 
