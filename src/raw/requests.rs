@@ -21,6 +21,7 @@ impl KvRequest for kvrpcpb::RawGetRequest {
     type Result = Option<Value>;
     type RpcResponse = kvrpcpb::RawGetResponse;
     type KeyData = Key;
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "raw_get";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_get_async_opt;
 
@@ -49,9 +50,7 @@ impl KvRequest for kvrpcpb::RawGetRequest {
         }
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response {
         results
             .into_future()
             .map(|(f, _)| f.expect("no results should be impossible"))
@@ -74,6 +73,7 @@ impl KvRequest for kvrpcpb::RawBatchGetRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::RawBatchGetResponse;
     type KeyData = Vec<Key>;
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "raw_batch_get";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_get_async_opt;
 
@@ -97,9 +97,7 @@ impl KvRequest for kvrpcpb::RawBatchGetRequest {
         resp.take_pairs().into_iter().map(Into::into).collect()
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response {
         results.try_concat().boxed()
     }
 }
@@ -119,6 +117,7 @@ impl KvRequest for kvrpcpb::RawPutRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawPutResponse;
     type KeyData = KvPair;
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "raw_put";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_put_async_opt;
 
@@ -143,9 +142,7 @@ impl KvRequest for kvrpcpb::RawPutRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response {
         results
             .into_future()
             .map(|(f, _)| f.expect("no results should be impossible"))
@@ -170,6 +167,7 @@ impl KvRequest for kvrpcpb::RawBatchPutRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawBatchPutResponse;
     type KeyData = Vec<KvPair>;
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "raw_batch_put";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_put_async_opt;
 
@@ -191,9 +189,7 @@ impl KvRequest for kvrpcpb::RawBatchPutRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response {
         results.try_collect().boxed()
     }
 }
@@ -213,6 +209,7 @@ impl KvRequest for kvrpcpb::RawDeleteRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawDeleteResponse;
     type KeyData = Key;
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "raw_delete";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_delete_async_opt;
 
@@ -234,9 +231,7 @@ impl KvRequest for kvrpcpb::RawDeleteRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response {
         results
             .into_future()
             .map(|(f, _)| f.expect("no results should be impossible"))
@@ -259,6 +254,7 @@ impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawBatchDeleteResponse;
     type KeyData = Vec<Key>;
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "raw_batch_delete";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_delete_async_opt;
 
@@ -280,9 +276,7 @@ impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response {
         results.try_collect().boxed()
     }
 }
@@ -302,6 +296,7 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawDeleteRangeResponse;
     type KeyData = (Key, Key);
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "raw_delete_range";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_delete_range_async_opt;
 
@@ -330,9 +325,7 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response {
         results
             .into_future()
             .map(|(f, _)| f.expect("no results should be impossible"))
@@ -357,6 +350,7 @@ impl KvRequest for kvrpcpb::RawScanRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::RawScanResponse;
     type KeyData = (Key, Key);
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "raw_scan";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_scan_async_opt;
 
@@ -389,9 +383,7 @@ impl KvRequest for kvrpcpb::RawScanRequest {
         resp.take_kvs().into_iter().map(Into::into).collect()
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response {
         results.try_concat().boxed()
     }
 }
@@ -417,6 +409,7 @@ impl KvRequest for kvrpcpb::RawBatchScanRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::RawBatchScanResponse;
     type KeyData = Vec<BoundRange>;
+    type Response = BoxFuture<'static, Result<Self::Result>>;
     const REQUEST_NAME: &'static str = "raw_batch_scan";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_scan_async_opt;
 
@@ -441,9 +434,7 @@ impl KvRequest for kvrpcpb::RawBatchScanRequest {
         resp.take_kvs().into_iter().map(Into::into).collect()
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response {
         results.try_concat().boxed()
     }
 }
