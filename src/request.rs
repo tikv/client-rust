@@ -25,10 +25,11 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
     /// share the same content while `KeyData`, which contains keys (and associated data if any),
     /// is the part which differs among the requests.
     type KeyData;
+    type Response;
     const REQUEST_NAME: &'static str;
     const RPC_FN: RpcFnType<Self, Self::RpcResponse>;
 
-    fn execute(self, pd_client: Arc<impl PdClient>) -> BoxFuture<'static, Result<Self::Result>> {
+    fn execute(self, pd_client: Arc<impl PdClient>) -> Self::Response {
         Self::reduce(
             self.response_stream(pd_client)
                 .and_then(|mut response| match response.error() {
@@ -95,9 +96,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
 
     fn map_result(result: Self::RpcResponse) -> Self::Result;
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>>;
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Self::Response;
 }
 
 pub fn store_stream_for_key<KeyData, PdC>(
