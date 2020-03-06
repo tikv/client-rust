@@ -205,7 +205,7 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
         self,
         region_error: Error,
         _pd_client: Arc<impl PdClient>,
-        _backoff: Arc<impl Backoff>,
+        _backoff: impl Backoff,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         stream::once(future::err(region_error)).boxed()
     }

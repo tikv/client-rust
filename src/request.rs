@@ -1,7 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    backoff::{Backoff, BackoffState, NoJitterBackoff},
+    backoff::{Backoff, NoJitterBackoff},
     kv_client::{HasError, HasRegionError, KvClient, RpcFnType, Store},
     pd::PdClient,
     transaction::{resolve_locks, HasLocks},
@@ -48,23 +48,13 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         self,
         pd_client: Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
-        let backoff_state = BackoffState::new(
-            REGION_RETRY_BASE_DELAY_MS,
-            REGION_RETRY_MAX_DELAY_MS,
-            REGION_RETRY_ATTEMPTS,
-        );
-
-        let backoff = Arc::new(NoJitterBackoff {
-            state: backoff_state,
-        });
-
-        self.retry_response_stream(pd_client, backoff)
+        self.retry_response_stream(pd_client, None::<NoJitterBackoff>)
     }
 
     fn retry_response_stream(
         mut self,
         pd_client: Arc<impl PdClient>,
-        backoff: Arc<impl Backoff>,
+        backoff: Option<impl Backoff>,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         let stores = self.store_stream(pd_client.clone());
         stores
@@ -76,11 +66,17 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
             })
             .map_ok(move |(request, mut response)| {
                 if let Some(region_error) = response.region_error() {
-                    return request.on_region_error(
-                        region_error,
-                        pd_client.clone(),
-                        backoff.clone(),
+                    if let Some(backoff) = backoff {
+                        return request.on_region_error(region_error, pd_client.clone(), backoff);
+                    }
+
+                    let backoff = NoJitterBackoff::new(
+                        REGION_RETRY_BASE_DELAY_MS,
+                        REGION_RETRY_MAX_DELAY_MS,
+                        REGION_RETRY_ATTEMPTS,
                     );
+
+                    return request.on_region_error(region_error, pd_client.clone(), backoff);
                 }
                 // Resolve locks
                 let locks = response.take_locks();
@@ -106,10 +102,8 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         self,
         region_error: Error,
         pd_client: Arc<impl PdClient>,
-        backoff: Arc<impl Backoff>,
+        mut backoff: impl Backoff,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
-        let mut backoff = *backoff;
-
         backoff.next_delay_ms().map_or(
             stream::once(future::err(region_error)).boxed(),
             move |delay_ms| {
@@ -118,7 +112,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
                     Ok(())
                 };
 
-                fut.map_ok(move |_| self.retry_response_stream(pd_client, Arc::new(backoff)))
+                fut.map_ok(move |_| self.retry_response_stream(pd_client, Some(backoff)))
                     .try_flatten_stream()
                     .boxed()
             },
@@ -337,13 +331,8 @@ mod test {
         };
 
         let pd_client = Arc::new(MockPdClient);
-
-        let backoff_state = BackoffState::new(1, 1, 3);
-        let backoff = Arc::new(NoJitterBackoff {
-            state: backoff_state,
-        });
-
-        let stream = request.retry_response_stream(pd_client, backoff);
+        let backoff = NoJitterBackoff::new(1, 1, 3);
+        let stream = request.retry_response_stream(pd_client, Some(backoff));
 
         executor::block_on(async { stream.collect::<Vec<Result<MockRpcResponse>>>().await });
 
