@@ -19,7 +19,7 @@ name = "tikv_client"
 
 [dependencies]
 derive-new = "0.5"
-failure = "0.1"
+failure = "0.1.7"
 futures = { version = "0.3.1", features = ["compat", "async-await", "thread-pool"] }
 grpcio = { version = "0.5.0-alpha", features = [ "secure", "prost-codec" ], default-features = false }
 kvproto = { git = "https://github.com/pingcap/kvproto.git", features = [ "prost-codec" ], default-features = false }
