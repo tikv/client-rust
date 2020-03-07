@@ -46,5 +46,4 @@ fail = { version = "0.3", features = [ "failpoints" ] }
 
 [replace]
 "protobuf:2.8.0" = { git = "https://github.com/nrc/rust-protobuf", rev="4df576feca3b10c01d55b0e7c634bfab30982087" }
-"protobuf-build:0.10.0" = { git = "https://github.com/tikv/protobuf-build", rev="42e52b9311f7fb31bbbe089fef5a24ec0392f9ce" }
-
+"protobuf-build:0.10.0" = { git = "https://github.com/tikv/protobuf-build", rev="1fe5d77689d9691b7917215f3a1d32968115cc02" }
