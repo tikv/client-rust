@@ -110,7 +110,6 @@ pub trait PdClient: Send + Sync + 'static {
     }
 
     // Wrap ranges in a Stream.
-    #[allow(dead_code)]
     fn stores_for_ranges(
         self: Arc<Self>,
         ranges: Vec<BoundRange>,
