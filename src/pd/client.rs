@@ -108,6 +108,40 @@ pub trait PdClient: Send + Sync + 'static {
         })
         .boxed()
     }
+
+    // Returns a Steam which iterates over the contexts for each range.
+    #[allow(dead_code)]
+    fn stores_for_ranges(
+        self: Arc<Self>,
+        ranges: Vec<BoundRange>,
+    ) -> BoxStream<'static, Result<(Vec<BoundRange>, Store<Self::KvClient>)>> {
+        self.region_for_key(&Key::from(vec![]))
+            .and_then(move |region| self.map_region_to_store(region))
+            .map_ok(move |store| (ranges, store))
+            .into_stream()
+            .boxed()
+        // let ranges = ranges.peekable();
+        // stream_fn(ranges, move |mut ranges| {
+        //     if let Some(range) = ranges.next() {
+        //         Either::Left(Some(range))
+        //     } else {
+        //         Either::Right(ready(Ok(None)))
+        //     }
+        // })
+        // .boxed()
+        // stream_fn(ranges, move |mut ranges| {
+        //     if ranges.is_empty() {
+        //         return Either::Left(None)
+        //     } else {
+        //         let new_ranges = ranges.clone();
+        //         ranges.clear();
+        //         return Either::Right(Some(new_ranges))
+        //     }
+        // })
+        // .boxed()
+
+        // future::err(crate::Error::kv_error("nmsl".to_owned())).into_stream().boxed()
+    }
 }
 
 /// This client converts requests for the logical TiKV cluster into requests

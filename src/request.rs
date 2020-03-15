@@ -178,6 +178,16 @@ pub fn store_stream_for_range<PdC: PdClient>(
         .boxed()
 }
 
+pub fn store_stream_for_ranges<PdC: PdClient>(
+    ranges: Vec<BoundRange>,
+    pd_client: Arc<PdC>,
+) -> BoxStream<'static, Result<(Vec<BoundRange>, Store<PdC::KvClient>)>> {
+    pd_client
+        .stores_for_ranges(ranges)
+        .into_stream()
+        .boxed()
+}
+
 /// Permits easy mocking of rpc calls.
 pub trait DispatchHook: KvRequest {
     fn dispatch_hook(
