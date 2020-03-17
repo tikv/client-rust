@@ -17,12 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const LOCK_RETRY_DELAY_MS: u64 = 10;
-const DEFAULT_REGION_BACKOFF: NoJitterBackoff = NoJitterBackoff {
-    current_attempts: 0,
-    max_attempts: 10,
-    current_delay_ms: 2,
-    max_delay_ms: 500,
-};
+const DEFAULT_REGION_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);
 
 pub trait KvRequest: Sync + Send + 'static + Sized {
     type Result;
@@ -336,13 +331,7 @@ mod test {
         };
 
         let pd_client = Arc::new(MockPdClient);
-        let backoff = NoJitterBackoff {
-            current_attempts: 0,
-            max_attempts: 3,
-            current_delay_ms: 1,
-            max_delay_ms: 1,
-        };
-
+        let backoff = NoJitterBackoff::new(1, 1, 3);
         let stream = request.retry_response_stream(pd_client, Some(backoff));
 
         executor::block_on(async { stream.collect::<Vec<Result<MockRpcResponse>>>().await });

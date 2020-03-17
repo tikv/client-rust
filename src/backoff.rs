@@ -12,10 +12,21 @@ pub trait Backoff: Clone + Send + 'static {
 
 #[derive(Clone)]
 pub struct NoJitterBackoff {
-    pub current_attempts: u32,
-    pub max_attempts: u32,
-    pub current_delay_ms: u64,
-    pub max_delay_ms: u64,
+    current_attempts: u32,
+    max_attempts: u32,
+    current_delay_ms: u64,
+    max_delay_ms: u64,
+}
+
+impl NoJitterBackoff {
+    pub const fn new(base_delay_ms: u64, max_delay_ms: u64, max_attempts: u32) -> Self {
+        Self {
+            current_attempts: 0,
+            max_attempts,
+            current_delay_ms: base_delay_ms,
+            max_delay_ms,
+        }
+    }
 }
 
 impl Backoff for NoJitterBackoff {
