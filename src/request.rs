@@ -17,9 +17,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const LOCK_RETRY_DELAY_MS: u64 = 10;
-const REGION_RETRY_BASE_DELAY_MS: u64 = 2;
-const REGION_RETRY_MAX_DELAY_MS: u64 = 500;
-const REGION_RETRY_ATTEMPTS: u32 = 10;
+const DEFAULT_REGION_BACKOFF: NoJitterBackoff = NoJitterBackoff {
+    current_attempts: 0,
+    max_attempts: 10,
+    current_delay_ms: 2,
+    max_delay_ms: 500,
+};
 
 pub trait KvRequest: Sync + Send + 'static + Sized {
     type Result;
@@ -66,17 +69,19 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
             })
             .map_ok(move |(request, mut response)| {
                 if let Some(region_error) = response.region_error() {
-                    if let Some(backoff) = backoff {
-                        return request.on_region_error(region_error, pd_client.clone(), backoff);
+                    if let Some(backoff) = &backoff {
+                        return request.on_region_error(
+                            region_error,
+                            pd_client.clone(),
+                            backoff.clone(),
+                        );
                     }
 
-                    let backoff = NoJitterBackoff::new(
-                        REGION_RETRY_BASE_DELAY_MS,
-                        REGION_RETRY_MAX_DELAY_MS,
-                        REGION_RETRY_ATTEMPTS,
+                    return request.on_region_error(
+                        region_error,
+                        pd_client.clone(),
+                        DEFAULT_REGION_BACKOFF,
                     );
-
-                    return request.on_region_error(region_error, pd_client.clone(), backoff);
                 }
                 // Resolve locks
                 let locks = response.take_locks();
@@ -104,11 +109,11 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         pd_client: Arc<impl PdClient>,
         mut backoff: impl Backoff,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
-        backoff.next_delay_ms().map_or(
+        backoff.next_delay_duration().map_or(
             stream::once(future::err(region_error)).boxed(),
-            move |delay_ms| {
+            move |delay_duration| {
                 let fut = async move {
-                    futures_timer::Delay::new(Duration::from_millis(delay_ms)).await;
+                    futures_timer::Delay::new(delay_duration).await;
                     Ok(())
                 };
 
@@ -331,7 +336,13 @@ mod test {
         };
 
         let pd_client = Arc::new(MockPdClient);
-        let backoff = NoJitterBackoff::new(1, 1, 3);
+        let backoff = NoJitterBackoff {
+            current_attempts: 0,
+            max_attempts: 3,
+            current_delay_ms: 1,
+            max_delay_ms: 1,
+        };
+
         let stream = request.retry_response_stream(pd_client, Some(backoff));
 
         executor::block_on(async { stream.collect::<Vec<Result<MockRpcResponse>>>().await });

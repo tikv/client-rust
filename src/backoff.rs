@@ -3,32 +3,23 @@
 // https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
 
 use rand::{thread_rng, Rng};
+use std::time::Duration;
 
-pub trait Backoff: Clone + Copy + Send + 'static {
-    fn next_delay_ms(&mut self) -> Option<u64>;
+pub trait Backoff: Clone + Send + 'static {
+    // Returns the delay period for next retry. If the maximum retry count is hit returns None.
+    fn next_delay_duration(&mut self) -> Option<Duration>;
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct NoJitterBackoff {
-    current_attempts: u32,
-    max_attempts: u32,
-    current_delay_ms: u64,
-    max_delay_ms: u64,
-}
-
-impl NoJitterBackoff {
-    pub fn new(base_delay_ms: u64, max_delay_ms: u64, max_attempts: u32) -> Self {
-        Self {
-            current_attempts: 0,
-            max_attempts,
-            current_delay_ms: base_delay_ms,
-            max_delay_ms,
-        }
-    }
+    pub current_attempts: u32,
+    pub max_attempts: u32,
+    pub current_delay_ms: u64,
+    pub max_delay_ms: u64,
 }
 
 impl Backoff for NoJitterBackoff {
-    fn next_delay_ms(&mut self) -> Option<u64> {
+    fn next_delay_duration(&mut self) -> Option<Duration> {
         if self.current_attempts >= self.max_attempts {
             return None;
         }
@@ -38,11 +29,11 @@ impl Backoff for NoJitterBackoff {
         self.current_attempts += 1;
         self.current_delay_ms <<= 1;
 
-        Some(delay_ms)
+        Some(Duration::from_millis(delay_ms))
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct FullJitterBackoff {
     current_attempts: u32,
     max_attempts: u32,
@@ -67,7 +58,7 @@ impl FullJitterBackoff {
 }
 
 impl Backoff for FullJitterBackoff {
-    fn next_delay_ms(&mut self) -> Option<u64> {
+    fn next_delay_duration(&mut self) -> Option<Duration> {
         if self.current_attempts >= self.max_attempts {
             return None;
         }
@@ -80,11 +71,11 @@ impl Backoff for FullJitterBackoff {
         self.current_attempts += 1;
         self.current_delay_ms <<= 1;
 
-        Some(delay_ms)
+        Some(Duration::from_millis(delay_ms))
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct EqualJitterBackoff {
     current_attempts: u32,
     max_attempts: u32,
@@ -109,7 +100,7 @@ impl EqualJitterBackoff {
 }
 
 impl Backoff for EqualJitterBackoff {
-    fn next_delay_ms(&mut self) -> Option<u64> {
+    fn next_delay_duration(&mut self) -> Option<Duration> {
         if self.current_attempts >= self.max_attempts {
             return None;
         }
@@ -123,11 +114,11 @@ impl Backoff for EqualJitterBackoff {
         self.current_attempts += 1;
         self.current_delay_ms <<= 1;
 
-        Some(delay_ms)
+        Some(Duration::from_millis(delay_ms))
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct DecorrelatedJitterBackoff {
     current_attempts: u32,
     max_attempts: u32,
@@ -154,7 +145,7 @@ impl DecorrelatedJitterBackoff {
 }
 
 impl Backoff for DecorrelatedJitterBackoff {
-    fn next_delay_ms(&mut self) -> Option<u64> {
+    fn next_delay_duration(&mut self) -> Option<Duration> {
         if self.current_attempts >= self.max_attempts {
             return None;
         }
@@ -168,34 +159,56 @@ impl Backoff for DecorrelatedJitterBackoff {
         self.current_attempts += 1;
         self.current_delay_ms = delay_ms;
 
-        Some(delay_ms)
+        Some(Duration::from_millis(delay_ms))
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::convert::TryInto;
 
     #[test]
     fn test_no_jitter_backoff() {
         // Tests for zero attempts.
-        let mut backoff = NoJitterBackoff::new(0, 0, 0);
-        assert_eq!(backoff.next_delay_ms(), None);
+        let mut backoff = NoJitterBackoff {
+            current_attempts: 0,
+            max_attempts: 0,
+            current_delay_ms: 0,
+            max_delay_ms: 0,
+        };
 
-        let mut backoff = NoJitterBackoff::new(2, 7, 3);
-        assert_eq!(backoff.next_delay_ms(), Some(2));
-        assert_eq!(backoff.next_delay_ms(), Some(4));
-        assert_eq!(backoff.next_delay_ms(), Some(7));
-        assert_eq!(backoff.next_delay_ms(), None);
+        assert_eq!(backoff.next_delay_duration(), None);
+
+        let mut backoff = NoJitterBackoff {
+            current_attempts: 0,
+            max_attempts: 3,
+            current_delay_ms: 2,
+            max_delay_ms: 7,
+        };
+
+        assert_eq!(
+            backoff.next_delay_duration(),
+            Some(Duration::from_millis(2))
+        );
+        assert_eq!(
+            backoff.next_delay_duration(),
+            Some(Duration::from_millis(4))
+        );
+        assert_eq!(
+            backoff.next_delay_duration(),
+            Some(Duration::from_millis(7))
+        );
+        assert_eq!(backoff.next_delay_duration(), None);
     }
 
     #[test]
     fn test_full_jitter_backoff() {
         let mut backoff = FullJitterBackoff::new(2, 7, 3);
-        assert!(backoff.next_delay_ms().unwrap() <= 2);
-        assert!(backoff.next_delay_ms().unwrap() <= 4);
-        assert!(backoff.next_delay_ms().unwrap() <= 7);
-        assert_eq!(backoff.next_delay_ms(), None);
+        assert!(backoff.next_delay_duration().unwrap() <= Duration::from_millis(2));
+        assert!(backoff.next_delay_duration().unwrap() <= Duration::from_millis(4));
+        assert!(backoff.next_delay_duration().unwrap() <= Duration::from_millis(7));
+        assert_eq!(backoff.next_delay_duration(), None);
     }
 
     #[test]
@@ -214,16 +227,19 @@ mod test {
     fn test_equal_jitter_backoff() {
         let mut backoff = EqualJitterBackoff::new(2, 7, 3);
 
-        let first_delay_ms = backoff.next_delay_ms().unwrap();
-        assert!(first_delay_ms >= 1 && first_delay_ms <= 2);
+        let first_delay_dur = backoff.next_delay_duration().unwrap();
+        assert!(first_delay_dur >= Duration::from_millis(1));
+        assert!(first_delay_dur <= Duration::from_millis(2));
 
-        let second_delay_ms = backoff.next_delay_ms().unwrap();
-        assert!(second_delay_ms >= 2 && second_delay_ms <= 4);
+        let second_delay_dur = backoff.next_delay_duration().unwrap();
+        assert!(second_delay_dur >= Duration::from_millis(2));
+        assert!(second_delay_dur <= Duration::from_millis(4));
 
-        let third_delay_ms = backoff.next_delay_ms().unwrap();
-        assert!(third_delay_ms >= 3 && third_delay_ms <= 6);
+        let third_delay_dur = backoff.next_delay_duration().unwrap();
+        assert!(third_delay_dur >= Duration::from_millis(3));
+        assert!(third_delay_dur <= Duration::from_millis(6));
 
-        assert_eq!(backoff.next_delay_ms(), None);
+        assert_eq!(backoff.next_delay_duration(), None);
     }
 
     #[test]
@@ -242,16 +258,21 @@ mod test {
     fn test_decorrelated_jitter_backoff() {
         let mut backoff = DecorrelatedJitterBackoff::new(2, 7, 3);
 
-        let first_delay_ms = backoff.next_delay_ms().unwrap();
-        assert!(first_delay_ms >= 2 && first_delay_ms <= 6);
+        let first_delay_dur = backoff.next_delay_duration().unwrap();
+        assert!(first_delay_dur >= Duration::from_millis(2));
+        assert!(first_delay_dur <= Duration::from_millis(6));
 
-        let second_delay_ms = backoff.next_delay_ms().unwrap();
-        assert!(second_delay_ms >= 2 && second_delay_ms <= 7u64.min(first_delay_ms * 3));
+        let second_delay_dur = backoff.next_delay_duration().unwrap();
+        assert!(second_delay_dur >= Duration::from_millis(2));
+        let cap_ms = 7u64.min((first_delay_dur.as_millis() * 3).try_into().unwrap());
+        assert!(second_delay_dur <= Duration::from_millis(cap_ms));
 
-        let third_delay_ms = backoff.next_delay_ms().unwrap();
-        assert!(third_delay_ms >= 2 && third_delay_ms <= 7u64.min(second_delay_ms * 3));
+        let third_delay_dur = backoff.next_delay_duration().unwrap();
+        assert!(third_delay_dur >= Duration::from_millis(2));
+        let cap_ms = 7u64.min((second_delay_dur.as_millis() * 3).try_into().unwrap());
+        assert!(second_delay_dur <= Duration::from_millis(cap_ms));
 
-        assert_eq!(backoff.next_delay_ms(), None);
+        assert_eq!(backoff.next_delay_duration(), None);
     }
 
     #[test]
