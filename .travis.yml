@@ -35,6 +35,7 @@ install:
   - if [[ $TRAVIS_OS_NAME == "windows" ]]; then export PATH="$PATH:/c/Go/bin/:/c/Program Files/CMake/bin"; fi
 
 script:
+  - which go && go version
   - if [[ $TRAVIS_OS_NAME == "linux" ]]; then cargo fmt -- --check; fi
   - if [[ $TRAVIS_OS_NAME == "linux" ]]; then cargo clippy -- -D clippy::all; fi
   - cargo build --all
