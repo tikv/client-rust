@@ -1,7 +1,7 @@
-dist: bionic
 sudo: false
 
-language: rust
+language:
+ - rust
 os:
   - linux
   # - windows # TODO: https://github.com/pingcap/kvproto/issues/355
@@ -9,8 +9,7 @@ os:
 rust:
   - stable
   - nightly
-go:
-  - "1.13"
+
 env:
   global:
     - RUST_BACKTRACE=1
@@ -34,6 +33,9 @@ install:
   - if [[ $TRAVIS_OS_NAME == "linux" ]]; then rustup component add clippy; fi
   - if [[ $TRAVIS_OS_NAME == "windows" ]]; then choco install golang cmake strawberryperl protoc; fi
   - if [[ $TRAVIS_OS_NAME == "windows" ]]; then export PATH="$PATH:/c/Go/bin/:/c/Program Files/CMake/bin"; fi
+
+before_script:
+  - eval "$(gimme stable)"
 
 script:
   - which go && go version
