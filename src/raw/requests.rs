@@ -36,7 +36,7 @@ impl KvRequest for kvrpcpb::RawGetRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        let key = mem::replace(&mut self.key, Default::default()).into();
+        let key = mem::take(&mut self.key).into();
         store_stream_for_key(key, pd_client)
     }
 
@@ -89,7 +89,7 @@ impl KvRequest for kvrpcpb::RawBatchGetRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        let keys = mem::replace(&mut self.keys, Default::default());
+        let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
     }
 
@@ -135,8 +135,8 @@ impl KvRequest for kvrpcpb::RawPutRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        let key = mem::replace(&mut self.key, Default::default());
-        let value = mem::replace(&mut self.value, Default::default());
+        let key = mem::take(&mut self.key);
+        let value = mem::take(&mut self.value);
         let pair = KvPair::new(key, value);
         store_stream_for_key(pair, pd_client)
     }
@@ -185,7 +185,7 @@ impl KvRequest for kvrpcpb::RawBatchPutRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        let pairs = mem::replace(&mut self.pairs, Default::default());
+        let pairs = mem::take(&mut self.pairs);
         store_stream_for_keys(pairs, pd_client)
     }
 
@@ -228,7 +228,7 @@ impl KvRequest for kvrpcpb::RawDeleteRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        let key = mem::replace(&mut self.key, Default::default()).into();
+        let key = mem::take(&mut self.key).into();
         store_stream_for_key(key, pd_client)
     }
 
@@ -274,7 +274,7 @@ impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        let keys = mem::replace(&mut self.keys, Default::default());
+        let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
     }
 
@@ -322,8 +322,8 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        let start_key = mem::replace(&mut self.start_key, Default::default());
-        let end_key = mem::replace(&mut self.end_key, Default::default());
+        let start_key = mem::take(&mut self.start_key);
+        let end_key = mem::take(&mut self.end_key);
         let range = BoundRange::from((start_key, end_key));
         store_stream_for_range(range, pd_client)
     }
@@ -379,8 +379,8 @@ impl KvRequest for kvrpcpb::RawScanRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        let start_key = mem::replace(&mut self.start_key, Default::default());
-        let end_key = mem::replace(&mut self.end_key, Default::default());
+        let start_key = mem::take(&mut self.start_key);
+        let end_key = mem::take(&mut self.end_key);
         let range = BoundRange::from((start_key, end_key));
         store_stream_for_range(range, pd_client)
     }
