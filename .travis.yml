@@ -18,8 +18,10 @@ addons:
     update: true
     sources:
       - sourceline: 'ppa:maarten-fonville/protobuf'
+      - sourceline: 'ppa:longsleep/golang-backports'
     packages:
       - protobuf-compiler
+      - golang-go
   homebrew:
     packages:
       - protobuf
