@@ -48,7 +48,7 @@ async fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {
     txn.commit().await.expect("Could not commit transaction");
 }
 
-#[runtime::main(runtime_tokio::Tokio)]
+#[tokio::main]
 async fn main() {
     // You can try running this example by passing your pd endpoints
     // (and SSL options if necessary) through command line arguments.

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::env;
 use tikv_client::{Config, Key, Result, TransactionClient, Value};
 
-#[runtime::test(runtime_tokio::Tokio)]
+#[tokio::test]
 async fn get_timestamp() -> Fallible<()> {
     const COUNT: usize = 1 << 16;
     let config = Config::new(pd_addrs());
@@ -25,7 +25,7 @@ async fn get_timestamp() -> Fallible<()> {
     Ok(())
 }
 
-#[runtime::test(runtime_tokio::Tokio)]
+#[tokio::test]
 async fn crud() -> Fallible<()> {
     let config = Config::new(pd_addrs());
 
