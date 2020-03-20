@@ -46,13 +46,13 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         self,
         pd_client: Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
-        self.retry_response_stream(pd_client, None::<NoJitterBackoff>)
+        self.retry_response_stream(pd_client, DEFAULT_REGION_BACKOFF)
     }
 
     fn retry_response_stream(
         mut self,
         pd_client: Arc<impl PdClient>,
-        backoff: Option<impl Backoff>,
+        backoff: impl Backoff,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         let stores = self.store_stream(pd_client.clone());
         stores
@@ -64,18 +64,10 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
             })
             .map_ok(move |(request, mut response)| {
                 if let Some(region_error) = response.region_error() {
-                    if let Some(backoff) = &backoff {
-                        return request.on_region_error(
-                            region_error,
-                            pd_client.clone(),
-                            backoff.clone(),
-                        );
-                    }
-
                     return request.on_region_error(
                         region_error,
                         pd_client.clone(),
-                        DEFAULT_REGION_BACKOFF,
+                        backoff.clone(),
                     );
                 }
                 // Resolve locks
@@ -112,7 +104,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
                     Ok(())
                 };
 
-                fut.map_ok(move |_| self.retry_response_stream(pd_client, Some(backoff)))
+                fut.map_ok(move |_| self.retry_response_stream(pd_client, backoff))
                     .try_flatten_stream()
                     .boxed()
             },
@@ -332,7 +324,7 @@ mod test {
 
         let pd_client = Arc::new(MockPdClient);
         let backoff = NoJitterBackoff::new(1, 1, 3);
-        let stream = request.retry_response_stream(pd_client, Some(backoff));
+        let stream = request.retry_response_stream(pd_client, backoff);
 
         executor::block_on(async { stream.collect::<Vec<Result<MockRpcResponse>>>().await });
 

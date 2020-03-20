@@ -10,6 +10,11 @@ pub trait Backoff: Clone + Send + 'static {
     fn next_delay_duration(&mut self) -> Option<Duration>;
 }
 
+// Exponential backoff means that the retry delay should multiply a constant
+// after each attempt, up to a maximum value. After each attempt, the new retry
+// delay should be:
+//
+// new_delay = min(max_delay, base_delay * 2 ** attempts)
 #[derive(Clone)]
 pub struct NoJitterBackoff {
     current_attempts: u32,
@@ -44,6 +49,11 @@ impl Backoff for NoJitterBackoff {
     }
 }
 
+// Adds Jitter to the basic exponential backoff. Returns a random value between
+// zero and the calculated exponential backoff:
+//
+// temp = min(max_delay, base_delay * 2 ** attempts)
+// new_delay = random_between(0, temp)
 #[derive(Clone)]
 pub struct FullJitterBackoff {
     current_attempts: u32,
@@ -86,6 +96,11 @@ impl Backoff for FullJitterBackoff {
     }
 }
 
+// Equal Jitter limits the random value should be equal or greater than half of
+// the calculated exponential backoff:
+//
+// temp = min(max_delay, base_delay * 2 ** attempts)
+// new_delay = random_between(temp / 2, temp)
 #[derive(Clone)]
 pub struct EqualJitterBackoff {
     current_attempts: u32,
@@ -129,6 +144,11 @@ impl Backoff for EqualJitterBackoff {
     }
 }
 
+// Decorrelated Jitter is always calculated with the previous backoff
+// (the initial value is base_delay):
+//
+// temp = random_between(base_delay, previous_delay * 3)
+// new_delay = min(max_delay, temp)
 #[derive(Clone)]
 pub struct DecorrelatedJitterBackoff {
     current_attempts: u32,
