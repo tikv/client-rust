@@ -1,7 +1,6 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use failure::{Backtrace, Context, Fail};
-use grpcio;
 use std::fmt::{self, Display};
 use std::result;
 

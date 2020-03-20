@@ -16,8 +16,6 @@ This is an open source (Apache 2) project hosted by the Cloud Native Computing F
 
 The TiKV client is a Rust library (crate). It uses async/await internally and exposes some `async fn` APIs as well.
 
-Async/await is a new feature in Rust and cannot be used with a stable Rust compiler. To use it now you'll need to use Rust 1.39 (see below).
-
 To use this crate in your project, add it as a dependency in your `Cargo.toml`:
 
 ```toml
@@ -44,30 +42,8 @@ cargo doc --package tikv-client --open
 # If it didn't work, browse file URL it tried to open with your browser.
 ```
 
-## Toolchain versions
+## Minimal Rust Version
 
-To check what version of Rust you are using, run
+This crate supports Rust 1.40 and above.
 
-```bash
-rustc --version
-```
-
-You'll see something like `rustc 1.39.0-nightly (eeba189cf 2019-08-24)` where the `1.39.0` is the toolchain version, and `nightly` is the channel (stable/beta/nightly). To install another toolchain use
-
-```bash
-rustup toolchain install nightly
-```
-
-Where `nightly` here is the channel to add. To update your toolchains, run
-
-```bash
-rustup update
-```
-
-To build your project using a specified toolchain, use something like
-
-```bash
-cargo +nightly build
-```
-
-Where `nightly` names the toolchain (by specifying the channel, in this case).
+For development, a nightly Rust compiler is needed to compile the tests.

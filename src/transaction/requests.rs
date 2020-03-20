@@ -34,7 +34,7 @@ impl KvRequest for kvrpcpb::GetRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        let key = mem::replace(&mut self.key, Vec::default()).into();
+        let key = mem::take(&mut self.key).into();
         store_stream_for_key(key, pd_client)
     }
 
@@ -93,7 +93,7 @@ impl KvRequest for kvrpcpb::BatchGetRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        let keys = mem::replace(&mut self.keys, Vec::default());
+        let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
     }
 
@@ -218,7 +218,7 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
             .context
             .take()
             .expect("ResolveLockRequest context must be given ");
-        let keys = mem::replace(&mut self.keys, Vec::default());
+        let keys = mem::take(&mut self.keys);
         pd_client
             .store_for_id(context.region_id)
             .map_ok(move |store| ((context, keys), store))
@@ -270,7 +270,7 @@ impl KvRequest for kvrpcpb::CleanupRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        let key = mem::replace(&mut self.key, Default::default()).into();
+        let key = mem::take(&mut self.key).into();
         store_stream_for_key(key, pd_client)
     }
 
@@ -329,7 +329,7 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        let mutations = mem::replace(&mut self.mutations, Vec::default());
+        let mutations = mem::take(&mut self.mutations);
         store_stream_for_keys(mutations, pd_client)
     }
 
@@ -391,7 +391,7 @@ impl KvRequest for kvrpcpb::CommitRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        let keys = mem::replace(&mut self.keys, Vec::default());
+        let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
     }
 
@@ -439,7 +439,7 @@ impl KvRequest for kvrpcpb::BatchRollbackRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        let keys = mem::replace(&mut self.keys, Vec::default());
+        let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
     }
 
