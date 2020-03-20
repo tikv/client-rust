@@ -25,6 +25,7 @@ grpcio = { version = "0.5.0", features = [ "secure", "prost-codec" ], default-fe
 kvproto = { git = "https://github.com/pingcap/kvproto.git", features = [ "prost-codec" ], default-features = false }
 lazy_static = "1"
 log = "0.4"
+rand = "0.7"
 regex = "1"
 serde = "1.0"
 serde_derive = "1.0"
