@@ -5,7 +5,7 @@ use crate::{
     kv_client::{HasError, HasRegionError, KvClient, RpcFnType, Store},
     pd::PdClient,
     transaction::{resolve_locks, HasLocks},
-    BoundRange, Error, Key, Result,
+    Error, Key, Result,
 };
 
 use futures::future::BoxFuture;
@@ -160,21 +160,6 @@ where
                 .store_for_id(region_id)
                 .map_ok(move |store| (key, store))
         })
-        .boxed()
-}
-
-pub fn store_stream_for_range<PdC: PdClient>(
-    range: BoundRange,
-    pd_client: Arc<PdC>,
-) -> BoxStream<'static, Result<((Key, Key), Store<PdC::KvClient>)>> {
-    pd_client
-        .stores_for_range(range)
-        .map_ok(move |store| {
-            // FIXME should be bounded by self.range
-            let range = store.region.range();
-            (range, store)
-        })
-        .into_stream()
         .boxed()
 }
 

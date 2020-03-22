@@ -4,7 +4,7 @@ use super::RawRpcRequest;
 use crate::{
     kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
-    request::{store_stream_for_key, store_stream_for_keys, store_stream_for_range, KvRequest},
+    request::{store_stream_for_key, store_stream_for_keys, KvRequest},
     transaction::HasLocks,
     BoundRange, ColumnFamily, Error, Key, KvPair, Result, Value,
 };
@@ -325,7 +325,7 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
         let start_key = mem::take(&mut self.start_key);
         let end_key = mem::take(&mut self.end_key);
         let range = BoundRange::from((start_key, end_key));
-        store_stream_for_range(range, pd_client)
+        pd_client.stores_for_range(range)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -382,7 +382,7 @@ impl KvRequest for kvrpcpb::RawScanRequest {
         let start_key = mem::take(&mut self.start_key);
         let end_key = mem::take(&mut self.end_key);
         let range = BoundRange::from((start_key, end_key));
-        store_stream_for_range(range, pd_client)
+        pd_client.stores_for_range(range)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {

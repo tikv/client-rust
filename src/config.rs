@@ -14,7 +14,7 @@ use std::{path::PathBuf, time::Duration};
 ///
 /// By default, this client will use an insecure connection over instead of one protected by
 /// Transport Layer Security (TLS). Your deployment may have chosen to rely on security measures
-/// such as a private network, or a VPN layer to provid secure transmission.
+/// such as a private network, or a VPN layer to provide secure transmission.
 ///
 /// To use a TLS secured connection, use the `with_security` function to set the required
 /// parameters.

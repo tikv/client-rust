@@ -82,11 +82,11 @@ pub trait PdClient: Send + Sync + 'static {
         .boxed()
     }
 
-    // Returns a Steam which iterates over the contexts for each region covered by range.
+    // Returns a Stream which iterates over the contexts for each region covered by range.
     fn stores_for_range(
         self: Arc<Self>,
         range: BoundRange,
-    ) -> BoxStream<'static, Result<Store<Self::KvClient>>> {
+    ) -> BoxStream<'static, Result<((Key, Key), Store<Self::KvClient>)>> {
         let (start_key, end_key) = range.into_keys();
         stream_fn(Some(start_key), move |start_key| {
             let start_key = match start_key {
@@ -99,10 +99,13 @@ pub trait PdClient: Send + Sync + 'static {
             Either::Left(self.region_for_key(&start_key).and_then(move |region| {
                 let region_end = region.end_key();
                 this.map_region_to_store(region).map_ok(move |store| {
-                    if end_key.map(|x| x < region_end).unwrap_or(false) || region_end.is_empty() {
-                        return Some((None, store));
+                    if end_key.as_ref().map(|x| x < &region_end).unwrap_or(false)
+                        || region_end.is_empty()
+                    {
+                        return Some((None, ((start_key, end_key.unwrap_or_default()), store)));
                     }
-                    Some((Some(region_end), store))
+                    let end_key = region_end.clone();
+                    Some((Some(region_end), ((start_key, end_key), store)))
                 })
             }))
         })
@@ -231,7 +234,7 @@ pub mod test {
         let kv1 = client.kv_client(&addr1).unwrap();
         let kv2 = client.kv_client(&addr2).unwrap();
         let kv3 = client.kv_client(&addr2).unwrap();
-        assert!(kv1 != kv2);
+        assert_ne!(kv1, kv2);
         assert_eq!(kv2, kv3);
     }
 
@@ -271,19 +274,30 @@ pub mod test {
 
     #[test]
     fn test_stores_for_range() {
+        // region1 range: [0] -> [10]; region2 range: [10] -> [250, 250]
         let client = Arc::new(MockPdClient);
         let k1: Key = vec![1].into();
         let k2: Key = vec![5, 2].into();
         let k3: Key = vec![11, 4].into();
-        let range1 = (k1, k2.clone()).into();
+        let range1 = (k1.clone(), k2.clone()).into();
         let mut stream = executor::block_on_stream(client.clone().stores_for_range(range1));
-        assert_eq!(stream.next().unwrap().unwrap().region.id(), 1);
+
+        let ((start, end), store) = stream.next().unwrap().unwrap();
+        assert_eq!(store.region.id(), 1);
+        assert_eq!(start, k1);
+        assert_eq!(end, k2);
         assert!(stream.next().is_none());
 
-        let range2 = (k2, k3).into();
+        let range2 = (k2.clone(), k3.clone()).into();
         let mut stream = executor::block_on_stream(client.stores_for_range(range2));
-        assert_eq!(stream.next().unwrap().unwrap().region.id(), 1);
-        assert_eq!(stream.next().unwrap().unwrap().region.id(), 2);
+        let ((start, end), store) = stream.next().unwrap().unwrap();
+        assert_eq!(store.region.id(), 1);
+        assert_eq!(start, k2);
+        assert_eq!(end, vec![10].into());
+        let ((start, end), store) = stream.next().unwrap().unwrap();
+        assert_eq!(store.region.id(), 2);
+        assert_eq!(start, vec![10].into());
+        assert_eq!(end, k3);
         assert!(stream.next().is_none());
     }
 }
