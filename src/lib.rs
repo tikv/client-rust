@@ -77,6 +77,7 @@ mod util;
 #[macro_use]
 pub mod transaction;
 
+mod backoff;
 mod compat;
 mod config;
 mod errors;

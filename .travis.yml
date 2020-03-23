@@ -28,8 +28,8 @@ addons:
       - go
 
 install:
-  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then rustup component add rustfmt; fi
-  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then rustup component add clippy; fi
+  - if [[ $TRAVIS_OS_NAME == "linux" && $TRAVIS_RUST_VERSION == "stable" ]]; then rustup component add rustfmt; fi
+  - if [[ $TRAVIS_OS_NAME == "linux" && $TRAVIS_RUST_VERSION == "stable" ]]; then rustup component add clippy; fi
   - if [[ $TRAVIS_OS_NAME == "windows" ]]; then choco install golang cmake strawberryperl protoc; fi
   - if [[ $TRAVIS_OS_NAME == "windows" ]]; then export PATH="$PATH:/c/Go/bin/:/c/Program Files/CMake/bin"; fi
 
@@ -38,7 +38,7 @@ before_script:
 
 script:
   - which go && go version
-  - if [[ $TRAVIS_OS_NAME == "linux" ]]; then cargo fmt -- --check; fi
+  - if [[ $TRAVIS_OS_NAME == "linux" && $TRAVIS_RUST_VERSION == "stable" ]]; then cargo fmt -- --check; fi
   - if [[ $TRAVIS_OS_NAME == "linux" && $TRAVIS_RUST_VERSION == "stable" ]]; then cargo clippy -- -D clippy::all; fi
   - cargo build --all
   - cargo build --examples

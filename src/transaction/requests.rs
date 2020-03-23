@@ -1,4 +1,5 @@
 use crate::{
+    backoff::Backoff,
     kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
     request::{store_stream_for_key, store_stream_for_keys, KvRequest},
@@ -204,6 +205,7 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
         self,
         region_error: Error,
         _pd_client: Arc<impl PdClient>,
+        _backoff: impl Backoff,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         stream::once(future::err(region_error)).boxed()
     }
