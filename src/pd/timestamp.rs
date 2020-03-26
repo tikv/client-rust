@@ -136,26 +136,24 @@ impl<'a> Stream for TsoRequestStream<'a> {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let pending_requests = self.pending_requests.clone();
         let mut pending_requests = pending_requests.borrow_mut();
-        let mut count = 0;
         let mut requests = Vec::new();
 
-        while count < MAX_BATCH_SIZE && pending_requests.len() < MAX_PENDING_COUNT {
+        while requests.len() < MAX_BATCH_SIZE && pending_requests.len() < MAX_PENDING_COUNT {
             match self.request_rx.as_mut().poll_next(cx) {
                 Poll::Ready(Some(sender)) => {
                     requests.push(sender);
-                    count += 1;
                 }
                 Poll::Ready(None) => return Poll::Ready(None),
                 Poll::Pending => break,
             }
         }
 
-        if count > 0 {
+        if requests.len() > 0 {
             let req = TsoRequest {
                 header: Some(RequestHeader {
                     cluster_id: self.cluster_id,
                 }),
-                count: count as u32,
+                count: requests.len() as u32,
             };
 
             let request_group = RequestGroup {
