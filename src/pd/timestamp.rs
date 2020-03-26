@@ -148,7 +148,7 @@ impl<'a> Stream for TsoRequestStream<'a> {
             }
         }
 
-        if requests.len() > 0 {
+        if !requests.is_empty() {
             let req = TsoRequest {
                 header: Some(RequestHeader {
                     cluster_id: self.cluster_id,
