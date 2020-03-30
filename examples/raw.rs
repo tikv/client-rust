@@ -10,7 +10,7 @@ use tikv_client::{Config, Key, KvPair, RawClient as Client, Result, ToOwnedRange
 const KEY: &str = "TiKV";
 const VALUE: &str = "Rust";
 
-#[runtime::main(runtime_tokio::Tokio)]
+#[tokio::main]
 async fn main() -> Result<()> {
     // You can try running this example by passing your pd endpoints
     // (and SSL options if necessary) through command line arguments.

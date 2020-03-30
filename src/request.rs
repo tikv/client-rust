@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
+    backoff::{Backoff, NoJitterBackoff},
     kv_client::{HasError, HasRegionError, KvClient, RpcFnType, Store},
     pd::PdClient,
     transaction::{resolve_locks, HasLocks},
@@ -16,6 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const LOCK_RETRY_DELAY_MS: u64 = 10;
+const DEFAULT_REGION_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);
 
 pub trait KvRequest: Sync + Send + 'static + Sized {
     type Result;
@@ -41,9 +43,18 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
     }
 
     fn response_stream(
+        self,
+        pd_client: Arc<impl PdClient>,
+        is_retry: bool,
+    ) -> BoxStream<'static, Result<Self::RpcResponse>> {
+        self.retry_response_stream(pd_client, is_retry, DEFAULT_REGION_BACKOFF)
+    }
+
+    fn retry_response_stream(
         mut self,
         pd_client: Arc<impl PdClient>,
         is_retry: bool,
+        backoff: impl Backoff,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         let stores = self.store_stream(pd_client.clone(), is_retry);
         stores
@@ -55,7 +66,11 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
             })
             .map_ok(move |(request, mut response)| {
                 if let Some(region_error) = response.region_error() {
-                    return request.on_region_error(region_error, pd_client.clone());
+                    return request.on_region_error(
+                        region_error,
+                        pd_client.clone(),
+                        backoff.clone(),
+                    );
                 }
                 // Resolve locks
                 let locks = response.take_locks();
@@ -79,12 +94,24 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
 
     fn on_region_error(
         self,
-        _region_error: Error,
+        region_error: Error,
         pd_client: Arc<impl PdClient>,
+        mut backoff: impl Backoff,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         // Retry on region errors by default
-        // TODO: Add backoff and retry limit
-        self.response_stream(pd_client.clone(), true)
+        backoff.next_delay_duration().map_or(
+            stream::once(future::err(region_error)).boxed(),
+            move |delay_duration| {
+                let fut = async move {
+                    futures_timer::Delay::new(delay_duration).await;
+                    Ok(())
+                };
+
+                fut.map_ok(move |_| self.retry_response_stream(pd_client, true, backoff))
+                    .try_flatten_stream()
+                    .boxed()
+            },
+        )
     }
 
     fn store_stream<PdC: PdClient>(
@@ -168,7 +195,15 @@ pub trait DispatchHook: KvRequest {
     }
 }
 
-impl<T: KvRequest> DispatchHook for T {}
+impl<T: KvRequest> DispatchHook for T {
+    #[cfg(test)]
+    default fn dispatch_hook(
+        &self,
+        _opt: CallOption,
+    ) -> Option<BoxFuture<'static, Result<Self::RpcResponse>>> {
+        None
+    }
+}
 
 pub trait KvRpcRequest: Default {
     fn set_context(&mut self, context: kvrpcpb::Context);
@@ -201,3 +236,107 @@ impl_kv_rpc_request!(CleanupRequest);
 impl_kv_rpc_request!(BatchGetRequest);
 impl_kv_rpc_request!(BatchRollbackRequest);
 impl_kv_rpc_request!(ResolveLockRequest);
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::mock::MockPdClient;
+    use futures::executor;
+    use kvproto::tikvpb::TikvClient;
+    use std::sync::Mutex;
+
+    #[test]
+    fn test_region_retry() {
+        #[derive(Clone)]
+        struct MockRpcResponse {}
+
+        impl HasError for MockRpcResponse {
+            fn error(&mut self) -> Option<Error> {
+                unreachable!()
+            }
+        }
+
+        impl HasRegionError for MockRpcResponse {
+            fn region_error(&mut self) -> Option<Error> {
+                Some(Error::region_not_found(1))
+            }
+        }
+
+        impl HasLocks for MockRpcResponse {}
+
+        struct MockKvRequest {
+            test_invoking_count: Arc<Mutex<usize>>,
+        }
+
+        fn mock_async_opt(
+            _client: &TikvClient,
+            _req: &MockKvRequest,
+            _opt: CallOption,
+        ) -> std::result::Result<::grpcio::ClientUnaryReceiver<MockRpcResponse>, ::grpcio::Error>
+        {
+            unreachable!()
+        }
+
+        impl DispatchHook for MockKvRequest {
+            fn dispatch_hook(
+                &self,
+                _opt: CallOption,
+            ) -> Option<BoxFuture<'static, Result<Self::RpcResponse>>> {
+                Some(future::ok(MockRpcResponse {}).boxed())
+            }
+        }
+
+        impl KvRequest for MockKvRequest {
+            type Result = ();
+            type RpcResponse = MockRpcResponse;
+            type KeyData = Key;
+            const REQUEST_NAME: &'static str = "mock";
+            const RPC_FN: RpcFnType<Self, Self::RpcResponse> = mock_async_opt;
+
+            fn make_rpc_request<KvC: KvClient>(
+                &self,
+                _key_data: Self::KeyData,
+                _store: &Store<KvC>,
+            ) -> Self {
+                Self {
+                    test_invoking_count: self.test_invoking_count.clone(),
+                }
+            }
+
+            fn map_result(_: Self::RpcResponse) -> Self::Result {}
+
+            fn reduce(
+                _results: BoxStream<'static, Result<Self::Result>>,
+            ) -> BoxFuture<'static, Result<Self::Result>> {
+                unreachable!()
+            }
+
+            fn store_stream<PdC: PdClient>(
+                &mut self,
+                pd_client: Arc<PdC>,
+                is_retry: bool,
+            ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+                // Increases by 1 for each call.
+                let mut test_invoking_count = self.test_invoking_count.lock().unwrap();
+                *test_invoking_count += 1;
+
+                store_stream_for_key(Key::from("mock_key".to_owned()), pd_client, is_retry)
+            }
+        }
+
+        let invoking_count = Arc::new(Mutex::new(0));
+
+        let request = MockKvRequest {
+            test_invoking_count: invoking_count.clone(),
+        };
+
+        let pd_client = Arc::new(MockPdClient);
+        let backoff = NoJitterBackoff::new(1, 1, 3);
+        let stream = request.retry_response_stream(pd_client, true, backoff);
+
+        executor::block_on(async { stream.collect::<Vec<Result<MockRpcResponse>>>().await });
+
+        // Original call plus the 3 retries
+        assert_eq!(*invoking_count.lock().unwrap(), 4);
+    }
+}

@@ -20,26 +20,29 @@ name = "tikv_client"
 [dependencies]
 derive-new = "0.5"
 failure = "0.1"
-futures-preview = { version = "0.3.0-alpha.18", features = ["compat", "async-await", "nightly"] }
-grpcio = { version = "0.5.0-alpha", features = [ "secure", "prost-codec" ], default-features = false }
-kvproto = { git = "https://github.com/pingcap/kvproto.git", rev = "2fc6229ed6097b59dbe51525c7a65b19543a94ca", features = [ "prost-codec" ], default-features = false }
+futures = { version = "0.3.1", features = ["compat", "async-await", "thread-pool"] }
+grpcio = { version = "0.5.0", features = [ "secure", "prost-codec" ], default-features = false }
+kvproto = { git = "https://github.com/pingcap/kvproto.git", features = [ "prost-codec" ], default-features = false }
 lazy_static = "1"
-log = "0.3.9"
+log = "0.4"
+rand = "0.7"
 regex = "1"
 serde = "1.0"
 serde_derive = "1.0"
-futures-timer = "0.3"
+futures-timer = "3.0"
 
 [dependencies.prometheus]
-version = "0.4.2"
+version = "0.8"
 default-features = false
 features = ["push", "process"]
 
 [dev-dependencies]
 clap = "2.32"
 tempdir = "0.3"
-runtime = { version = "0.3.0-alpha.7", default-features = false }
-runtime-tokio = "0.3.0-alpha.6"
+tokio = { version = "0.2", features = ["rt-threaded", "macros"] }
 proptest = "0.9"
 proptest-derive = "0.1.0"
 fail = { version = "0.3", features = [ "failpoints" ] }
+
+[patch.crates-io]
+raft-proto = { git = "https://github.com/tikv/raft-rs", rev = "e624c1d48460940a40d8aa69b5329460d9af87dd" }

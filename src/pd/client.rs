@@ -45,7 +45,7 @@ pub trait PdClient: Send + Sync + 'static {
         skip_cache: bool,
     ) -> BoxFuture<'static, Result<Store<Self::KvClient>>> {
         self.region_for_key(key, skip_cache)
-            .and_then(move |region| self.clone().map_region_to_store(region))
+            .and_then(move |region| self.map_region_to_store(region))
             .boxed()
     }
 
@@ -55,7 +55,7 @@ pub trait PdClient: Send + Sync + 'static {
         skip_cache: bool,
     ) -> BoxFuture<'static, Result<Store<Self::KvClient>>> {
         self.region_for_id(id, skip_cache)
-            .and_then(move |region| self.clone().map_region_to_store(region).boxed())
+            .and_then(move |region| self.map_region_to_store(region).boxed())
             .boxed()
     }
 

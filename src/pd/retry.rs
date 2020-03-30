@@ -185,7 +185,7 @@ where
             if reconnect_count == 0 {
                 return Err(e);
             }
-            Delay::new(Duration::from_secs(RECONNECT_INTERVAL_SEC)).await?;
+            Delay::new(Duration::from_secs(RECONNECT_INTERVAL_SEC)).await;
         }
     }
 

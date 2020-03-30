@@ -277,7 +277,7 @@ impl TwoPhaseCommitter {
     }
 
     async fn commit_secondary(mut self, commit_version: u64) -> Result<()> {
-        let mutations = mem::replace(&mut self.mutations, Vec::default());
+        let mutations = mem::take(&mut self.mutations);
         // No need to commit secondary keys when there is only one key
         if mutations.len() == 1 {
             return Ok(());
@@ -294,7 +294,7 @@ impl TwoPhaseCommitter {
     }
 
     fn rollback(&mut self) -> impl Future<Output = Result<()>> + 'static {
-        let mutations = mem::replace(&mut self.mutations, Vec::default());
+        let mutations = mem::take(&mut self.mutations);
         let keys = mutations
             .into_iter()
             .map(|mutation| mutation.key.into())
