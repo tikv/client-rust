@@ -106,9 +106,9 @@ async fn main() -> Result<()> {
     let k2 = "k2";
     let k3 = "k3";
     let batch_scan_keys = vec![
-        (k1.to_owned()..=k2.to_owned()).to_owned(),
-        (k2.to_owned()..=k3.to_owned()).to_owned(),
-        (k1.to_owned()..=k3.to_owned()).to_owned(),
+        (k1.to_owned()..=k2.to_owned()),
+        (k2.to_owned()..=k3.to_owned()),
+        (k1.to_owned()..=k3.to_owned()),
     ];
     let kv_pairs = client
         .batch_scan(batch_scan_keys.to_owned(), 10)
