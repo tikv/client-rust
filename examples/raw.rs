@@ -94,7 +94,11 @@ async fn main() -> Result<()> {
     let keys: Vec<_> = pairs.into_iter().map(|p| p.key().clone()).collect();
     assert_eq!(
         &keys,
-        &[Key::from("k1".to_owned()), Key::from("k2".to_owned()), Key::from("k3".to_owned())]
+        &[
+            Key::from("k1".to_owned()),
+            Key::from("k2".to_owned()),
+            Key::from("k3".to_owned())
+        ]
     );
     println!("Scaning from {:?} to {:?} gives: {:?}", start, end, keys);
 
@@ -102,20 +106,31 @@ async fn main() -> Result<()> {
     let k2 = "k2";
     let k3 = "k3";
     let batch_scan_keys = vec![
-        (k1.clone().to_owned()..=k2.clone().to_owned()).to_owned(),
-        (k2.to_owned()..=k3.clone().to_owned()).to_owned(),
+        (k1.to_owned()..=k2.to_owned()).to_owned(),
+        (k2.to_owned()..=k3.to_owned()).to_owned(),
         (k1.to_owned()..=k3.to_owned()).to_owned(),
     ];
     let kv_pairs = client
         .batch_scan(batch_scan_keys.to_owned(), 10)
         .await
         .expect("Could not batch scan");
-    let vals: Vec<_> = kv_pairs.into_iter().map(|p| p.value().clone()).collect();
-    assert_eq!(&vals,
-        &[Value::from("v1".to_owned()), Value::from("v2".to_owned()),
-            Value::from("v2".to_owned()), Value::from("v3".to_owned()),
-            Value::from("v1".to_owned()), Value::from("v2".to_owned()), Value::from("v3".to_owned())]);
-    println!("Scaning batch scan from {:?} gives: {:?}", batch_scan_keys, vals);
+    let vals: Vec<_> = kv_pairs.into_iter().map(|p| p.1).collect();
+    assert_eq!(
+        &vals,
+        &[
+            "v1".to_owned().into(),
+            "v2".to_owned().into(),
+            "v2".to_owned().into(),
+            "v3".to_owned().into(),
+            "v1".to_owned().into(),
+            "v2".to_owned().into(),
+            "v3".to_owned().into()
+        ]
+    );
+    println!(
+        "Scaning batch scan from {:?} gives: {:?}",
+        batch_scan_keys, vals
+    );
 
     // Cleanly exit.
     Ok(())

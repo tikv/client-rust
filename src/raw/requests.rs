@@ -4,7 +4,10 @@ use super::RawRpcRequest;
 use crate::{
     kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
-    request::{store_stream_for_key, store_stream_for_keys, store_stream_for_range, store_stream_for_ranges, KvRequest},
+    request::{
+        store_stream_for_key, store_stream_for_keys, store_stream_for_range,
+        store_stream_for_ranges, KvRequest,
+    },
     transaction::HasLocks,
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
@@ -435,7 +438,9 @@ impl KvRequest for kvrpcpb::RawBatchScanRequest {
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let ranges = mem::replace(&mut self.ranges, Default::default())
-            .into_iter().map(BoundRange::from).collect();
+            .into_iter()
+            .map(|range| range.into())
+            .collect();
         store_stream_for_ranges(ranges, pd_client)
     }
 

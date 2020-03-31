@@ -202,6 +202,12 @@ impl From<kvrpcpb::KeyRange> for BoundRange {
     }
 }
 
+impl AsRef<BoundRange> for BoundRange {
+    fn as_ref(&self) -> &BoundRange {
+        self
+    }
+}
+
 /// A convenience trait for converting ranges of borrowed types into a `BoundRange`.
 pub trait ToOwnedRange {
     /// Transform a borrowed range of some form into an owned `BoundRange`.
