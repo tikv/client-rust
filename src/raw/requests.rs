@@ -437,7 +437,7 @@ impl KvRequest for kvrpcpb::RawBatchScanRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        let ranges = mem::take(&mut self.ranges, Default::default())
+        let ranges = mem::take(&mut self.ranges)
             .into_iter()
             .map(|range| range.into())
             .collect();
