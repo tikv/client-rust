@@ -54,6 +54,7 @@ impl<Cl> RetryClient<Cl> {
 }
 
 impl RetryClient<Cluster> {
+    //TODO 异步化
     pub fn connect(
         env: Arc<Environment>,
         endpoints: &[String],
@@ -111,6 +112,7 @@ impl fmt::Debug for RetryClient {
 // A node-like thing that can be connected to.
 trait Reconnect {
     type Cl;
+    //TODO 异步化
     fn reconnect(&self, interval: u64) -> Result<()>;
     fn with_cluster<T, F: Fn(&Self::Cl) -> T>(&self, f: F) -> T;
 }
