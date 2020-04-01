@@ -152,6 +152,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 }
 
 impl PdRpcClient<TikvConnect, Cluster> {
+    //TODO 异步化
     pub fn connect(config: &Config) -> Result<PdRpcClient> {
         PdRpcClient::new(
             config,

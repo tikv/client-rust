@@ -191,6 +191,7 @@ impl Connection {
     }
 
     // Re-establish connection with PD leader in synchronized fashion.
+    //TODO 异步化
     pub fn reconnect(
         &self,
         old_cluster: &Cluster,
@@ -271,6 +272,7 @@ impl Connection {
         }
     }
 
+    //TODO 异步化
     fn connect(
         &self,
         addr: &str,
