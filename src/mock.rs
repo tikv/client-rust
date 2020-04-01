@@ -60,7 +60,6 @@ impl KvClient for MockKvClient {
 impl KvConnect for MockKvConnect {
     type KvClient = MockKvClient;
 
-    //TODO 异步化
     fn connect(&self, address: &str) -> Result<Self::KvClient> {
         Ok(MockKvClient {
             addr: address.to_owned(),

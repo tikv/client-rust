@@ -26,7 +26,6 @@ use std::time::Duration;
 pub trait KvConnect: Sized {
     type KvClient: KvClient + Clone + Send + Sync + 'static;
 
-    //TODO 异步化
     fn connect(&self, address: &str) -> Result<Self::KvClient>;
 }
 
@@ -47,7 +46,6 @@ pub struct TikvConnect {
 impl KvConnect for TikvConnect {
     type KvClient = KvRpcClient;
 
-    //TODO 异步化
     fn connect(&self, address: &str) -> Result<KvRpcClient> {
         self.security_mgr
             .connect(self.env.clone(), address, TikvClient::new)
