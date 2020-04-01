@@ -100,6 +100,8 @@ extern crate lazy_static;
 extern crate log;
 #[macro_use]
 extern crate prometheus;
+#[macro_use]
+extern crate async_trait;
 
 #[doc(inline)]
 pub use crate::config::Config;
