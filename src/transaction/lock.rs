@@ -3,6 +3,7 @@ use crate::pd::{PdClient, RegionVerId};
 use crate::request::KvRequest;
 use crate::{ErrorKind, Key, Result, Timestamp};
 
+use fail::fail_point;
 use kvproto::kvrpcpb;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -20,6 +21,8 @@ pub async fn resolve_locks(
     locks: Vec<kvrpcpb::LockInfo>,
     pd_client: Arc<impl PdClient>,
 ) -> Result<bool> {
+    fail_point!("transaction-unresolved-lock", |_| { Ok(false) });
+
     let ts = pd_client.clone().get_timestamp().await?;
     let mut has_live_locks = false;
     let expired_locks = locks.into_iter().filter(|lock| {

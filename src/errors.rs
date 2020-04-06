@@ -60,6 +60,8 @@ pub enum ErrorKind {
     /// Multiple errors
     #[fail(display = "Multiple errors: {:?}", _0)]
     MultipleErrors(Vec<Error>),
+    #[fail(display = "Lock error. {}", message)]
+    LockError { message: String },
 }
 
 impl Fail for Error {
@@ -127,6 +129,10 @@ impl Error {
 
     pub(crate) fn undetermined_error(error: Error) -> Self {
         Error::from(ErrorKind::UndeterminedError(error))
+    }
+
+    pub(crate) fn lock_error(message: String) -> Self {
+        Error::from(ErrorKind::LockError { message })
     }
 }
 

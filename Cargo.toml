@@ -19,6 +19,7 @@ name = "tikv_client"
 
 [dependencies]
 derive-new = "0.5"
+fail = { version = "0.3", features = [ "failpoints" ] }
 failure = "0.1"
 futures = { version = "0.3.1", features = ["compat", "async-await", "thread-pool"] }
 grpcio = { version = "0.5.0", features = [ "secure", "prost-codec" ], default-features = false }
@@ -42,7 +43,6 @@ tempdir = "0.3"
 tokio = { version = "0.2", features = ["rt-threaded", "macros"] }
 proptest = "0.9"
 proptest-derive = "0.1.0"
-fail = { version = "0.3", features = [ "failpoints" ] }
 
 [patch.crates-io]
 raft-proto = { git = "https://github.com/tikv/raft-rs", rev = "e624c1d48460940a40d8aa69b5329460d9af87dd" }

@@ -63,12 +63,9 @@ pub struct FullJitterBackoff {
 }
 
 impl FullJitterBackoff {
+    // Both base_delay_ms and max_delay_ms must be positive.
     #[allow(dead_code)]
-    pub fn new(base_delay_ms: u64, max_delay_ms: u64, max_attempts: u32) -> Self {
-        if base_delay_ms == 0 || max_delay_ms == 0 {
-            panic!("Both base_delay_ms and max_delay_ms must be positive");
-        }
-
+    pub const fn new(base_delay_ms: u64, max_delay_ms: u64, max_attempts: u32) -> Self {
         Self {
             current_attempts: 0,
             max_attempts,
@@ -110,12 +107,8 @@ pub struct EqualJitterBackoff {
 }
 
 impl EqualJitterBackoff {
-    #[allow(dead_code)]
-    pub fn new(base_delay_ms: u64, max_delay_ms: u64, max_attempts: u32) -> Self {
-        if base_delay_ms < 2 || max_delay_ms < 2 {
-            panic!("Both base_delay_ms and max_delay_ms must be greater than 1");
-        }
-
+    // Both base_delay_ms and max_delay_ms must be greater than 1.
+    pub const fn new(base_delay_ms: u64, max_delay_ms: u64, max_attempts: u32) -> Self {
         Self {
             current_attempts: 0,
             max_attempts,
@@ -159,12 +152,9 @@ pub struct DecorrelatedJitterBackoff {
 }
 
 impl DecorrelatedJitterBackoff {
+    // base_delay_ms must be positive.
     #[allow(dead_code)]
-    pub fn new(base_delay_ms: u64, max_delay_ms: u64, max_attempts: u32) -> Self {
-        if base_delay_ms == 0 {
-            panic!("base_delay_ms must be positive");
-        }
-
+    pub const fn new(base_delay_ms: u64, max_delay_ms: u64, max_attempts: u32) -> Self {
         Self {
             current_attempts: 0,
             max_attempts,
@@ -243,18 +233,6 @@ mod test {
     }
 
     #[test]
-    #[should_panic(expected = "Both base_delay_ms and max_delay_ms must be positive")]
-    fn test_full_jitter_backoff_with_invalid_base_delay_ms() {
-        FullJitterBackoff::new(0, 7, 3);
-    }
-
-    #[test]
-    #[should_panic(expected = "Both base_delay_ms and max_delay_ms must be positive")]
-    fn test_full_jitter_backoff_with_invalid_max_delay_ms() {
-        FullJitterBackoff::new(2, 0, 3);
-    }
-
-    #[test]
     fn test_equal_jitter_backoff() {
         let mut backoff = EqualJitterBackoff::new(2, 7, 3);
 
@@ -271,18 +249,6 @@ mod test {
         assert!(third_delay_dur <= Duration::from_millis(6));
 
         assert_eq!(backoff.next_delay_duration(), None);
-    }
-
-    #[test]
-    #[should_panic(expected = "Both base_delay_ms and max_delay_ms must be greater than 1")]
-    fn test_equal_jitter_backoff_with_invalid_base_delay_ms() {
-        EqualJitterBackoff::new(1, 7, 3);
-    }
-
-    #[test]
-    #[should_panic(expected = "Both base_delay_ms and max_delay_ms must be greater than 1")]
-    fn test_equal_jitter_backoff_with_invalid_max_delay_ms() {
-        EqualJitterBackoff::new(2, 1, 3);
     }
 
     #[test]
@@ -304,11 +270,5 @@ mod test {
         assert!(second_delay_dur <= Duration::from_millis(cap_ms));
 
         assert_eq!(backoff.next_delay_duration(), None);
-    }
-
-    #[test]
-    #[should_panic(expected = "base_delay_ms must be positive")]
-    fn test_decorrelated_jitter_backoff_with_invalid_base_delay_ms() {
-        DecorrelatedJitterBackoff::new(0, 7, 3);
     }
 }
