@@ -175,7 +175,11 @@ impl Connection {
         }
     }
 
-    pub async fn connect_cluster(&self, endpoints: &[String], timeout: Duration) -> Result<Cluster> {
+    pub async fn connect_cluster(
+        &self,
+        endpoints: &[String],
+        timeout: Duration,
+    ) -> Result<Cluster> {
         let members = self.validate_endpoints(endpoints, timeout).await?;
         let (client, members) = self.try_connect_leader(&members, timeout).await?;
 
@@ -205,7 +209,9 @@ impl Connection {
 
         warn!("updating pd client, blocking the tokio core");
         let start = Instant::now();
-        let (client, members) = self.try_connect_leader(&old_cluster.members, timeout).await?;
+        let (client, members) = self
+            .try_connect_leader(&old_cluster.members, timeout)
+            .await?;
         let tso = TimestampOracle::new(old_cluster.id, &client)?;
 
         let cluster = Cluster {

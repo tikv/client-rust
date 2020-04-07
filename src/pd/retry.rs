@@ -121,15 +121,12 @@ impl Reconnect for RetryClient<Cluster> {
     type Cl = Cluster;
 
     async fn reconnect(&self, interval: u64) -> Result<()> {
-        if let Some(cluster) =
-        {
+        if let Some(cluster) = {
             let read_guard = self.cluster.read().unwrap();
-            let res = self.connection
-                .reconnect(&read_guard, interval, self.timeout).await?;
-            std::mem::drop(read_guard);
-            res
-        }
-        {
+            self.connection
+                .reconnect(&read_guard, interval, self.timeout)
+                .await?
+        } {
             *self.cluster.write().unwrap() = cluster;
         }
         Ok(())

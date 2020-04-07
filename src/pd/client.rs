@@ -158,7 +158,12 @@ impl PdRpcClient<TikvConnect, Cluster> {
             config,
             |env, security_mgr| TikvConnect::new(env, security_mgr),
             |env, security_mgr| {
-                block_on(RetryClient::connect(env, &config.pd_endpoints, security_mgr, config.timeout))
+                block_on(RetryClient::connect(
+                    env,
+                    &config.pd_endpoints,
+                    security_mgr,
+                    config.timeout,
+                ))
             },
         )
     }
