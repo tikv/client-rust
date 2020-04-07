@@ -34,7 +34,8 @@ pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
                 MockCluster,
             ))
         },
-    ).await
+    )
+    .await
     .unwrap()
 }
 

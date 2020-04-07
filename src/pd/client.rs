@@ -159,12 +159,13 @@ impl PdRpcClient<TikvConnect, Cluster> {
             |env, security_mgr| {
                 RetryClient::connect(env, &config.pd_endpoints, security_mgr, config.timeout)
             },
-        ).await
+        )
+        .await
     }
 }
 
 impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
-    pub async fn new<Fu,MakeKvC, MakePd>(
+    pub async fn new<Fu, MakeKvC, MakePd>(
         config: &Config,
         kv_connect: MakeKvC,
         pd: MakePd,
@@ -221,10 +222,11 @@ pub mod test {
     use crate::mock::*;
 
     use futures::executor;
+    use futures::executor::block_on;
 
     #[test]
     fn test_kv_client_caching() {
-        let client =block_on( pd_rpc_client());
+        let client = block_on(pd_rpc_client());
 
         let addr1 = "foo";
         let addr2 = "bar";
