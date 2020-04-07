@@ -122,9 +122,13 @@ impl Reconnect for RetryClient<Cluster> {
 
     async fn reconnect(&self, interval: u64) -> Result<()> {
         if let Some(cluster) = {
-            let read_guard = self.cluster.read().unwrap();
+            let (id, members) = {
+                let read_guard = self.cluster.read().unwrap();
+                (read_guard.id, read_guard.members.clone())
+            };
+
             self.connection
-                .reconnect(&read_guard, interval, self.timeout)
+                .reconnect(id, &members, interval, self.timeout)
                 .await?
         } {
             *self.cluster.write().unwrap() = cluster;

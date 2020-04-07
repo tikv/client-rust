@@ -36,7 +36,7 @@ macro_rules! pd_request {
 pub struct Cluster {
     pub id: u64,
     pub(super) client: pdpb::PdClient,
-    members: pdpb::GetMembersResponse,
+    pub members: pdpb::GetMembersResponse,
     tso: TimestampOracle,
 }
 
@@ -198,7 +198,8 @@ impl Connection {
     //TODO 异步化
     pub async fn reconnect(
         &self,
-        old_cluster: &Cluster,
+        cluster_id: u64,
+        previous_members: &pdpb::GetMembersResponse,
         interval: u64,
         timeout: Duration,
     ) -> Result<Option<Cluster>> {
@@ -209,13 +210,11 @@ impl Connection {
 
         warn!("updating pd client, blocking the tokio core");
         let start = Instant::now();
-        let (client, members) = self
-            .try_connect_leader(&old_cluster.members, timeout)
-            .await?;
-        let tso = TimestampOracle::new(old_cluster.id, &client)?;
+        let (client, members) = self.try_connect_leader(previous_members, timeout).await?;
+        let tso = TimestampOracle::new(cluster_id, &client)?;
 
         let cluster = Cluster {
-            id: old_cluster.id,
+            id: cluster_id,
             client,
             members,
             tso,
