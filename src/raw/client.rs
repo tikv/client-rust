@@ -28,8 +28,8 @@ impl Client {
     /// let client = RawClient::new(Config::default()).unwrap();
     /// # });
     /// ```
-    pub fn new(config: Config) -> Result<Client> {
-        let rpc = Arc::new(PdRpcClient::connect(&config)?);
+    pub async fn new(config: Config) -> Result<Client> {
+        let rpc = Arc::new(PdRpcClient::connect(&config).await?);
         Ok(Client {
             rpc,
             cf: None,

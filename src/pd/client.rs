@@ -153,7 +153,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 }
 
 impl PdRpcClient<TikvConnect, Cluster> {
-    pub fn connect(config: &Config) -> Result<PdRpcClient> {
+    pub async fn connect(config: &Config) -> Result<PdRpcClient> {
         PdRpcClient::new(
             config,
             |env, security_mgr| TikvConnect::new(env, security_mgr),
