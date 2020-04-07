@@ -195,7 +195,6 @@ impl Connection {
     }
 
     // Re-establish connection with PD leader in synchronized fashion.
-    //TODO 异步化
     pub async fn reconnect(
         &self,
         cluster_id: u64,
@@ -283,7 +282,7 @@ impl Connection {
         timeout: Duration,
     ) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
         let client = self
-            .security_mgr //todo 异步化
+            .security_mgr
             .connect(self.env.clone(), addr, pdpb::PdClient::new)?;
         let option = CallOption::default().timeout(timeout);
         let resp = client
