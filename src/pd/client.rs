@@ -21,6 +21,7 @@ use crate::{
     transaction::Timestamp,
     Config, Key, Result,
 };
+use futures::executor::block_on;
 
 const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";
@@ -157,7 +158,7 @@ impl PdRpcClient<TikvConnect, Cluster> {
             config,
             |env, security_mgr| TikvConnect::new(env, security_mgr),
             |env, security_mgr| {
-                RetryClient::connect(env, &config.pd_endpoints, security_mgr, config.timeout)
+                block_on(RetryClient::connect(env, &config.pd_endpoints, security_mgr, config.timeout))
             },
         )
     }

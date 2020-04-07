@@ -54,15 +54,14 @@ impl<Cl> RetryClient<Cl> {
 }
 
 impl RetryClient<Cluster> {
-    //TODO 异步化
-    pub fn connect(
+    pub async fn connect(
         env: Arc<Environment>,
         endpoints: &[String],
         security_mgr: Arc<SecurityManager>,
         timeout: Duration,
     ) -> Result<RetryClient> {
         let connection = Connection::new(env, security_mgr);
-        let cluster = RwLock::new(connection.connect_cluster(endpoints, timeout)?);
+        let cluster = RwLock::new(connection.connect_cluster(endpoints, timeout).await?);
         Ok(RetryClient {
             cluster,
             connection,
@@ -110,20 +109,26 @@ impl fmt::Debug for RetryClient {
 }
 
 // A node-like thing that can be connected to.
+#[async_trait]
 trait Reconnect {
     type Cl;
-    //TODO 异步化
-    fn reconnect(&self, interval: u64) -> Result<()>;
+    async fn reconnect(&self, interval: u64) -> Result<()>;
     fn with_cluster<T, F: Fn(&Self::Cl) -> T>(&self, f: F) -> T;
 }
 
+#[async_trait]
 impl Reconnect for RetryClient<Cluster> {
     type Cl = Cluster;
 
-    fn reconnect(&self, interval: u64) -> Result<()> {
+    async fn reconnect(&self, interval: u64) -> Result<()> {
         if let Some(cluster) =
-            self.connection
-                .reconnect(&self.cluster.read().unwrap(), interval, self.timeout)?
+        {
+            let read_guard = self.cluster.read().unwrap();
+            let res = self.connection
+                .reconnect(&read_guard, interval, self.timeout).await?;
+            std::mem::drop(read_guard);
+            res
+        }
         {
             *self.cluster.write().unwrap() = cluster;
         }
@@ -152,7 +157,7 @@ where
 
         // Reconnect.
         let mut reconnect_count = MAX_REQUEST_COUNT;
-        while let Err(e) = client.reconnect(RECONNECT_INTERVAL_SEC) {
+        while let Err(e) = client.reconnect(RECONNECT_INTERVAL_SEC).await {
             reconnect_count -= 1;
             if reconnect_count == 0 {
                 return Err(e);
