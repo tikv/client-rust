@@ -277,19 +277,20 @@ impl Connection {
         }
     }
 
-    //TODO 异步化
     async fn connect(
         &self,
         addr: &str,
         timeout: Duration,
     ) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
         let client = self
-            .security_mgr
+            .security_mgr //todo 异步化
             .connect(self.env.clone(), addr, pdpb::PdClient::new)?;
         let option = CallOption::default().timeout(timeout);
         let resp = client
-            .get_members_opt(&pdpb::GetMembersRequest::default(), option)
-            .map_err(Error::from)?;
+            .get_members_async_opt(&pdpb::GetMembersRequest::default(), option)
+            .map(Compat01As03::new)
+            .map_err(Error::from)?
+            .await?;
         Ok((client, resp))
     }
 
