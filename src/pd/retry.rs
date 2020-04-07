@@ -185,10 +185,11 @@ mod test {
             reconnect_count: Mutex<usize>,
         }
 
+        #[async_trait]
         impl Reconnect for MockClient {
             type Cl = ();
 
-            fn reconnect(&self, _: u64) -> Result<()> {
+            async fn reconnect(&self, _: u64) -> Result<()> {
                 *self.reconnect_count.lock().unwrap() += 1;
                 // Not actually unimplemented, we just don't care about the error.
                 Err(Error::unimplemented())
@@ -223,10 +224,11 @@ mod test {
             retry_count: Mutex<usize>,
         }
 
+        #[async_trait]
         impl Reconnect for MockClient {
             type Cl = ();
 
-            fn reconnect(&self, _: u64) -> Result<()> {
+            async fn reconnect(&self, _: u64) -> Result<()> {
                 Ok(())
             }
 

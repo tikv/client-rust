@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
 
     // When we first create a client we receive a `Connect` structure which must be resolved before
     // the client is actually connected and usable.
-    let client = Client::new(config)?;
+    let client = Client::new(config).await?;
 
     // Requests are created from the connected client. These calls return structures which
     // implement `Future`. This means the `Future` must be resolved before the action ever takes
@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
     let end = "k2";
     let pairs = client
         .with_key_only(true)
-        .scan((start..=end).to_owned(), 10)
+        .scan((start..=end).to_owned(), 10 as u32)
         .await
         .expect("Could not scan");
 
