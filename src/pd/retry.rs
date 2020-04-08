@@ -9,6 +9,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use futures::lock::{Mutex, MutexGuard, MutexLockFuture};
 use futures::prelude::*;
 use futures_timer::Delay;
 use grpcio::Environment;
@@ -23,6 +24,8 @@ use crate::{
     transaction::Timestamp,
     Result,
 };
+use failure::_core::pin::Pin;
+use futures::task::{Context, Poll};
 
 // FIXME: these numbers and how they are used are all just cargo-culted in, there
 // may be more optimal values.
@@ -35,6 +38,7 @@ pub struct RetryClient<Cl = Cluster> {
     cluster: RwLock<Cl>,
     connection: Connection,
     timeout: Duration,
+    connected: Arc<Mutex<bool>>,
 }
 
 #[cfg(test)]
@@ -50,6 +54,7 @@ impl<Cl> RetryClient<Cl> {
             cluster: RwLock::new(cluster),
             connection,
             timeout,
+            connected: Arc::new(Mutex::new(true)),
         }
     }
 }
@@ -67,6 +72,7 @@ impl RetryClient<Cluster> {
             cluster,
             connection,
             timeout,
+            connected: Arc::new(Mutex::new(true)),
         })
     }
 
@@ -109,6 +115,46 @@ impl fmt::Debug for RetryClient {
     }
 }
 
+struct ShouldReconnect<'a> {
+    connected: MutexLockFuture<'a, bool>,
+    first_ready: Option<bool>,
+}
+
+impl<'a> ShouldReconnect<'a> {
+    fn new(connected: MutexLockFuture<'a, bool>) -> Self {
+        ShouldReconnect {
+            connected,
+            first_ready: None,
+        }
+    }
+}
+
+impl<'a> Future for ShouldReconnect<'a> {
+    type Output = (MutexGuard<'a, bool>, bool);
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        return match Pin::new(&mut self.connected).poll(cx) {
+            Poll::Ready(val) => match self.first_ready {
+                None => {
+                    self.first_ready = Some(true);
+                    Poll::Ready((val, true))
+                }
+                Some(true) => panic!("should not happen"),
+                Some(false) => {
+                    let res = !*val;
+                    Poll::Ready((val, res))
+                }
+            },
+            Poll::Pending => {
+                match self.first_ready {
+                    None => self.first_ready = Some(false),
+                    _ => {}
+                }
+                Poll::Pending
+            }
+        };
+    }
+}
+
 // A node-like thing that can be connected to.
 #[async_trait]
 trait Reconnect {
@@ -122,19 +168,28 @@ impl Reconnect for RetryClient<Cluster> {
     type Cl = Cluster;
 
     async fn reconnect(&self, interval: u64) -> Result<()> {
-        if let Some(cluster) = {
-            let (id, members) = {
-                let read_guard = self.cluster.read().unwrap();
-                (read_guard.id, read_guard.members.clone())
-            };
+        let connected: MutexLockFuture<bool> = self.connected.lock();
+        let (mut connected, should_connect) = ShouldReconnect::new(connected).await;
+        //if try to reconnect while a previous reconnect is running,the second reconnect will succeed in direct if the first one is succeed
+        if should_connect {
+            *connected = false;
+            if let Some(cluster) = {
+                let (id, members) = {
+                    let read_guard = self.cluster.read().unwrap();
+                    (read_guard.id, read_guard.members.clone())
+                };
 
-            self.connection
-                .reconnect(id, &members, interval, self.timeout)
-                .await?
-        } {
-            *self.cluster.write().unwrap() = cluster;
+                self.connection
+                    .reconnect(id, &members, interval, self.timeout)
+                    .await?
+            } {
+                *self.cluster.write().unwrap() = cluster;
+            }
+            *connected = true;
+            Ok(())
+        } else {
+            Ok(())
         }
-        Ok(())
     }
 
     fn with_cluster<T, F: Fn(&Cluster) -> T>(&self, f: F) -> T {
