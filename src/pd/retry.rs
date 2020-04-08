@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use async_trait::async_trait;
 use futures::prelude::*;
 use futures_timer::Delay;
 use grpcio::Environment;
