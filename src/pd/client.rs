@@ -165,15 +165,15 @@ impl PdRpcClient<TikvConnect, Cluster> {
 }
 
 impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
-    pub async fn new<Fu, MakeKvC, MakePd>(
+    pub async fn new<PdFut, MakeKvC, MakePd>(
         config: &Config,
         kv_connect: MakeKvC,
         pd: MakePd,
     ) -> Result<PdRpcClient<KvC, Cl>>
     where
-        Fu: Future<Output = Result<RetryClient<Cl>>>,
+        PdFut: Future<Output = Result<RetryClient<Cl>>>,
         MakeKvC: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> KvC,
-        MakePd: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> Fu,
+        MakePd: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> PdFut,
     {
         let env = Arc::new(
             EnvBuilder::new()
