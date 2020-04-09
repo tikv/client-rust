@@ -132,7 +132,7 @@ impl<'a> ShouldReconnect<'a> {
 impl<'a> Future for ShouldReconnect<'a> {
     type Output = (MutexGuard<'a, bool>, bool);
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        return match Pin::new(&mut self.connected).poll(cx) {
+        match Pin::new(&mut self.connected).poll(cx) {
             Poll::Ready(val) => match self.first_ready {
                 None => {
                     self.first_ready = Some(true);
@@ -145,13 +145,12 @@ impl<'a> Future for ShouldReconnect<'a> {
                 }
             },
             Poll::Pending => {
-                match self.first_ready {
-                    None => self.first_ready = Some(false),
-                    _ => {}
+                if self.first_ready.is_none() {
+                    self.first_ready = Some(false)
                 }
                 Poll::Pending
             }
-        };
+        }
     }
 }
 
