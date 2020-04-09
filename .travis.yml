@@ -7,7 +7,6 @@ os:
   - osx
 rust:
   - stable
-  allow_failures:
   - nightly
 
 env:
