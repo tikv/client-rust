@@ -169,7 +169,8 @@ impl Reconnect for RetryClient<Cluster> {
     async fn reconnect(&self, interval: u64) -> Result<()> {
         let connected: MutexLockFuture<bool> = self.connected.lock();
         let (mut connected, should_connect) = ShouldReconnect::new(connected).await;
-        //if try to reconnect while a previous reconnect is running,the second reconnect will succeed in direct if the first one is succeed
+        //if try to reconnect while a previous reconnect is running,
+        // the second reconnect will succeed in direct if the first one is succeed
         if should_connect {
             *connected = false;
             if let Some(cluster) = {
