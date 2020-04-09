@@ -9,14 +9,15 @@ rust:
   - stable
   - nightly
 
+matrix:
+  allow_failures:
+    - rust: nightly
+  fast_finish: true
+
 env:
   global:
     - RUST_BACKTRACE=1
     - RUSTFLAGS="-D warnings"
-
-matrix:
-  allow_failures:
-    - rust: nightly
 
 addons:
   apt:
