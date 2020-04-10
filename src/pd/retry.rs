@@ -115,6 +115,7 @@ impl fmt::Debug for RetryClient {
     }
 }
 
+//A helper struct to check whether a previous connecting is running.
 struct ShouldReconnect<'a> {
     connected: MutexLockFuture<'a, bool>,
     first_ready: Option<bool>,
@@ -169,7 +170,7 @@ impl Reconnect for RetryClient<Cluster> {
     async fn reconnect(&self, interval: u64) -> Result<()> {
         let connected: MutexLockFuture<bool> = self.connected.lock();
         let (mut connected, should_connect) = ShouldReconnect::new(connected).await;
-        //if try to reconnect while a previous reconnect is running,
+        // if try to reconnect while a previous reconnect is running,
         // the second reconnect will succeed in direct if the first one is succeed
         if should_connect {
             *connected = false;
