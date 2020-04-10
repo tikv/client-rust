@@ -115,7 +115,7 @@ impl fmt::Debug for RetryClient {
     }
 }
 
-//A helper struct to check whether a previous connecting is running.
+// A helper struct to check whether a previous connecting is running.
 struct ShouldReconnect<'a> {
     connected: MutexLockFuture<'a, bool>,
     first_ready: Option<bool>,
@@ -131,6 +131,8 @@ impl<'a> ShouldReconnect<'a> {
 }
 
 impl<'a> Future for ShouldReconnect<'a> {
+    // `tuple.0 : MutexGuard` tells whether current connecting is finished, `tuple.1 : bool` tells if
+    // we should start a new connection.
     type Output = (MutexGuard<'a, bool>, bool);
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match Pin::new(&mut self.connected).poll(cx) {
