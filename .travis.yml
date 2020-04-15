@@ -14,10 +14,6 @@ env:
     - RUST_BACKTRACE=1
     - RUSTFLAGS="-D warnings"
 
-matrix:
-  allow_failures:
-    - rust: nightly
-
 addons:
   apt:
     update: true
