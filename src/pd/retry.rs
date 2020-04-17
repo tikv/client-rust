@@ -183,7 +183,7 @@ impl Reconnect for RetryClient<Cluster> {
                 };
 
                 self.connection
-                    .reconnect(id, &members, interval, self.timeout)
+                    .reconnect(id, members, interval, self.timeout)
                     .await?
             } {
                 *self.cluster.write().unwrap() = cluster;

@@ -181,7 +181,7 @@ impl Connection {
         timeout: Duration,
     ) -> Result<Cluster> {
         let members = self.validate_endpoints(endpoints, timeout).await?;
-        let (client, members) = self.try_connect_leader(&members, timeout).await?;
+        let (client, members) = self.try_connect_leader(members, timeout).await?;
 
         let id = members.get_header().get_cluster_id();
         let tso = TimestampOracle::new(id, &client)?;
@@ -198,7 +198,7 @@ impl Connection {
     pub async fn reconnect(
         &self,
         cluster_id: u64,
-        previous_members: &pdpb::GetMembersResponse,
+        previous_members: pdpb::GetMembersResponse,
         interval: u64,
         timeout: Duration,
     ) -> Result<Option<Cluster>> {
@@ -324,7 +324,7 @@ impl Connection {
 
     async fn try_connect_leader(
         &self,
-        previous: &pdpb::GetMembersResponse,
+        previous: pdpb::GetMembersResponse,
         timeout: Duration,
     ) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
         let previous_leader = previous.get_leader();
