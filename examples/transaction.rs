@@ -19,9 +19,9 @@ async fn get(client: &Client, key: Key) -> Option<Value> {
     txn.get(key).await.expect("Could not get value")
 }
 
-async fn scan(client: &Client, range: impl Into<BoundRange>) {
+async fn scan(client: &Client, range: impl Into<BoundRange>, limit: u32) {
     let mut txn = client.begin().await.expect("Could not begin a transaction");
-    txn.scan(range)
+    txn.scan(range, limit)
         .await
         .expect("Could not scan key-value pairs in rnage")
         .for_each(|pair| println!("{:?}", pair));

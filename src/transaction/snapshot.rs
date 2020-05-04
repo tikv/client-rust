@@ -28,8 +28,12 @@ impl Snapshot {
         self.transaction.batch_get(keys).await
     }
 
-    pub async fn scan(&self, range: impl Into<BoundRange>) -> Result<impl Iterator<Item = KvPair>> {
-        self.transaction.scan(range).await
+    pub async fn scan(
+        &self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Iterator<Item = KvPair>> {
+        self.transaction.scan(range, limit).await
     }
 
     pub fn scan_reverse(&self, range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
