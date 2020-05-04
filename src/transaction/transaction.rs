@@ -129,18 +129,13 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn scan(
-        &self,
-        range: impl Into<BoundRange>
-    ) -> Result<impl Iterator<Item = KvPair>> {
+    pub async fn scan(&self, range: impl Into<BoundRange>) -> Result<impl Iterator<Item = KvPair>> {
         // TODO: determine params and pass them to `new_mvcc_scan_request`
         // - limit
         // - key_only
         let timestamp = self.timestamp;
         let rpc = self.rpc.clone();
-        let pairs = new_mvcc_scan_request(range, timestamp)
-            .execute(rpc)
-            .await?;
+        let pairs = new_mvcc_scan_request(range, timestamp).execute(rpc).await?;
         Ok(pairs.into_iter())
     }
 

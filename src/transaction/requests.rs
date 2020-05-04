@@ -2,7 +2,7 @@ use crate::{
     backoff::Backoff,
     kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
-    request::{store_stream_for_key, store_stream_for_keys, store_stream_for_range, KvRequest,},
+    request::{store_stream_for_key, store_stream_for_keys, store_stream_for_range, KvRequest},
     transaction::{HasLocks, Timestamp},
     BoundRange, Error, Key, KvPair, Result, Value,
 };
