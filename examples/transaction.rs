@@ -19,11 +19,11 @@ async fn get(client: &Client, key: Key) -> Option<Value> {
     txn.get(key).await.expect("Could not get value")
 }
 
-async fn scan(client: &Client, range: impl Into<BoundRange>, mut _limit: usize) {
+async fn scan(client: &Client, range: impl Into<BoundRange>) {
     let mut txn = client.begin().await.expect("Could not begin a transaction");
     txn.scan(range)
         .await
-        .unwrap()
+        .expect("Could not scan key-value pairs in rnage")
         .for_each(|pair| println!("{:?}", pair));
     txn.commit().await.expect("Could not commit transaction");
 }
