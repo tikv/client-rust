@@ -32,8 +32,9 @@ impl Snapshot {
         &self,
         range: impl Into<BoundRange>,
         limit: u32,
+        key_only: bool,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.transaction.scan(range, limit).await
+        self.transaction.scan(range, limit, key_only).await
     }
 
     pub fn scan_reverse(&self, range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {

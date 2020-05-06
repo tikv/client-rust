@@ -121,7 +121,7 @@ impl Transaction {
     /// let key1: Key = b"TiKV".to_vec().into();
     /// let key2: Key = b"TiDB".to_vec().into();
     /// let result: Vec<KvPair> = txn
-    ///     .scan(key1..key2, std::u32::MAX)
+    ///     .scan(key1..key2, 10, false)
     ///     .await
     ///     .unwrap()
     ///     .collect();
@@ -133,12 +133,11 @@ impl Transaction {
         &self,
         range: impl Into<BoundRange>,
         limit: u32,
+        key_only: bool,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        // TODO: determine params and pass them to `new_mvcc_scan_request`
-        // - key_only
         let timestamp = self.timestamp;
         let rpc = self.rpc.clone();
-        let pairs = new_mvcc_scan_request(range, timestamp, limit)
+        let pairs = new_mvcc_scan_request(range, timestamp, limit, key_only)
             .execute(rpc)
             .await?;
         Ok(pairs.into_iter())

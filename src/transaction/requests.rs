@@ -174,12 +174,14 @@ pub fn new_mvcc_scan_request(
     range: impl Into<BoundRange>,
     timestamp: Timestamp,
     limit: u32,
+    key_only: bool,
 ) -> kvrpcpb::ScanRequest {
     let (start_key, end_key) = range.into().into_keys();
     let mut req = kvrpcpb::ScanRequest::default();
     req.set_start_key(start_key.into());
     req.set_end_key(end_key.unwrap_or_default().into());
     req.set_limit(limit);
+    req.set_key_only(key_only);
     req.set_version(timestamp.into_version());
     req
 }
