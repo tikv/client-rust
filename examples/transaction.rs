@@ -23,7 +23,7 @@ async fn scan(client: &Client, range: impl Into<BoundRange>, limit: u32) {
     let mut txn = client.begin().await.expect("Could not begin a transaction");
     txn.scan(range, limit, false)
         .await
-        .expect("Could not scan key-value pairs in rnage")
+        .expect("Could not scan key-value pairs in range")
         .for_each(|pair| println!("{:?}", pair));
     txn.commit().await.expect("Could not commit transaction");
 }
