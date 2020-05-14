@@ -2,6 +2,7 @@
 
 use crate::{
     backoff::{Backoff, NoJitterBackoff},
+    group_by_range,
     kv_client::{HasError, HasRegionError, KvClient, RpcFnType, Store},
     pd::PdClient,
     transaction::{resolve_locks, HasLocks},
@@ -151,9 +152,7 @@ where
     I::IntoIter: Send + Sync + 'static,
     PdC: PdClient,
 {
-    pd_client
-        .clone()
-        .group_keys_by_region(key_data.into_iter().map(Into::into))
+    group_by_range!(pd_client.clone(), keys => key_data.into_iter().map(Into::into))
         .and_then(move |(region_id, key)| {
             pd_client
                 .clone()
@@ -182,9 +181,7 @@ pub fn store_stream_for_ranges<PdC: PdClient>(
     ranges: Vec<BoundRange>,
     pd_client: Arc<PdC>,
 ) -> BoxStream<'static, Result<(Vec<BoundRange>, Store<PdC::KvClient>)>> {
-    pd_client
-        .clone()
-        .group_ranges_by_region(ranges)
+    group_by_range!(pd_client.clone(), ranges => ranges)
         .and_then(move |(region_id, range)| {
             pd_client
                 .clone()
