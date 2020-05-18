@@ -150,7 +150,7 @@ impl Reconnect for RetryClient<Cluster> {
     }
 
     async fn with_cluster<T, F: Fn(&Cluster) -> T>(&self, f: F) -> T {
-        f(&self.cluster.read().await)
+        f(&*self.cluster.read().await)
     }
 }
 
