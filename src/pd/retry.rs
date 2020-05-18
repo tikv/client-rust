@@ -4,16 +4,16 @@
 
 use std::{
     fmt,
-    sync::{Arc, RwLock},
+    sync::{Arc},
     time::Duration,
 };
 
 use async_trait::async_trait;
-use futures::lock::{Mutex, MutexGuard, MutexLockFuture};
 use futures::prelude::*;
 use futures_timer::Delay;
 use grpcio::Environment;
 use kvproto::metapb;
+use tokio::sync::RwLock;
 
 use crate::{
     pd::{
@@ -24,8 +24,7 @@ use crate::{
     transaction::Timestamp,
     Result,
 };
-use failure::_core::pin::Pin;
-use futures::task::{Context, Poll};
+use std::time::Instant;
 
 // FIXME: these numbers and how they are used are all just cargo-culted in, there
 // may be more optimal values.
@@ -38,7 +37,7 @@ pub struct RetryClient<Cl = Cluster> {
     cluster: RwLock<Cl>,
     connection: Connection,
     timeout: Duration,
-    connected: Arc<Mutex<bool>>,
+    last_connected: Instant,
 }
 
 #[cfg(test)]
@@ -54,7 +53,7 @@ impl<Cl> RetryClient<Cl> {
             cluster: RwLock::new(cluster),
             connection,
             timeout,
-            connected: Arc::new(Mutex::new(true)),
+            last_connected: Instant::now(),
         }
     }
 }
@@ -72,7 +71,7 @@ impl RetryClient<Cluster> {
             cluster,
             connection,
             timeout,
-            connected: Arc::new(Mutex::new(true)),
+            last_connected: Instant::now(),
         })
     }
 
@@ -109,76 +108,31 @@ impl RetryClient<Cluster> {
 impl fmt::Debug for RetryClient {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("pd::RetryClient")
-            .field("cluster_id", &self.cluster.read().unwrap().id)
+            .field("cluster_id", block_on(&self.cluster.read().await.id))
             .field("timeout", &self.timeout)
             .finish()
     }
 }
-
-// A helper struct to check whether a previous connecting is running.
-struct ShouldReconnect<'a> {
-    connected: MutexLockFuture<'a, bool>,
-    first_ready: Option<bool>,
-}
-
-impl<'a> ShouldReconnect<'a> {
-    fn new(connected: MutexLockFuture<'a, bool>) -> Self {
-        ShouldReconnect {
-            connected,
-            first_ready: None,
-        }
-    }
-}
-
-impl<'a> Future for ShouldReconnect<'a> {
-    // `tuple.0 : MutexGuard` tells whether current connecting is finished, `tuple.1 : bool` tells if
-    // we should start a new connection.
-    type Output = (MutexGuard<'a, bool>, bool);
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match Pin::new(&mut self.connected).poll(cx) {
-            Poll::Ready(val) => match self.first_ready {
-                None => {
-                    self.first_ready = Some(true);
-                    Poll::Ready((val, true))
-                }
-                Some(true) => panic!("should not happen"),
-                Some(false) => {
-                    let res = !*val;
-                    Poll::Ready((val, res))
-                }
-            },
-            Poll::Pending => {
-                if self.first_ready.is_none() {
-                    self.first_ready = Some(false)
-                }
-                Poll::Pending
-            }
-        }
-    }
-}
-
 // A node-like thing that can be connected to.
 #[async_trait]
 trait Reconnect {
     type Cl;
-    async fn reconnect(&self, interval: u64) -> Result<()>;
-    fn with_cluster<T, F: Fn(&Self::Cl) -> T>(&self, f: F) -> T;
+    async fn reconnect(&mut self, interval: u64) -> Result<()>;
+    async fn with_cluster<T, F: Fn(&Self::Cl) -> T>(&self, f: F) -> T;
 }
 
 #[async_trait]
 impl Reconnect for RetryClient<Cluster> {
     type Cl = Cluster;
 
-    async fn reconnect(&self, interval: u64) -> Result<()> {
-        let connected: MutexLockFuture<bool> = self.connected.lock();
-        let (mut connected, should_connect) = ShouldReconnect::new(connected).await;
-        // if try to reconnect while a previous reconnect is running,
-        // the second reconnect will succeed in direct if the first one is succeed
+    async fn reconnect(&mut self, interval: u64) -> Result<()> {
+        let reconnect_begin = Instant::now();
+        let write_lock = self.cluster.write().await;
+        let should_connect = reconnect_begin > self.last_connected;
         if should_connect {
-            *connected = false;
             if let Some(cluster) = {
                 let (id, members) = {
-                    let read_guard = self.cluster.read().unwrap();
+                    let read_guard = self.cluster.read().await;
                     (read_guard.id, read_guard.members.clone())
                 };
 
@@ -186,17 +140,17 @@ impl Reconnect for RetryClient<Cluster> {
                     .reconnect(id, members, interval, self.timeout)
                     .await?
             } {
-                *self.cluster.write().unwrap() = cluster;
+                *write_lock = cluster;
             }
-            *connected = true;
+            self.last_connected = Instant::now();
             Ok(())
         } else {
             Ok(())
         }
     }
 
-    fn with_cluster<T, F: Fn(&Cluster) -> T>(&self, f: F) -> T {
-        f(&self.cluster.read().unwrap())
+    async fn with_cluster<T, F: Fn(&Cluster) -> T>(&self, f: F) -> T {
+        f(&self.cluster.read().await)
     }
 }
 
@@ -209,7 +163,7 @@ where
 {
     let mut last_err = Ok(());
     for _ in 0..LEADER_CHANGE_RETRY {
-        let fut = client.with_cluster(&func);
+        let fut = client.with_cluster(&func).await;
         match fut.await {
             Ok(r) => return Ok(r),
             Err(e) => last_err = Err(e),
