@@ -108,7 +108,7 @@ impl RetryClient<Cluster> {
 impl fmt::Debug for RetryClient {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("pd::RetryClient")
-            .field("cluster_id", block_on(&self.cluster.read().await.id))
+            .field("cluster_id", &self.cluster.read().await.id)
             .field("timeout", &self.timeout)
             .finish()
     }
