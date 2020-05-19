@@ -204,7 +204,7 @@ mod test {
                 Err(Error::unimplemented())
             }
 
-            fn with_cluster<T, F: Fn(&()) -> T>(&self, f: F) -> T {
+            async fn with_cluster<T, F: Fn(&Self::Cl) -> T + Send + Sync>(&self, f: F) -> T {
                 f(&())
             }
         }
@@ -241,7 +241,7 @@ mod test {
                 Ok(())
             }
 
-            fn with_cluster<T, F: Fn(&()) -> T>(&self, f: F) -> T {
+            async fn with_cluster<T, F: Fn(&Self::Cl) -> T + Send + Sync>(&self, f: F) -> T {
                 *self.retry_count.lock().unwrap() += 1;
                 f(&())
             }
