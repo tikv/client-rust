@@ -123,7 +123,8 @@ impl Reconnect for RetryClient<Cluster> {
     async fn reconnect(&self, interval: u64) -> Result<()> {
         let reconnect_begin = Instant::now();
         let mut write_lock = self.cluster.write().await;
-        // If last_connected is larger or equal than reconnect_begin, a concurrent reconnect is just succeed when this thread trying to get write lock
+        // If last_connected is larger or equal than reconnect_begin,
+        // a concurrent reconnect is just succeed when this thread trying to get write lock
         let should_connect = reconnect_begin > *self.last_connected.read().await;
         if should_connect {
             if let Some(cluster) = {
