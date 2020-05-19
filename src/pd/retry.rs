@@ -2,11 +2,7 @@
 
 //! A utility module for managing and retrying PD requests.
 
-use std::{
-    fmt,
-    sync::{Arc},
-    time::Duration,
-};
+use std::{fmt, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use futures::prelude::*;
@@ -37,7 +33,7 @@ pub struct RetryClient<Cl = Cluster> {
     cluster: RwLock<Cl>,
     connection: Connection,
     timeout: Duration,
-    last_connected: Instant,
+    last_connected: RwLock<Instant>,
 }
 
 #[cfg(test)]
@@ -53,7 +49,7 @@ impl<Cl> RetryClient<Cl> {
             cluster: RwLock::new(cluster),
             connection,
             timeout,
-            last_connected: Instant::now(),
+            last_connected: RwLock::new(Instant::now()),
         }
     }
 }
@@ -71,7 +67,7 @@ impl RetryClient<Cluster> {
             cluster,
             connection,
             timeout,
-            last_connected: Instant::now(),
+            last_connected: RwLock::new(Instant::now()),
         })
     }
 
@@ -108,7 +104,8 @@ impl RetryClient<Cluster> {
 impl fmt::Debug for RetryClient {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("pd::RetryClient")
-            .field("cluster_id", &self.cluster.read().await.id)
+            //TODO reborn this field
+            // .field("cluster_id", &self.cluster.read().await.id)
             .field("timeout", &self.timeout)
             .finish()
     }
@@ -117,18 +114,19 @@ impl fmt::Debug for RetryClient {
 #[async_trait]
 trait Reconnect {
     type Cl;
-    async fn reconnect(&mut self, interval: u64) -> Result<()>;
-    async fn with_cluster<T, F: Fn(&Self::Cl) -> T>(&self, f: F) -> T;
+    async fn reconnect(&self, interval: u64) -> Result<()>;
+    async fn with_cluster<T, F: Fn(&Self::Cl) -> T + Send + Sync>(&self, f: F) -> T;
 }
 
 #[async_trait]
 impl Reconnect for RetryClient<Cluster> {
     type Cl = Cluster;
 
-    async fn reconnect(&mut self, interval: u64) -> Result<()> {
+    async fn reconnect(&self, interval: u64) -> Result<()> {
         let reconnect_begin = Instant::now();
-        let write_lock = self.cluster.write().await;
-        let should_connect = reconnect_begin > self.last_connected;
+        let mut write_lock = self.cluster.write().await;
+        // If last_connected is larger or equal than reconnect_begin, a concurrent reconnect is just succeed when this thread trying to get write lock
+        let should_connect = reconnect_begin > *self.last_connected.read().await;
         if should_connect {
             if let Some(cluster) = {
                 let (id, members) = {
@@ -142,14 +140,14 @@ impl Reconnect for RetryClient<Cluster> {
             } {
                 *write_lock = cluster;
             }
-            self.last_connected = Instant::now();
+            *self.last_connected.write().await = Instant::now();
             Ok(())
         } else {
             Ok(())
         }
     }
 
-    async fn with_cluster<T, F: Fn(&Cluster) -> T>(&self, f: F) -> T {
+    async fn with_cluster<T, F: Fn(&Cluster) -> T + Send + Sync>(&self, f: F) -> T {
         f(&*self.cluster.read().await)
     }
 }
@@ -158,7 +156,7 @@ async fn retry_request<Rc, Resp, Func, RespFuture>(client: Arc<Rc>, func: Func) 
 where
     Rc: Reconnect,
     Resp: Send + 'static,
-    Func: Fn(&Rc::Cl) -> RespFuture,
+    Func: Fn(&Rc::Cl) -> RespFuture + Send + Sync,
     RespFuture: Future<Output = Result<Resp>> + Send + 'static,
 {
     let mut last_err = Ok(());
