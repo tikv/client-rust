@@ -103,7 +103,7 @@ where
             return future::Either::Left(future::ok(()));
         }
 
-        match self.client.reconnect(RECONNECT_INTERVAL_SEC) {
+        match self.client.reconnect() {
             Ok(_) => {
                 self.request_sent = 0;
                 future::Either::Left(future::ok(()))
