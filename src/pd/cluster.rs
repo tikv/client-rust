@@ -37,7 +37,7 @@ pub struct Cluster {
     pub id: u64,
     pub last_connected: Instant,
     pub(super) client: pdpb::PdClient,
-    pub members: pdpb::GetMembersResponse,
+    members: pdpb::GetMembersResponse,
     tso: TimestampOracle,
 }
 
@@ -191,28 +191,21 @@ impl Connection {
         Ok(cluster)
     }
 
-    // Re-establish connection with PD leader in synchronized fashion.
+    // Re-establish connection with PD leader in asynchronous fashion.
     pub async fn reconnect(
         &self,
         mut cluster_guard: RwLockWriteGuard<'_, Cluster>,
-        interval: u64,
         timeout: Duration,
     ) -> Result<()> {
-        if cluster_guard.last_connected.elapsed() < Duration::from_secs(interval) {
-            // Avoid unnecessary updating.
-            return Ok(());
-        }
-
-        let cluster_id = cluster_guard.id;
-        let previous_members = &cluster_guard.members;
-
-        warn!("updating pd client, blocking the tokio core");
+        warn!("updating pd client");
         let start = Instant::now();
-        let (client, members) = self.try_connect_leader(previous_members, timeout).await?;
-        let tso = TimestampOracle::new(cluster_id, &client)?;
+        let (client, members) = self
+            .try_connect_leader(&cluster_guard.members, timeout)
+            .await?;
+        let tso = TimestampOracle::new(cluster_guard.id, &client)?;
         let last_connected = Instant::now();
         let cluster = Cluster {
-            id: cluster_id,
+            id: cluster_guard.id,
             last_connected,
             client,
             members,

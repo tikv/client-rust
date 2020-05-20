@@ -110,7 +110,7 @@ impl fmt::Debug for RetryClient {
 #[async_trait]
 trait Reconnect {
     type Cl;
-    async fn reconnect(&self, interval: u64) -> Result<()>;
+    async fn reconnect(&self) -> Result<()>;
     async fn with_cluster<T, F: Fn(&Self::Cl) -> T + Send + Sync>(&self, f: F) -> T;
 }
 
@@ -118,16 +118,14 @@ trait Reconnect {
 impl Reconnect for RetryClient<Cluster> {
     type Cl = Cluster;
 
-    async fn reconnect(&self, interval: u64) -> Result<()> {
+    async fn reconnect(&self) -> Result<()> {
         let reconnect_begin = Instant::now();
         let write_lock = self.cluster.write().await;
         // If last_update is larger or equal than reconnect_begin,
         // a concurrent reconnect is just succeed when this thread trying to get write lock
         let should_connect = reconnect_begin > write_lock.last_connected;
         if should_connect {
-            self.connection
-                .reconnect(write_lock, interval, self.timeout)
-                .await?;
+            self.connection.reconnect(write_lock, self.timeout).await?;
             Ok(())
         } else {
             Ok(())
@@ -156,7 +154,7 @@ where
 
         // Reconnect.
         let mut reconnect_count = MAX_REQUEST_COUNT;
-        while let Err(e) = client.reconnect(RECONNECT_INTERVAL_SEC).await {
+        while let Err(e) = client.reconnect().await {
             reconnect_count -= 1;
             if reconnect_count == 0 {
                 return Err(e);
@@ -187,7 +185,7 @@ mod test {
         impl Reconnect for MockClient {
             type Cl = ();
 
-            async fn reconnect(&self, _: u64) -> Result<()> {
+            async fn reconnect(&self) -> Result<()> {
                 *self.reconnect_count.lock().unwrap() += 1;
                 // Not actually unimplemented, we just don't care about the error.
                 Err(Error::unimplemented())
@@ -226,7 +224,7 @@ mod test {
         impl Reconnect for MockClient {
             type Cl = ();
 
-            async fn reconnect(&self, _: u64) -> Result<()> {
+            async fn reconnect(&self) -> Result<()> {
                 Ok(())
             }
 

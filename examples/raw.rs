@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
     let end = "k2";
     let pairs = client
         .with_key_only(true)
-        .scan((start..=end).to_owned(), 10 as u32)
+        .scan((start..=end).to_owned(), 10)
         .await
         .expect("Could not scan");
 
