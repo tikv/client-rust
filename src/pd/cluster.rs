@@ -177,7 +177,7 @@ impl Connection {
         timeout: Duration,
     ) -> Result<Cluster> {
         let members = self.validate_endpoints(endpoints, timeout).await?;
-        let (client, members) = self.try_connect_leader(members, timeout).await?;
+        let (client, members) = self.try_connect_leader(&members, timeout).await?;
 
         let id = members.get_header().get_cluster_id();
         let tso = TimestampOracle::new(id, &client)?;
@@ -204,7 +204,7 @@ impl Connection {
         }
 
         let cluster_id = cluster_guard.id;
-        let previous_members = cluster_guard.members.clone();
+        let previous_members = &cluster_guard.members;
 
         warn!("updating pd client, blocking the tokio core");
         let start = Instant::now();
@@ -324,7 +324,7 @@ impl Connection {
 
     async fn try_connect_leader(
         &self,
-        previous: pdpb::GetMembersResponse,
+        previous: &pdpb::GetMembersResponse,
         timeout: Duration,
     ) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
         let previous_leader = previous.get_leader();
