@@ -195,8 +195,6 @@ impl Connection {
     pub async fn reconnect(
         &self,
         mut cluster_guard: RwLockWriteGuard<'_, Cluster>,
-        cluster_id: u64,
-        previous_members: pdpb::GetMembersResponse,
         interval: u64,
         timeout: Duration,
     ) -> Result<()> {
@@ -204,6 +202,9 @@ impl Connection {
             // Avoid unnecessary updating.
             return Ok(());
         }
+
+        let cluster_id = cluster_guard.id;
+        let previous_members = cluster_guard.members.clone();
 
         warn!("updating pd client, blocking the tokio core");
         let start = Instant::now();

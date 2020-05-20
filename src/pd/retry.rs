@@ -125,13 +125,8 @@ impl Reconnect for RetryClient<Cluster> {
         // a concurrent reconnect is just succeed when this thread trying to get write lock
         let should_connect = reconnect_begin > write_lock.last_connected;
         if should_connect {
-            let (id, members) = {
-                let read_guard = self.cluster.read().await;
-                (read_guard.id, read_guard.members.clone())
-            };
-
             self.connection
-                .reconnect(write_lock, id, members, interval, self.timeout)
+                .reconnect(write_lock, interval, self.timeout)
                 .await?;
             Ok(())
         } else {
