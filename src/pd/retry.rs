@@ -20,7 +20,6 @@ use crate::{
     transaction::Timestamp,
     Result,
 };
-use std::ops::Add;
 use std::time::Instant;
 
 // FIXME: these numbers and how they are used are all just cargo-culted in, there
@@ -124,10 +123,8 @@ impl Reconnect for RetryClient<Cluster> {
         let write_lock = self.cluster.write().await;
         // If `last_connected + interval_sec` is larger or equal than reconnect_begin,
         // a concurrent reconnect is just succeed when this thread trying to get write lock
-        let should_connect = reconnect_begin
-            > write_lock
-                .last_connected
-                .add(Duration::from_secs(interval_sec));
+        let should_connect =
+            reconnect_begin > write_lock.last_connected + Duration::from_secs(interval_sec);
         if should_connect {
             self.connection.reconnect(write_lock, self.timeout).await?;
             Ok(())
