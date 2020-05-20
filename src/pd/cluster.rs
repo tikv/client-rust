@@ -35,6 +35,7 @@ macro_rules! pd_request {
 /// A PD cluster.
 pub struct Cluster {
     pub id: u64,
+    pub last_update: Instant,
     pub(super) client: pdpb::PdClient,
     pub members: pdpb::GetMembersResponse,
     tso: TimestampOracle,
@@ -187,6 +188,7 @@ impl Connection {
         let tso = TimestampOracle::new(id, &client)?;
         let cluster = Cluster {
             id,
+            last_update: Instant::now(),
             members,
             client,
             tso,
@@ -211,14 +213,15 @@ impl Connection {
         let start = Instant::now();
         let (client, members) = self.try_connect_leader(previous_members, timeout).await?;
         let tso = TimestampOracle::new(cluster_id, &client)?;
-
+        let last_update = Instant::now();
         let cluster = Cluster {
             id: cluster_id,
+            last_update,
             client,
             members,
             tso,
         };
-        *self.last_update.write().unwrap() = Instant::now();
+        *self.last_update.write().unwrap() = last_update;
 
         warn!("updating PD client done, spent {:?}", start.elapsed());
         Ok(Some(cluster))

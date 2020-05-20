@@ -33,7 +33,6 @@ pub struct RetryClient<Cl = Cluster> {
     cluster: RwLock<Cl>,
     connection: Connection,
     timeout: Duration,
-    last_connected: RwLock<Instant>,
 }
 
 #[cfg(test)]
@@ -49,7 +48,6 @@ impl<Cl> RetryClient<Cl> {
             cluster: RwLock::new(cluster),
             connection,
             timeout,
-            last_connected: RwLock::new(Instant::now()),
         }
     }
 }
@@ -67,7 +65,6 @@ impl RetryClient<Cluster> {
             cluster,
             connection,
             timeout,
-            last_connected: RwLock::new(Instant::now()),
         })
     }
 
@@ -123,9 +120,9 @@ impl Reconnect for RetryClient<Cluster> {
     async fn reconnect(&self, interval: u64) -> Result<()> {
         let reconnect_begin = Instant::now();
         let mut write_lock = self.cluster.write().await;
-        // If last_connected is larger or equal than reconnect_begin,
+        // If last_update is larger or equal than reconnect_begin,
         // a concurrent reconnect is just succeed when this thread trying to get write lock
-        let should_connect = reconnect_begin > *self.last_connected.read().await;
+        let should_connect = reconnect_begin > write_lock.last_update;
         if should_connect {
             if let Some(cluster) = {
                 let (id, members) = {
@@ -139,7 +136,6 @@ impl Reconnect for RetryClient<Cluster> {
             } {
                 *write_lock = cluster;
             }
-            *self.last_connected.write().await = Instant::now();
             Ok(())
         } else {
             Ok(())
