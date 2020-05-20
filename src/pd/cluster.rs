@@ -5,14 +5,9 @@
 
 use std::{
     collections::HashSet,
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
-
-use futures::compat::Compat01As03;
-use futures::prelude::*;
-use grpcio::{CallOption, Environment};
-use kvproto::{metapb, pdpb};
 
 use crate::{
     pd::{timestamp::TimestampOracle, Region, RegionId, StoreId},
@@ -21,6 +16,11 @@ use crate::{
     transaction::Timestamp,
     Error, Result,
 };
+use futures::compat::Compat01As03;
+use futures::prelude::*;
+use grpcio::{CallOption, Environment};
+use kvproto::{metapb, pdpb};
+use tokio::sync::RwLockWriteGuard;
 
 macro_rules! pd_request {
     ($cluster_id:expr, $type:ty) => {{
@@ -35,7 +35,7 @@ macro_rules! pd_request {
 /// A PD cluster.
 pub struct Cluster {
     pub id: u64,
-    pub last_update: Instant,
+    pub last_connected: Instant,
     pub(super) client: pdpb::PdClient,
     pub members: pdpb::GetMembersResponse,
     tso: TimestampOracle,
@@ -164,16 +164,11 @@ impl Cluster {
 pub struct Connection {
     env: Arc<Environment>,
     security_mgr: Arc<SecurityManager>,
-    last_update: RwLock<Instant>,
 }
 
 impl Connection {
     pub fn new(env: Arc<Environment>, security_mgr: Arc<SecurityManager>) -> Connection {
-        Connection {
-            env,
-            security_mgr,
-            last_update: RwLock::new(Instant::now()),
-        }
+        Connection { env, security_mgr }
     }
 
     pub async fn connect_cluster(
@@ -188,7 +183,7 @@ impl Connection {
         let tso = TimestampOracle::new(id, &client)?;
         let cluster = Cluster {
             id,
-            last_update: Instant::now(),
+            last_connected: Instant::now(),
             members,
             client,
             tso,
@@ -199,32 +194,33 @@ impl Connection {
     // Re-establish connection with PD leader in synchronized fashion.
     pub async fn reconnect(
         &self,
+        mut cluster_guard: RwLockWriteGuard<'_, Cluster>,
         cluster_id: u64,
         previous_members: pdpb::GetMembersResponse,
         interval: u64,
         timeout: Duration,
-    ) -> Result<Option<Cluster>> {
-        if self.last_update.read().unwrap().elapsed() < Duration::from_secs(interval) {
+    ) -> Result<()> {
+        if cluster_guard.last_connected.elapsed() < Duration::from_secs(interval) {
             // Avoid unnecessary updating.
-            return Ok(None);
+            return Ok(());
         }
 
         warn!("updating pd client, blocking the tokio core");
         let start = Instant::now();
         let (client, members) = self.try_connect_leader(previous_members, timeout).await?;
         let tso = TimestampOracle::new(cluster_id, &client)?;
-        let last_update = Instant::now();
+        let last_connected = Instant::now();
         let cluster = Cluster {
             id: cluster_id,
-            last_update,
+            last_connected,
             client,
             members,
             tso,
         };
-        *self.last_update.write().unwrap() = last_update;
 
         warn!("updating PD client done, spent {:?}", start.elapsed());
-        Ok(Some(cluster))
+        *cluster_guard = cluster;
+        Ok(())
     }
 
     async fn validate_endpoints(

@@ -105,6 +105,7 @@ impl fmt::Debug for RetryClient {
             .finish()
     }
 }
+
 // A node-like thing that can be connected to.
 #[async_trait]
 trait Reconnect {
@@ -119,23 +120,19 @@ impl Reconnect for RetryClient<Cluster> {
 
     async fn reconnect(&self, interval: u64) -> Result<()> {
         let reconnect_begin = Instant::now();
-        let mut write_lock = self.cluster.write().await;
+        let write_lock = self.cluster.write().await;
         // If last_update is larger or equal than reconnect_begin,
         // a concurrent reconnect is just succeed when this thread trying to get write lock
-        let should_connect = reconnect_begin > write_lock.last_update;
+        let should_connect = reconnect_begin > write_lock.last_connected;
         if should_connect {
-            if let Some(cluster) = {
-                let (id, members) = {
-                    let read_guard = self.cluster.read().await;
-                    (read_guard.id, read_guard.members.clone())
-                };
+            let (id, members) = {
+                let read_guard = self.cluster.read().await;
+                (read_guard.id, read_guard.members.clone())
+            };
 
-                self.connection
-                    .reconnect(id, members, interval, self.timeout)
-                    .await?
-            } {
-                *write_lock = cluster;
-            }
+            self.connection
+                .reconnect(write_lock, id, members, interval, self.timeout)
+                .await?;
             Ok(())
         } else {
             Ok(())
