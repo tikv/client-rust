@@ -127,10 +127,8 @@ impl Reconnect for RetryClient<Cluster> {
             reconnect_begin > write_lock.last_connected + Duration::from_secs(interval_sec);
         if should_connect {
             self.connection.reconnect(write_lock, self.timeout).await?;
-            Ok(())
-        } else {
-            Ok(())
         }
+        Ok(())
     }
 
     async fn with_cluster<T, F: Fn(&Cluster) -> T + Send + Sync>(&self, f: F) -> T {
