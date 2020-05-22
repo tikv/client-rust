@@ -12,7 +12,7 @@ proptest! {
     fn point(
         pair in any::<KvPair>(),
     ) {
-        let client = Client::new(Config::new(pd_addrs())).unwrap();
+        let client = block_on(Client::new(Config::new(pd_addrs()))).unwrap();
 
         block_on(
             client.put(pair.key().clone(), pair.value().clone())
@@ -36,7 +36,7 @@ proptest! {
     fn batch(
         kvs in arb_batch(any::<KvPair>(), None),
     ) {
-        let client = Client::new(Config::new(pd_addrs())).unwrap();
+        let client = block_on(Client::new(Config::new(pd_addrs()))).unwrap();
         let keys = kvs.iter().map(|kv| kv.key()).cloned().collect::<Vec<_>>();
 
         block_on(
