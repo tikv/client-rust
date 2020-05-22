@@ -1,6 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{Key, KvPair, Result, Transaction, Value};
+use crate::{BoundRange, Key, KvPair, Result, Transaction, Value};
 
 use derive_new::new;
 use futures::stream::BoxStream;
@@ -28,8 +28,13 @@ impl Snapshot {
         self.transaction.batch_get(keys).await
     }
 
-    pub fn scan(&self, range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
-        self.transaction.scan(range)
+    pub async fn scan(
+        &self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+        key_only: bool,
+    ) -> Result<impl Iterator<Item = KvPair>> {
+        self.transaction.scan(range, limit, key_only).await
     }
 
     pub fn scan_reverse(&self, range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {

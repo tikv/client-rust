@@ -21,13 +21,13 @@ use std::{sync::Arc, time::Duration};
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
-pub fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
+pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
     let config = Config::default();
     PdRpcClient::new(
         &config,
         |_, _| MockKvConnect,
         |e, sm| {
-            Ok(RetryClient::new_with_cluster(
+            futures::future::ok(RetryClient::new_with_cluster(
                 e,
                 sm,
                 config.timeout,
@@ -35,6 +35,7 @@ pub fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
             ))
         },
     )
+    .await
     .unwrap()
 }
 
