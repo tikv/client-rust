@@ -59,6 +59,7 @@ pub async fn resolve_locks(
 
         let cleaned_region = resolve_lock_with_retry(
             lock.key.into(),
+            lock.txn_size,
             lock.lock_version,
             commit_version,
             pd_client.clone(),
@@ -74,6 +75,7 @@ pub async fn resolve_locks(
 
 async fn resolve_lock_with_retry(
     key: Key,
+    txn_size: u64,
     start_version: u64,
     commit_version: u64,
     pd_client: Arc<impl PdClient>,
@@ -90,9 +92,15 @@ async fn resolve_lock_with_retry(
                 continue;
             }
         };
-        match requests::new_resolve_lock_request(context, start_version, commit_version)
-            .execute(pd_client.clone())
-            .await
+        match requests::new_resolve_lock_request(
+            &key,
+            txn_size,
+            context,
+            start_version,
+            commit_version,
+        )
+        .execute(pd_client.clone())
+        .await
         {
             Ok(_) => {
                 return Ok(region.ver_id());
@@ -131,14 +139,14 @@ mod tests {
         let key: Key = vec![1].into();
         let region1 = MockPdClient::region1();
         let resolved_region =
-            executor::block_on(resolve_lock_with_retry(key, 1, 2, client.clone())).unwrap();
+            executor::block_on(resolve_lock_with_retry(key, 100, 1, 2, client.clone())).unwrap();
         assert_eq!(region1.ver_id(), resolved_region);
 
         // Test resolve lock over retry limit
         fail::cfg("region-error", "10*return").unwrap();
         let client = Arc::new(MockPdClient);
         let key: Key = vec![100].into();
-        executor::block_on(resolve_lock_with_retry(key, 3, 4, client.clone()))
+        executor::block_on(resolve_lock_with_retry(key, 100, 3, 4, client.clone()))
             .expect_err("should return error");
     }
 }

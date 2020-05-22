@@ -235,12 +235,19 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
     }
 }
 
+const BIG_TXN_THRESHOLD: u64 = 16;
+
 pub fn new_resolve_lock_request(
+    key: &Key,
+    txn_size: u64,
     context: kvrpcpb::Context,
     start_version: u64,
     commit_version: u64,
 ) -> kvrpcpb::ResolveLockRequest {
     let mut req = kvrpcpb::ResolveLockRequest::default();
+    if txn_size < BIG_TXN_THRESHOLD {
+        req.set_keys(vec![key.clone().into()]);
+    }
     req.set_context(context);
     req.set_start_version(start_version);
     req.set_commit_version(commit_version);
