@@ -204,7 +204,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 }
 
 impl PdRpcClient<TikvConnect, Cluster> {
-    pub fn connect(config: &Config) -> Result<PdRpcClient> {
+    pub async fn connect(config: &Config) -> Result<PdRpcClient> {
         PdRpcClient::new(
             config,
             |env, security_mgr| TikvConnect::new(env, security_mgr),
@@ -212,18 +212,20 @@ impl PdRpcClient<TikvConnect, Cluster> {
                 RetryClient::connect(env, &config.pd_endpoints, security_mgr, config.timeout)
             },
         )
+        .await
     }
 }
 
 impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
-    pub fn new<MakeKvC, MakePd>(
+    pub async fn new<PdFut, MakeKvC, MakePd>(
         config: &Config,
         kv_connect: MakeKvC,
         pd: MakePd,
     ) -> Result<PdRpcClient<KvC, Cl>>
     where
+        PdFut: Future<Output = Result<RetryClient<Cl>>>,
         MakeKvC: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> KvC,
-        MakePd: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> Result<RetryClient<Cl>>,
+        MakePd: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> PdFut,
     {
         let env = Arc::new(
             EnvBuilder::new()
@@ -241,7 +243,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             },
         );
 
-        let pd = Arc::new(pd(env.clone(), security_mgr.clone())?);
+        let pd = Arc::new(pd(env.clone(), security_mgr.clone()).await?);
         let kv_client_cache = Default::default();
         Ok(PdRpcClient {
             pd,
@@ -272,10 +274,11 @@ pub mod test {
     use crate::mock::*;
 
     use futures::executor;
+    use futures::executor::block_on;
 
     #[test]
     fn test_kv_client_caching() {
-        let client = pd_rpc_client();
+        let client = block_on(pd_rpc_client());
 
         let addr1 = "foo";
         let addr2 = "bar";
