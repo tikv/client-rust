@@ -25,16 +25,6 @@ use crate::{
 const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";
 
-#[macro_export]
-macro_rules! group_by_range {
-    ($client: expr, ranges => $data:expr) => {
-        $client.group_ranges_by_region($data)
-    };
-    ($client: expr, keys => $data:expr) => {
-        $client.group_keys_by_region($data)
-    };
-}
-
 pub trait PdClient: Send + Sync + 'static {
     type KvClient: KvClient + Send + Sync + 'static;
 
@@ -312,7 +302,7 @@ pub mod test {
             vec![11, 4].into(),
         ];
 
-        let stream = group_by_range!(Arc::new(client), keys => tasks.into_iter());
+        let stream = Arc::new(client).group_keys_by_region(tasks.into_iter());
         let mut stream = executor::block_on_stream(stream);
 
         assert_eq!(
@@ -362,7 +352,7 @@ pub mod test {
         let range3 = (k2.clone(), k4.clone()).into();
         let ranges: Vec<BoundRange> = vec![range1, range2, range3];
 
-        let mut stream = executor::block_on_stream(group_by_range!(client, ranges => ranges));
+        let mut stream = executor::block_on_stream(client.group_ranges_by_region(ranges));
         let ranges1 = stream.next().unwrap().unwrap();
         let ranges2 = stream.next().unwrap().unwrap();
         let ranges3 = stream.next().unwrap().unwrap();
