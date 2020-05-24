@@ -59,7 +59,7 @@ pub async fn resolve_locks(
         .map(|(k, v)| (k, v.collect()))
         .collect();
 
-    for ((_region_ver_id, lock_version), locks) in grouped.into_iter() {
+    for ((_region_ver_id, lock_version), locks) in grouped {
         let is_large_txn = locks.iter().any(|lock| lock.txn_size >= 16);
 
         let commit_version =
