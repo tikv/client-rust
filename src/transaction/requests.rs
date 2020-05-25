@@ -10,7 +10,6 @@ use crate::{
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::BoxStream;
-use itertools::Itertools;
 use kvproto::kvrpcpb;
 use kvproto::tikvpb::TikvClient;
 use std::mem;
