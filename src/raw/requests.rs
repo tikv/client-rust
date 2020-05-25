@@ -4,9 +4,12 @@ use super::RawRpcRequest;
 use crate::{
     kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
-    request::{store_stream_for_key, store_stream_for_keys, store_stream_for_range, KvRequest},
+    request::{
+        store_stream_for_key, store_stream_for_keys, store_stream_for_range,
+        store_stream_for_ranges, KvRequest,
+    },
     transaction::HasLocks,
-    BoundRange, ColumnFamily, Error, Key, KvPair, Result, Value,
+    BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
 
 use futures::future::BoxFuture;
@@ -432,9 +435,13 @@ impl KvRequest for kvrpcpb::RawBatchScanRequest {
 
     fn store_stream<PdC: PdClient>(
         &mut self,
-        _pd_client: Arc<PdC>,
+        pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        future::err(Error::unimplemented()).into_stream().boxed()
+        let ranges = mem::take(&mut self.ranges)
+            .into_iter()
+            .map(|range| range.into())
+            .collect();
+        store_stream_for_ranges(ranges, pd_client)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {

@@ -108,6 +108,58 @@ pub trait PdClient: Send + Sync + 'static {
         })
         .boxed()
     }
+
+    // Returns a Steam which iterates over the contexts for ranges in the same region.
+    fn group_ranges_by_region(
+        self: Arc<Self>,
+        mut ranges: Vec<BoundRange>,
+    ) -> BoxStream<'static, Result<(RegionId, Vec<BoundRange>)>> {
+        ranges.reverse();
+        stream_fn(Some(ranges), move |ranges| {
+            let mut ranges = match ranges {
+                None => return Either::Right(ready(Ok(None))),
+                Some(r) => r,
+            };
+
+            if let Some(range) = ranges.pop() {
+                let (start_key, end_key) = range.clone().into_keys();
+                Either::Left(self.region_for_key(&start_key).map_ok(move |region| {
+                    let id = region.id();
+                    let region_start = region.start_key();
+                    let region_end = region.end_key();
+                    let mut grouped = vec![];
+                    if !region_end.is_empty()
+                        && end_key.clone().map(|x| x > region_end).unwrap_or(true)
+                    {
+                        grouped.push((start_key, region_end.clone()).into());
+                        ranges.push((region_end, end_key).into());
+                        return Some((Some(ranges), (id, grouped)));
+                    }
+                    grouped.push(range);
+
+                    while let Some(range) = ranges.pop() {
+                        let (start_key, end_key) = range.clone().into_keys();
+                        if start_key < region_start {
+                            ranges.push(range);
+                            break;
+                        }
+                        if !region_end.is_empty()
+                            && end_key.clone().map(|x| x > region_end).unwrap_or(true)
+                        {
+                            grouped.push((start_key, region_end.clone()).into());
+                            ranges.push((region_end, end_key).into());
+                            return Some((Some(ranges), (id, grouped)));
+                        }
+                        grouped.push(range);
+                    }
+                    Some((Some(ranges), (id, grouped)))
+                }))
+            } else {
+                Either::Right(ready(Ok(None)))
+            }
+        })
+        .boxed()
+    }
 }
 
 /// This client converts requests for the logical TiKV cluster into requests
@@ -287,6 +339,51 @@ pub mod test {
         let mut stream = executor::block_on_stream(client.stores_for_range(range2));
         assert_eq!(stream.next().unwrap().unwrap().region.id(), 1);
         assert_eq!(stream.next().unwrap().unwrap().region.id(), 2);
+        assert!(stream.next().is_none());
+    }
+
+    #[test]
+    fn test_group_ranges_by_region() {
+        let client = Arc::new(MockPdClient);
+        let k1: Key = vec![1].into();
+        let k2: Key = vec![5, 2].into();
+        let k3: Key = vec![11, 4].into();
+        let k4: Key = vec![16, 4].into();
+        let k_split: Key = vec![10].into();
+        let range1 = (k1.clone(), k2.clone()).into();
+        let range2 = (k1.clone(), k3.clone()).into();
+        let range3 = (k2.clone(), k4.clone()).into();
+        let ranges: Vec<BoundRange> = vec![range1, range2, range3];
+
+        let mut stream = executor::block_on_stream(client.group_ranges_by_region(ranges));
+        let ranges1 = stream.next().unwrap().unwrap();
+        let ranges2 = stream.next().unwrap().unwrap();
+        let ranges3 = stream.next().unwrap().unwrap();
+        let ranges4 = stream.next().unwrap().unwrap();
+
+        assert_eq!(ranges1.0, 1);
+        assert_eq!(
+            ranges1.1,
+            vec![
+                (k1.clone(), k2.clone()).into(),
+                (k1.clone(), k_split.clone()).into()
+            ] as Vec<BoundRange>
+        );
+        assert_eq!(ranges2.0, 2);
+        assert_eq!(
+            ranges2.1,
+            vec![(k_split.clone(), k3.clone()).into()] as Vec<BoundRange>
+        );
+        assert_eq!(ranges3.0, 1);
+        assert_eq!(
+            ranges3.1,
+            vec![(k2.clone(), k_split.clone()).into()] as Vec<BoundRange>
+        );
+        assert_eq!(ranges4.0, 2);
+        assert_eq!(
+            ranges4.1,
+            vec![(k_split.clone(), k4.clone()).into()] as Vec<BoundRange>
+        );
         assert!(stream.next().is_none());
     }
 }

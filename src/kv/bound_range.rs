@@ -194,6 +194,14 @@ impl Into<kvrpcpb::KeyRange> for BoundRange {
     }
 }
 
+impl From<kvrpcpb::KeyRange> for BoundRange {
+    fn from(range: kvrpcpb::KeyRange) -> Self {
+        let start_key = Key::from(range.start_key);
+        let end_key = Key::from(range.end_key);
+        BoundRange::new(start_key.into_lower_bound(), end_key.into_upper_bound())
+    }
+}
+
 /// A convenience trait for converting ranges of borrowed types into a `BoundRange`.
 pub trait ToOwnedRange {
     /// Transform a borrowed range of some form into an owned `BoundRange`.
