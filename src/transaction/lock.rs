@@ -67,7 +67,7 @@ pub async fn resolve_locks(
         let request_keys = if is_large_txn {
             vec![]
         } else {
-            locks.iter().map(|lock| lock.primary_key.clone()).collect()
+            locks.iter().map(|lock| &lock.primary_key).collect()
         };
         let _cleaned_region = resolve_lock_with_retry(
             &locks.get(0).unwrap().region,
@@ -83,7 +83,7 @@ pub async fn resolve_locks(
 
 async fn resolve_lock_with_retry(
     region: &Region,
-    keys: &Vec<Key>,
+    keys: &Vec<&Key>,
     start_version: u64,
     commit_version: u64,
     pd_client: Arc<impl PdClient>,
@@ -100,14 +100,9 @@ async fn resolve_lock_with_retry(
                 continue;
             }
         };
-        match requests::new_resolve_lock_request(
-            keys.clone(),
-            context,
-            start_version,
-            commit_version,
-        )
-        .execute(pd_client.clone())
-        .await
+        match requests::new_resolve_lock_request(keys, context, start_version, commit_version)
+            .execute(pd_client.clone())
+            .await
         {
             Ok(_) => {
                 return Ok(region.ver_id());
