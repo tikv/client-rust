@@ -29,10 +29,11 @@ pub async fn resolve_locks(
         lock_version: u64,
         txn_size: u64,
     }
+
     let mut expired_locks = vec![];
     for lock in locks {
-        let expired = ts.physical - Timestamp::from_version(lock.clone().lock_version).physical
-            >= lock.clone().lock_ttl as i64;
+        let expired = ts.physical - Timestamp::from_version(lock.lock_version).physical
+            >= lock.lock_ttl as i64;
         if expired {
             let primary_key: Key = lock.primary_lock.into();
             let region = pd_client.region_for_key(&primary_key).await?;
