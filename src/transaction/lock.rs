@@ -61,7 +61,8 @@ pub async fn resolve_locks(
         .collect();
 
     for ((_region_ver_id, lock_version), locks) in grouped {
-        let is_large_txn = locks.iter().any(|lock| lock.txn_size >= 16);
+        //For every lock with the same (region, lock_version), the txn_size is the same.
+        let is_large_txn = locks.get(0).unwrap().txn_size >= 16;
 
         let commit_version =
             requests::new_cleanup_request(locks.get(0).unwrap().primary_key.clone(), lock_version)
