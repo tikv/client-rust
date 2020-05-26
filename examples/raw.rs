@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
 
     // When we first create a client we receive a `Connect` structure which must be resolved before
     // the client is actually connected and usable.
-    let client = Client::new(config)?;
+    let client = Client::new(config).await?;
 
     // Requests are created from the connected client. These calls return structures which
     // implement `Future`. This means the `Future` must be resolved before the action ever takes
@@ -94,9 +94,43 @@ async fn main() -> Result<()> {
     let keys: Vec<_> = pairs.into_iter().map(|p| p.key().clone()).collect();
     assert_eq!(
         &keys,
-        &[Key::from("k1".to_owned()), Key::from("k2".to_owned())]
+        &[
+            Key::from("k1".to_owned()),
+            Key::from("k2".to_owned()),
+            Key::from("k3".to_owned())
+        ]
     );
     println!("Scaning from {:?} to {:?} gives: {:?}", start, end, keys);
+
+    let k1 = "k1";
+    let k2 = "k2";
+    let k3 = "k3";
+    let batch_scan_keys = vec![
+        (k1.to_owned()..=k2.to_owned()),
+        (k2.to_owned()..=k3.to_owned()),
+        (k1.to_owned()..=k3.to_owned()),
+    ];
+    let kv_pairs = client
+        .batch_scan(batch_scan_keys.to_owned(), 10)
+        .await
+        .expect("Could not batch scan");
+    let vals: Vec<_> = kv_pairs.into_iter().map(|p| p.1).collect();
+    assert_eq!(
+        &vals,
+        &[
+            "v1".to_owned().into(),
+            "v2".to_owned().into(),
+            "v2".to_owned().into(),
+            "v3".to_owned().into(),
+            "v1".to_owned().into(),
+            "v2".to_owned().into(),
+            "v3".to_owned().into()
+        ]
+    );
+    println!(
+        "Scaning batch scan from {:?} gives: {:?}",
+        batch_scan_keys, vals
+    );
 
     // Cleanly exit.
     Ok(())

@@ -118,10 +118,15 @@ async fn run_tso(
     error!("TSO receive error: {:?}", recv_res);
 }
 
+struct RequestGroup {
+    tso_request: TsoRequest,
+    requests: Vec<TimestampRequest>,
+}
+
 struct TsoRequestStream<'a> {
     cluster_id: u64,
     request_rx: Pin<&'a mut mpsc::Receiver<oneshot::Sender<Timestamp>>>,
-    pending_requests: Rc<RefCell<VecDeque<TimestampRequest>>>,
+    pending_requests: Rc<RefCell<VecDeque<RequestGroup>>>,
     self_waker: Rc<AtomicWaker>,
 }
 
@@ -131,25 +136,32 @@ impl<'a> Stream for TsoRequestStream<'a> {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let pending_requests = self.pending_requests.clone();
         let mut pending_requests = pending_requests.borrow_mut();
-        let mut count = 0;
-        while count < MAX_BATCH_SIZE && pending_requests.len() < MAX_PENDING_COUNT {
+        let mut requests = Vec::new();
+
+        while requests.len() < MAX_BATCH_SIZE && pending_requests.len() < MAX_PENDING_COUNT {
             match self.request_rx.as_mut().poll_next(cx) {
                 Poll::Ready(Some(sender)) => {
-                    pending_requests.push_back(sender);
-                    count += 1;
+                    requests.push(sender);
                 }
                 Poll::Ready(None) => return Poll::Ready(None),
                 Poll::Pending => break,
             }
         }
 
-        if count > 0 {
+        if !requests.is_empty() {
             let req = TsoRequest {
                 header: Some(RequestHeader {
                     cluster_id: self.cluster_id,
                 }),
-                count: count as u32,
+                count: requests.len() as u32,
             };
+
+            let request_group = RequestGroup {
+                tso_request: req.clone(),
+                requests,
+            };
+            pending_requests.push_back(request_group);
+
             let write_flags = WriteFlags::default().buffer_hint(false);
             Poll::Ready(Some((req, write_flags)))
         } else {
@@ -163,7 +175,7 @@ impl<'a> Stream for TsoRequestStream<'a> {
 
 fn allocate_timestamps(
     resp: &TsoResponse,
-    pending_requests: &mut VecDeque<TimestampRequest>,
+    pending_requests: &mut VecDeque<RequestGroup>,
 ) -> Result<()> {
     // PD returns the timestamp with the biggest logical value. We can send back timestamps
     // whose logical value is from `logical - count + 1` to `logical` using the senders
@@ -173,22 +185,30 @@ fn allocate_timestamps(
         .as_ref()
         .ok_or_else(|| Error::internal_error("No timestamp in TsoResponse"))?;
 
-    let mut offset = i64::from(resp.count);
-    while offset > 0 {
-        offset -= 1;
-        if let Some(sender) = pending_requests.pop_front() {
-            let ts = Timestamp {
-                physical: tail_ts.physical,
-                logical: tail_ts.logical - offset,
-            };
-
-            // It doesn't matter if the receiver of the channel is dropped.
-            let _ = sender.send(ts);
-        } else {
+    let mut offset = resp.count;
+    if let Some(RequestGroup {
+        tso_request,
+        requests,
+    }) = pending_requests.pop_front()
+    {
+        if tso_request.count != offset {
             return Err(Error::internal_error(
-                "PD gives more timestamps than expected",
+                "PD gives different number of timestamps than expected",
             ));
         }
-    }
+
+        for request in requests {
+            offset -= 1;
+            let ts = Timestamp {
+                physical: tail_ts.physical,
+                logical: tail_ts.logical - offset as i64,
+            };
+            let _ = request.send(ts);
+        }
+    } else {
+        return Err(Error::internal_error(
+            "PD gives more TsoResponse than expected",
+        ));
+    };
     Ok(())
 }

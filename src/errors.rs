@@ -83,6 +83,7 @@ impl Error {
         self.inner.get_context()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn unimplemented() -> Self {
         Error::from(ErrorKind::Unimplemented)
     }

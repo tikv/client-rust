@@ -2,16 +2,14 @@
 
 //! A utility module for managing and retrying PD requests.
 
-use std::{
-    fmt,
-    sync::{Arc, RwLock},
-    time::Duration,
-};
+use std::{fmt, sync::Arc, time::Duration};
 
+use async_trait::async_trait;
 use futures::prelude::*;
 use futures_timer::Delay;
 use grpcio::Environment;
 use kvproto::metapb;
+use tokio::sync::RwLock;
 
 use crate::{
     pd::{
@@ -22,6 +20,7 @@ use crate::{
     transaction::Timestamp,
     Result,
 };
+use std::time::Instant;
 
 // FIXME: these numbers and how they are used are all just cargo-culted in, there
 // may be more optimal values.
@@ -54,14 +53,14 @@ impl<Cl> RetryClient<Cl> {
 }
 
 impl RetryClient<Cluster> {
-    pub fn connect(
+    pub async fn connect(
         env: Arc<Environment>,
         endpoints: &[String],
         security_mgr: Arc<SecurityManager>,
         timeout: Duration,
     ) -> Result<RetryClient> {
         let connection = Connection::new(env, security_mgr);
-        let cluster = RwLock::new(connection.connect_cluster(endpoints, timeout)?);
+        let cluster = RwLock::new(connection.connect_cluster(endpoints, timeout).await?);
         Ok(RetryClient {
             cluster,
             connection,
@@ -102,34 +101,38 @@ impl RetryClient<Cluster> {
 impl fmt::Debug for RetryClient {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("pd::RetryClient")
-            .field("cluster_id", &self.cluster.read().unwrap().id)
             .field("timeout", &self.timeout)
             .finish()
     }
 }
 
 // A node-like thing that can be connected to.
+#[async_trait]
 trait Reconnect {
     type Cl;
-    fn reconnect(&self, interval: u64) -> Result<()>;
-    fn with_cluster<T, F: Fn(&Self::Cl) -> T>(&self, f: F) -> T;
+    async fn reconnect(&self, interval_sec: u64) -> Result<()>;
+    async fn with_cluster<T, F: Fn(&Self::Cl) -> T + Send + Sync>(&self, f: F) -> T;
 }
 
+#[async_trait]
 impl Reconnect for RetryClient<Cluster> {
     type Cl = Cluster;
 
-    fn reconnect(&self, interval: u64) -> Result<()> {
-        if let Some(cluster) =
-            self.connection
-                .reconnect(&self.cluster.read().unwrap(), interval, self.timeout)?
-        {
-            *self.cluster.write().unwrap() = cluster;
+    async fn reconnect(&self, interval_sec: u64) -> Result<()> {
+        let reconnect_begin = Instant::now();
+        let write_lock = self.cluster.write().await;
+        // If `last_connected + interval_sec` is larger or equal than reconnect_begin,
+        // a concurrent reconnect is just succeed when this thread trying to get write lock
+        let should_connect =
+            reconnect_begin > write_lock.last_connected + Duration::from_secs(interval_sec);
+        if should_connect {
+            self.connection.reconnect(write_lock, self.timeout).await?;
         }
         Ok(())
     }
 
-    fn with_cluster<T, F: Fn(&Cluster) -> T>(&self, f: F) -> T {
-        f(&self.cluster.read().unwrap())
+    async fn with_cluster<T, F: Fn(&Cluster) -> T + Send + Sync>(&self, f: F) -> T {
+        f(&*self.cluster.read().await)
     }
 }
 
@@ -137,12 +140,12 @@ async fn retry_request<Rc, Resp, Func, RespFuture>(client: Arc<Rc>, func: Func) 
 where
     Rc: Reconnect,
     Resp: Send + 'static,
-    Func: Fn(&Rc::Cl) -> RespFuture,
+    Func: Fn(&Rc::Cl) -> RespFuture + Send + Sync,
     RespFuture: Future<Output = Result<Resp>> + Send + 'static,
 {
     let mut last_err = Ok(());
     for _ in 0..LEADER_CHANGE_RETRY {
-        let fut = client.with_cluster(&func);
+        let fut = client.with_cluster(&func).await;
         match fut.await {
             Ok(r) => return Ok(r),
             Err(e) => last_err = Err(e),
@@ -150,7 +153,7 @@ where
 
         // Reconnect.
         let mut reconnect_count = MAX_REQUEST_COUNT;
-        while let Err(e) = client.reconnect(RECONNECT_INTERVAL_SEC) {
+        while let Err(e) = client.reconnect(RECONNECT_INTERVAL_SEC).await {
             reconnect_count -= 1;
             if reconnect_count == 0 {
                 return Err(e);
@@ -177,16 +180,17 @@ mod test {
             reconnect_count: Mutex<usize>,
         }
 
+        #[async_trait]
         impl Reconnect for MockClient {
             type Cl = ();
 
-            fn reconnect(&self, _: u64) -> Result<()> {
+            async fn reconnect(&self, _: u64) -> Result<()> {
                 *self.reconnect_count.lock().unwrap() += 1;
                 // Not actually unimplemented, we just don't care about the error.
                 Err(Error::unimplemented())
             }
 
-            fn with_cluster<T, F: Fn(&()) -> T>(&self, f: F) -> T {
+            async fn with_cluster<T, F: Fn(&Self::Cl) -> T + Send + Sync>(&self, f: F) -> T {
                 f(&())
             }
         }
@@ -215,14 +219,15 @@ mod test {
             retry_count: Mutex<usize>,
         }
 
+        #[async_trait]
         impl Reconnect for MockClient {
             type Cl = ();
 
-            fn reconnect(&self, _: u64) -> Result<()> {
+            async fn reconnect(&self, _: u64) -> Result<()> {
                 Ok(())
             }
 
-            fn with_cluster<T, F: Fn(&()) -> T>(&self, f: F) -> T {
+            async fn with_cluster<T, F: Fn(&Self::Cl) -> T + Send + Sync>(&self, f: F) -> T {
                 *self.retry_count.lock().unwrap() += 1;
                 f(&())
             }

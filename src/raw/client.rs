@@ -25,11 +25,11 @@ impl Client {
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(Config::default()).unwrap();
+    /// let client = RawClient::new(Config::default()).await.unwrap();
     /// # });
     /// ```
-    pub fn new(config: Config) -> Result<Client> {
-        let rpc = Arc::new(PdRpcClient::connect(&config)?);
+    pub async fn new(config: Config) -> Result<Client> {
+        let rpc = Arc::new(PdRpcClient::connect(&config).await?);
         Ok(Client {
             rpc,
             cf: None,
@@ -46,7 +46,7 @@ impl Client {
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(Config::default()).unwrap().with_cf("write");
+    /// let client = RawClient::new(Config::default()).await.unwrap().with_cf("write");
     /// let get_request = client.get("foo".to_owned());
     /// # });
     /// ```
@@ -69,7 +69,7 @@ impl Client {
     /// # use tikv_client::{Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(Config::default()).unwrap().with_key_only(true);
+    /// let client = RawClient::new(Config::default()).await.unwrap().with_key_only(true);
     /// let scan_request = client.scan(("TiKV"..="TiDB").to_owned(), 2);
     /// # });
     /// ```
@@ -90,7 +90,7 @@ impl Client {
     /// # use tikv_client::{Value, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// # let client = RawClient::new(Config::default()).await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let req = client.get(key);
     /// let result: Option<Value> = req.await.unwrap();
@@ -111,7 +111,7 @@ impl Client {
     /// # use tikv_client::{KvPair, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// # let client = RawClient::new(Config::default()).await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let req = client.batch_get(keys);
     /// let result: Vec<KvPair> = req.await.unwrap();
@@ -134,7 +134,7 @@ impl Client {
     /// # use tikv_client::{Key, Value, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// # let client = RawClient::new(Config::default()).await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let val = "TiKV".to_owned();
     /// let req = client.put(key, val);
@@ -155,7 +155,7 @@ impl Client {
     /// # use tikv_client::{Error, Result, KvPair, Key, Value, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// # let client = RawClient::new(Config::default()).await.unwrap();
     /// let kvpair1 = ("PD".to_owned(), "Go".to_owned());
     /// let kvpair2 = ("TiKV".to_owned(), "Rust".to_owned());
     /// let iterable = vec![kvpair1, kvpair2];
@@ -180,7 +180,7 @@ impl Client {
     /// # use tikv_client::{Key, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// # let client = RawClient::new(Config::default()).await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let req = client.delete(key);
     /// let result: () = req.await.unwrap();
@@ -200,7 +200,7 @@ impl Client {
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// # let client = RawClient::new(Config::default()).await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let req = client.batch_delete(keys);
     /// let result: () = req.await.unwrap();
@@ -220,7 +220,7 @@ impl Client {
     /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// # let client = RawClient::new(Config::default()).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = client.delete_range(inclusive_range.to_owned());
     /// let result: () = req.await.unwrap();
@@ -240,7 +240,7 @@ impl Client {
     /// # use tikv_client::{KvPair, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// # let client = RawClient::new(Config::default()).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = client.scan(inclusive_range.to_owned(), 2);
     /// let result: Vec<KvPair> = req.await.unwrap();
@@ -264,7 +264,7 @@ impl Client {
     /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(Config::default()).unwrap();
+    /// # let client = RawClient::new(Config::default()).await.unwrap();
     /// let inclusive_range1 = "TiDB"..="TiKV";
     /// let inclusive_range2 = "TiKV"..="TiSpark";
     /// let iterable = vec![inclusive_range1.to_owned(), inclusive_range2.to_owned()];
