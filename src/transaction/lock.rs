@@ -7,7 +7,8 @@ use kvproto::kvrpcpb;
 use std::sync::Arc;
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
-use itertools::Itertools;
+
+use std::collections::HashMap;
 
 /// _Resolves_ the given locks. Returns whether all the given locks are resolved.
 ///
@@ -21,56 +22,54 @@ pub async fn resolve_locks(
     pd_client: Arc<impl PdClient>,
 ) -> Result<bool> {
     let ts = pd_client.clone().get_timestamp().await?;
-    let locks_len = locks.len();
+    type LockVersion = u64;
+    let mut has_live_locks = false;
 
-    struct RichLock {
-        primary_key: Key,
-        region: Region,
-        lock_version: u64,
+    struct ResolveInfo {
         txn_size: u64,
+        region: Region,
+        keys: Vec<Key>,
     }
 
-    let mut expired_locks = vec![];
+    let mut grouped: HashMap<(RegionVerId, LockVersion), ResolveInfo> = HashMap::new();
+
     for lock in locks {
         let expired = ts.physical - Timestamp::from_version(lock.lock_version).physical
             >= lock.lock_ttl as i64;
         if expired {
             let primary_key: Key = lock.primary_lock.into();
-            let region = pd_client.region_for_key(&primary_key).await?;
-            expired_locks.push(RichLock {
-                primary_key,
-                region,
-                lock_version: lock.lock_version,
-                txn_size: lock.txn_size,
-            })
+            let region: Region = pd_client.region_for_key(&primary_key).await?;
+
+            grouped
+                .entry((region.ver_id(), lock.lock_version))
+                .or_insert(ResolveInfo {
+                    txn_size: lock.txn_size,
+                    region: region.clone(),
+                    keys: vec![],
+                })
+                .keys
+                .push(primary_key);
+        } else {
+            has_live_locks = true;
         }
     }
 
-    let has_live_locks = locks_len > expired_locks.len();
-
-    let grouped: Vec<((RegionVerId, u64), Vec<RichLock>)> = expired_locks
-        .into_iter()
-        .group_by(|rich_lock| (rich_lock.region.ver_id().clone(), rich_lock.lock_version))
-        .into_iter()
-        .map(|(k, v)| (k, v.collect()))
-        .collect();
-
-    for ((_region_ver_id, lock_version), locks) in grouped {
-        //Every lock with the same (region, lock_version), the txn_size is the same.
-        let is_large_txn = locks.get(0).unwrap().txn_size >= 16;
+    for ((_region_ver_id, lock_version), resolve_info) in grouped {
+        let is_large_txn = resolve_info.txn_size >= 16;
 
         let commit_version =
-            requests::new_cleanup_request(locks.get(0).unwrap().primary_key.clone(), lock_version)
+            requests::new_cleanup_request(resolve_info.keys.get(0).unwrap().clone(), lock_version)
                 .execute(pd_client.clone())
                 .await?;
 
         let request_keys = if is_large_txn {
             vec![]
         } else {
-            locks.iter().map(|lock| &lock.primary_key).collect()
+            resolve_info.keys
         };
+
         let _cleaned_region = resolve_lock_with_retry(
-            &locks.get(0).unwrap().region,
+            &resolve_info.region,
             &request_keys,
             lock_version,
             commit_version,
@@ -78,12 +77,13 @@ pub async fn resolve_locks(
         )
         .await?;
     }
+
     Ok(!has_live_locks)
 }
 
 async fn resolve_lock_with_retry(
     region: &Region,
-    keys: &Vec<&Key>,
+    keys: &Vec<Key>,
     start_version: u64,
     commit_version: u64,
     pd_client: Arc<impl PdClient>,
