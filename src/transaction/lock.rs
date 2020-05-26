@@ -50,12 +50,7 @@ pub async fn resolve_locks(
 
     let grouped: Vec<((RegionVerId, u64), Vec<RichLock>)> = expired_locks
         .into_iter()
-        .group_by(|rich_lock| {
-            (
-                rich_lock.region.ver_id().clone(),
-                rich_lock.lock_version.clone(),
-            )
-        })
+        .group_by(|rich_lock| (rich_lock.region.ver_id().clone(), rich_lock.lock_version))
         .into_iter()
         .map(|(k, v)| (k, v.collect()))
         .collect();
