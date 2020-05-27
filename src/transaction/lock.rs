@@ -83,7 +83,6 @@ async fn resolve_lock_with_retry(
     commit_version: u64,
     pd_client: Arc<impl PdClient>,
 ) -> Result<()> {
-    // TODO: Add backoff
     let mut error = None;
     let mut back_off = NoJitterBackoff::new(10, 1000, RESOLVE_LOCK_RETRY_LIMIT as u32);
 
