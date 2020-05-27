@@ -44,7 +44,7 @@ pub async fn resolve_locks(
                 .entry((region.ver_id(), lock.lock_version))
                 .or_insert(ResolveInfo {
                     txn_size: lock.txn_size,
-                    region: region.clone(),
+                    region,
                     keys: vec![],
                 })
                 .keys
