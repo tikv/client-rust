@@ -54,17 +54,15 @@ pub async fn resolve_locks(
             } else {
                 //if txn is large,keep resolve_info.keys empty to send a full resolve lock request
             }
-
         } else {
             has_live_locks = true;
         }
     }
 
     for ((_region_ver_id, lock_version), resolve_info) in grouped {
-        let commit_version =
-            requests::new_cleanup_request(resolve_info.primary_key.clone(), lock_version)
-                .execute(pd_client.clone())
-                .await?;
+        let commit_version = requests::new_cleanup_request(resolve_info.primary_key, lock_version)
+            .execute(pd_client.clone())
+            .await?;
 
         let _cleaned_region = resolve_lock_with_retry(
             &resolve_info.region,
