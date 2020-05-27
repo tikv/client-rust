@@ -3,6 +3,7 @@ use crate::pd::{PdClient, Region, RegionVerId};
 use crate::request::KvRequest;
 use crate::{ErrorKind, Key, Result, Timestamp};
 
+use crate::backoff::{Backoff, NoJitterBackoff};
 use kvproto::kvrpcpb;
 use std::{collections::HashMap, sync::Arc};
 
@@ -84,6 +85,8 @@ async fn resolve_lock_with_retry(
 ) -> Result<()> {
     // TODO: Add backoff
     let mut error = None;
+    let mut back_off = NoJitterBackoff::new(10, 1000, RESOLVE_LOCK_RETRY_LIMIT as u32);
+
     for _ in 0..RESOLVE_LOCK_RETRY_LIMIT {
         let region = pd_client.region_for_id(region.id()).await?;
         let context = match region.context() {
@@ -91,6 +94,11 @@ async fn resolve_lock_with_retry(
             Err(e) => {
                 // Retry if the region has no leader
                 error = Some(e);
+
+                back_off
+                    .next_delay_duration()
+                    .map(|duration| async move { futures_timer::Delay::new(duration).await });
+
                 continue;
             }
         };
