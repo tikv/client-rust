@@ -141,7 +141,7 @@ mod tests {
         let client = Arc::new(MockPdClient);
         let key: Key = vec![1].into();
         let region1 = MockPdClient::region1();
-        let resolved_region = executor::block_on(resolve_lock_with_retry(
+        executor::block_on(resolve_lock_with_retry(
             &region1,
             &vec![key],
             1,
@@ -149,7 +149,6 @@ mod tests {
             client.clone(),
         ))
         .unwrap();
-        assert_eq!(region1.ver_id(), resolved_region);
 
         // Test resolve lock over retry limit
         fail::cfg("region-error", "10*return").unwrap();
