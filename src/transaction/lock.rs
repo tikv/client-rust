@@ -4,11 +4,9 @@ use crate::request::KvRequest;
 use crate::{ErrorKind, Key, Result, Timestamp};
 
 use kvproto::kvrpcpb;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
-
-use std::collections::HashMap;
 
 /// _Resolves_ the given locks. Returns whether all the given locks are resolved.
 ///
@@ -64,7 +62,7 @@ pub async fn resolve_locks(
             .execute(pd_client.clone())
             .await?;
 
-        let _cleaned_region = resolve_lock_with_retry(
+        resolve_lock_with_retry(
             &resolve_info.region,
             &resolve_info.keys,
             lock_version,
@@ -83,7 +81,7 @@ async fn resolve_lock_with_retry(
     start_version: u64,
     commit_version: u64,
     pd_client: Arc<impl PdClient>,
-) -> Result<RegionVerId> {
+) -> Result<()> {
     // TODO: Add backoff
     let mut error = None;
     for _ in 0..RESOLVE_LOCK_RETRY_LIMIT {
@@ -101,7 +99,7 @@ async fn resolve_lock_with_retry(
             .await
         {
             Ok(_) => {
-                return Ok(region.ver_id());
+                return Ok(());
             }
             Err(e) => match e.kind() {
                 ErrorKind::RegionError(_) => {
