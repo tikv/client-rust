@@ -26,8 +26,8 @@ pub async fn resolve_locks(
     let mut has_live_locks = false;
 
     struct ResolveInfo {
-        txn_size: u64,
         region: Region,
+        primary_key: Key,
         keys: Vec<Key>,
     }
 
@@ -39,38 +39,36 @@ pub async fn resolve_locks(
         if expired {
             let primary_key: Key = lock.primary_lock.into();
             let region: Region = pd_client.region_for_key(&primary_key).await?;
+            let is_small_txn = lock.txn_size < 16;
 
-            grouped
+            let resolve_info = grouped
                 .entry((region.ver_id(), lock.lock_version))
                 .or_insert(ResolveInfo {
-                    txn_size: lock.txn_size,
                     region,
+                    primary_key: primary_key.clone(),
                     keys: vec![],
-                })
-                .keys
-                .push(primary_key);
+                });
+
+            if is_small_txn {
+                resolve_info.keys.push(primary_key);
+            } else {
+                //if txn is large,keep resolve_info.keys empty to send a full resolve lock request
+            }
+
         } else {
             has_live_locks = true;
         }
     }
 
     for ((_region_ver_id, lock_version), resolve_info) in grouped {
-        let is_large_txn = resolve_info.txn_size >= 16;
-
         let commit_version =
-            requests::new_cleanup_request(resolve_info.keys.get(0).unwrap().clone(), lock_version)
+            requests::new_cleanup_request(resolve_info.primary_key.clone(), lock_version)
                 .execute(pd_client.clone())
                 .await?;
 
-        let request_keys = if is_large_txn {
-            vec![]
-        } else {
-            resolve_info.keys
-        };
-
         let _cleaned_region = resolve_lock_with_retry(
             &resolve_info.region,
-            &request_keys,
+            &resolve_info.keys,
             lock_version,
             commit_version,
             pd_client.clone(),
