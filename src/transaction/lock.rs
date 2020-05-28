@@ -8,6 +8,7 @@ use kvproto::kvrpcpb;
 use std::{collections::HashMap, sync::Arc};
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
+const LARGE_TXN_THRESHOLD: u64 = 16;
 
 /// _Resolves_ the given locks. Returns whether all the given locks are resolved.
 ///
@@ -38,7 +39,7 @@ pub async fn resolve_locks(
         if expired {
             let primary_key: Key = lock.primary_lock.into();
             let region: Region = pd_client.region_for_key(&primary_key).await?;
-            let is_small_txn = lock.txn_size < 16;
+            let is_small_txn = lock.txn_size < LARGE_TXN_THRESHOLD;
 
             let resolve_info = grouped
                 .entry((region.ver_id(), lock.lock_version))
@@ -84,7 +85,7 @@ async fn resolve_lock_with_retry(
     pd_client: Arc<impl PdClient>,
 ) -> Result<()> {
     let mut error = None;
-    let mut back_off = NoJitterBackoff::new(10, 1000, RESOLVE_LOCK_RETRY_LIMIT as u32);
+    let mut backoff = NoJitterBackoff::new(10, 1000, RESOLVE_LOCK_RETRY_LIMIT as u32);
 
     for _ in 0..RESOLVE_LOCK_RETRY_LIMIT {
         let region = pd_client.region_for_id(region.id()).await?;
@@ -94,7 +95,7 @@ async fn resolve_lock_with_retry(
                 // Retry if the region has no leader
                 error = Some(e);
 
-                back_off
+                backoff
                     .next_delay_duration()
                     .map(|duration| async move { futures_timer::Delay::new(duration).await });
 
