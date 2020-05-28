@@ -9,6 +9,8 @@ use std::{collections::HashMap, sync::Arc};
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 const LARGE_TXN_THRESHOLD: u64 = 16;
+const RESOLVE_LOCK_BACKOFF: NoJitterBackoff =
+    NoJitterBackoff::new(10, 1000, RESOLVE_LOCK_RETRY_LIMIT as u32);
 
 /// _Resolves_ the given locks. Returns whether all the given locks are resolved.
 ///
@@ -84,7 +86,7 @@ async fn resolve_lock_with_retry(
     commit_version: u64,
     pd_client: Arc<impl PdClient>,
 ) -> Result<()> {
-    let mut backoff = NoJitterBackoff::new(10, 1000, RESOLVE_LOCK_RETRY_LIMIT as u32);
+    let mut backoff = RESOLVE_LOCK_BACKOFF;
 
     loop {
         let region = pd_client.region_for_id(region.id()).await?;
