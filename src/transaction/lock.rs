@@ -84,24 +84,25 @@ async fn resolve_lock_with_retry(
     commit_version: u64,
     pd_client: Arc<impl PdClient>,
 ) -> Result<()> {
-    let mut error = None;
     let mut backoff = NoJitterBackoff::new(10, 1000, RESOLVE_LOCK_RETRY_LIMIT as u32);
 
-    for _ in 0..RESOLVE_LOCK_RETRY_LIMIT {
+    loop {
         let region = pd_client.region_for_id(region.id()).await?;
         let context = match region.context() {
             Ok(context) => context,
             Err(e) => {
                 // Retry if the region has no leader
-                error = Some(e);
 
-                backoff
-                    .next_delay_duration()
-                    .map(|duration| async move { futures_timer::Delay::new(duration).await });
-
-                continue;
+                match backoff.next_delay_duration() {
+                    Some(duration) => {
+                        futures_timer::Delay::new(duration).await;
+                        continue;
+                    }
+                    None => return Err(e),
+                }
             }
         };
+
         match requests::new_resolve_lock_request(keys, context, start_version, commit_version)
             .execute(pd_client.clone())
             .await
@@ -112,14 +113,18 @@ async fn resolve_lock_with_retry(
             Err(e) => match e.kind() {
                 ErrorKind::RegionError(_) => {
                     // Retry on region error
-                    error = Some(e);
-                    continue;
+                    match backoff.next_delay_duration() {
+                        Some(duration) => {
+                            futures_timer::Delay::new(duration).await;
+                            continue;
+                        }
+                        None => return Err(e),
+                    }
                 }
                 _ => return Err(e),
             },
         }
     }
-    Err(error.expect("no error is impossible"))
 }
 
 pub trait HasLocks {
