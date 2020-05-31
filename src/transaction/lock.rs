@@ -89,7 +89,13 @@ async fn resolve_lock_with_retry(
     let mut backoff = RESOLVE_LOCK_BACKOFF;
 
     loop {
-        let region = pd_client.region_for_id(region.id()).await?;
+        let region = if keys.is_empty() {
+            pd_client.region_for_id(region.id()).await?
+        } else {
+            //Region id for key may change caused by region split
+            pd_client.region_for_key(keys.get(0).unwrap()).await?
+        };
+
         let context = match region.context() {
             Ok(context) => context,
             Err(e) => {
