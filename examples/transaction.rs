@@ -3,9 +3,7 @@
 mod common;
 
 use crate::common::parse_args;
-use futures::prelude::*;
-use std::ops::RangeBounds;
-use tikv_client::{Config, Key, KvPair, TransactionClient as Client, Value};
+use tikv_client::{BoundRange, Config, Key, KvPair, TransactionClient as Client, Value};
 
 async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
     let mut txn = client.begin().await.expect("Could not begin a transaction");
@@ -21,23 +19,13 @@ async fn get(client: &Client, key: Key) -> Option<Value> {
     txn.get(key).await.expect("Could not get value")
 }
 
-// Ignore a spurious warning from rustc (https://github.com/rust-lang/rust/issues/60566).
-#[allow(unused_mut)]
-async fn scan(client: &Client, range: impl RangeBounds<Key>, mut limit: usize) {
+async fn scan(client: &Client, range: impl Into<BoundRange>, limit: u32) {
     let mut txn = client.begin().await.expect("Could not begin a transaction");
-    txn.scan(range)
-        .into_stream()
-        .take_while(move |r| {
-            assert!(r.is_ok(), "Could not scan keys");
-            future::ready(if limit == 0 {
-                false
-            } else {
-                limit -= 1;
-                true
-            })
-        })
-        .for_each(|pair| future::ready(println!("{:?}", pair)))
-        .await;
+    txn.scan(range, limit, false)
+        .await
+        .expect("Could not scan key-value pairs in range")
+        .for_each(|pair| println!("{:?}", pair));
+    txn.commit().await.expect("Could not commit transaction");
 }
 
 async fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {

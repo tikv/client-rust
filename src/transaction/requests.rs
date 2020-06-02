@@ -2,9 +2,9 @@ use crate::{
     backoff::Backoff,
     kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
-    request::{store_stream_for_key, store_stream_for_keys, KvRequest},
+    request::{store_stream_for_key, store_stream_for_keys, store_stream_for_range, KvRequest},
     transaction::{HasLocks, Timestamp},
-    Error, Key, KvPair, Result, Value,
+    BoundRange, Error, Key, KvPair, Result, Value,
 };
 
 use futures::future::BoxFuture;
@@ -153,10 +153,13 @@ impl KvRequest for kvrpcpb::ScanRequest {
 
     fn store_stream<PdC: PdClient>(
         &mut self,
-        _pd_client: Arc<PdC>,
-        _is_retry: bool,
+        pd_client: Arc<PdC>,
+        is_retry: bool,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        future::err(Error::unimplemented()).into_stream().boxed()
+        let start_key = mem::take(&mut self.start_key);
+        let end_key = mem::take(&mut self.end_key);
+        let range = BoundRange::from((start_key, end_key));
+        store_stream_for_range(range, pd_client, is_retry)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
@@ -168,6 +171,22 @@ impl KvRequest for kvrpcpb::ScanRequest {
     ) -> BoxFuture<'static, Result<Self::Result>> {
         results.try_concat().boxed()
     }
+}
+
+pub fn new_mvcc_scan_request(
+    range: impl Into<BoundRange>,
+    timestamp: Timestamp,
+    limit: u32,
+    key_only: bool,
+) -> kvrpcpb::ScanRequest {
+    let (start_key, end_key) = range.into().into_keys();
+    let mut req = kvrpcpb::ScanRequest::default();
+    req.set_start_key(start_key.into());
+    req.set_end_key(end_key.unwrap_or_default().into());
+    req.set_limit(limit);
+    req.set_key_only(key_only);
+    req.set_version(timestamp.into_version());
+    req
 }
 
 impl HasLocks for kvrpcpb::ScanResponse {

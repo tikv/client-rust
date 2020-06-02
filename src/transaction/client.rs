@@ -31,7 +31,7 @@ impl Client {
         let bg_worker = ThreadPool::new()?;
         // TODO: PdRpcClient::connect currently uses a blocking implementation.
         //       Make it asynchronous later.
-        let pd = Arc::new(PdRpcClient::connect(&config)?);
+        let pd = Arc::new(PdRpcClient::connect(&config).await?);
         Ok(Client { pd, bg_worker })
     }
 

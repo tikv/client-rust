@@ -120,6 +120,62 @@ pub trait PdClient: Send + Sync + 'static {
         })
         .boxed()
     }
+
+    // Returns a Steam which iterates over the contexts for ranges in the same region.
+    fn group_ranges_by_region(
+        self: Arc<Self>,
+        mut ranges: Vec<BoundRange>,
+        skip_cache: bool,
+    ) -> BoxStream<'static, Result<(RegionId, Vec<BoundRange>)>> {
+        ranges.reverse();
+        stream_fn(Some(ranges), move |ranges| {
+            let mut ranges = match ranges {
+                None => return Either::Right(ready(Ok(None))),
+                Some(r) => r,
+            };
+
+            if let Some(range) = ranges.pop() {
+                let (start_key, end_key) = range.clone().into_keys();
+                Either::Left(
+                    self.region_for_key(&start_key, skip_cache)
+                        .map_ok(move |region| {
+                            let id = region.id();
+                            let region_start = region.start_key();
+                            let region_end = region.end_key();
+                            let mut grouped = vec![];
+                            if !region_end.is_empty()
+                                && end_key.clone().map(|x| x > region_end).unwrap_or(true)
+                            {
+                                grouped.push((start_key, region_end.clone()).into());
+                                ranges.push((region_end, end_key).into());
+                                return Some((Some(ranges), (id, grouped)));
+                            }
+                            grouped.push(range);
+
+                            while let Some(range) = ranges.pop() {
+                                let (start_key, end_key) = range.clone().into_keys();
+                                if start_key < region_start {
+                                    ranges.push(range);
+                                    break;
+                                }
+                                if !region_end.is_empty()
+                                    && end_key.clone().map(|x| x > region_end).unwrap_or(true)
+                                {
+                                    grouped.push((start_key, region_end.clone()).into());
+                                    ranges.push((region_end, end_key).into());
+                                    return Some((Some(ranges), (id, grouped)));
+                                }
+                                grouped.push(range);
+                            }
+                            Some((Some(ranges), (id, grouped)))
+                        }),
+                )
+            } else {
+                Either::Right(ready(Ok(None)))
+            }
+        })
+        .boxed()
+    }
 }
 
 /// This client converts requests for the logical TiKV cluster into requests
@@ -166,7 +222,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 }
 
 impl PdRpcClient<TikvConnect, Cluster> {
-    pub fn connect(config: &Config) -> Result<PdRpcClient> {
+    pub async fn connect(config: &Config) -> Result<PdRpcClient> {
         PdRpcClient::new(
             config,
             |env, security_mgr| TikvConnect::new(env, security_mgr),
@@ -174,18 +230,20 @@ impl PdRpcClient<TikvConnect, Cluster> {
                 RetryClient::connect(env, &config.pd_endpoints, security_mgr, config.timeout)
             },
         )
+        .await
     }
 }
 
 impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
-    pub fn new<MakeKvC, MakePd>(
+    pub async fn new<PdFut, MakeKvC, MakePd>(
         config: &Config,
         kv_connect: MakeKvC,
         pd: MakePd,
     ) -> Result<PdRpcClient<KvC, Cl>>
     where
+        PdFut: Future<Output = Result<RetryClient<Cl>>>,
         MakeKvC: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> KvC,
-        MakePd: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> Result<RetryClient<Cl>>,
+        MakePd: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> PdFut,
     {
         let env = Arc::new(
             EnvBuilder::new()
@@ -203,7 +261,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             },
         );
 
-        let pd = Arc::new(pd(env.clone(), security_mgr.clone())?);
+        let pd = Arc::new(pd(env.clone(), security_mgr.clone()).await?);
         let kv_client_cache = Default::default();
         Ok(PdRpcClient {
             pd,
@@ -234,10 +292,11 @@ pub mod test {
     use crate::mock::*;
 
     use futures::executor;
+    use futures::executor::block_on;
 
     #[test]
     fn test_kv_client_caching() {
-        let client = pd_rpc_client();
+        let client = block_on(pd_rpc_client());
 
         let addr1 = "foo";
         let addr2 = "bar";
@@ -298,6 +357,51 @@ pub mod test {
         let mut stream = executor::block_on_stream(client.stores_for_range(range2, true));
         assert_eq!(stream.next().unwrap().unwrap().region.id(), 1);
         assert_eq!(stream.next().unwrap().unwrap().region.id(), 2);
+        assert!(stream.next().is_none());
+    }
+
+    #[test]
+    fn test_group_ranges_by_region() {
+        let client = Arc::new(MockPdClient);
+        let k1: Key = vec![1].into();
+        let k2: Key = vec![5, 2].into();
+        let k3: Key = vec![11, 4].into();
+        let k4: Key = vec![16, 4].into();
+        let k_split: Key = vec![10].into();
+        let range1 = (k1.clone(), k2.clone()).into();
+        let range2 = (k1.clone(), k3.clone()).into();
+        let range3 = (k2.clone(), k4.clone()).into();
+        let ranges: Vec<BoundRange> = vec![range1, range2, range3];
+
+        let mut stream = executor::block_on_stream(client.group_ranges_by_region(ranges, true));
+        let ranges1 = stream.next().unwrap().unwrap();
+        let ranges2 = stream.next().unwrap().unwrap();
+        let ranges3 = stream.next().unwrap().unwrap();
+        let ranges4 = stream.next().unwrap().unwrap();
+
+        assert_eq!(ranges1.0, 1);
+        assert_eq!(
+            ranges1.1,
+            vec![
+                (k1.clone(), k2.clone()).into(),
+                (k1.clone(), k_split.clone()).into()
+            ] as Vec<BoundRange>
+        );
+        assert_eq!(ranges2.0, 2);
+        assert_eq!(
+            ranges2.1,
+            vec![(k_split.clone(), k3.clone()).into()] as Vec<BoundRange>
+        );
+        assert_eq!(ranges3.0, 1);
+        assert_eq!(
+            ranges3.1,
+            vec![(k2.clone(), k_split.clone()).into()] as Vec<BoundRange>
+        );
+        assert_eq!(ranges4.0, 2);
+        assert_eq!(
+            ranges4.1,
+            vec![(k_split.clone(), k4.clone()).into()] as Vec<BoundRange>
+        );
         assert!(stream.next().is_none());
     }
 }
