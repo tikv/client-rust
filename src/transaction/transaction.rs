@@ -249,6 +249,7 @@ struct TwoPhaseCommitter {
 impl TwoPhaseCommitter {
     async fn commit(mut self) -> Result<()> {
         if self.mutations.is_empty() {
+            self.committed = true;
             return Ok(());
         }
         self.prewrite().await?;
