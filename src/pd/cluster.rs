@@ -16,7 +16,6 @@ use crate::{
     transaction::Timestamp,
     Error, Result,
 };
-use futures::compat::Compat01As03;
 use futures::prelude::*;
 use grpcio::{CallOption, Environment};
 use kvproto::{metapb, pdpb};
@@ -56,7 +55,6 @@ impl Cluster {
 
         self.client
             .get_region_async_opt(&req, option)
-            .map(Compat01As03::new)
             .unwrap()
             .map(move |r| context.done(r.map_err(|e| e.into())))
             .and_then(move |resp| {
@@ -87,7 +85,6 @@ impl Cluster {
 
         self.client
             .get_region_by_id_async_opt(&req, option)
-            .map(Compat01As03::new)
             .unwrap()
             .map(move |r| context.done(r.map_err(|e| e.into())))
             .and_then(move |resp| {
@@ -116,7 +113,6 @@ impl Cluster {
 
         self.client
             .get_store_async_opt(&req, option)
-            .map(Compat01As03::new)
             .unwrap()
             .map(move |r| context.done(r.map_err(|e| e.into())))
             .and_then(|mut resp| {
@@ -141,7 +137,6 @@ impl Cluster {
 
         self.client
             .get_all_stores_async_opt(&req, option)
-            .map(Compat01As03::new)
             .unwrap()
             .map(move |r| context.done(r.map_err(|e| e.into())))
             .and_then(|mut resp| {
@@ -280,7 +275,6 @@ impl Connection {
         let option = CallOption::default().timeout(timeout);
         let resp = client
             .get_members_async_opt(&pdpb::GetMembersRequest::default(), option)
-            .map(Compat01As03::new)
             .map_err(Error::from)?
             .await?;
         Ok((client, resp))

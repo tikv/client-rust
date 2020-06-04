@@ -15,7 +15,6 @@ use crate::{transaction::Timestamp, Error, Result};
 
 use futures::{
     channel::{mpsc, oneshot},
-    compat::*,
     executor::block_on,
     join, pin_mut,
     prelude::*,
@@ -54,8 +53,8 @@ impl TimestampOracle {
         thread::spawn(move || {
             block_on(run_tso(
                 cluster_id,
-                rpc_sender.sink_compat().sink_err_into(),
-                rpc_receiver.compat().err_into(),
+                rpc_sender.sink_err_into(),
+                rpc_receiver.err_into(),
                 request_rx,
             ))
         });

@@ -14,7 +14,6 @@ use crate::{
 };
 
 use derive_new::new;
-use futures::compat::Compat01As03;
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use grpcio::CallOption;
@@ -83,11 +82,11 @@ async fn map_errors_and_trace<Resp, RpcFuture>(
     fut: ::grpcio::Result<RpcFuture>,
 ) -> Result<Resp>
 where
-    Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
+    RpcFuture: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
     Resp: HasError + Sized + Clone + Send + 'static,
 {
     let res = match fut {
-        Ok(f) => Compat01As03::new(f).await,
+        Ok(f) => f.await,
         Err(e) => Err(e),
     };
 
