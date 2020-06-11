@@ -27,6 +27,10 @@ addons:
       - cmake
       - go
 
+before_install:
+  # travis will handle the toolchains' version
+  rm ./rust-toolchain
+
 install:
   - if [[ $TRAVIS_OS_NAME == "linux" && $TRAVIS_RUST_VERSION == "1.42.0" ]]; then rustup component add rustfmt; fi
   - if [[ $TRAVIS_OS_NAME == "linux" ]]; then
