@@ -21,7 +21,11 @@ proptest! {
         let out_value = block_on(
             client.get(pair.key().clone())
         ).unwrap();
-        assert_eq!(Some(Value::from(pair.value().clone())), out_value);
+
+        match out_value {
+            None =>assert!(pair.value().is_empty()),
+            Some(out) => assert_eq!(Value::from(pair.value().clone()), out)
+        }
 
         block_on(
             client.delete(pair.key().clone())

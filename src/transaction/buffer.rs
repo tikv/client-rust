@@ -139,7 +139,7 @@ impl Mutation {
             Mutation::Cached(_) => return None,
             Mutation::Put(v) => {
                 pb.set_op(kvrpcpb::Op::Put);
-                pb.set_value(v.clone().into());
+                pb.set_value(v.clone());
             }
             Mutation::Del => pb.set_op(kvrpcpb::Op::Del),
             Mutation::Lock => pb.set_op(kvrpcpb::Op::Lock),
@@ -192,7 +192,7 @@ mod tests {
             block_on(buffer.get_or_else(b"key1".to_vec().into(), move |_| ready(panic!())))
                 .unwrap()
                 .unwrap(),
-            b"value1".to_vec().into()
+            b"value1".to_vec()
         );
 
         buffer.delete(b"key2".to_vec().into());

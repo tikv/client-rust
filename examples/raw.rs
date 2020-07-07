@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
     // Above, you saw we can use a `&'static str`, this is primarily for making examples short.
     // This type is practical to use for real things, and usage forces an internal copy.
     //
-    // It is best to pass a `Vec<u8>` in terms of explictness and speed. `String`s and a few other
+    // It is best to pass a `Vec<u8>` in terms of explicitness and speed. `String`s and a few other
     // types are supported as well, but it all ends up as `Vec<u8>` in the end.
     let value: Option<Value> = client.get(KEY.to_owned()).await?;
     assert_eq!(value, Some(Value::from(VALUE.to_owned())));
@@ -114,17 +114,20 @@ async fn main() -> Result<()> {
         .batch_scan(batch_scan_keys.to_owned(), 10)
         .await
         .expect("Could not batch scan");
-    let vals: Vec<_> = kv_pairs.into_iter().map(|p| p.1).collect();
+    let vals: Vec<_> = kv_pairs
+        .into_iter()
+        .map(|p| String::from_utf8(p.1).unwrap().to_owned())
+        .collect();
     assert_eq!(
         &vals,
         &[
-            "v1".to_owned().into(),
-            "v2".to_owned().into(),
-            "v2".to_owned().into(),
-            "v3".to_owned().into(),
-            "v1".to_owned().into(),
-            "v2".to_owned().into(),
-            "v3".to_owned().into()
+            "v1".to_owned(),
+            "v2".to_owned(),
+            "v2".to_owned(),
+            "v3".to_owned(),
+            "v1".to_owned(),
+            "v2".to_owned(),
+            "v3".to_owned()
         ]
     );
     println!(
