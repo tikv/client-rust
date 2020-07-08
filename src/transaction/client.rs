@@ -6,12 +6,16 @@ use crate::{
     Config, Result,
 };
 
+use crate::kv_client::TikvConnect;
+use crate::security::SecurityManager;
 use futures::executor::ThreadPool;
+use grpcio::EnvBuilder;
 use std::sync::Arc;
 
 /// The TiKV transactional `Client` is used to issue requests to the TiKV server and PD cluster.
 pub struct Client {
     pd: Arc<PdRpcClient>,
+    kv_connect: Arc<TikvConnect>,
     /// The thread pool for background tasks including committing secondary keys and failed
     /// transaction cleanups.
     bg_worker: ThreadPool,
@@ -32,7 +36,34 @@ impl Client {
         // TODO: PdRpcClient::connect currently uses a blocking implementation.
         //       Make it asynchronous later.
         let pd = Arc::new(PdRpcClient::connect(&config).await?);
-        Ok(Client { pd, bg_worker })
+        // FIXME: only for test. The initialization should be either
+        // 1. same as pd (get from pd)
+        // 2. inside the TikvConnect::new()
+
+        const CQ_COUNT: usize = 1;
+        const CLIENT_PREFIX: &str = "tikv-client";
+        let env = Arc::new(
+            EnvBuilder::new()
+                .cq_count(CQ_COUNT)
+                .name_prefix(thread_name!(CLIENT_PREFIX))
+                .build(),
+        );
+        let security_mgr = Arc::new(
+            if let (Some(ca_path), Some(cert_path), Some(key_path)) =
+                (&config.ca_path, &config.cert_path, &config.key_path)
+            {
+                SecurityManager::load(ca_path, cert_path, key_path)?
+            } else {
+                SecurityManager::default()
+            },
+        );
+
+        let kv_connect = Arc::new(TikvConnect::new(env, security_mgr));
+        Ok(Client {
+            pd,
+            kv_connect,
+            bg_worker,
+        })
     }
 
     /// Creates a new [`Transaction`](Transaction).
@@ -75,6 +106,11 @@ impl Client {
     }
 
     fn new_transaction(&self, timestamp: Timestamp) -> Transaction {
-        Transaction::new(timestamp, self.bg_worker.clone(), self.pd.clone())
+        Transaction::new(
+            timestamp,
+            self.bg_worker.clone(),
+            self.pd.clone(),
+            self.kv_connect.clone(),
+        )
     }
 }

@@ -113,3 +113,5 @@ impl PdResponse for pdpb::GetAllStoresResponse {
         self.get_header()
     }
 }
+
+pub use client::StoreBuilder;

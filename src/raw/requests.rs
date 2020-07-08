@@ -3,10 +3,10 @@
 use super::RawRpcRequest;
 use crate::{
     kv_client::{KvClient, RpcFnType, Store},
-    pd::PdClient,
+    pd::{PdClient, StoreBuilder},
     request::{
-        store_stream_for_key, store_stream_for_keys, store_stream_for_range,
-        store_stream_for_ranges, KvRequest,
+        store_builder_stream_for_key, store_builder_stream_for_keys,
+        store_builder_stream_for_range, store_builder_stream_for_ranges, KvRequest,
     },
     transaction::HasLocks,
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
@@ -27,20 +27,20 @@ impl KvRequest for kvrpcpb::RawGetRequest {
     const REQUEST_NAME: &'static str = "raw_get";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_get_async_opt;
 
+    fn store_builder_stream<PdC: PdClient>(
+        &mut self,
+        pd_client: Arc<PdC>,
+    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
+        let key = mem::take(&mut self.key).into();
+        store_builder_stream_for_key(key, pd_client)
+    }
+
     fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
         let mut req = store.request::<Self>();
         req.set_key(key.into());
         req.set_cf(self.cf.clone());
 
         req
-    }
-
-    fn store_stream<PdC: PdClient>(
-        &mut self,
-        pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
-        let key = mem::take(&mut self.key).into();
-        store_stream_for_key(key, pd_client)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
@@ -88,12 +88,12 @@ impl KvRequest for kvrpcpb::RawBatchGetRequest {
         req
     }
 
-    fn store_stream<PdC: PdClient>(
+    fn store_builder_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
         let keys = mem::take(&mut self.keys);
-        store_stream_for_keys(keys, pd_client)
+        store_builder_stream_for_keys(keys, pd_client)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
@@ -134,14 +134,14 @@ impl KvRequest for kvrpcpb::RawPutRequest {
         req
     }
 
-    fn store_stream<PdC: PdClient>(
+    fn store_builder_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
         let key = mem::take(&mut self.key);
         let value = mem::take(&mut self.value);
         let pair = KvPair::new(key, value);
-        store_stream_for_key(pair, pd_client)
+        store_builder_stream_for_key(pair, pd_client)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -184,12 +184,12 @@ impl KvRequest for kvrpcpb::RawBatchPutRequest {
         req
     }
 
-    fn store_stream<PdC: PdClient>(
+    fn store_builder_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
         let pairs = mem::take(&mut self.pairs);
-        store_stream_for_keys(pairs, pd_client)
+        store_builder_stream_for_keys(pairs, pd_client)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -227,12 +227,12 @@ impl KvRequest for kvrpcpb::RawDeleteRequest {
         req
     }
 
-    fn store_stream<PdC: PdClient>(
+    fn store_builder_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
         let key = mem::take(&mut self.key).into();
-        store_stream_for_key(key, pd_client)
+        store_builder_stream_for_key(key, pd_client)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -273,12 +273,12 @@ impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
         req
     }
 
-    fn store_stream<PdC: PdClient>(
+    fn store_builder_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
         let keys = mem::take(&mut self.keys);
-        store_stream_for_keys(keys, pd_client)
+        store_builder_stream_for_keys(keys, pd_client)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -321,14 +321,14 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
         req
     }
 
-    fn store_stream<PdC: PdClient>(
+    fn store_builder_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
         let start_key = mem::take(&mut self.start_key);
         let end_key = mem::take(&mut self.end_key);
         let range = BoundRange::from((start_key, end_key));
-        store_stream_for_range(range, pd_client)
+        store_builder_stream_for_range(range, pd_client)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -378,14 +378,14 @@ impl KvRequest for kvrpcpb::RawScanRequest {
         req
     }
 
-    fn store_stream<PdC: PdClient>(
+    fn store_builder_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
         let start_key = mem::take(&mut self.start_key);
         let end_key = mem::take(&mut self.end_key);
         let range = BoundRange::from((start_key, end_key));
-        store_stream_for_range(range, pd_client)
+        store_builder_stream_for_range(range, pd_client)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
@@ -433,15 +433,15 @@ impl KvRequest for kvrpcpb::RawBatchScanRequest {
         req
     }
 
-    fn store_stream<PdC: PdClient>(
+    fn store_builder_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
         let ranges = mem::take(&mut self.ranges)
             .into_iter()
             .map(|range| range.into())
             .collect();
-        store_stream_for_ranges(ranges, pd_client)
+        store_builder_stream_for_ranges(ranges, pd_client)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
@@ -504,7 +504,7 @@ impl HasLocks for kvrpcpb::RawDeleteRangeResponse {}
 mod test {
     use super::*;
 
-    use crate::mock::MockPdClient;
+    use crate::mock::{MockPdClient, MockKvConnect};
     use crate::request::DispatchHook;
 
     use futures::executor;
@@ -535,6 +535,7 @@ mod test {
     #[ignore]
     fn test_raw_scan() {
         let client = Arc::new(MockPdClient);
+        let kv_connect = Arc::new(MockKvConnect);
 
         let start: Key = vec![1].into();
         let end: Key = vec![50].into();
@@ -545,7 +546,7 @@ mod test {
             key_only: true,
             ..Default::default()
         };
-        let scan = executor::block_on(scan.execute(client)).unwrap();
+        let scan = executor::block_on(scan.execute(client, kv_connect)).unwrap();
 
         assert_eq!(scan.len(), 10);
         // TODO test the keys returned.

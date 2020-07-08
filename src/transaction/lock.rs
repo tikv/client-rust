@@ -3,6 +3,7 @@ use crate::pd::{PdClient, RegionVerId};
 use crate::request::KvRequest;
 use crate::{ErrorKind, Key, Result, Timestamp};
 
+use crate::kv_client::KvConnect;
 use kvproto::kvrpcpb;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -19,6 +20,7 @@ const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 pub async fn resolve_locks(
     locks: Vec<kvrpcpb::LockInfo>,
     pd_client: Arc<impl PdClient>,
+    kv_connect: Arc<impl KvConnect>,
 ) -> Result<bool> {
     let ts = pd_client.clone().get_timestamp().await?;
     let mut has_live_locks = false;
@@ -50,7 +52,7 @@ pub async fn resolve_locks(
             Some(&commit_version) => commit_version,
             None => {
                 let commit_version = requests::new_cleanup_request(primary_key, lock.lock_version)
-                    .execute(pd_client.clone())
+                    .execute(pd_client.clone(), kv_connect.clone())
                     .await?;
                 commit_versions.insert(lock.lock_version, commit_version);
                 commit_version
@@ -62,6 +64,7 @@ pub async fn resolve_locks(
             lock.lock_version,
             commit_version,
             pd_client.clone(),
+            kv_connect.clone(),
         )
         .await?;
         clean_regions
@@ -77,6 +80,7 @@ async fn resolve_lock_with_retry(
     start_version: u64,
     commit_version: u64,
     pd_client: Arc<impl PdClient>,
+    kv_connect: Arc<impl KvConnect>,
 ) -> Result<RegionVerId> {
     // TODO: Add backoff
     let mut error = None;
@@ -91,7 +95,7 @@ async fn resolve_lock_with_retry(
             }
         };
         match requests::new_resolve_lock_request(context, start_version, commit_version)
-            .execute(pd_client.clone())
+            .execute(pd_client.clone(), kv_connect.clone())
             .await
         {
             Ok(_) => {
@@ -119,7 +123,7 @@ pub trait HasLocks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mock::MockPdClient;
+    use crate::mock::{MockKvConnect, MockPdClient};
 
     use futures::executor;
 
@@ -128,17 +132,31 @@ mod tests {
         // Test resolve lock within retry limit
         fail::cfg("region-error", "9*return").unwrap();
         let client = Arc::new(MockPdClient);
+        let kv_connect = Arc::new(MockKvConnect);
         let key: Key = vec![1].into();
         let region1 = MockPdClient::region1();
-        let resolved_region =
-            executor::block_on(resolve_lock_with_retry(key, 1, 2, client.clone())).unwrap();
+        let resolved_region = executor::block_on(resolve_lock_with_retry(
+            key,
+            1,
+            2,
+            client.clone(),
+            kv_connect.clone(),
+        ))
+        .unwrap();
         assert_eq!(region1.ver_id(), resolved_region);
 
         // Test resolve lock over retry limit
         fail::cfg("region-error", "10*return").unwrap();
         let client = Arc::new(MockPdClient);
+        let kv_connect = Arc::new(MockKvConnect);
         let key: Key = vec![100].into();
-        executor::block_on(resolve_lock_with_retry(key, 3, 4, client.clone()))
-            .expect_err("should return error");
+        executor::block_on(resolve_lock_with_retry(
+            key,
+            3,
+            4,
+            client.clone(),
+            kv_connect.clone(),
+        ))
+        .expect_err("should return error");
     }
 }

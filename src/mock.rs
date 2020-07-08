@@ -6,13 +6,14 @@
 //! the system, in particular without requiring a TiKV or PD server, or RPC layer.
 
 use crate::{
-    kv_client::{KvClient, KvConnect, Store},
+    kv_client::{KvClient, KvConnect},
     pd::{PdClient, PdRpcClient, Region, RegionId, RetryClient},
     request::{DispatchHook, KvRequest},
     transaction::Timestamp,
     Config, Error, Key, Result,
 };
 
+use crate::pd::StoreBuilder;
 use fail::fail_point;
 use futures::future::{ready, BoxFuture, FutureExt};
 use grpcio::CallOption;
@@ -21,22 +22,18 @@ use std::{sync::Arc, time::Duration};
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
-pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
+pub async fn pd_rpc_client() -> PdRpcClient<MockCluster> {
     let config = Config::default();
-    PdRpcClient::new(
-        &config,
-        |_, _| MockKvConnect,
-        |e, sm| {
-            futures::future::ok(RetryClient::new_with_cluster(
-                e,
-                sm,
-                config.timeout,
-                MockCluster,
-            ))
-        },
-    )
-    .await
-    .unwrap()
+    PdRpcClient::new(&config, |e, sm| {
+        futures::future::ok(RetryClient::new_with_cluster(
+            e,
+            sm,
+            config.timeout,
+            MockCluster,
+        ))
+    })
+        .await
+        .unwrap()
 }
 
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -45,7 +42,9 @@ pub struct MockKvClient {
 }
 
 pub struct MockKvConnect;
+
 pub struct MockCluster;
+
 pub struct MockPdClient;
 
 impl KvClient for MockKvClient {
@@ -97,17 +96,13 @@ impl MockPdClient {
 }
 
 impl PdClient for MockPdClient {
-    type KvClient = MockKvClient;
-
-    fn map_region_to_store(
+    fn map_region_to_store_builder(
         self: Arc<Self>,
         region: Region,
-    ) -> BoxFuture<'static, Result<Store<Self::KvClient>>> {
-        Box::pin(ready(Ok(Store::new(
+    ) -> BoxFuture<'static, Result<StoreBuilder>> {
+        Box::pin(ready(Ok(StoreBuilder::new(
             region,
-            MockKvClient {
-                addr: String::new(),
-            },
+            String::new(),
             Duration::from_secs(60),
         ))))
     }

@@ -2,12 +2,13 @@
 
 use crate::{
     backoff::{Backoff, NoJitterBackoff},
-    kv_client::{HasError, HasRegionError, KvClient, RpcFnType, Store},
-    pd::PdClient,
+    kv_client::{HasError, HasRegionError, KvClient, RpcFnType},
+    pd::{PdClient, StoreBuilder},
     transaction::{resolve_locks, HasLocks},
     BoundRange, Error, Key, Result,
 };
 
+use crate::kv_client::{KvConnect, Store};
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::BoxStream;
@@ -30,9 +31,13 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
     const REQUEST_NAME: &'static str;
     const RPC_FN: RpcFnType<Self, Self::RpcResponse>;
 
-    fn execute(self, pd_client: Arc<impl PdClient>) -> BoxFuture<'static, Result<Self::Result>> {
+    fn execute(
+        self,
+        pd_client: Arc<impl PdClient>,
+        kv_connect: Arc<impl KvConnect>,
+    ) -> BoxFuture<'static, Result<Self::Result>> {
         Self::reduce(
-            self.response_stream(pd_client)
+            self.response_stream(pd_client, kv_connect.clone())
                 .and_then(|mut response| match response.error() {
                     Some(e) => future::err(e),
                     None => future::ok(response),
@@ -45,18 +50,22 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
     fn response_stream(
         self,
         pd_client: Arc<impl PdClient>,
+        kv_connect: Arc<impl KvConnect>,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
-        self.retry_response_stream(pd_client, DEFAULT_REGION_BACKOFF)
+        self.retry_response_stream(pd_client, DEFAULT_REGION_BACKOFF, kv_connect)
     }
 
     fn retry_response_stream(
         mut self,
         pd_client: Arc<impl PdClient>,
         backoff: impl Backoff,
+        kv_connect: Arc<impl KvConnect>,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
-        let stores = self.store_stream(pd_client.clone());
+        let stores = self.store_builder_stream(pd_client.clone());
+        let kv_connect_clone = kv_connect.clone();
         stores
-            .and_then(move |(key_data, store)| {
+            .and_then(move |(key_data, store_builder)| {
+                let store = Store::from_builder(store_builder, kv_connect_clone.clone()).unwrap();
                 let request = self.make_rpc_request(key_data, &store);
                 self.dispatch_hook(store.call_options())
                     .unwrap_or_else(|| store.dispatch::<Self>(&request, store.call_options()))
@@ -67,6 +76,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
                     return request.on_region_error(
                         region_error,
                         pd_client.clone(),
+                        kv_connect.clone(),
                         backoff.clone(),
                     );
                 }
@@ -74,13 +84,14 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
                 let locks = response.take_locks();
                 if !locks.is_empty() {
                     let pd_client = pd_client.clone();
-                    return resolve_locks(locks, pd_client.clone())
+                    let kv_connect = kv_connect.clone();
+                    return resolve_locks(locks, pd_client.clone(), kv_connect.clone())
                         .map_ok(|resolved| {
                             // TODO: backoff
                             let delay_ms = if resolved { 0 } else { LOCK_RETRY_DELAY_MS };
                             futures_timer::Delay::new(Duration::from_millis(delay_ms))
                         })
-                        .map_ok(move |_| request.response_stream(pd_client))
+                        .map_ok(move |_| request.response_stream(pd_client, kv_connect))
                         .try_flatten_stream()
                         .boxed();
                 }
@@ -94,6 +105,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         self,
         region_error: Error,
         pd_client: Arc<impl PdClient>,
+        kv_connect: Arc<impl KvConnect>,
         mut backoff: impl Backoff,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         backoff.next_delay_duration().map_or(
@@ -104,17 +116,17 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
                     Ok(())
                 };
 
-                fut.map_ok(move |_| self.retry_response_stream(pd_client, backoff))
+                fut.map_ok(move |_| self.retry_response_stream(pd_client, backoff, kv_connect))
                     .try_flatten_stream()
                     .boxed()
             },
         )
     }
 
-    fn store_stream<PdC: PdClient>(
+    fn store_builder_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>>;
+    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>>;
 
     fn make_rpc_request<KvC: KvClient>(&self, key_data: Self::KeyData, store: &Store<KvC>) -> Self;
 
@@ -125,25 +137,25 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
     ) -> BoxFuture<'static, Result<Self::Result>>;
 }
 
-pub fn store_stream_for_key<KeyData, PdC>(
+pub fn store_builder_stream_for_key<KeyData, PdC>(
     key_data: KeyData,
     pd_client: Arc<PdC>,
-) -> BoxStream<'static, Result<(KeyData, Store<PdC::KvClient>)>>
+) -> BoxStream<'static, Result<(KeyData, StoreBuilder)>>
 where
     KeyData: AsRef<Key> + Send + 'static,
     PdC: PdClient,
 {
     pd_client
-        .store_for_key(key_data.as_ref())
+        .store_builder_for_key(key_data.as_ref())
         .map_ok(move |store| (key_data, store))
         .into_stream()
         .boxed()
 }
 
-pub fn store_stream_for_keys<KeyData, IntoKey, I, PdC>(
+pub fn store_builder_stream_for_keys<KeyData, IntoKey, I, PdC>(
     key_data: I,
     pd_client: Arc<PdC>,
-) -> BoxStream<'static, Result<(Vec<KeyData>, Store<PdC::KvClient>)>>
+) -> BoxStream<'static, Result<(Vec<KeyData>, StoreBuilder)>>
 where
     KeyData: AsRef<Key> + Send + Sync + 'static,
     IntoKey: Into<KeyData> + 'static,
@@ -157,18 +169,18 @@ where
         .and_then(move |(region_id, key)| {
             pd_client
                 .clone()
-                .store_for_id(region_id)
+                .store_builder_for_id(region_id)
                 .map_ok(move |store| (key, store))
         })
         .boxed()
 }
 
-pub fn store_stream_for_range<PdC: PdClient>(
+pub fn store_builder_stream_for_range<PdC: PdClient>(
     range: BoundRange,
     pd_client: Arc<PdC>,
-) -> BoxStream<'static, Result<((Key, Key), Store<PdC::KvClient>)>> {
+) -> BoxStream<'static, Result<((Key, Key), StoreBuilder)>> {
     pd_client
-        .stores_for_range(range)
+        .store_builders_for_range(range)
         .map_ok(move |store| {
             // FIXME should be bounded by self.range
             let range = store.region.range();
@@ -178,17 +190,17 @@ pub fn store_stream_for_range<PdC: PdClient>(
         .boxed()
 }
 
-pub fn store_stream_for_ranges<PdC: PdClient>(
+pub fn store_builder_stream_for_ranges<PdC: PdClient>(
     ranges: Vec<BoundRange>,
     pd_client: Arc<PdC>,
-) -> BoxStream<'static, Result<(Vec<BoundRange>, Store<PdC::KvClient>)>> {
+) -> BoxStream<'static, Result<(Vec<BoundRange>, StoreBuilder)>> {
     pd_client
         .clone()
         .group_ranges_by_region(ranges)
         .and_then(move |(region_id, range)| {
             pd_client
                 .clone()
-                .store_for_id(region_id)
+                .store_builder_for_id(region_id)
                 .map_ok(move |store| (range, store))
         })
         .into_stream()
@@ -250,7 +262,7 @@ impl_kv_rpc_request!(ResolveLockRequest);
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::mock::MockPdClient;
+    use crate::mock::{MockPdClient, MockKvConnect};
     use futures::executor;
     use kvproto::tikvpb::TikvClient;
     use std::sync::Mutex;
@@ -321,15 +333,15 @@ mod test {
                 unreachable!()
             }
 
-            fn store_stream<PdC: PdClient>(
+            fn store_builder_stream<PdC: PdClient>(
                 &mut self,
                 pd_client: Arc<PdC>,
-            ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+            ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
                 // Increases by 1 for each call.
                 let mut test_invoking_count = self.test_invoking_count.lock().unwrap();
                 *test_invoking_count += 1;
 
-                store_stream_for_key(Key::from("mock_key".to_owned()), pd_client)
+                store_builder_stream_for_key(Key::from("mock_key".to_owned()), pd_client)
             }
         }
 
@@ -340,8 +352,9 @@ mod test {
         };
 
         let pd_client = Arc::new(MockPdClient);
+        let kv_connect = Arc::new(MockKvConnect);
         let backoff = NoJitterBackoff::new(1, 1, 3);
-        let stream = request.retry_response_stream(pd_client, backoff);
+        let stream = request.retry_response_stream(pd_client, backoff, kv_connect);
 
         executor::block_on(async { stream.collect::<Vec<Result<MockRpcResponse>>>().await });
 

@@ -6,6 +6,9 @@ use crate::{
     Result, Value,
 };
 
+use crate::kv_client::TikvConnect;
+use crate::security::SecurityManager;
+use grpcio::EnvBuilder;
 use std::{sync::Arc, u32};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
@@ -14,6 +17,7 @@ const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 #[derive(Clone)]
 pub struct Client {
     rpc: Arc<PdRpcClient>,
+    kv_connect: Arc<TikvConnect>,
     cf: Option<ColumnFamily>,
     key_only: bool,
 }
@@ -30,8 +34,33 @@ impl Client {
     /// ```
     pub async fn new(config: Config) -> Result<Client> {
         let rpc = Arc::new(PdRpcClient::connect(&config).await?);
+
+        // FIXME: only for test. The initialization should be either
+        // 1. same as pd (get from pd)
+        // 2. inside the TikvConnect::new()
+
+        const CQ_COUNT: usize = 1;
+        const CLIENT_PREFIX: &str = "tikv-client";
+        let env = Arc::new(
+            EnvBuilder::new()
+                .cq_count(CQ_COUNT)
+                .name_prefix(thread_name!(CLIENT_PREFIX))
+                .build(),
+        );
+        let security_mgr = Arc::new(
+            if let (Some(ca_path), Some(cert_path), Some(key_path)) =
+                (&config.ca_path, &config.cert_path, &config.key_path)
+            {
+                SecurityManager::load(ca_path, cert_path, key_path)?
+            } else {
+                SecurityManager::default()
+            },
+        );
+
+        let kv_connect = Arc::new(TikvConnect::new(env, security_mgr));
         Ok(Client {
             rpc,
+            kv_connect,
             cf: None,
             key_only: false,
         })
@@ -53,6 +82,7 @@ impl Client {
     pub fn with_cf(&self, cf: impl Into<ColumnFamily>) -> Client {
         Client {
             rpc: self.rpc.clone(),
+            kv_connect: self.kv_connect.clone(),
             cf: Some(cf.into()),
             key_only: self.key_only,
         }
@@ -76,6 +106,7 @@ impl Client {
     pub fn with_key_only(&self, key_only: bool) -> Client {
         Client {
             rpc: self.rpc.clone(),
+            kv_connect: self.kv_connect.clone(),
             cf: self.cf.clone(),
             key_only,
         }
@@ -98,7 +129,7 @@ impl Client {
     /// ```
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
         requests::new_raw_get_request(key, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), self.kv_connect.clone())
             .await
     }
 
@@ -122,7 +153,7 @@ impl Client {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
         requests::new_raw_batch_get_request(keys, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), self.kv_connect.clone())
             .await
     }
 
@@ -143,7 +174,7 @@ impl Client {
     /// ```
     pub async fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
         requests::new_raw_put_request(key, value, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), self.kv_connect.clone())
             .await
     }
 
@@ -168,7 +199,7 @@ impl Client {
         pairs: impl IntoIterator<Item = impl Into<KvPair>>,
     ) -> Result<()> {
         requests::new_raw_batch_put_request(pairs, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), self.kv_connect.clone())
             .await
     }
 
@@ -188,7 +219,7 @@ impl Client {
     /// ```
     pub async fn delete(&self, key: impl Into<Key>) -> Result<()> {
         requests::new_raw_delete_request(key, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), self.kv_connect.clone())
             .await
     }
 
@@ -208,7 +239,7 @@ impl Client {
     /// ```
     pub async fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
         requests::new_raw_batch_delete_request(keys, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), self.kv_connect.clone())
             .await
     }
 
@@ -228,7 +259,7 @@ impl Client {
     /// ```
     pub async fn delete_range(&self, range: impl Into<BoundRange>) -> Result<()> {
         requests::new_raw_delete_range_request(range, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), self.kv_connect.clone())
             .await
     }
 
@@ -252,7 +283,7 @@ impl Client {
         }
 
         requests::new_raw_scan_request(range, limit, self.key_only, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), self.kv_connect.clone())
             .await
     }
 
@@ -285,7 +316,7 @@ impl Client {
         }
 
         requests::new_raw_batch_scan_request(ranges, each_limit, self.key_only, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), self.kv_connect.clone())
             .await
     }
 }

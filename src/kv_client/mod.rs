@@ -13,6 +13,7 @@ use crate::{
     ErrorKind, Result,
 };
 
+use crate::pd::StoreBuilder;
 use derive_new::new;
 use futures::compat::Compat01As03;
 use futures::future::BoxFuture;
@@ -23,7 +24,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// A trait for connecting to TiKV stores.
-pub trait KvConnect: Sized {
+pub trait KvConnect: Sized + Send + Sync + 'static {
     type KvClient: KvClient + Clone + Send + Sync + 'static;
 
     fn connect(&self, address: &str) -> Result<Self::KvClient>;
@@ -103,6 +104,16 @@ pub struct Store<Client: KvClient> {
 }
 
 impl<Client: KvClient> Store<Client> {
+    pub fn from_builder<T>(builder: StoreBuilder, connect: Arc<T>) -> Result<Store<Client>>
+    where
+        Client: KvClient + Clone + Send + Sync + 'static,
+        T: KvConnect<KvClient = Client>,
+    {
+        info!("connect to tikv endpoint: {:?}", &builder.address);
+        let client = connect.connect(builder.address.as_str())?;
+        Ok(Store::new(builder.region, client, builder.timeout))
+    }
+
     pub fn call_options(&self) -> CallOption {
         CallOption::default().timeout(self.timeout)
     }
