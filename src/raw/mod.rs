@@ -12,8 +12,6 @@
 
 pub use self::client::Client;
 
-use std::fmt;
-
 mod client;
 mod requests;
 
@@ -42,18 +40,34 @@ mod requests;
 /// **But, you should not need to worry about all this:** Many functions which accept a
 /// `ColumnFamily` accept an `Into<ColumnFamily>`, which means all of the above types can be passed
 /// directly to those functions.
-#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
-pub struct ColumnFamily(String);
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
+pub enum ColumnFamily {
+    Default,
+    Lock,
+    Write,
+    Version,
+}
 
 impl<T: Into<String>> From<T> for ColumnFamily {
     fn from(i: T) -> ColumnFamily {
-        ColumnFamily(i.into())
+        match i.into().as_str() {
+            "default" => ColumnFamily::Default,
+            "lock" => ColumnFamily::Lock,
+            "write" => ColumnFamily::Write,
+            "versioncf" => ColumnFamily::Version,
+            _ => unreachable!(),
+        }
     }
 }
 
-impl fmt::Display for ColumnFamily {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
+impl ToString for ColumnFamily {
+    fn to_string(&self) -> String {
+        match self {
+            ColumnFamily::Default => "default".to_owned(),
+            ColumnFamily::Lock => "lock".to_owned(),
+            ColumnFamily::Write => "write".to_owned(),
+            ColumnFamily::Version => "versioncf".to_owned(),
+        }
     }
 }
 
