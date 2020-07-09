@@ -43,11 +43,11 @@ impl Client {
     /// supplied column family constraint. The original `Client` can still be used.
     ///
     /// ```rust,no_run
-    /// # use tikv_client::{Config, RawClient};
+    /// # use tikv_client::{Config, RawClient, ColumnFamily};
     /// # use futures::prelude::*;
     /// # use std::convert::TryInto;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(Config::default()).await.unwrap().with_cf("write".try_into().unwrap());
+    /// let client = RawClient::new(Config::default()).await.unwrap().with_cf(ColumnFamily::Write);
     /// let get_request = client.get("foo".to_owned());
     /// # });
     /// ```
