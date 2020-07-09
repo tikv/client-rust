@@ -73,22 +73,19 @@
 //!
 //! At this point, you should seek the documentation in the related API modules.
 
-#[macro_use]
-mod util;
+
 #[macro_use]
 pub mod transaction;
 
 mod backoff;
 mod compat;
 mod config;
-mod errors;
-mod kv;
 mod kv_client;
 mod pd;
 pub mod raw;
 mod request;
 mod security;
-mod stats;
+
 
 #[cfg(test)]
 mod mock;
@@ -104,14 +101,7 @@ extern crate prometheus;
 
 #[doc(inline)]
 pub use crate::config::Config;
-#[doc(inline)]
-pub use crate::errors::Error;
-#[doc(inline)]
-pub use crate::errors::ErrorKind;
-#[doc(inline)]
-pub use crate::errors::Result;
-#[doc(inline)]
-pub use crate::kv::{BoundRange, Key, KvPair, ToOwnedRange, Value};
+
 #[doc(inline)]
 pub use crate::raw::{Client as RawClient, ColumnFamily};
 #[doc(inline)]

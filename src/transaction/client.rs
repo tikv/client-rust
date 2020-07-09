@@ -3,8 +3,10 @@
 use crate::{
     pd::{PdClient, PdRpcClient},
     transaction::{Snapshot, Timestamp, Transaction},
-    Config, Result,
+    Config,
 };
+
+use tikv_client_common::Result;
 
 use crate::kv_client::TikvConnect;
 use crate::security::SecurityManager;

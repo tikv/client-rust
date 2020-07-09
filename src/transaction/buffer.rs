@@ -1,6 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{Key, KvPair, Result, Value};
+use tikv_client_common::{Key, KvPair, Result, Value};
 
 use kvproto::kvrpcpb;
 use std::collections::BTreeMap;

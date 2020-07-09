@@ -1,4 +1,4 @@
-use super::requests;
+// use crate::requests;
 use crate::pd::{PdClient, RegionVerId};
 use crate::request::KvRequest;
 use crate::{ErrorKind, Key, Result, Timestamp};
