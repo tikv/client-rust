@@ -70,22 +70,18 @@ impl TryFrom<String> for ColumnFamily {
     type Error = Error;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        TryFrom::try_from(value.as_str())
+        TryFrom::try_from(&*value)
     }
 }
 
 impl fmt::Display for ColumnFamily {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                ColumnFamily::Default => "default",
-                ColumnFamily::Lock => "lock",
-                ColumnFamily::Write => "write",
-                ColumnFamily::VersionDefault => "ver_default",
-            }
-        )
+        match self {
+            ColumnFamily::Default => f.write_str("default"),
+            ColumnFamily::Lock => f.write_str("lock"),
+            ColumnFamily::Write => f.write_str("write"),
+            ColumnFamily::VersionDefault => f.write_str("ver_default"),
+        }
     }
 }
 

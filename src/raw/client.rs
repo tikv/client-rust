@@ -6,7 +6,6 @@ use crate::{
     Result, Value,
 };
 
-use std::convert::TryInto;
 use std::{sync::Arc, u32};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
@@ -46,18 +45,18 @@ impl Client {
     /// ```rust,no_run
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
+    /// # use std::convert::TryInto;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(Config::default()).await.unwrap().with_cf("write").unwrap();
+    /// let client = RawClient::new(Config::default()).await.unwrap().with_cf("write".try_into().unwrap());
     /// let get_request = client.get("foo".to_owned());
     /// # });
     /// ```
-    pub fn with_cf(&self, cf: &str) -> Result<Client> {
-        let cf = cf.try_into()?;
-        Ok(Client {
+    pub fn with_cf(&self, cf: ColumnFamily) -> Client {
+        Client {
             rpc: self.rpc.clone(),
             cf: Some(cf),
             key_only: self.key_only,
-        })
+        }
     }
 
     /// Set the `key_only` option of requests.
