@@ -31,7 +31,7 @@ pub struct RetryClient<Cl = Cluster> {
     timeout: Duration,
 }
 
-#[cfg(test)]
+// #[cfg(test)]
 impl<Cl> RetryClient<Cl> {
     pub fn new_with_cluster(
         env: Arc<Environment>,
