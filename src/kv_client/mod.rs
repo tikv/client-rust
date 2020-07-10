@@ -5,8 +5,6 @@ mod errors;
 pub use self::errors::{HasError, HasRegionError};
 pub use kvproto::tikvpb::TikvClient;
 
-use crate::request::{KvRequest, KvRpcRequest};
-
 use derive_new::new;
 use futures::compat::Compat01As03;
 use futures::future::BoxFuture;
@@ -50,51 +48,49 @@ impl KvConnect for TikvConnect {
 }
 
 pub trait KvClient {
-    fn dispatch<T: KvRequest>(
+    fn dispatch<Resp, RpcFuture>(
         &self,
-        request: &T,
-        opt: CallOption,
-    ) -> BoxFuture<'static, Result<T::RpcResponse>>;
+        request_name: &'static str,
+        fut: ::grpcio::Result<RpcFuture>,
+    ) -> BoxFuture<'static, Result<Resp>>
+    where
+        Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
+        Resp: HasError + Sized + Clone + Send + 'static,
+        RpcFuture: Send + 'static;
+
+    fn get_rpc_client(&self) -> Arc<TikvClient>;
 }
 
 /// This client handles requests for a single TiKV node. It converts the data
 /// types and abstractions of the client program into the grpc data types.
 #[derive(new, Clone)]
 pub struct KvRpcClient {
-    rpc_client: Arc<TikvClient>,
+    pub(crate) rpc_client: Arc<TikvClient>,
 }
 
 impl KvClient for KvRpcClient {
-    fn dispatch<T: KvRequest>(
+    fn dispatch<Resp, RpcFuture>(
         &self,
-        request: &T,
-        opt: CallOption,
-    ) -> BoxFuture<'static, Result<T::RpcResponse>> {
-        map_errors_and_trace(T::REQUEST_NAME, T::RPC_FN(&self.rpc_client, request, opt)).boxed()
+        request_name: &'static str,
+        fut: ::grpcio::Result<RpcFuture>,
+    ) -> BoxFuture<'static, Result<Resp>>
+    where
+        Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
+        Resp: HasError + Sized + Clone + Send + 'static,
+        RpcFuture: Send + 'static,
+    {
+        map_errors_and_trace(request_name, fut).boxed()
     }
-}
 
-async fn map_errors_and_trace<Resp, RpcFuture>(
-    request_name: &'static str,
-    fut: ::grpcio::Result<RpcFuture>,
-) -> Result<Resp>
-where
-    Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
-    Resp: HasError + Sized + Clone + Send + 'static,
-{
-    let res = match fut {
-        Ok(f) => Compat01As03::new(f).await,
-        Err(e) => Err(e),
-    };
-
-    let context = tikv_stats(request_name);
-    context.done(res.map_err(|e| ErrorKind::Grpc(e).into()))
+    fn get_rpc_client(&self) -> Arc<TikvClient> {
+        self.rpc_client.clone()
+    }
 }
 
 #[derive(new)]
 pub struct Store<Client: KvClient> {
     pub region: Region,
-    client: Client,
+    pub(crate) client: Client,
     timeout: Duration,
 }
 
@@ -113,22 +109,33 @@ impl<Client: KvClient> Store<Client> {
         CallOption::default().timeout(self.timeout)
     }
 
-    pub fn request<T: KvRpcRequest>(&self) -> T {
-        let mut request = T::default();
-        // FIXME propagate the error instead of using `expect`
-        request.set_context(
-            self.region
-                .context()
-                .expect("Cannot create context from region"),
-        );
-        request
-    }
-
-    pub fn dispatch<T: KvRequest>(
+    pub(crate) fn dispatch<Resp, RpcFuture>(
         &self,
-        request: &T,
-        opt: CallOption,
-    ) -> BoxFuture<'static, Result<T::RpcResponse>> {
-        self.client.dispatch::<T>(request, opt)
+        request_name: &'static str,
+        fut: ::grpcio::Result<RpcFuture>,
+    ) -> BoxFuture<'static, Result<Resp>>
+        where
+            Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
+            Resp: HasError + Sized + Clone + Send + 'static,
+            RpcFuture: Send + 'static
+    {
+        self.client.dispatch(request_name, fut)
     }
+}
+
+async fn map_errors_and_trace<Resp, RpcFuture>(
+    request_name: &'static str,
+    fut: ::grpcio::Result<RpcFuture>,
+) -> Result<Resp>
+where
+    Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
+    Resp: HasError + Sized + Clone + Send + 'static,
+{
+    let res = match fut {
+        Ok(f) => Compat01As03::new(f).await,
+        Err(e) => Err(e),
+    };
+
+    let context = tikv_stats(request_name);
+    context.done(res.map_err(|e| ErrorKind::Grpc(e).into()))
 }

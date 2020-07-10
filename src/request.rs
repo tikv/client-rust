@@ -2,14 +2,16 @@
 
 use crate::{
     backoff::{Backoff, NoJitterBackoff},
+    kv_client,
     kv_client::{HasError, HasRegionError, KvClient, RpcFnType},
     transaction::{resolve_locks, HasLocks},
 };
 
-use tikv_client_common::{BoundRange, Error, Key, Result};
+use tikv_client_common::{BoundRange, Error, ErrorKind, Key, Result};
 use tikv_client_pd::{PdClient, StoreBuilder};
 
-use crate::kv_client::{KvConnect, Store};
+use crate::kv_client::{KvConnect, KvRpcClient, Store};
+use futures::compat::Compat01As03;
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::BoxStream;
@@ -17,6 +19,7 @@ use grpcio::CallOption;
 use kvproto::kvrpcpb;
 use std::sync::Arc;
 use std::time::Duration;
+use tikv_client_common::stats::tikv_stats;
 
 const LOCK_RETRY_DELAY_MS: u64 = 10;
 const DEFAULT_REGION_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);
@@ -69,7 +72,9 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
                 let store = Store::from_builder(store_builder, kv_connect_clone.clone()).unwrap();
                 let request = self.make_rpc_request(key_data, &store);
                 self.dispatch_hook(store.call_options())
-                    .unwrap_or_else(|| store.dispatch::<Self>(&request, store.call_options()))
+                    .unwrap_or_else(|| {
+                        store.dispatch(Self::REQUEST_NAME, Self::RPC_FN(store.client.get_rpc_client(), request, opt))
+                    })
                     .map_ok(move |response| (request, response))
             })
             .map_ok(move |(request, mut response)| {
@@ -136,6 +141,18 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
     fn reduce(
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>>;
+
+    fn request_from_store<T, KvC: KvClient>(store: &Store<KvC>) -> Self {
+        let mut request = T::default();
+        // FIXME propagate the error instead of using `expect`
+        request.set_context(
+            store
+                .region
+                .context()
+                .expect("Cannot create context from region"),
+        );
+        request
+    }
 }
 
 pub fn store_builder_stream_for_key<KeyData, PdC>(

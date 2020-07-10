@@ -55,10 +55,10 @@ use std::{fmt, u8};
 #[repr(transparent)]
 pub struct Key(
     #[cfg_attr(
-    test,
-    proptest(
-    strategy = "any_with::<Vec<u8>>((size_range(crate::proptests::PROPTEST_KEY_MAX), ()))"
-    )
+        test,
+        proptest(
+            strategy = "any_with::<Vec<u8>>((size_range(crate::proptests::PROPTEST_KEY_MAX), ()))"
+        )
     )]
     pub(super) Vec<u8>,
 );
