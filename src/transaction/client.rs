@@ -1,15 +1,11 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    pd::{PdClient, PdRpcClient},
-    transaction::{Snapshot, Timestamp, Transaction},
-    Config,
-};
+use crate::transaction::{Snapshot, Transaction};
 
-use tikv_client_common::Result;
+use tikv_client_common::{security::SecurityManager, Config, Result, Timestamp};
+use tikv_client_pd::{PdClient, PdRpcClient};
 
 use crate::kv_client::TikvConnect;
-use crate::security::SecurityManager;
 use futures::executor::ThreadPool;
 use grpcio::EnvBuilder;
 use std::sync::Arc;

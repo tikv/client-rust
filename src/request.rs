@@ -3,10 +3,11 @@
 use crate::{
     backoff::{Backoff, NoJitterBackoff},
     kv_client::{HasError, HasRegionError, KvClient, RpcFnType},
-    pd::{PdClient, StoreBuilder},
     transaction::{resolve_locks, HasLocks},
-    BoundRange, Error, Key, Result,
 };
+
+use tikv_client_common::{BoundRange, Error, Key, Result};
+use tikv_client_pd::{PdClient, StoreBuilder};
 
 use crate::kv_client::{KvConnect, Store};
 use futures::future::BoxFuture;
@@ -37,7 +38,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         kv_connect: Arc<impl KvConnect>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
         Self::reduce(
-            self.response_stream(pd_client, kv_connect.clone())
+            self.response_stream(pd_client, kv_connect)
                 .and_then(|mut response| match response.error() {
                     Some(e) => future::err(e),
                     None => future::ok(response),
@@ -262,7 +263,7 @@ impl_kv_rpc_request!(ResolveLockRequest);
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::mock::{MockPdClient, MockKvConnect};
+    use crate::mock::{MockKvConnect, MockPdClient};
     use futures::executor;
     use kvproto::tikvpb::TikvClient;
     use std::sync::Mutex;

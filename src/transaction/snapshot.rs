@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{BoundRange, Key, KvPair, Result, Transaction, Value};
+use crate::Transaction;
+use tikv_client_common::{BoundRange, Key, KvPair, Result, Value};
 
 use derive_new::new;
 use futures::stream::BoxStream;

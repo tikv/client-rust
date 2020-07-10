@@ -1,13 +1,13 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::requests;
-use crate::{
-    pd::PdRpcClient, request::KvRequest, BoundRange, ColumnFamily, Config, Error, Key, KvPair,
-    Result, Value,
+use crate::{request::KvRequest, ColumnFamily};
+use tikv_client_common::{
+    security::SecurityManager, BoundRange, Config, Error, Key, KvPair, Result, Value,
 };
+use tikv_client_pd::PdRpcClient;
 
 use crate::kv_client::TikvConnect;
-use crate::security::SecurityManager;
 use grpcio::EnvBuilder;
 use std::{sync::Arc, u32};
 

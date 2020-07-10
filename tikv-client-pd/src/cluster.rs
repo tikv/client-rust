@@ -9,17 +9,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{
-    pd::{timestamp::TimestampOracle, Region, RegionId, StoreId},
-    security::SecurityManager,
-    stats::pd_stats,
-    transaction::Timestamp,
-    Error, Result,
-};
+use crate::{timestamp::TimestampOracle, Region, RegionId, StoreId};
 use futures::compat::Compat01As03;
 use futures::prelude::*;
 use grpcio::{CallOption, Environment};
 use kvproto::{metapb, pdpb};
+use tikv_client_common::{security::SecurityManager, stats::pd_stats, Error, Result, Timestamp};
 use tokio::sync::RwLockWriteGuard;
 
 macro_rules! pd_request {

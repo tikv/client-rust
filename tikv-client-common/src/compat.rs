@@ -13,12 +13,12 @@ use std::pin::Pin;
 /// Created by the `loop_fn` function.
 #[derive(Debug)]
 #[must_use = "futures do nothing unless polled"]
-pub(crate) struct LoopFn<A, F> {
+pub struct LoopFn<A, F> {
     future: A,
     func: F,
 }
 
-pub(crate) fn stream_fn<S, T, A, F, E>(initial_state: S, mut func: F) -> LoopFn<A, F>
+pub fn stream_fn<S, T, A, F, E>(initial_state: S, mut func: F) -> LoopFn<A, F>
 where
     F: FnMut(S) -> A,
     A: Future<Output = Result<Option<(S, T)>, E>>,
@@ -53,7 +53,7 @@ where
 /// A future created by the `ok_and_then` method.
 #[derive(Debug)]
 #[must_use = "futures do nothing unless polled"]
-pub(crate) struct OkAndThen<A, F> {
+pub struct OkAndThen<A, F> {
     future: A,
     func: F,
 }
@@ -75,7 +75,7 @@ where
 }
 
 /// An extension crate to make using our combinator functions more ergonomic.
-pub(crate) trait ClientFutureExt {
+pub trait ClientFutureExt {
     /// This function is similar to `map_ok` combinator. Provide a function which
     /// is applied after the `self` future is resolved, only if that future
     /// resolves to `Ok`. Similar to `Result::and_then`, the supplied function

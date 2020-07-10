@@ -2,6 +2,7 @@
 
 use std::{thread, time::Duration};
 
+#[macro_export]
 macro_rules! internal_err {
     ($e:expr) => ({
         let kind = $crate::Error::internal_error(
@@ -15,6 +16,7 @@ macro_rules! internal_err {
 }
 
 /// make a thread name with additional tag inheriting from current thread.
+#[macro_export]
 macro_rules! thread_name {
     ($name:expr) => {{
         $crate::util::get_tag_from_thread_name()

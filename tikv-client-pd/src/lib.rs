@@ -3,10 +3,15 @@
 use derive_new::new;
 use kvproto::{kvrpcpb, metapb, pdpb};
 
-use crate::{Error, Key, Result};
 pub use client::{PdClient, PdRpcClient};
 pub use cluster::Cluster;
 pub use retry::RetryClient;
+use tikv_client_common::{Error, Key, Result};
+
+#[macro_use]
+extern crate tikv_client_common;
+#[macro_use]
+extern crate log;
 
 mod client;
 #[macro_use]

@@ -14,13 +14,11 @@ pub use lock::{resolve_locks, HasLocks};
 pub use snapshot::Snapshot;
 pub use transaction::Transaction;
 
-use std::convert::TryInto;
-
 mod buffer;
 mod client;
 #[macro_use]
 mod requests;
+mod lock;
 mod snapshot;
 #[allow(clippy::module_inception)]
 mod transaction;
-

@@ -8,20 +8,14 @@ use futures::prelude::*;
 use futures::stream::BoxStream;
 use grpcio::{EnvBuilder, Environment};
 
-use crate::{
+use crate::{cluster::Cluster, Region, RegionId, RetryClient};
+
+use tikv_client_common::{
     compat::{stream_fn, ClientFutureExt},
     kv::BoundRange,
-    // kv_client::{KvConnect, TikvConnect},
-    pd::{cluster::Cluster, Region, RegionId, RetryClient},
     security::SecurityManager,
-    transaction::Timestamp,
-    Config,
-    Key,
-    Result,
+    Config, Key, Result, Timestamp,
 };
-
-// FIXME: do we need this line?
-// use futures::{FutureExt, TryFutureExt};
 
 pub struct StoreBuilder {
     pub region: Region,
@@ -220,13 +214,9 @@ impl PdClient for PdRpcClient {
 
 impl PdRpcClient<Cluster> {
     pub async fn connect(config: &Config) -> Result<PdRpcClient> {
-        PdRpcClient::new(
-            config,
-            // |env, security_mgr| TikvConnect::new(env, security_mgr),
-            |env, security_mgr| {
-                RetryClient::connect(env, &config.pd_endpoints, security_mgr, config.timeout)
-            },
-        )
+        PdRpcClient::new(config, |env, security_mgr| {
+            RetryClient::connect(env, &config.pd_endpoints, security_mgr, config.timeout)
+        })
         .await
     }
 }

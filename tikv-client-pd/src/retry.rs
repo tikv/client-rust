@@ -12,15 +12,11 @@ use kvproto::metapb;
 use tokio::sync::RwLock;
 
 use crate::{
-    pd::{
-        cluster::{Cluster, Connection},
-        Region, RegionId, StoreId,
-    },
-    security::SecurityManager,
-    transaction::Timestamp,
-    Result,
+    cluster::{Cluster, Connection},
+    Region, RegionId, StoreId,
 };
 use std::time::Instant;
+use tikv_client_common::{security::SecurityManager, Result, Timestamp};
 
 // FIXME: these numbers and how they are used are all just cargo-culted in, there
 // may be more optimal values.

@@ -3,14 +3,16 @@
 use super::RawRpcRequest;
 use crate::{
     kv_client::{KvClient, RpcFnType, Store},
-    pd::{PdClient, StoreBuilder},
     request::{
         store_builder_stream_for_key, store_builder_stream_for_keys,
         store_builder_stream_for_range, store_builder_stream_for_ranges, KvRequest,
     },
     transaction::HasLocks,
-    BoundRange, ColumnFamily, Key, KvPair, Result, Value,
+    ColumnFamily,
 };
+
+use tikv_client_common::{BoundRange, Key, KvPair, Result, Value};
+use tikv_client_pd::{PdClient, StoreBuilder};
 
 use futures::future::BoxFuture;
 use futures::prelude::*;
@@ -491,20 +493,28 @@ impl_raw_rpc_request!(RawBatchScanRequest);
 impl_raw_rpc_request!(RawDeleteRangeRequest);
 
 impl HasLocks for kvrpcpb::RawGetResponse {}
+
 impl HasLocks for kvrpcpb::RawBatchGetResponse {}
+
 impl HasLocks for kvrpcpb::RawPutResponse {}
+
 impl HasLocks for kvrpcpb::RawBatchPutResponse {}
+
 impl HasLocks for kvrpcpb::RawDeleteResponse {}
+
 impl HasLocks for kvrpcpb::RawBatchDeleteResponse {}
+
 impl HasLocks for kvrpcpb::RawScanResponse {}
+
 impl HasLocks for kvrpcpb::RawBatchScanResponse {}
+
 impl HasLocks for kvrpcpb::RawDeleteRangeResponse {}
 
 #[cfg(test)]
 mod test {
     use super::*;
 
-    use crate::mock::{MockPdClient, MockKvConnect};
+    use crate::mock::{MockKvConnect, MockPdClient};
     use crate::request::DispatchHook;
 
     use futures::executor;

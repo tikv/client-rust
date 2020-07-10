@@ -24,11 +24,11 @@ use std::{path::PathBuf, time::Duration};
 #[serde(default)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
-    pub(crate) pd_endpoints: Vec<String>,
-    pub(crate) ca_path: Option<PathBuf>,
-    pub(crate) cert_path: Option<PathBuf>,
-    pub(crate) key_path: Option<PathBuf>,
-    pub(crate) timeout: Duration,
+    pub pd_endpoints: Vec<String>,
+    pub ca_path: Option<PathBuf>,
+    pub cert_path: Option<PathBuf>,
+    pub key_path: Option<PathBuf>,
+    pub timeout: Duration,
 }
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);

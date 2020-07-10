@@ -1,17 +1,17 @@
 use crate::{
     backoff::Backoff,
     kv_client::{KvClient, RpcFnType, Store},
-    pd::PdClient,
     request::{
         store_builder_stream_for_key, store_builder_stream_for_keys,
         store_builder_stream_for_range, KvRequest,
     },
-    transaction::{HasLocks, Timestamp},
-    BoundRange, Error, Key, KvPair, Result, Value,
+    transaction::HasLocks,
 };
 
+use tikv_client_common::{BoundRange, Error, Key, KvPair, Result, Timestamp, Value};
+use tikv_client_pd::{PdClient, StoreBuilder};
+
 use crate::kv_client::KvConnect;
-use crate::pd::StoreBuilder;
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::BoxStream;
@@ -321,12 +321,6 @@ pub fn new_cleanup_request(key: impl Into<Key>, start_version: u64) -> kvrpcpb::
     req
 }
 
-impl AsRef<Key> for kvrpcpb::Mutation {
-    fn as_ref(&self) -> &Key {
-        self.key.as_ref()
-    }
-}
-
 impl KvRequest for kvrpcpb::PrewriteRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::PrewriteResponse;
@@ -492,6 +486,9 @@ pub fn new_batch_rollback_request(
 }
 
 impl HasLocks for kvrpcpb::CommitResponse {}
+
 impl HasLocks for kvrpcpb::CleanupResponse {}
+
 impl HasLocks for kvrpcpb::BatchRollbackResponse {}
+
 impl HasLocks for kvrpcpb::ResolveLockResponse {}

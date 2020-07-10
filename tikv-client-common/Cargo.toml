@@ -10,8 +10,22 @@ grpcio = { version = "0.5.0", features = [ "secure", "prost-codec" ], default-fe
 futures = { version = "0.3.1", features = ["compat", "async-await", "thread-pool"] }
 kvproto = { git = "https://github.com/pingcap/kvproto.git", features = [ "prost-codec" ], default-features = false }
 lazy_static = "1"
+regex = "1"
+serde = "1.0"
+serde_derive = "1.0"
+log = "0.4"
+
 
 [dependencies.prometheus]
 version = "0.8"
 default-features = false
 features = ["push", "process"]
+
+
+[dev-dependencies]
+clap = "2.32"
+tempdir = "0.3"
+tokio = { version = "0.2", features = ["rt-threaded", "macros"] }
+proptest = "0.9"
+proptest-derive = "0.1.0"
+fail = { version = "0.3", features = [ "failpoints" ] }

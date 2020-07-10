@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::HexRepr;
+use kvproto::kvrpcpb;
 #[cfg(test)]
 use proptest::{arbitrary::any_with, collection::size_range};
 #[cfg(test)]
@@ -54,13 +55,19 @@ use std::{fmt, u8};
 #[repr(transparent)]
 pub struct Key(
     #[cfg_attr(
-        test,
-        proptest(
-            strategy = "any_with::<Vec<u8>>((size_range(crate::proptests::PROPTEST_KEY_MAX), ()))"
-        )
+    test,
+    proptest(
+    strategy = "any_with::<Vec<u8>>((size_range(crate::proptests::PROPTEST_KEY_MAX), ()))"
+    )
     )]
     pub(super) Vec<u8>,
 );
+
+impl AsRef<Key> for kvrpcpb::Mutation {
+    fn as_ref(&self) -> &Key {
+        self.key.as_ref()
+    }
+}
 
 impl Key {
     #[inline]

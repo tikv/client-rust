@@ -5,15 +5,8 @@ mod errors;
 pub use self::errors::{HasError, HasRegionError};
 pub use kvproto::tikvpb::TikvClient;
 
-use crate::{
-    pd::Region,
-    request::{KvRequest, KvRpcRequest},
-    security::SecurityManager,
-    stats::tikv_stats,
-    ErrorKind, Result,
-};
+use crate::request::{KvRequest, KvRpcRequest};
 
-use crate::pd::StoreBuilder;
 use derive_new::new;
 use futures::compat::Compat01As03;
 use futures::future::BoxFuture;
@@ -22,6 +15,8 @@ use grpcio::CallOption;
 use grpcio::Environment;
 use std::sync::Arc;
 use std::time::Duration;
+use tikv_client_common::{security::SecurityManager, stats::tikv_stats, ErrorKind, Result};
+use tikv_client_pd::{Region, StoreBuilder};
 
 /// A trait for connecting to TiKV stores.
 pub trait KvConnect: Sized + Send + Sync + 'static {

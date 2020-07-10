@@ -1,7 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::Error;
-use kvproto::{errorpb, kvrpcpb};
+use kvproto::kvrpcpb;
+use tikv_client_common::Error;
 
 pub trait HasRegionError {
     fn region_error(&mut self) -> Option<Error>;
@@ -9,12 +9,6 @@ pub trait HasRegionError {
 
 pub trait HasError: HasRegionError {
     fn error(&mut self) -> Option<Error>;
-}
-
-impl From<errorpb::Error> for Error {
-    fn from(e: errorpb::Error) -> Error {
-        Error::region_error(e)
-    }
 }
 
 macro_rules! has_region_error {

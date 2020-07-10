@@ -7,13 +7,12 @@
 
 use crate::{
     kv_client::{KvClient, KvConnect},
-    pd::{PdClient, PdRpcClient, Region, RegionId, RetryClient},
     request::{DispatchHook, KvRequest},
-    transaction::Timestamp,
-    Config, Error, Key, Result,
+    Config, Error, Key, Result, Timestamp,
 };
 
-use crate::pd::StoreBuilder;
+use tikv_client_pd::{PdClient, PdRpcClient, Region, RegionId, RetryClient, StoreBuilder};
+
 use fail::fail_point;
 use futures::future::{ready, BoxFuture, FutureExt};
 use grpcio::CallOption;
@@ -32,8 +31,8 @@ pub async fn pd_rpc_client() -> PdRpcClient<MockCluster> {
             MockCluster,
         ))
     })
-        .await
-        .unwrap()
+    .await
+    .unwrap()
 }
 
 #[derive(Clone, Eq, PartialEq, Debug)]

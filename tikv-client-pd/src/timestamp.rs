@@ -11,7 +11,7 @@
 //! single `TsoRequest` to the PD server. The other future receives `TsoResponse`s from the PD
 //! server and allocates timestamps for the requests.
 
-use crate::{transaction::Timestamp, Error, Result};
+use tikv_client_common::{Error, Result, Timestamp};
 
 use futures::{
     channel::{mpsc, oneshot},
