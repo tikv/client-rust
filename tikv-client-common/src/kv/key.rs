@@ -19,7 +19,7 @@ const _PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
 /// This type wraps around an owned value, so it should be treated it like `String` or `Vec<u8>`.
 ///
 /// ```rust
-/// use tikv_client::Key;
+/// use tikv_client_common::Key;
 ///
 /// let static_str: &'static str = "TiKV";
 /// let from_static_str = Key::from(static_str.to_owned());
@@ -42,7 +42,7 @@ const _PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
 /// these cases using the fully-qualified-syntax is useful:
 ///
 /// ```rust
-/// use tikv_client::Key;
+/// use tikv_client_common::Key;
 ///
 /// let buf = "TiKV".as_bytes().to_owned();
 /// let key = Key::from(buf.clone());

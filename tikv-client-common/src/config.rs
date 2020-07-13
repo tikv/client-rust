@@ -3,8 +3,7 @@
 use serde_derive::{Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
 
-/// The configuration for either a [`raw::Client`](super::raw::Client) or a
-/// [`transaction::Client`](super::transaction::Client).
+/// The configuration for either a `raw::Client` or a `transaction::Client`.
 ///
 /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for PD
 /// must be provided, **not** the TiKV nodes.
@@ -40,7 +39,7 @@ impl Config {
     /// This helps avoid having a *single point of failure*.
     ///
     /// ```rust
-    /// # use tikv_client::Config;
+    /// # use tikv_client_common::Config;
     /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"]);
     /// ```
     pub fn new(pd_endpoints: impl IntoIterator<Item = impl Into<String>>) -> Self {
@@ -60,7 +59,7 @@ impl Config {
     /// these values.
     ///
     /// ```rust
-    /// # use tikv_client::Config;
+    /// # use tikv_client_common::Config;
     /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"])
     ///     .with_security("root.ca", "internal.cert", "internal.key");
     /// ```
