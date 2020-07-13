@@ -6,8 +6,9 @@ use kvproto::kvrpcpb;
 use proptest::{arbitrary::any_with, collection::size_range};
 #[cfg(test)]
 use proptest_derive::Arbitrary;
-use std::ops::Bound;
-use std::{fmt, u8};
+use std::{fmt, ops::Bound, u8};
+
+const _PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
 
 /// The key part of a key/value pair.
 ///
@@ -56,9 +57,7 @@ use std::{fmt, u8};
 pub struct Key(
     #[cfg_attr(
         test,
-        proptest(
-            strategy = "any_with::<Vec<u8>>((size_range(crate::proptests::PROPTEST_KEY_MAX), ()))"
-        )
+        proptest(strategy = "any_with::<Vec<u8>>((size_range(_PROPTEST_KEY_MAX), ()))")
     )]
     pub(super) Vec<u8>,
 );

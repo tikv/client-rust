@@ -1,10 +1,9 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use derive_new::new;
-use kvproto::{kvrpcpb, metapb, pdpb};
-
 pub use client::{PdClient, PdRpcClient};
 pub use cluster::Cluster;
+use derive_new::new;
+use kvproto::{kvrpcpb, metapb, pdpb};
 pub use retry::RetryClient;
 use tikv_client_common::{Error, Key, Result};
 

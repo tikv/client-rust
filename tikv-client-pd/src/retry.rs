@@ -2,21 +2,22 @@
 
 //! A utility module for managing and retrying PD requests.
 
-use std::{fmt, sync::Arc, time::Duration};
-
+use crate::{
+    cluster::{Cluster, Connection},
+    Region, RegionId, StoreId,
+};
 use async_trait::async_trait;
 use futures::prelude::*;
 use futures_timer::Delay;
 use grpcio::Environment;
 use kvproto::metapb;
-use tokio::sync::RwLock;
-
-use crate::{
-    cluster::{Cluster, Connection},
-    Region, RegionId, StoreId,
+use std::{
+    fmt,
+    sync::Arc,
+    time::{Duration, Instant},
 };
-use std::time::Instant;
 use tikv_client_common::{security::SecurityManager, Result, Timestamp};
+use tokio::sync::RwLock;
 
 // FIXME: these numbers and how they are used are all just cargo-culted in, there
 // may be more optimal values.
@@ -166,8 +167,7 @@ where
 mod test {
     use super::*;
     use crate::Error;
-    use futures::executor;
-    use futures::future::ready;
+    use futures::{executor, future::ready};
     use std::sync::Mutex;
 
     #[test]

@@ -1,11 +1,8 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use tikv_client_common::{Key, KvPair, Result, Value};
-
 use kvproto::kvrpcpb;
-use std::collections::BTreeMap;
-use std::future::Future;
-use std::sync::Mutex;
+use std::{collections::BTreeMap, future::Future, sync::Mutex};
+use tikv_client_common::{Key, KvPair, Result, Value};
 
 /// A caching layer which buffers reads and writes in a transaction.
 #[derive(Default)]
@@ -179,8 +176,7 @@ impl MutationValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::executor::block_on;
-    use futures::future::ready;
+    use futures::{executor::block_on, future::ready};
 
     #[test]
     #[allow(unreachable_code)]

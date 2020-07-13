@@ -1,15 +1,16 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::Key;
+use crate::{Error, Result};
 use kvproto::kvrpcpb;
 #[cfg(test)]
 use proptest_derive::Arbitrary;
-use std::borrow::Borrow;
-use std::cmp::{Eq, PartialEq};
-use std::convert::TryFrom;
-use std::ops::{Bound, Range, RangeFrom, RangeInclusive};
-
-use crate::{Error, Result};
+use std::{
+    borrow::Borrow,
+    cmp::{Eq, PartialEq},
+    convert::TryFrom,
+    ops::{Bound, Range, RangeFrom, RangeInclusive},
+};
 
 /// A struct for expressing ranges. This type is semi-opaque and is not really meant for users to
 /// deal with directly. Most functions which operate on ranges will accept any types which

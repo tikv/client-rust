@@ -11,7 +11,6 @@
 //!
 
 pub use self::client::Client;
-
 use std::fmt;
 
 mod client;

@@ -10,6 +10,8 @@ kvproto = { git = "https://github.com/pingcap/kvproto.git", features = [ "prost-
 derive-new = "0.5"
 grpcio = { version = "0.5.0", features = [ "secure", "prost-codec" ], default-features = false }
 log = "0.4"
+proptest = "0.9"
+proptest-derive = "0.1.0"
 
-tikv-client-pd = {path = "../tikv-client-pd"}
-tikv-client-common = {path = "../tikv-client-common"}
+tikv-client-pd = { path = "../tikv-client-pd" }
+tikv-client-common = { path = "../tikv-client-common" }

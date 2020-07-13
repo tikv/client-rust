@@ -1,9 +1,8 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
+use crate::{util::duration_to_sec, Result};
 use prometheus::{Histogram, HistogramVec, IntCounterVec};
 use std::time::Instant;
-
-use crate::{util::duration_to_sec, Result};
 
 pub struct RequestStats {
     start: Instant,

@@ -1,15 +1,13 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{sync::Arc, time::Duration};
-
-use futures::future::BoxFuture;
-use futures::future::{ready, Either};
-use futures::prelude::*;
-use futures::stream::BoxStream;
-use grpcio::{EnvBuilder, Environment};
-
 use crate::{cluster::Cluster, Region, RegionId, RetryClient};
-
+use futures::{
+    future::{ready, BoxFuture, Either},
+    prelude::*,
+    stream::BoxStream,
+};
+use grpcio::{EnvBuilder, Environment};
+use std::{sync::Arc, time::Duration};
 use tikv_client_common::{
     compat::{stream_fn, ClientFutureExt},
     kv::BoundRange,
@@ -48,19 +46,13 @@ pub trait PdClient: Send + Sync + 'static {
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>>;
 
-    fn store_builder_for_key(
-        self: Arc<Self>,
-        key: &Key,
-    ) -> BoxFuture<'static, Result<StoreBuilder>> {
+    fn store_for_key(self: Arc<Self>, key: &Key) -> BoxFuture<'static, Result<StoreBuilder>> {
         self.region_for_key(key)
             .and_then(move |region| self.map_region_to_store_builder(region))
             .boxed()
     }
 
-    fn store_builder_for_id(
-        self: Arc<Self>,
-        id: RegionId,
-    ) -> BoxFuture<'static, Result<StoreBuilder>> {
+    fn store_for_id(self: Arc<Self>, id: RegionId) -> BoxFuture<'static, Result<StoreBuilder>> {
         self.region_for_id(id)
             .and_then(move |region| self.map_region_to_store_builder(region).boxed())
             .boxed()
@@ -92,7 +84,7 @@ pub trait PdClient: Send + Sync + 'static {
     }
 
     // Returns a Steam which iterates over the contexts for each region covered by range.
-    fn store_builders_for_range(
+    fn stores_for_range(
         self: Arc<Self>,
         range: BoundRange,
     ) -> BoxStream<'static, Result<StoreBuilder>> {
@@ -177,8 +169,6 @@ pub trait PdClient: Send + Sync + 'static {
 /// for a single TiKV store using PD and internal logic.
 pub struct PdRpcClient<Cl = Cluster> {
     pd: Arc<RetryClient<Cl>>,
-    // kv_connect: KvC,
-    // kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
     timeout: Duration,
 }
 
@@ -222,14 +212,9 @@ impl PdRpcClient<Cluster> {
 }
 
 impl<Cl> PdRpcClient<Cl> {
-    pub async fn new<PdFut, MakePd>(
-        config: &Config,
-        // kv_connect: MakeKvC,
-        pd: MakePd,
-    ) -> Result<PdRpcClient<Cl>>
+    pub async fn new<PdFut, MakePd>(config: &Config, pd: MakePd) -> Result<PdRpcClient<Cl>>
     where
         PdFut: Future<Output = Result<RetryClient<Cl>>>,
-        // MakeKvC: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> KvC,
         MakePd: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> PdFut,
     {
         let env = Arc::new(
@@ -249,132 +234,9 @@ impl<Cl> PdRpcClient<Cl> {
         );
 
         let pd = Arc::new(pd(env.clone(), security_mgr.clone()).await?);
-        // let kv_client_cache = Default::default();
         Ok(PdRpcClient {
             pd,
-            // kv_client_cache,
-            // kv_connect: kv_connect(env, security_mgr),
             timeout: config.timeout,
         })
-    }
-}
-
-#[cfg(test)]
-pub mod test {
-    use super::*;
-    use crate::mock::*;
-
-    use futures::executor;
-    // use futures::executor::block_on;
-
-    // #[test]
-    // fn test_kv_client_caching() {
-    //     let client = block_on(pd_rpc_client());
-    //
-    //     let addr1 = "foo";
-    //     let addr2 = "bar";
-    //
-    //     let kv1 = client.kv_client(&addr1).unwrap();
-    //     let kv2 = client.kv_client(&addr2).unwrap();
-    //     let kv3 = client.kv_client(&addr2).unwrap();
-    //     assert!(kv1 != kv2);
-    //     assert_eq!(kv2, kv3);
-    // }
-
-    #[test]
-    fn test_group_keys_by_region() {
-        let client = MockPdClient;
-
-        // FIXME This only works if the keys are in order of regions. Not sure if
-        // that is a reasonable constraint.
-        let tasks: Vec<Key> = vec![
-            vec![1].into(),
-            vec![2].into(),
-            vec![3].into(),
-            vec![5, 2].into(),
-            vec![12].into(),
-            vec![11, 4].into(),
-        ];
-
-        let stream = Arc::new(client).group_keys_by_region(tasks.into_iter());
-        let mut stream = executor::block_on_stream(stream);
-
-        assert_eq!(
-            stream.next().unwrap().unwrap().1,
-            vec![
-                vec![1].into(),
-                vec![2].into(),
-                vec![3].into(),
-                vec![5, 2].into()
-            ]
-        );
-        assert_eq!(
-            stream.next().unwrap().unwrap().1,
-            vec![vec![12].into(), vec![11, 4].into()]
-        );
-        assert!(stream.next().is_none());
-    }
-
-    #[test]
-    fn test_stores_for_range() {
-        let client = Arc::new(MockPdClient);
-        let k1: Key = vec![1].into();
-        let k2: Key = vec![5, 2].into();
-        let k3: Key = vec![11, 4].into();
-        let range1 = (k1, k2.clone()).into();
-        let mut stream = executor::block_on_stream(client.clone().store_builders_for_range(range1));
-        assert_eq!(stream.next().unwrap().unwrap().region.id(), 1);
-        assert!(stream.next().is_none());
-
-        let range2 = (k2, k3).into();
-        let mut stream = executor::block_on_stream(client.store_builders_for_range(range2));
-        assert_eq!(stream.next().unwrap().unwrap().region.id(), 1);
-        assert_eq!(stream.next().unwrap().unwrap().region.id(), 2);
-        assert!(stream.next().is_none());
-    }
-
-    #[test]
-    fn test_group_ranges_by_region() {
-        let client = Arc::new(MockPdClient);
-        let k1: Key = vec![1].into();
-        let k2: Key = vec![5, 2].into();
-        let k3: Key = vec![11, 4].into();
-        let k4: Key = vec![16, 4].into();
-        let k_split: Key = vec![10].into();
-        let range1 = (k1.clone(), k2.clone()).into();
-        let range2 = (k1.clone(), k3.clone()).into();
-        let range3 = (k2.clone(), k4.clone()).into();
-        let ranges: Vec<BoundRange> = vec![range1, range2, range3];
-
-        let mut stream = executor::block_on_stream(client.group_ranges_by_region(ranges));
-        let ranges1 = stream.next().unwrap().unwrap();
-        let ranges2 = stream.next().unwrap().unwrap();
-        let ranges3 = stream.next().unwrap().unwrap();
-        let ranges4 = stream.next().unwrap().unwrap();
-
-        assert_eq!(ranges1.0, 1);
-        assert_eq!(
-            ranges1.1,
-            vec![
-                (k1.clone(), k2.clone()).into(),
-                (k1.clone(), k_split.clone()).into()
-            ] as Vec<BoundRange>
-        );
-        assert_eq!(ranges2.0, 2);
-        assert_eq!(
-            ranges2.1,
-            vec![(k_split.clone(), k3.clone()).into()] as Vec<BoundRange>
-        );
-        assert_eq!(ranges3.0, 1);
-        assert_eq!(
-            ranges3.1,
-            vec![(k2.clone(), k_split.clone()).into()] as Vec<BoundRange>
-        );
-        assert_eq!(ranges4.0, 2);
-        assert_eq!(
-            ranges4.1,
-            vec![(k_split.clone(), k4.clone()).into()] as Vec<BoundRange>
-        );
-        assert!(stream.next().is_none());
     }
 }

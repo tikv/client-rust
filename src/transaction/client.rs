@@ -2,12 +2,11 @@
 
 use crate::transaction::{Snapshot, Transaction};
 
-use tikv_client_common::{security::SecurityManager, Config, Result, Timestamp};
-use tikv_client_pd::{PdClient, PdRpcClient};
-
 use futures::executor::ThreadPool;
 use grpcio::EnvBuilder;
 use std::sync::Arc;
+use tikv_client_common::{security::SecurityManager, Config, Result, Timestamp};
+use tikv_client_pd::{PdClient, PdRpcClient};
 use tikv_client_store::TikvConnect;
 
 /// The TiKV transactional `Client` is used to issue requests to the TiKV server and PD cluster.

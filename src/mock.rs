@@ -9,19 +9,16 @@ use crate::{
     request::{DispatchHook, KvRequest},
     Config, Error, Key, Result, Timestamp,
 };
-
-use tikv_client_pd::{PdClient, PdRpcClient, Region, RegionId, RetryClient, StoreBuilder};
-use tikv_client_store::{KvClient, KvConnect};
-
 use fail::fail_point;
-use futures::compat::Compat01As03;
-use futures::future::{ready, BoxFuture, FutureExt};
+use futures::{
+    compat::Compat01As03,
+    future::{ready, BoxFuture, FutureExt},
+};
 use grpcio::CallOption;
-use kvproto::tikvpb::TikvClient;
-use kvproto::{errorpb, kvrpcpb, metapb};
-use std::future::Future;
-use std::{sync::Arc, time::Duration};
-use tikv_client_store::HasError;
+use kvproto::{errorpb, kvrpcpb, metapb, tikvpb::TikvClient};
+use std::{future::Future, sync::Arc, time::Duration};
+use tikv_client_pd::{PdClient, PdRpcClient, Region, RegionId, RetryClient, StoreBuilder};
+use tikv_client_store::{HasError, KvClient, KvConnect};
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
@@ -156,5 +153,126 @@ impl DispatchHook for kvrpcpb::ResolveLockRequest {
             Some(ready(Ok(resp)).boxed())
         });
         Some(ready(Ok(kvrpcpb::ResolveLockResponse::default())).boxed())
+    }
+}
+
+#[cfg(test)]
+pub mod test {
+    use super::*;
+    use crate::mock::*;
+
+    use futures::{executor, executor::block_on};
+    use tikv_client_common::BoundRange;
+
+    // TODO: implement client cache?
+    // #[test]
+    // fn test_kv_client_caching() {
+    //     let client = block_on(pd_rpc_client());
+    //
+    //     let addr1 = "foo";
+    //     let addr2 = "bar";
+    //
+    //     let kv1 = client.kv_client(&addr1).unwrap();
+    //     let kv2 = client.kv_client(&addr2).unwrap();
+    //     let kv3 = client.kv_client(&addr2).unwrap();
+    //     assert!(kv1 != kv2);
+    //     assert_eq!(kv2, kv3);
+    // }
+
+    #[test]
+    fn test_group_keys_by_region() {
+        let client = MockPdClient;
+
+        // FIXME This only works if the keys are in order of regions. Not sure if
+        // that is a reasonable constraint.
+        let tasks: Vec<Key> = vec![
+            vec![1].into(),
+            vec![2].into(),
+            vec![3].into(),
+            vec![5, 2].into(),
+            vec![12].into(),
+            vec![11, 4].into(),
+        ];
+
+        let stream = Arc::new(client).group_keys_by_region(tasks.into_iter());
+        let mut stream = executor::block_on_stream(stream);
+
+        assert_eq!(
+            stream.next().unwrap().unwrap().1,
+            vec![
+                vec![1].into(),
+                vec![2].into(),
+                vec![3].into(),
+                vec![5, 2].into()
+            ]
+        );
+        assert_eq!(
+            stream.next().unwrap().unwrap().1,
+            vec![vec![12].into(), vec![11, 4].into()]
+        );
+        assert!(stream.next().is_none());
+    }
+
+    #[test]
+    fn test_stores_for_range() {
+        let client = Arc::new(MockPdClient);
+        let k1: Key = vec![1].into();
+        let k2: Key = vec![5, 2].into();
+        let k3: Key = vec![11, 4].into();
+        let range1 = (k1, k2.clone()).into();
+        let mut stream = executor::block_on_stream(client.clone().stores_for_range(range1));
+        assert_eq!(stream.next().unwrap().unwrap().region.id(), 1);
+        assert!(stream.next().is_none());
+
+        let range2 = (k2, k3).into();
+        let mut stream = executor::block_on_stream(client.stores_for_range(range2));
+        assert_eq!(stream.next().unwrap().unwrap().region.id(), 1);
+        assert_eq!(stream.next().unwrap().unwrap().region.id(), 2);
+        assert!(stream.next().is_none());
+    }
+
+    #[test]
+    fn test_group_ranges_by_region() {
+        let client = Arc::new(MockPdClient);
+        let k1: Key = vec![1].into();
+        let k2: Key = vec![5, 2].into();
+        let k3: Key = vec![11, 4].into();
+        let k4: Key = vec![16, 4].into();
+        let k_split: Key = vec![10].into();
+        let range1 = (k1.clone(), k2.clone()).into();
+        let range2 = (k1.clone(), k3.clone()).into();
+        let range3 = (k2.clone(), k4.clone()).into();
+        let ranges: Vec<BoundRange> = vec![range1, range2, range3];
+
+        let mut stream = executor::block_on_stream(client.group_ranges_by_region(ranges));
+        let ranges1 = stream.next().unwrap().unwrap();
+        let ranges2 = stream.next().unwrap().unwrap();
+        let ranges3 = stream.next().unwrap().unwrap();
+        let ranges4 = stream.next().unwrap().unwrap();
+
+        assert_eq!(ranges1.0, 1);
+        assert_eq!(
+            ranges1.1,
+            vec![
+                (k1.clone(), k2.clone()).into(),
+                (k1.clone(), k_split.clone()).into()
+            ] as Vec<BoundRange>
+        );
+        assert_eq!(ranges2.0, 2);
+        assert_eq!(
+            ranges2.1,
+            vec![(k_split.clone(), k3.clone()).into()] as Vec<BoundRange>
+        );
+        assert_eq!(ranges3.0, 1);
+        assert_eq!(
+            ranges3.1,
+            vec![(k2.clone(), k_split.clone()).into()] as Vec<BoundRange>
+        );
+        assert_eq!(ranges4.0, 2);
+        assert_eq!(
+            ranges4.1,
+            vec![(k_split.clone(), k4.clone()).into()] as Vec<BoundRange>
+        );
+        assert!(stream.next().is_none());
     }
 }

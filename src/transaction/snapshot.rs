@@ -1,11 +1,10 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::Transaction;
-use tikv_client_common::{BoundRange, Key, KvPair, Result, Value};
-
 use derive_new::new;
 use futures::stream::BoxStream;
 use std::ops::RangeBounds;
+use tikv_client_common::{BoundRange, Key, KvPair, Result, Value};
 
 /// A readonly transaction which can have a custom timestamp.
 ///

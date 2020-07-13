@@ -6,16 +6,11 @@ extern crate log;
 mod errors;
 
 pub use self::errors::{HasError, HasRegionError};
-pub use kvproto::tikvpb::TikvClient;
-
 use derive_new::new;
-use futures::compat::Compat01As03;
-use futures::future::BoxFuture;
-use futures::prelude::*;
-use grpcio::CallOption;
-use grpcio::Environment;
-use std::sync::Arc;
-use std::time::Duration;
+use futures::{compat::Compat01As03, future::BoxFuture, prelude::*};
+use grpcio::{CallOption, Environment};
+pub use kvproto::tikvpb::TikvClient;
+use std::{sync::Arc, time::Duration};
 use tikv_client_common::{security::SecurityManager, stats::tikv_stats, ErrorKind, Result};
 use tikv_client_pd::{Region, StoreBuilder};
 

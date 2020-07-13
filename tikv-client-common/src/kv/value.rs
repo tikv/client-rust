@@ -7,6 +7,8 @@ use proptest::{arbitrary::any_with, collection::size_range};
 use proptest_derive::Arbitrary;
 use std::{fmt, str, u8};
 
+const _PROPTEST_VALUE_MAX: usize = 1024 * 16; // 16 KB
+
 /// The value part of a key/value pair.
 ///
 /// In TiKV, values are an ordered sequence of bytes. This has an advantage over choosing `String`
@@ -53,9 +55,7 @@ use std::{fmt, str, u8};
 pub struct Value(
     #[cfg_attr(
         test,
-        proptest(
-            strategy = "any_with::<Vec<u8>>((size_range(crate::proptests::PROPTEST_VALUE_MAX), ()))"
-        )
+        proptest(strategy = "any_with::<Vec<u8>>((size_range(_PROPTEST_VALUE_MAX), ()))")
     )]
     pub(super) Vec<u8>,
 );

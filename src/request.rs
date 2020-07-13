@@ -4,19 +4,13 @@ use crate::{
     backoff::{Backoff, NoJitterBackoff},
     transaction::{resolve_locks, HasLocks},
 };
-
-use tikv_client_common::{BoundRange, Error, Key, Result};
-use tikv_client_pd::{PdClient, StoreBuilder};
-use tikv_client_store::{HasError, HasRegionError, KvClient, RpcFnType};
-
-use futures::future::BoxFuture;
-use futures::prelude::*;
-use futures::stream::BoxStream;
+use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
 use grpcio::CallOption;
 use kvproto::kvrpcpb;
-use std::sync::Arc;
-use std::time::Duration;
-use tikv_client_store::{KvConnect, Store};
+use std::{sync::Arc, time::Duration};
+use tikv_client_common::{BoundRange, Error, Key, Result};
+use tikv_client_pd::{PdClient, StoreBuilder};
+use tikv_client_store::{HasError, HasRegionError, KvClient, KvConnect, RpcFnType, Store};
 
 const LOCK_RETRY_DELAY_MS: u64 = 10;
 const DEFAULT_REGION_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);
@@ -62,7 +56,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         backoff: impl Backoff,
         kv_connect: Arc<impl KvConnect>,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
-        let stores = self.store_builder_stream(pd_client.clone());
+        let stores = self.store_stream(pd_client.clone());
         let kv_connect_clone = kv_connect.clone();
         stores
             .and_then(move |(key_data, store_builder)| {
@@ -133,7 +127,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         )
     }
 
-    fn store_builder_stream<PdC: PdClient>(
+    fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>>;
@@ -162,7 +156,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
     }
 }
 
-pub fn store_builder_stream_for_key<KeyData, PdC>(
+pub fn store_stream_for_key<KeyData, PdC>(
     key_data: KeyData,
     pd_client: Arc<PdC>,
 ) -> BoxStream<'static, Result<(KeyData, StoreBuilder)>>
@@ -171,13 +165,13 @@ where
     PdC: PdClient,
 {
     pd_client
-        .store_builder_for_key(key_data.as_ref())
+        .store_for_key(key_data.as_ref())
         .map_ok(move |store| (key_data, store))
         .into_stream()
         .boxed()
 }
 
-pub fn store_builder_stream_for_keys<KeyData, IntoKey, I, PdC>(
+pub fn store_stream_for_keys<KeyData, IntoKey, I, PdC>(
     key_data: I,
     pd_client: Arc<PdC>,
 ) -> BoxStream<'static, Result<(Vec<KeyData>, StoreBuilder)>>
@@ -194,18 +188,18 @@ where
         .and_then(move |(region_id, key)| {
             pd_client
                 .clone()
-                .store_builder_for_id(region_id)
+                .store_for_id(region_id)
                 .map_ok(move |store| (key, store))
         })
         .boxed()
 }
 
-pub fn store_builder_stream_for_range<PdC: PdClient>(
+pub fn store_stream_for_range<PdC: PdClient>(
     range: BoundRange,
     pd_client: Arc<PdC>,
 ) -> BoxStream<'static, Result<((Key, Key), StoreBuilder)>> {
     pd_client
-        .store_builders_for_range(range)
+        .stores_for_range(range)
         .map_ok(move |store| {
             // FIXME should be bounded by self.range
             let range = store.region.range();
@@ -215,7 +209,7 @@ pub fn store_builder_stream_for_range<PdC: PdClient>(
         .boxed()
 }
 
-pub fn store_builder_stream_for_ranges<PdC: PdClient>(
+pub fn store_stream_for_ranges<PdC: PdClient>(
     ranges: Vec<BoundRange>,
     pd_client: Arc<PdC>,
 ) -> BoxStream<'static, Result<(Vec<BoundRange>, StoreBuilder)>> {
@@ -225,7 +219,7 @@ pub fn store_builder_stream_for_ranges<PdC: PdClient>(
         .and_then(move |(region_id, range)| {
             pd_client
                 .clone()
-                .store_builder_for_id(region_id)
+                .store_for_id(region_id)
                 .map_ok(move |store| (range, store))
         })
         .into_stream()
@@ -358,7 +352,7 @@ mod test {
                 unreachable!()
             }
 
-            fn store_builder_stream<PdC: PdClient>(
+            fn store_stream<PdC: PdClient>(
                 &mut self,
                 pd_client: Arc<PdC>,
             ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
@@ -366,7 +360,7 @@ mod test {
                 let mut test_invoking_count = self.test_invoking_count.lock().unwrap();
                 *test_invoking_count += 1;
 
-                store_builder_stream_for_key(Key::from("mock_key".to_owned()), pd_client)
+                store_stream_for_key(Key::from("mock_key".to_owned()), pd_client)
             }
         }
 

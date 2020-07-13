@@ -2,8 +2,10 @@
 
 use failure::{Backtrace, Context, Fail};
 use kvproto::errorpb;
-use std::fmt::{self, Display};
-use std::result;
+use std::{
+    fmt::{self, Display},
+    result,
+};
 
 #[derive(Debug)]
 pub struct Error {
