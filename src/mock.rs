@@ -7,7 +7,7 @@
 
 use crate::{
     pd::{PdClient, PdRpcClient, RetryClient},
-    request::{DispatchHook, KvRequest},
+    request::DispatchHook,
     Config, Error, Key, Result, Timestamp,
 };
 use fail::fail_point;
@@ -51,8 +51,8 @@ pub struct MockPdClient;
 impl KvClient for MockKvClient {
     fn dispatch<Resp, RpcFuture>(
         &self,
-        request_name: &'static str,
-        fut: grpcio::Result<RpcFuture>,
+        _request_name: &'static str,
+        _fut: grpcio::Result<RpcFuture>,
     ) -> BoxFuture<'static, Result<Resp>>
     where
         Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
@@ -160,9 +160,8 @@ impl DispatchHook for kvrpcpb::ResolveLockRequest {
 #[cfg(test)]
 pub mod test {
     use super::*;
-    use crate::mock::*;
 
-    use futures::{executor, executor::block_on};
+    use futures::executor;
     use tikv_client_common::BoundRange;
 
     // TODO: implement client cache?
