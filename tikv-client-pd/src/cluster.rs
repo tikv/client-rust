@@ -3,7 +3,7 @@
 // FIXME: Remove this when txn is done.
 #![allow(dead_code)]
 
-use crate::{timestamp::TimestampOracle, Region, RegionId, StoreId};
+use crate::timestamp::TimestampOracle;
 use futures::{compat::Compat01As03, prelude::*};
 use grpcio::{CallOption, Environment};
 use kvproto::{metapb, pdpb};
@@ -12,7 +12,9 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tikv_client_common::{security::SecurityManager, stats::pd_stats, Error, Result, Timestamp};
+use tikv_client_common::{
+    security::SecurityManager, stats::pd_stats, Error, Region, RegionId, Result, StoreId, Timestamp,
+};
 use tokio::sync::RwLockWriteGuard;
 
 macro_rules! pd_request {

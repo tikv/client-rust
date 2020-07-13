@@ -6,6 +6,7 @@
 //! the system, in particular without requiring a TiKV or PD server, or RPC layer.
 
 use crate::{
+    pd::{PdClient, PdRpcClient, RetryClient},
     request::{DispatchHook, KvRequest},
     Config, Error, Key, Result, Timestamp,
 };
@@ -17,7 +18,7 @@ use futures::{
 use grpcio::CallOption;
 use kvproto::{errorpb, kvrpcpb, metapb, tikvpb::TikvClient};
 use std::{future::Future, sync::Arc, time::Duration};
-use tikv_client_pd::{PdClient, PdRpcClient, Region, RegionId, RetryClient, StoreBuilder};
+use tikv_client_common::{Region, RegionId, StoreBuilder};
 use tikv_client_store::{HasError, KvClient, KvConnect};
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the

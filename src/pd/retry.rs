@@ -2,10 +2,6 @@
 
 //! A utility module for managing and retrying PD requests.
 
-use crate::{
-    cluster::{Cluster, Connection},
-    Region, RegionId, StoreId,
-};
 use async_trait::async_trait;
 use futures::prelude::*;
 use futures_timer::Delay;
@@ -16,7 +12,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tikv_client_common::{security::SecurityManager, Result, Timestamp};
+use tikv_client_common::{security::SecurityManager, Region, RegionId, Result, StoreId, Timestamp};
+use tikv_client_pd::cluster::{Cluster, Connection};
 use tokio::sync::RwLock;
 
 // FIXME: these numbers and how they are used are all just cargo-culted in, there
@@ -32,7 +29,7 @@ pub struct RetryClient<Cl = Cluster> {
     timeout: Duration,
 }
 
-// #[cfg(test)]
+#[cfg(test)]
 impl<Cl> RetryClient<Cl> {
     pub fn new_with_cluster(
         env: Arc<Environment>,

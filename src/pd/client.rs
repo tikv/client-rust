@@ -1,6 +1,6 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{cluster::Cluster, Region, RegionId, RetryClient};
+use crate::pd::RetryClient;
 use futures::{
     future::{ready, BoxFuture, Either},
     prelude::*,
@@ -12,24 +12,9 @@ use tikv_client_common::{
     compat::{stream_fn, ClientFutureExt},
     kv::BoundRange,
     security::SecurityManager,
-    Config, Key, Result, Timestamp,
+    Config, Key, Region, RegionId, Result, StoreBuilder, Timestamp,
 };
-
-pub struct StoreBuilder {
-    pub region: Region,
-    pub address: String,
-    pub timeout: Duration,
-}
-
-impl StoreBuilder {
-    pub fn new(region: Region, address: String, timeout: Duration) -> StoreBuilder {
-        StoreBuilder {
-            region,
-            address,
-            timeout,
-        }
-    }
-}
+use tikv_client_pd::cluster::Cluster;
 
 const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";

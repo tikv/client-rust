@@ -1,13 +1,13 @@
 use crate::{
     backoff::Backoff,
+    pd::PdClient,
     request::{store_stream_for_key, store_stream_for_keys, store_stream_for_range, KvRequest},
     transaction::HasLocks,
 };
 use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
 use kvproto::{kvrpcpb, tikvpb::TikvClient};
 use std::{mem, sync::Arc};
-use tikv_client_common::{BoundRange, Error, Key, KvPair, Result, Timestamp, Value};
-use tikv_client_pd::{PdClient, StoreBuilder};
+use tikv_client_common::{BoundRange, Error, Key, KvPair, Result, StoreBuilder, Timestamp, Value};
 use tikv_client_store::{KvClient, KvConnect, RpcFnType, Store};
 
 impl KvRequest for kvrpcpb::GetRequest {

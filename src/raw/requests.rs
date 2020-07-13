@@ -2,6 +2,7 @@
 
 use super::RawRpcRequest;
 use crate::{
+    pd::PdClient,
     request::{
         store_stream_for_key, store_stream_for_keys, store_stream_for_range,
         store_stream_for_ranges, KvRequest,
@@ -12,8 +13,7 @@ use crate::{
 use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
 use kvproto::{kvrpcpb, tikvpb::TikvClient};
 use std::{mem, sync::Arc};
-use tikv_client_common::{BoundRange, Key, KvPair, Result, Value};
-use tikv_client_pd::{PdClient, StoreBuilder};
+use tikv_client_common::{BoundRange, Key, KvPair, Result, StoreBuilder, Value};
 use tikv_client_store::{KvClient, RpcFnType, Store};
 
 impl KvRequest for kvrpcpb::RawGetRequest {

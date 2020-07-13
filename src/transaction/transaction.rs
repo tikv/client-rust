@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
+    pd::{PdClient, PdRpcClient},
     request::KvRequest,
     transaction::{buffer::Buffer, requests::*},
 };
@@ -9,7 +10,6 @@ use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
 use kvproto::kvrpcpb;
 use std::{mem, ops::RangeBounds, sync::Arc};
 use tikv_client_common::{BoundRange, Error, ErrorKind, Key, KvPair, Result, Timestamp, Value};
-use tikv_client_pd::{PdClient, PdRpcClient};
 use tikv_client_store::TikvConnect;
 
 /// A undo-able set of actions on the dataset.

@@ -11,8 +11,9 @@ use futures::{compat::Compat01As03, future::BoxFuture, prelude::*};
 use grpcio::{CallOption, Environment};
 pub use kvproto::tikvpb::TikvClient;
 use std::{sync::Arc, time::Duration};
-use tikv_client_common::{security::SecurityManager, stats::tikv_stats, ErrorKind, Result};
-use tikv_client_pd::{Region, StoreBuilder};
+use tikv_client_common::{
+    security::SecurityManager, stats::tikv_stats, ErrorKind, Region, Result, StoreBuilder,
+};
 
 /// A trait for connecting to TiKV stores.
 pub trait KvConnect: Sized + Send + Sync + 'static {

@@ -1,13 +1,12 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::requests;
-use crate::{request::KvRequest, ColumnFamily};
+use crate::{pd::PdRpcClient, request::KvRequest, ColumnFamily};
 use grpcio::EnvBuilder;
 use std::{sync::Arc, u32};
 use tikv_client_common::{
     security::SecurityManager, BoundRange, Config, Error, Key, KvPair, Result, Value,
 };
-use tikv_client_pd::PdRpcClient;
 use tikv_client_store::TikvConnect;
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
