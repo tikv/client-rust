@@ -7,9 +7,9 @@ use tikv_client_common::{
 };
 use tikv_client_pd::PdRpcClient;
 
-use crate::kv_client::TikvConnect;
 use grpcio::EnvBuilder;
 use std::{sync::Arc, u32};
+use tikv_client_store::TikvConnect;
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 

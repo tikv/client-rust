@@ -77,7 +77,6 @@
 pub mod transaction;
 
 mod backoff;
-mod kv_client;
 pub mod raw;
 mod request;
 

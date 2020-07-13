@@ -3,11 +3,11 @@ use crate::request::KvRequest;
 use tikv_client_common::{ErrorKind, Key, Result, Timestamp};
 use tikv_client_pd::{PdClient, RegionVerId};
 
-use crate::kv_client::KvConnect;
 use crate::transaction::requests;
 use kvproto::kvrpcpb;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use tikv_client_store::KvConnect;
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 

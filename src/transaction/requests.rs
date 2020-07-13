@@ -1,6 +1,5 @@
 use crate::{
     backoff::Backoff,
-    kv_client::{KvClient, RpcFnType, Store},
     request::{
         store_builder_stream_for_key, store_builder_stream_for_keys,
         store_builder_stream_for_range, KvRequest,
@@ -10,8 +9,8 @@ use crate::{
 
 use tikv_client_common::{BoundRange, Error, Key, KvPair, Result, Timestamp, Value};
 use tikv_client_pd::{PdClient, StoreBuilder};
+use tikv_client_store::{KvClient, RpcFnType, Store};
 
-use crate::kv_client::KvConnect;
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::BoxStream;
@@ -19,6 +18,7 @@ use kvproto::kvrpcpb;
 use kvproto::tikvpb::TikvClient;
 use std::mem;
 use std::sync::Arc;
+use tikv_client_store::KvConnect;
 
 impl KvRequest for kvrpcpb::GetRequest {
     type Result = Option<Value>;

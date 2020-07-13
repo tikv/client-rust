@@ -6,22 +6,22 @@
 //! the system, in particular without requiring a TiKV or PD server, or RPC layer.
 
 use crate::{
-    kv_client::{KvClient, KvConnect},
     request::{DispatchHook, KvRequest},
     Config, Error, Key, Result, Timestamp,
 };
 
 use tikv_client_pd::{PdClient, PdRpcClient, Region, RegionId, RetryClient, StoreBuilder};
+use tikv_client_store::{KvClient, KvConnect};
 
 use fail::fail_point;
+use futures::compat::Compat01As03;
 use futures::future::{ready, BoxFuture, FutureExt};
 use grpcio::CallOption;
-use kvproto::{errorpb, kvrpcpb, metapb};
-use std::{sync::Arc, time::Duration};
 use kvproto::tikvpb::TikvClient;
-use futures::compat::Compat01As03;
-use crate::kv_client::HasError;
+use kvproto::{errorpb, kvrpcpb, metapb};
 use std::future::Future;
+use std::{sync::Arc, time::Duration};
+use tikv_client_store::HasError;
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
@@ -51,10 +51,16 @@ pub struct MockCluster;
 pub struct MockPdClient;
 
 impl KvClient for MockKvClient {
-    fn dispatch<Resp, RpcFuture>(&self, request_name: &'static str, fut: grpcio::Result<RpcFuture>) -> BoxFuture<'static, Result<Resp>> where
-        Compat01As03<RpcFuture>: Future<Output=std::result::Result<Resp, ::grpcio::Error>>,
+    fn dispatch<Resp, RpcFuture>(
+        &self,
+        request_name: &'static str,
+        fut: grpcio::Result<RpcFuture>,
+    ) -> BoxFuture<'static, Result<Resp>>
+    where
+        Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
         Resp: HasError + Sized + Clone + Send + 'static,
-        RpcFuture: Send + 'static {
+        RpcFuture: Send + 'static,
+    {
         unimplemented!()
     }
 

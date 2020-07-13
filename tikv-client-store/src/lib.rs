@@ -1,5 +1,8 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
+#[macro_use]
+extern crate log;
+
 mod errors;
 
 pub use self::errors::{HasError, HasRegionError};
@@ -65,7 +68,7 @@ pub trait KvClient {
 /// types and abstractions of the client program into the grpc data types.
 #[derive(new, Clone)]
 pub struct KvRpcClient {
-    pub(crate) rpc_client: Arc<TikvClient>,
+    pub rpc_client: Arc<TikvClient>,
 }
 
 impl KvClient for KvRpcClient {
@@ -90,7 +93,7 @@ impl KvClient for KvRpcClient {
 #[derive(new)]
 pub struct Store<Client: KvClient> {
     pub region: Region,
-    pub(crate) client: Client,
+    pub client: Client,
     timeout: Duration,
 }
 
@@ -109,7 +112,7 @@ impl<Client: KvClient> Store<Client> {
         CallOption::default().timeout(self.timeout)
     }
 
-    pub(crate) fn dispatch<Resp, RpcFuture>(
+    pub fn dispatch<Resp, RpcFuture>(
         &self,
         request_name: &'static str,
         fut: ::grpcio::Result<RpcFuture>,

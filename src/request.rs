@@ -2,14 +2,13 @@
 
 use crate::{
     backoff::{Backoff, NoJitterBackoff},
-    kv_client::{HasError, HasRegionError, KvClient, RpcFnType},
     transaction::{resolve_locks, HasLocks},
 };
 
 use tikv_client_common::{BoundRange, Error, Key, Result};
 use tikv_client_pd::{PdClient, StoreBuilder};
+use tikv_client_store::{HasError, HasRegionError, KvClient, RpcFnType};
 
-use crate::kv_client::{KvConnect, Store};
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::BoxStream;
@@ -17,6 +16,7 @@ use grpcio::CallOption;
 use kvproto::kvrpcpb;
 use std::sync::Arc;
 use std::time::Duration;
+use tikv_client_store::{KvConnect, Store};
 
 const LOCK_RETRY_DELAY_MS: u64 = 10;
 const DEFAULT_REGION_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);
