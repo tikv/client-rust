@@ -3,12 +3,13 @@ use crate::{
     pd::PdClient,
     request::{store_stream_for_key, store_stream_for_keys, store_stream_for_range, KvRequest},
     transaction::HasLocks,
+    BoundRange, Error, Key, KvPair, Result, Value,
 };
 use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
 use kvproto::{kvrpcpb, tikvpb::TikvClient};
 use std::{mem, sync::Arc};
-use tikv_client_common::{BoundRange, Error, Key, KvPair, Result, StoreBuilder, Timestamp, Value};
-use tikv_client_store::{KvClient, KvConnect, RpcFnType, Store};
+use tikv_client_common::Timestamp;
+use tikv_client_store::{KvClient, RpcFnType, Store};
 
 impl KvRequest for kvrpcpb::GetRequest {
     type Result = Option<Value>;
@@ -28,7 +29,7 @@ impl KvRequest for kvrpcpb::GetRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let key = mem::take(&mut self.key).into();
         store_stream_for_key(key, pd_client)
     }
@@ -87,7 +88,7 @@ impl KvRequest for kvrpcpb::BatchGetRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
     }
@@ -147,7 +148,7 @@ impl KvRequest for kvrpcpb::ScanRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let start_key = mem::take(&mut self.start_key);
         let end_key = mem::take(&mut self.end_key);
         let range = BoundRange::from((start_key, end_key));
@@ -219,7 +220,6 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
         self,
         region_error: Error,
         _pd_client: Arc<impl PdClient>,
-        _kv_connect: Arc<impl KvConnect>,
         _backoff: impl Backoff,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         stream::once(future::err(region_error)).boxed()
@@ -228,7 +228,7 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let context = self
             .context
             .take()
@@ -284,7 +284,7 @@ impl KvRequest for kvrpcpb::CleanupRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let key = mem::take(&mut self.key).into();
         store_stream_for_key(key, pd_client)
     }
@@ -337,7 +337,7 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let mutations = mem::take(&mut self.mutations);
         store_stream_for_keys(mutations, pd_client)
     }
@@ -399,7 +399,7 @@ impl KvRequest for kvrpcpb::CommitRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
     }
@@ -447,7 +447,7 @@ impl KvRequest for kvrpcpb::BatchRollbackRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, StoreBuilder)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
     }
@@ -476,9 +476,6 @@ pub fn new_batch_rollback_request(
 }
 
 impl HasLocks for kvrpcpb::CommitResponse {}
-
 impl HasLocks for kvrpcpb::CleanupResponse {}
-
 impl HasLocks for kvrpcpb::BatchRollbackResponse {}
-
 impl HasLocks for kvrpcpb::ResolveLockResponse {}

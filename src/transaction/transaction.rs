@@ -10,7 +10,6 @@ use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
 use kvproto::kvrpcpb;
 use std::{mem, ops::RangeBounds, sync::Arc};
 use tikv_client_common::{BoundRange, Error, ErrorKind, Key, KvPair, Result, Timestamp, Value};
-use tikv_client_store::TikvConnect;
 
 /// A undo-able set of actions on the dataset.
 ///
@@ -34,7 +33,6 @@ pub struct Transaction {
     buffer: Buffer,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
-    kv_connect: Arc<TikvConnect>,
 }
 
 impl Transaction {
@@ -42,14 +40,12 @@ impl Transaction {
         timestamp: Timestamp,
         bg_worker: ThreadPool,
         rpc: Arc<PdRpcClient>,
-        kv_connect: Arc<TikvConnect>,
     ) -> Transaction {
         Transaction {
             timestamp,
             buffer: Default::default(),
             bg_worker,
             rpc,
-            kv_connect,
         }
     }
 
@@ -71,8 +67,7 @@ impl Transaction {
         let key = key.into();
         self.buffer
             .get_or_else(key, |key| {
-                new_mvcc_get_request(key, self.timestamp)
-                    .execute(self.rpc.clone(), self.kv_connect.clone())
+                new_mvcc_get_request(key, self.timestamp).execute(self.rpc.clone())
             })
             .await
     }
@@ -102,10 +97,9 @@ impl Transaction {
     ) -> Result<impl Iterator<Item = (Key, Option<Value>)>> {
         let timestamp = self.timestamp;
         let rpc = self.rpc.clone();
-        let kv_connect = self.kv_connect.clone();
         self.buffer
             .batch_get_or_else(keys.into_iter().map(|k| k.into()), move |keys| {
-                new_mvcc_get_batch_request(keys, timestamp).execute(rpc, kv_connect)
+                new_mvcc_get_batch_request(keys, timestamp).execute(rpc)
             })
             .await
     }
@@ -138,9 +132,8 @@ impl Transaction {
     ) -> Result<impl Iterator<Item = KvPair>> {
         let timestamp = self.timestamp;
         let rpc = self.rpc.clone();
-        let kv_connecct = self.kv_connect.clone();
         let pairs = new_mvcc_scan_request(range, timestamp, limit, key_only)
-            .execute(rpc, kv_connecct)
+            .execute(rpc)
             .await?;
         Ok(pairs.into_iter())
     }
@@ -227,7 +220,6 @@ impl Transaction {
             self.timestamp.into_version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
-            self.kv_connect.clone(),
         )
         .commit()
         .await
@@ -243,7 +235,6 @@ struct TwoPhaseCommitter {
     start_version: u64,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
-    kv_connect: Arc<TikvConnect>,
     #[new(default)]
     committed: bool,
     #[new(default)]
@@ -289,7 +280,7 @@ impl TwoPhaseCommitter {
             self.start_version,
             lock_ttl,
         )
-        .execute(self.rpc.clone(), self.kv_connect.clone())
+        .execute(self.rpc.clone())
         .await
     }
 
@@ -298,7 +289,7 @@ impl TwoPhaseCommitter {
         let primary_key = vec![self.mutations[0].key.clone().into()];
         let commit_version = self.rpc.clone().get_timestamp().await?.into_version();
         new_commit_request(primary_key, self.start_version, commit_version)
-            .execute(self.rpc.clone(), self.kv_connect.clone())
+            .execute(self.rpc.clone())
             .inspect_err(|e| {
                 // We don't know whether the transaction is committed or not if we fail to receive
                 // the response. Then, we mark the transaction as undetermined and propagate the
@@ -324,7 +315,7 @@ impl TwoPhaseCommitter {
             .map(|mutation| mutation.key.into())
             .collect();
         new_commit_request(keys, self.start_version, commit_version)
-            .execute(self.rpc.clone(), self.kv_connect.clone())
+            .execute(self.rpc.clone())
             .await
     }
 
@@ -334,8 +325,7 @@ impl TwoPhaseCommitter {
             .into_iter()
             .map(|mutation| mutation.key.into())
             .collect();
-        new_batch_rollback_request(keys, self.start_version)
-            .execute(self.rpc.clone(), self.kv_connect.clone())
+        new_batch_rollback_request(keys, self.start_version).execute(self.rpc.clone())
     }
 }
 

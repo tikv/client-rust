@@ -10,10 +10,11 @@ use std::env::var;
 mod raw;
 
 pub(crate) const ENV_PD_ADDRS: &str = "PD_ADDRS";
-pub(crate) const PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
-pub(crate) const PROPTEST_VALUE_MAX: usize = 1024 * 16; // 16 KB
+// pub(crate) const PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
+// pub(crate) const PROPTEST_VALUE_MAX: usize = 1024 * 16; // 16 KB
 pub(crate) const PROPTEST_BATCH_SIZE_MAX: usize = 16;
 
+#[allow(dead_code)]
 pub fn arb_batch<T: core::fmt::Debug>(
     single_strategy: impl Strategy<Value = T>,
     max_batch_size: impl Into<Option<usize>>,
@@ -22,6 +23,7 @@ pub fn arb_batch<T: core::fmt::Debug>(
     proptest::collection::vec(single_strategy, 0..max_batch_size)
 }
 
+#[allow(dead_code)]
 pub fn pd_addrs() -> Vec<String> {
     var(ENV_PD_ADDRS)
         .expect(&format!("Expected {}:", ENV_PD_ADDRS))
