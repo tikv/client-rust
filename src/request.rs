@@ -2,16 +2,14 @@
 
 use crate::{
     backoff::{Backoff, NoJitterBackoff},
-    kv_client,
     kv_client::{HasError, HasRegionError, KvClient, RpcFnType},
     transaction::{resolve_locks, HasLocks},
 };
 
-use tikv_client_common::{BoundRange, Error, ErrorKind, Key, Result};
+use tikv_client_common::{BoundRange, Error, Key, Result};
 use tikv_client_pd::{PdClient, StoreBuilder};
 
-use crate::kv_client::{KvConnect, KvRpcClient, Store};
-use futures::compat::Compat01As03;
+use crate::kv_client::{KvConnect, Store};
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::BoxStream;
@@ -19,7 +17,6 @@ use grpcio::CallOption;
 use kvproto::kvrpcpb;
 use std::sync::Arc;
 use std::time::Duration;
-use tikv_client_common::stats::tikv_stats;
 
 const LOCK_RETRY_DELAY_MS: u64 = 10;
 const DEFAULT_REGION_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);
@@ -73,7 +70,14 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
                 let request = self.make_rpc_request(key_data, &store);
                 self.dispatch_hook(store.call_options())
                     .unwrap_or_else(|| {
-                        store.dispatch(Self::REQUEST_NAME, Self::RPC_FN(store.client.get_rpc_client(), request, opt))
+                        store.dispatch(
+                            Self::REQUEST_NAME,
+                            Self::RPC_FN(
+                                &store.client.get_rpc_client(),
+                                &request,
+                                store.call_options(),
+                            ),
+                        )
                     })
                     .map_ok(move |response| (request, response))
             })
@@ -142,8 +146,11 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>>;
 
-    fn request_from_store<T, KvC: KvClient>(store: &Store<KvC>) -> Self {
-        let mut request = T::default();
+    fn request_from_store<KvC: KvClient>(&self, store: &Store<KvC>) -> Self
+    where
+        Self: Default + KvRpcRequest,
+    {
+        let mut request = Self::default();
         // FIXME propagate the error instead of using `expect`
         request.set_context(
             store

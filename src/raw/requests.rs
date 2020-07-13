@@ -38,7 +38,7 @@ impl KvRequest for kvrpcpb::RawGetRequest {
     }
 
     fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = Self::request_from_store::<Self, KvC>(store);
+        let mut req = self.request_from_store(store);
         req.set_key(key.into());
         req.set_cf(self.cf.clone());
 
@@ -83,7 +83,7 @@ impl KvRequest for kvrpcpb::RawBatchGetRequest {
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_get_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(&self, keys: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = Self::request_from_store::<Self, KvC>(store);
+        let mut req = self.request_from_store(store);
         req.set_keys(keys.into_iter().map(Into::into).collect());
         req.set_cf(self.cf.clone());
 
@@ -128,7 +128,7 @@ impl KvRequest for kvrpcpb::RawPutRequest {
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_put_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = Self::request_from_store::<Self, KvC>(store);
+        let mut req = self.request_from_store(store);
         req.set_key(key.0.into());
         req.set_value(key.1.into());
         req.set_cf(self.cf.clone());
@@ -179,7 +179,7 @@ impl KvRequest for kvrpcpb::RawBatchPutRequest {
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_put_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(&self, pairs: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = Self::request_from_store::<Self, KvC>(store);
+        let mut req = self.request_from_store(store);
         req.set_pairs(pairs.into_iter().map(Into::into).collect());
         req.set_cf(self.cf.clone());
 
@@ -222,7 +222,7 @@ impl KvRequest for kvrpcpb::RawDeleteRequest {
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_delete_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = Self::request_from_store::<Self, KvC>(store);
+        let mut req = self.request_from_store(store);
         req.set_key(key.into());
         req.set_cf(self.cf.clone());
 
@@ -268,7 +268,7 @@ impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_delete_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(&self, keys: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = Self::request_from_store::<Self, KvC>(store);
+        let mut req = self.request_from_store(store);
         req.set_keys(keys.into_iter().map(Into::into).collect());
         req.set_cf(self.cf.clone());
 
@@ -315,7 +315,7 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
         (start_key, end_key): Self::KeyData,
         store: &Store<KvC>,
     ) -> Self {
-        let mut req = Self::request_from_store::<Self, KvC>(store);
+        let mut req = self.request_from_store(store);
         req.set_start_key(start_key.into());
         req.set_end_key(end_key.into());
         req.set_cf(self.cf.clone());
@@ -370,7 +370,7 @@ impl KvRequest for kvrpcpb::RawScanRequest {
         (start_key, end_key): Self::KeyData,
         store: &Store<KvC>,
     ) -> Self {
-        let mut req = Self::request_from_store::<Self, KvC>(store);
+        let mut req = self.request_from_store(store);
         req.set_start_key(start_key.into());
         req.set_end_key(end_key.into());
         req.set_limit(self.limit);
@@ -426,7 +426,8 @@ impl KvRequest for kvrpcpb::RawBatchScanRequest {
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_scan_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(&self, ranges: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = store.request::<Self>();
+        // let mut req = store.request::<Self>();
+        let mut req = self.request_from_store::<KvC>(store);
         req.set_ranges(ranges.into_iter().map(Into::into).collect());
         req.set_each_limit(self.each_limit);
         req.set_key_only(self.key_only);

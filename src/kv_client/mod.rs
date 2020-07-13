@@ -114,10 +114,10 @@ impl<Client: KvClient> Store<Client> {
         request_name: &'static str,
         fut: ::grpcio::Result<RpcFuture>,
     ) -> BoxFuture<'static, Result<Resp>>
-        where
-            Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
-            Resp: HasError + Sized + Clone + Send + 'static,
-            RpcFuture: Send + 'static
+    where
+        Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
+        Resp: HasError + Sized + Clone + Send + 'static,
+        RpcFuture: Send + 'static,
     {
         self.client.dispatch(request_name, fut)
     }

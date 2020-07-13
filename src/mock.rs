@@ -18,6 +18,10 @@ use futures::future::{ready, BoxFuture, FutureExt};
 use grpcio::CallOption;
 use kvproto::{errorpb, kvrpcpb, metapb};
 use std::{sync::Arc, time::Duration};
+use kvproto::tikvpb::TikvClient;
+use futures::compat::Compat01As03;
+use crate::kv_client::HasError;
+use std::future::Future;
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
@@ -47,12 +51,15 @@ pub struct MockCluster;
 pub struct MockPdClient;
 
 impl KvClient for MockKvClient {
-    fn dispatch<T: KvRequest>(
-        &self,
-        _request: &T,
-        _opt: CallOption,
-    ) -> BoxFuture<'static, Result<T::RpcResponse>> {
-        unreachable!()
+    fn dispatch<Resp, RpcFuture>(&self, request_name: &'static str, fut: grpcio::Result<RpcFuture>) -> BoxFuture<'static, Result<Resp>> where
+        Compat01As03<RpcFuture>: Future<Output=std::result::Result<Resp, ::grpcio::Error>>,
+        Resp: HasError + Sized + Clone + Send + 'static,
+        RpcFuture: Send + 'static {
+        unimplemented!()
+    }
+
+    fn get_rpc_client(&self) -> Arc<TikvClient> {
+        unimplemented!()
     }
 }
 
