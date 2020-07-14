@@ -18,14 +18,6 @@ impl KvRequest for kvrpcpb::GetRequest {
     const REQUEST_NAME: &'static str = "kv_get";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_get_async_opt;
 
-    fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = self.request_from_store::<KvC>(store);
-        req.set_key(key.into());
-        req.set_version(self.version);
-
-        req
-    }
-
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
@@ -34,12 +26,19 @@ impl KvRequest for kvrpcpb::GetRequest {
         store_stream_for_key(key, pd_client)
     }
 
+    fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
+        let mut req = self.request_from_store::<KvC>(store);
+        req.set_key(key.into());
+        req.set_version(self.version);
+
+        req
+    }
+
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
-        let result: Value = resp.take_value().into();
         if resp.not_found {
             None
         } else {
-            Some(result)
+            Some(resp.take_value().into())
         }
     }
 

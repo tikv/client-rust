@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
     // Above, you saw we can use a `&'static str`, this is primarily for making examples short.
     // This type is practical to use for real things, and usage forces an internal copy.
     //
-    // It is best to pass a `Vec<u8>` in terms of explictness and speed. `String`s and a few other
+    // It is best to pass a `Vec<u8>` in terms of explicitness and speed. `String`s and a few other
     // types are supported as well, but it all ends up as `Vec<u8>` in the end.
     let value: Option<Value> = client.get(KEY.to_owned()).await?;
     assert_eq!(value, Some(Value::from(VALUE.to_owned())));
