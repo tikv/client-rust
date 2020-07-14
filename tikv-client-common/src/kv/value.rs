@@ -1,9 +1,8 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::HexRepr;
-#[cfg(test)]
+#[allow(unused_imports)]
 use proptest::{arbitrary::any_with, collection::size_range};
-#[cfg(test)]
 use proptest_derive::Arbitrary;
 use std::{fmt, str, u8};
 
@@ -50,8 +49,7 @@ const _PROPTEST_VALUE_MAX: usize = 1024 * 16; // 16 KB
 ///
 /// Many functions which accept a `Value` accept an `Into<Value>`, which means all of the above types
 /// can be passed directly to those functions.
-#[derive(Default, Clone, Eq, PartialEq, Hash)]
-#[cfg_attr(test, derive(Arbitrary))]
+#[derive(Default, Clone, Eq, PartialEq, Hash, Arbitrary)]
 pub struct Value(
     #[cfg_attr(
         test,

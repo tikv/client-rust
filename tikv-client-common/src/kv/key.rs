@@ -2,9 +2,8 @@
 
 use super::HexRepr;
 use kvproto::kvrpcpb;
-#[cfg(test)]
+#[allow(unused_imports)]
 use proptest::{arbitrary::any_with, collection::size_range};
-#[cfg(test)]
 use proptest_derive::Arbitrary;
 use std::{fmt, ops::Bound, u8};
 
@@ -51,8 +50,7 @@ const _PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
 ///
 /// Many functions which accept a `Key` accept an `Into<Key>`, which means all of the above types
 /// can be passed directly to those functions.
-#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-#[cfg_attr(test, derive(Arbitrary))]
+#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Arbitrary)]
 #[repr(transparent)]
 pub struct Key(
     #[cfg_attr(
