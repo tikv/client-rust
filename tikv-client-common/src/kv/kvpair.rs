@@ -122,26 +122,9 @@ impl AsRef<Value> for KvPair {
 impl fmt::Debug for KvPair {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let KvPair(key, value) = self;
-        // FIXME: resume following lines
-        // match str::from_utf8(&value.0) {
-        //     Ok(s) => write!(f, "KvPair({}, {:?})", HexRepr(&key.0), s),
-        //     Err(_) => write!(f, "KvPair({}, {})", HexRepr(&key.0), HexRepr(&value.0)),
-        // }
         match str::from_utf8(&value.0) {
-            Ok(s) => write!(
-                f,
-                "KvPair(klen={}, {}, {:?})",
-                key.0.len(),
-                HexRepr(&key.0),
-                s
-            ),
-            Err(_) => write!(
-                f,
-                "KvPair(klen={}, {}, {})",
-                key.0.len(),
-                HexRepr(&key.0),
-                HexRepr(&value.0)
-            ),
+            Ok(s) => write!(f, "KvPair({}, {:?})", HexRepr(&key.0), s),
+            Err(_) => write!(f, "KvPair({}, {})", HexRepr(&key.0), HexRepr(&value.0)),
         }
     }
 }
