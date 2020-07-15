@@ -23,7 +23,7 @@ proptest! {
         ).unwrap();
 
         match out_value {
-            None =>assert!(pair.value().is_empty()),
+            None => assert!(pair.value().is_empty()),
             Some(out) => assert_eq!(Value::from(pair.value().clone()), out)
         }
 
