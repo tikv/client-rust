@@ -60,6 +60,9 @@ pub enum ErrorKind {
     /// Multiple errors
     #[fail(display = "Multiple errors: {:?}", _0)]
     MultipleErrors(Vec<Error>),
+    /// Invalid ColumnFamily
+    #[fail(display = "Unsupported column family {}", _0)]
+    ColumnFamilyError(String),
 }
 
 impl Fail for Error {

@@ -4,6 +4,7 @@
 #![type_length_limit = "16777216"]
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::type_complexity)]
+#![allow(incomplete_features)]
 #![cfg_attr(test, feature(specialization))]
 
 //! This crate provides a clean, ready to use client for [TiKV](https://github.com/tikv/tikv), a
