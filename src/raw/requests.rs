@@ -123,7 +123,7 @@ impl KvRequest for kvrpcpb::RawPutRequest {
     fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
         let mut req = self.request_from_store(store);
         req.set_key(key.0.into());
-        req.set_value(key.1.into());
+        req.set_value(key.1);
         req.set_cf(self.cf.clone());
 
         req
@@ -158,7 +158,7 @@ pub fn new_raw_put_request(
 ) -> kvrpcpb::RawPutRequest {
     let mut req = kvrpcpb::RawPutRequest::default();
     req.set_key(key.into().into());
-    req.set_value(value.into().into());
+    req.set_value(value.into());
     req.maybe_set_cf(cf);
 
     req

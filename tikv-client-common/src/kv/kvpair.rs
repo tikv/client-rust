@@ -93,7 +93,7 @@ impl Into<(Key, Value)> for KvPair {
 
 impl From<kvrpcpb::KvPair> for KvPair {
     fn from(mut pair: kvrpcpb::KvPair) -> Self {
-        KvPair(Key::from(pair.take_key()), Value::from(pair.take_value()))
+        KvPair(Key::from(pair.take_key()), pair.take_value())
     }
 }
 
@@ -102,7 +102,7 @@ impl Into<kvrpcpb::KvPair> for KvPair {
         let mut result = kvrpcpb::KvPair::default();
         let (key, value) = self.into();
         result.set_key(key.into());
-        result.set_value(value.into());
+        result.set_value(value);
         result
     }
 }
@@ -122,9 +122,9 @@ impl AsRef<Value> for KvPair {
 impl fmt::Debug for KvPair {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let KvPair(key, value) = self;
-        match str::from_utf8(&value.0) {
+        match str::from_utf8(&value) {
             Ok(s) => write!(f, "KvPair({}, {:?})", HexRepr(&key.0), s),
-            Err(_) => write!(f, "KvPair({}, {})", HexRepr(&key.0), HexRepr(&value.0)),
+            Err(_) => write!(f, "KvPair({}, {})", HexRepr(&key.0), HexRepr(&value)),
         }
     }
 }

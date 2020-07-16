@@ -114,17 +114,20 @@ async fn main() -> Result<()> {
         .batch_scan(batch_scan_keys.to_owned(), 10)
         .await
         .expect("Could not batch scan");
-    let vals: Vec<_> = kv_pairs.into_iter().map(|p| p.1).collect();
+    let vals: Vec<_> = kv_pairs
+        .into_iter()
+        .map(|p| String::from_utf8(p.1).unwrap().to_owned())
+        .collect();
     assert_eq!(
         &vals,
         &[
-            "v1".to_owned().into(),
-            "v2".to_owned().into(),
-            "v2".to_owned().into(),
-            "v3".to_owned().into(),
-            "v1".to_owned().into(),
-            "v2".to_owned().into(),
-            "v3".to_owned().into()
+            "v1".to_owned(),
+            "v2".to_owned(),
+            "v2".to_owned(),
+            "v3".to_owned(),
+            "v1".to_owned(),
+            "v2".to_owned(),
+            "v3".to_owned()
         ]
     );
     println!(
