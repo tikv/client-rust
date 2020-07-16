@@ -46,5 +46,4 @@ const _PROPTEST_VALUE_MAX: usize = 1024 * 16; // 16 KB
 /// Many functions which accept a `Value` accept an `Into<Value>`, which means all of the above types
 /// can be passed directly to those functions.
 
-
 pub type Value = Vec<u8>;

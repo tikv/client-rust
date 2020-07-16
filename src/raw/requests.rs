@@ -43,7 +43,7 @@ impl KvRequest for kvrpcpb::RawGetRequest {
         if resp.not_found {
             None
         } else {
-            Some(resp.take_value().into())
+            Some(resp.take_value())
         }
     }
 
