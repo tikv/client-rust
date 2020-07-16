@@ -27,14 +27,6 @@ impl KvRequest for kvrpcpb::RawGetRequest {
     const REQUEST_NAME: &'static str = "raw_get";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_get_async_opt;
 
-    fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = store.request::<Self>();
-        req.set_key(key.into());
-        req.set_cf(self.cf.clone());
-
-        req
-    }
-
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
@@ -43,8 +35,16 @@ impl KvRequest for kvrpcpb::RawGetRequest {
         store_stream_for_key(key, pd_client)
     }
 
+    fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
+        let mut req = store.request::<Self>();
+        req.set_key(key.into());
+        req.set_cf(self.cf.clone());
+
+        req
+    }
+
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
-        let result: Value = resp.take_value().into();
+        let result: Value = resp.take_value();
         if result.is_empty() {
             None
         } else {
@@ -128,7 +128,7 @@ impl KvRequest for kvrpcpb::RawPutRequest {
     fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
         let mut req = store.request::<Self>();
         req.set_key(key.0.into());
-        req.set_value(key.1.into());
+        req.set_value(key.1);
         req.set_cf(self.cf.clone());
 
         req
@@ -163,7 +163,7 @@ pub fn new_raw_put_request(
 ) -> kvrpcpb::RawPutRequest {
     let mut req = kvrpcpb::RawPutRequest::default();
     req.set_key(key.into().into());
-    req.set_value(value.into().into());
+    req.set_value(value.into());
     req.maybe_set_cf(cf);
 
     req

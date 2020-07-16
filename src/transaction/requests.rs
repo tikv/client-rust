@@ -39,7 +39,7 @@ impl KvRequest for kvrpcpb::GetRequest {
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
-        let result: Value = resp.take_value().into();
+        let result: Value = resp.take_value();
         if resp.not_found {
             None
         } else {
