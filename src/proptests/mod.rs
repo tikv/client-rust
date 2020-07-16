@@ -10,8 +10,6 @@ use std::env::var;
 mod raw;
 
 pub(crate) const ENV_PD_ADDRS: &str = "PD_ADDRS";
-// pub(crate) const PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
-// pub(crate) const PROPTEST_VALUE_MAX: usize = 1024 * 16; // 16 KB
 pub(crate) const PROPTEST_BATCH_SIZE_MAX: usize = 16;
 
 pub fn arb_batch<T: core::fmt::Debug>(
