@@ -3,23 +3,18 @@
 // FIXME: Remove this when txn is done.
 #![allow(dead_code)]
 
+use crate::timestamp::TimestampOracle;
+use futures::{compat::Compat01As03, prelude::*};
+use grpcio::{CallOption, Environment};
+use kvproto::{metapb, pdpb};
 use std::{
     collections::HashSet,
     sync::Arc,
     time::{Duration, Instant},
 };
-
-use crate::{
-    pd::{timestamp::TimestampOracle, Region, RegionId, StoreId},
-    security::SecurityManager,
-    stats::pd_stats,
-    transaction::Timestamp,
-    Error, Result,
+use tikv_client_common::{
+    security::SecurityManager, stats::pd_stats, Error, Region, RegionId, Result, StoreId, Timestamp,
 };
-use futures::compat::Compat01As03;
-use futures::prelude::*;
-use grpcio::{CallOption, Environment};
-use kvproto::{metapb, pdpb};
 use tokio::sync::RwLockWriteGuard;
 
 macro_rules! pd_request {

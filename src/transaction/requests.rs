@@ -1,19 +1,15 @@
 use crate::{
     backoff::Backoff,
-    kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
     request::{store_stream_for_key, store_stream_for_keys, store_stream_for_range, KvRequest},
-    transaction::{HasLocks, Timestamp},
+    transaction::HasLocks,
     BoundRange, Error, Key, KvPair, Result, Value,
 };
-
-use futures::future::BoxFuture;
-use futures::prelude::*;
-use futures::stream::BoxStream;
-use kvproto::kvrpcpb;
-use kvproto::tikvpb::TikvClient;
-use std::mem;
-use std::sync::Arc;
+use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
+use kvproto::{kvrpcpb, tikvpb::TikvClient};
+use std::{mem, sync::Arc};
+use tikv_client_common::Timestamp;
+use tikv_client_store::{KvClient, RpcFnType, Store};
 
 impl KvRequest for kvrpcpb::GetRequest {
     type Result = Option<Value>;
@@ -21,14 +17,6 @@ impl KvRequest for kvrpcpb::GetRequest {
     type KeyData = Key;
     const REQUEST_NAME: &'static str = "kv_get";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_get_async_opt;
-
-    fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = store.request::<Self>();
-        req.set_key(key.into());
-        req.set_version(self.version);
-
-        req
-    }
 
     fn store_stream<PdC: PdClient>(
         &mut self,
@@ -38,12 +26,19 @@ impl KvRequest for kvrpcpb::GetRequest {
         store_stream_for_key(key, pd_client)
     }
 
+    fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
+        let mut req = self.request_from_store::<KvC>(store);
+        req.set_key(key.into());
+        req.set_version(self.version);
+
+        req
+    }
+
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
-        let result: Value = resp.take_value();
         if resp.not_found {
             None
         } else {
-            Some(result)
+            Some(resp.take_value())
         }
     }
 
@@ -82,7 +77,7 @@ impl KvRequest for kvrpcpb::BatchGetRequest {
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_batch_get_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(&self, keys: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = store.request::<Self>();
+        let mut req = self.request_from_store(store);
         req.set_keys(keys.into_iter().map(Into::into).collect());
         req.set_version(self.version);
 
@@ -139,7 +134,7 @@ impl KvRequest for kvrpcpb::ScanRequest {
         (start_key, end_key): Self::KeyData,
         store: &Store<KvC>,
     ) -> Self {
-        let mut req = store.request::<Self>();
+        let mut req = self.request_from_store(store);
         req.set_start_key(start_key.into());
         req.set_end_key(end_key.into());
         req.set_limit(self.limit);
@@ -278,7 +273,7 @@ impl KvRequest for kvrpcpb::CleanupRequest {
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_cleanup_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = store.request::<Self>();
+        let mut req = self.request_from_store(store);
         req.set_key(key.into());
         req.set_start_version(self.start_version);
 
@@ -315,12 +310,6 @@ pub fn new_cleanup_request(key: impl Into<Key>, start_version: u64) -> kvrpcpb::
     req
 }
 
-impl AsRef<Key> for kvrpcpb::Mutation {
-    fn as_ref(&self) -> &Key {
-        self.key.as_ref()
-    }
-}
-
 impl KvRequest for kvrpcpb::PrewriteRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::PrewriteResponse;
@@ -333,7 +322,7 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
         mutations: Self::KeyData,
         store: &Store<KvC>,
     ) -> Self {
-        let mut req = store.request::<Self>();
+        let mut req = self.request_from_store(store);
         req.set_mutations(mutations);
         req.set_primary_lock(self.primary_lock.clone());
         req.set_start_version(self.start_version);
@@ -398,7 +387,7 @@ impl KvRequest for kvrpcpb::CommitRequest {
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_commit_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(&self, keys: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = store.request::<Self>();
+        let mut req = self.request_from_store(store);
         req.set_keys(keys);
         req.set_start_version(self.start_version);
         req.set_commit_version(self.commit_version);
@@ -447,7 +436,7 @@ impl KvRequest for kvrpcpb::BatchRollbackRequest {
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_batch_rollback_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(&self, keys: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = store.request::<Self>();
+        let mut req = self.request_from_store(store);
         req.set_keys(keys);
         req.set_start_version(self.start_version);
 

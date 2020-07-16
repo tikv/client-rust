@@ -1,15 +1,16 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::Key;
+use crate::{Error, Result};
 use kvproto::kvrpcpb;
 #[cfg(test)]
 use proptest_derive::Arbitrary;
-use std::borrow::Borrow;
-use std::cmp::{Eq, PartialEq};
-use std::convert::TryFrom;
-use std::ops::{Bound, Range, RangeFrom, RangeInclusive};
-
-use crate::{Error, Result};
+use std::{
+    borrow::Borrow,
+    cmp::{Eq, PartialEq},
+    convert::TryFrom,
+    ops::{Bound, Range, RangeFrom, RangeInclusive},
+};
 
 /// A struct for expressing ranges. This type is semi-opaque and is not really meant for users to
 /// deal with directly. Most functions which operate on ranges will accept any types which
@@ -24,9 +25,9 @@ use crate::{Error, Result};
 /// Invariant: a range may not be unbounded below.
 ///
 /// ```rust
-/// use tikv_client::{BoundRange, Key};
-/// use std::ops::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull, Bound};
+/// # use std::ops::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull, Bound};
 /// # use std::convert::TryInto;
+/// # use tikv_client_common::{Key, BoundRange};
 ///
 /// let explict_range: Range<Key> = Range { start: Key::from("Rust".to_owned()), end: Key::from("TiKV".to_owned()) };
 /// let from_explict_range: BoundRange = explict_range.into();
@@ -77,7 +78,7 @@ impl BoundRange {
     /// The **end** of a scan is exclusive, unless appended with an '\0', then it is inclusive.
     ///
     /// ```rust
-    /// use tikv_client::{BoundRange, Key, ToOwnedRange};
+    /// use tikv_client_common::{BoundRange, Key, ToOwnedRange};
     /// // Exclusive
     /// let range = "a".."z";
     /// assert_eq!(

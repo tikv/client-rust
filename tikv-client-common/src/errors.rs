@@ -1,8 +1,11 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use failure::{Backtrace, Context, Fail};
-use std::fmt::{self, Display};
-use std::result;
+use kvproto::errorpb;
+use std::{
+    fmt::{self, Display},
+    result,
+};
 
 #[derive(Debug)]
 pub struct Error {
@@ -87,50 +90,56 @@ impl Error {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn unimplemented() -> Self {
+    pub fn unimplemented() -> Self {
         Error::from(ErrorKind::Unimplemented)
     }
 
-    pub(crate) fn region_for_key_not_found(key: Vec<u8>) -> Self {
+    pub fn region_for_key_not_found(key: Vec<u8>) -> Self {
         Error::from(ErrorKind::RegionForKeyNotFound { key })
     }
 
-    pub(crate) fn region_error(error: kvproto::errorpb::Error) -> Self {
+    pub fn region_error(error: kvproto::errorpb::Error) -> Self {
         Error::from(ErrorKind::RegionError(error))
     }
 
-    pub(crate) fn region_not_found(region_id: u64) -> Self {
+    pub fn region_not_found(region_id: u64) -> Self {
         Error::from(ErrorKind::RegionNotFound { region_id })
     }
 
-    pub(crate) fn leader_not_found(region_id: u64) -> Self {
+    pub fn leader_not_found(region_id: u64) -> Self {
         Error::from(ErrorKind::LeaderNotFound { region_id })
     }
 
-    pub(crate) fn invalid_key_range() -> Self {
+    pub fn invalid_key_range() -> Self {
         Error::from(ErrorKind::InvalidKeyRange)
     }
 
-    pub(crate) fn max_scan_limit_exceeded(limit: u32, max_limit: u32) -> Self {
+    pub fn max_scan_limit_exceeded(limit: u32, max_limit: u32) -> Self {
         Error::from(ErrorKind::MaxScanLimitExceeded { limit, max_limit })
     }
 
-    pub(crate) fn kv_error(message: String) -> Self {
+    pub fn kv_error(message: String) -> Self {
         Error::from(ErrorKind::KvError { message })
     }
 
-    pub(crate) fn internal_error(message: impl Into<String>) -> Self {
+    pub fn internal_error(message: impl Into<String>) -> Self {
         Error::from(ErrorKind::InternalError {
             message: message.into(),
         })
     }
 
-    pub(crate) fn multiple_errors(errors: Vec<Error>) -> Self {
+    pub fn multiple_errors(errors: Vec<Error>) -> Self {
         Error::from(ErrorKind::MultipleErrors(errors))
     }
 
-    pub(crate) fn undetermined_error(error: Error) -> Self {
+    pub fn undetermined_error(error: Error) -> Self {
         Error::from(ErrorKind::UndeterminedError(error))
+    }
+}
+
+impl From<errorpb::Error> for Error {
+    fn from(e: errorpb::Error) -> Error {
+        Error::region_error(e)
     }
 }
 

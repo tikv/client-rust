@@ -11,10 +11,9 @@
 //!
 
 pub use self::client::Client;
-use crate::errors::ErrorKind::ColumnFamilyError;
 use crate::Error;
-use std::convert::TryFrom;
-use std::fmt;
+use std::{convert::TryFrom, fmt};
+use tikv_client_common::errors::ErrorKind::ColumnFamilyError;
 
 mod client;
 mod requests;

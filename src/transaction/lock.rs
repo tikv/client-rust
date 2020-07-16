@@ -1,11 +1,10 @@
-use super::requests;
-use crate::pd::{PdClient, RegionVerId};
-use crate::request::KvRequest;
-use crate::{ErrorKind, Key, Result, Timestamp};
-
+use crate::{pd::PdClient, request::KvRequest, transaction::requests};
 use kvproto::kvrpcpb;
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+use tikv_client_common::{ErrorKind, Key, RegionVerId, Result, Timestamp};
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 

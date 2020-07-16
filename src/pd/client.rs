@@ -1,26 +1,24 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
+use crate::{pd::RetryClient, Config, Key};
+use futures::{
+    future::{ready, BoxFuture, Either},
+    prelude::*,
+    stream::BoxStream,
+};
+use grpcio::{EnvBuilder, Environment};
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
     time::Duration,
 };
-
-use futures::future::BoxFuture;
-use futures::future::{ready, Either};
-use futures::prelude::*;
-use futures::stream::BoxStream;
-use grpcio::{EnvBuilder, Environment};
-
-use crate::{
+use tikv_client_common::{
     compat::{stream_fn, ClientFutureExt},
-    kv::BoundRange,
-    kv_client::{KvClient, KvConnect, Store, TikvConnect},
-    pd::{cluster::Cluster, Region, RegionId, RetryClient},
     security::SecurityManager,
-    transaction::Timestamp,
-    Config, Key, Result,
+    BoundRange, Region, RegionId, Result, Timestamp,
 };
+use tikv_client_pd::Cluster;
+use tikv_client_store::{KvClient, KvConnect, Store, TikvConnect};
 
 const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";
@@ -189,13 +187,13 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
             .boxed()
     }
 
-    fn region_for_id(&self, id: RegionId) -> BoxFuture<'static, Result<Region>> {
-        self.pd.clone().get_region_by_id(id).boxed()
-    }
-
     fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>> {
         let key: &[u8] = key.into();
         self.pd.clone().get_region(key.to_owned()).boxed()
+    }
+
+    fn region_for_id(&self, id: RegionId) -> BoxFuture<'static, Result<Region>> {
+        self.pd.clone().get_region_by_id(id).boxed()
     }
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
@@ -273,8 +271,8 @@ pub mod test {
     use super::*;
     use crate::mock::*;
 
-    use futures::executor;
-    use futures::executor::block_on;
+    use futures::{executor, executor::block_on};
+    use tikv_client_common::BoundRange;
 
     #[test]
     fn test_kv_client_caching() {

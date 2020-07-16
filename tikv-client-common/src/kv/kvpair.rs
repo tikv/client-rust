@@ -2,14 +2,13 @@
 
 use super::{HexRepr, Key, Value};
 use kvproto::kvrpcpb;
-#[cfg(test)]
 use proptest_derive::Arbitrary;
 use std::{fmt, str};
 
 /// A key/value pair.
 ///
 /// ```rust
-/// # use tikv_client::{Key, Value, KvPair};
+/// # use tikv_client_common::{Key, Value, KvPair};
 /// let key = "key".to_owned();
 /// let value = "value".to_owned();
 /// let constructed = KvPair::new(key.clone(), value.clone());
@@ -19,8 +18,7 @@ use std::{fmt, str};
 ///
 /// Many functions which accept a `KvPair` accept an `Into<KvPair>`, which means all of the above
 /// types (Like a `(Key, Value)`) can be passed directly to those functions.
-#[derive(Default, Clone, Eq, PartialEq)]
-#[cfg_attr(test, derive(Arbitrary))]
+#[derive(Default, Clone, Eq, PartialEq, Arbitrary)]
 pub struct KvPair(pub Key, pub Value);
 
 impl KvPair {
