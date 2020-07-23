@@ -11,8 +11,6 @@
 //! single `TsoRequest` to the PD server. The other future receives `TsoResponse`s from the PD
 //! server and allocates timestamps for the requests.
 
-use crate::{transaction::Timestamp, Error, Result};
-
 use futures::{
     channel::{mpsc, oneshot},
     executor::block_on,
@@ -23,6 +21,7 @@ use futures::{
 use grpcio::WriteFlags;
 use kvproto::pdpb::*;
 use std::{cell::RefCell, collections::VecDeque, pin::Pin, rc::Rc, thread};
+use tikv_client_common::{Error, Result, Timestamp};
 
 /// It is an empirical value.
 const MAX_BATCH_SIZE: usize = 64;

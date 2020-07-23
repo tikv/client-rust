@@ -1,11 +1,8 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::HexRepr;
-#[cfg(test)]
-use proptest::{arbitrary::any_with, collection::size_range};
-#[cfg(test)]
-use proptest_derive::Arbitrary;
-use std::{fmt, str, u8};
+use std::u8;
+
+const _PROPTEST_VALUE_MAX: usize = 1024 * 16; // 16 KB
 
 /// The value part of a key/value pair.
 ///
@@ -16,7 +13,7 @@ use std::{fmt, str, u8};
 /// This type wraps around an owned value, so it should be treated it like `String` or `Vec<u8>`.
 ///
 /// ```rust
-/// use tikv_client::Value;
+/// use tikv_client_common::Value;
 ///
 /// let static_str: &'static str = "TiKV";
 /// let from_static_str = Value::from(static_str.to_owned());
@@ -39,7 +36,7 @@ use std::{fmt, str, u8};
 /// these cases using the fully-qualified-syntax is useful:
 ///
 /// ```rust
-/// use tikv_client::Value;
+/// use tikv_client_common::Value;
 ///
 /// let buf = "TiKV".as_bytes().to_owned();
 /// let value = Value::from(buf.clone());
@@ -48,54 +45,5 @@ use std::{fmt, str, u8};
 ///
 /// Many functions which accept a `Value` accept an `Into<Value>`, which means all of the above types
 /// can be passed directly to those functions.
-#[derive(Default, Clone, Eq, PartialEq, Hash)]
-#[cfg_attr(test, derive(Arbitrary))]
-pub struct Value(
-    #[cfg_attr(
-        test,
-        proptest(
-            strategy = "any_with::<Vec<u8>>((size_range(crate::proptests::PROPTEST_VALUE_MAX), ()))"
-        )
-    )]
-    pub(super) Vec<u8>,
-);
 
-impl Value {
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
-impl From<Vec<u8>> for Value {
-    fn from(v: Vec<u8>) -> Self {
-        Value(v)
-    }
-}
-
-impl From<String> for Value {
-    fn from(v: String) -> Value {
-        Value(v.into_bytes())
-    }
-}
-
-impl Into<Vec<u8>> for Value {
-    fn into(self) -> Vec<u8> {
-        self.0
-    }
-}
-
-impl<'a> Into<&'a [u8]> for &'a Value {
-    fn into(self) -> &'a [u8] {
-        &self.0
-    }
-}
-
-impl fmt::Debug for Value {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match str::from_utf8(&self.0) {
-            Ok(s) => write!(f, "Value({:?})", s),
-            Err(_) => write!(f, "Value({})", HexRepr(&self.0)),
-        }
-    }
-}
+pub type Value = Vec<u8>;

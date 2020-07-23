@@ -4,6 +4,7 @@
 #![type_length_limit = "16777216"]
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::type_complexity)]
+#![allow(incomplete_features)]
 #![cfg_attr(test, feature(specialization))]
 
 //! This crate provides a clean, ready to use client for [TiKV](https://github.com/tikv/tikv), a
@@ -73,21 +74,12 @@
 //! At this point, you should seek the documentation in the related API modules.
 
 #[macro_use]
-mod util;
-#[macro_use]
 pub mod transaction;
 
 mod backoff;
-mod compat;
-mod config;
-mod errors;
-mod kv;
-mod kv_client;
 mod pd;
 pub mod raw;
 mod request;
-mod security;
-mod stats;
 
 #[cfg(test)]
 mod mock;
@@ -95,23 +87,16 @@ mod mock;
 mod proptests;
 
 #[macro_use]
-extern crate lazy_static;
-#[macro_use]
 extern crate log;
 #[macro_use]
-extern crate prometheus;
+extern crate tikv_client_common;
 
-#[doc(inline)]
-pub use crate::config::Config;
-#[doc(inline)]
-pub use crate::errors::Error;
-#[doc(inline)]
-pub use crate::errors::ErrorKind;
-#[doc(inline)]
-pub use crate::errors::Result;
-#[doc(inline)]
-pub use crate::kv::{BoundRange, Key, KvPair, ToOwnedRange, Value};
 #[doc(inline)]
 pub use crate::raw::{Client as RawClient, ColumnFamily};
 #[doc(inline)]
-pub use crate::transaction::{Client as TransactionClient, Snapshot, Timestamp, Transaction};
+pub use crate::transaction::{Client as TransactionClient, Snapshot, Transaction};
+
+#[doc(inline)]
+pub use tikv_client_common::{
+    BoundRange, Config, Error, ErrorKind, Key, KvPair, Result, Timestamp, ToOwnedRange, Value,
+};

@@ -1,0 +1,23 @@
+[package]
+name = "tikv-client-pd"
+version = "0.0.0"
+edition = "2018"
+
+
+[dependencies]
+derive-new = "0.5"
+kvproto = { git = "https://github.com/pingcap/kvproto.git", features = [ "prost-codec" ], default-features = false }
+futures = { version = "0.3.1", features = ["compat", "async-await", "thread-pool"] }
+tokio = { version = "0.2", features = ["sync"] }
+grpcio = { version = "0.5.0", features = [ "secure", "prost-codec" ], default-features = false }
+log = "0.4"
+
+tikv-client-common = { path = "../tikv-client-common" }
+
+[dev-dependencies]
+clap = "2.32"
+tempdir = "0.3"
+tokio = { version = "0.2", features = ["rt-threaded", "macros"] }
+proptest = "0.9"
+proptest-derive = "0.1.0"
+fail = { version = "0.3", features = [ "failpoints" ] }

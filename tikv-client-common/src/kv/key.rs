@@ -1,12 +1,13 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::HexRepr;
-#[cfg(test)]
+use kvproto::kvrpcpb;
+#[allow(unused_imports)]
 use proptest::{arbitrary::any_with, collection::size_range};
-#[cfg(test)]
 use proptest_derive::Arbitrary;
-use std::ops::Bound;
-use std::{fmt, u8};
+use std::{fmt, ops::Bound, u8};
+
+const _PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
 
 /// The key part of a key/value pair.
 ///
@@ -17,7 +18,7 @@ use std::{fmt, u8};
 /// This type wraps around an owned value, so it should be treated it like `String` or `Vec<u8>`.
 ///
 /// ```rust
-/// use tikv_client::Key;
+/// use tikv_client_common::Key;
 ///
 /// let static_str: &'static str = "TiKV";
 /// let from_static_str = Key::from(static_str.to_owned());
@@ -40,7 +41,7 @@ use std::{fmt, u8};
 /// these cases using the fully-qualified-syntax is useful:
 ///
 /// ```rust
-/// use tikv_client::Key;
+/// use tikv_client_common::Key;
 ///
 /// let buf = "TiKV".as_bytes().to_owned();
 /// let key = Key::from(buf.clone());
@@ -49,18 +50,21 @@ use std::{fmt, u8};
 ///
 /// Many functions which accept a `Key` accept an `Into<Key>`, which means all of the above types
 /// can be passed directly to those functions.
-#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-#[cfg_attr(test, derive(Arbitrary))]
+#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Arbitrary)]
 #[repr(transparent)]
 pub struct Key(
     #[cfg_attr(
         test,
-        proptest(
-            strategy = "any_with::<Vec<u8>>((size_range(crate::proptests::PROPTEST_KEY_MAX), ()))"
-        )
+        proptest(strategy = "any_with::<Vec<u8>>((size_range(_PROPTEST_KEY_MAX), ()))")
     )]
     pub(super) Vec<u8>,
 );
+
+impl AsRef<Key> for kvrpcpb::Mutation {
+    fn as_ref(&self) -> &Key {
+        self.key.as_ref()
+    }
+}
 
 impl Key {
     #[inline]

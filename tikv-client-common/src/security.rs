@@ -1,5 +1,8 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
+use crate::Result;
+use grpcio::{Channel, ChannelBuilder, ChannelCredentialsBuilder, Environment};
+use regex::Regex;
 use std::{
     fs::File,
     io::Read,
@@ -7,11 +10,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-
-use grpcio::{Channel, ChannelBuilder, ChannelCredentialsBuilder, Environment};
-use regex::Regex;
-
-use crate::Result;
 
 lazy_static! {
     static ref SCHEME_REG: Regex = Regex::new(r"^\s*(https?://)").unwrap();
@@ -95,9 +93,7 @@ mod tests {
     extern crate tempdir;
     use super::*;
 
-    use std::fs::File;
-    use std::io::Write;
-    use std::path::PathBuf;
+    use std::{fs::File, io::Write, path::PathBuf};
 
     use self::tempdir::TempDir;
 

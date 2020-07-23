@@ -1,12 +1,9 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::requests;
-use crate::{
-    pd::PdRpcClient, request::KvRequest, BoundRange, ColumnFamily, Config, Error, Key, KvPair,
-    Result, Value,
-};
-
+use crate::{pd::PdRpcClient, request::KvRequest, ColumnFamily};
 use std::{sync::Arc, u32};
+use tikv_client_common::{BoundRange, Config, Error, Key, KvPair, Result, Value};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
@@ -43,17 +40,18 @@ impl Client {
     /// supplied column family constraint. The original `Client` can still be used.
     ///
     /// ```rust,no_run
-    /// # use tikv_client::{Config, RawClient};
+    /// # use tikv_client::{Config, RawClient, ColumnFamily};
     /// # use futures::prelude::*;
+    /// # use std::convert::TryInto;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(Config::default()).await.unwrap().with_cf("write");
+    /// let client = RawClient::new(Config::default()).await.unwrap().with_cf(ColumnFamily::Write);
     /// let get_request = client.get("foo".to_owned());
     /// # });
     /// ```
-    pub fn with_cf(&self, cf: impl Into<ColumnFamily>) -> Client {
+    pub fn with_cf(&self, cf: ColumnFamily) -> Client {
         Client {
             rpc: self.rpc.clone(),
-            cf: Some(cf.into()),
+            cf: Some(cf),
             key_only: self.key_only,
         }
     }

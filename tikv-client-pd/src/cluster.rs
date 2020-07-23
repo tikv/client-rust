@@ -3,22 +3,18 @@
 // FIXME: Remove this when txn is done.
 #![allow(dead_code)]
 
+use crate::timestamp::TimestampOracle;
+use futures::{compat::Compat01As03, prelude::*};
+use grpcio::{CallOption, Environment};
+use kvproto::{metapb, pdpb};
 use std::{
     collections::HashSet,
     sync::Arc,
     time::{Duration, Instant},
 };
-
-use crate::{
-    pd::{timestamp::TimestampOracle, Region, RegionId, StoreId},
-    security::SecurityManager,
-    stats::pd_stats,
-    transaction::Timestamp,
-    Error, Result,
+use tikv_client_common::{
+    security::SecurityManager, stats::pd_stats, Error, Region, RegionId, Result, StoreId, Timestamp,
 };
-use futures::prelude::*;
-use grpcio::{CallOption, Environment};
-use kvproto::{metapb, pdpb};
 use tokio::sync::RwLockWriteGuard;
 
 macro_rules! pd_request {
@@ -55,6 +51,7 @@ impl Cluster {
 
         self.client
             .get_region_async_opt(&req, option)
+            .map(Compat01As03::new)
             .unwrap()
             .map(move |r| context.done(r.map_err(|e| e.into())))
             .and_then(move |resp| {
@@ -85,6 +82,7 @@ impl Cluster {
 
         self.client
             .get_region_by_id_async_opt(&req, option)
+            .map(Compat01As03::new)
             .unwrap()
             .map(move |r| context.done(r.map_err(|e| e.into())))
             .and_then(move |resp| {
@@ -113,6 +111,7 @@ impl Cluster {
 
         self.client
             .get_store_async_opt(&req, option)
+            .map(Compat01As03::new)
             .unwrap()
             .map(move |r| context.done(r.map_err(|e| e.into())))
             .and_then(|mut resp| {
@@ -137,6 +136,7 @@ impl Cluster {
 
         self.client
             .get_all_stores_async_opt(&req, option)
+            .map(Compat01As03::new)
             .unwrap()
             .map(move |r| context.done(r.map_err(|e| e.into())))
             .and_then(|mut resp| {
@@ -275,6 +275,7 @@ impl Connection {
         let option = CallOption::default().timeout(timeout);
         let resp = client
             .get_members_async_opt(&pdpb::GetMembersRequest::default(), option)
+            .map(Compat01As03::new)
             .map_err(Error::from)?
             .await?;
         Ok((client, resp))

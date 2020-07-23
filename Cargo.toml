@@ -20,9 +20,9 @@ name = "tikv_client"
 [dependencies]
 derive-new = "0.5"
 failure = "0.1"
-futures = { version = "0.3.1", features = ["async-await", "thread-pool"] }
-grpcio = { git = "https://github.com/tikv/grpc-rs.git", features = [ "secure", "prost-codec" ], default-features = false }
-kvproto = { git = "https://github.com/longfangsong/kvproto.git", features = [ "prost-codec" ], default-features = false }
+futures = { version = "0.3.1", features = ["compat", "async-await", "thread-pool"] }
+grpcio = { version = "0.5.0", features = [ "secure", "prost-codec" ], default-features = false }
+kvproto = { git = "https://github.com/pingcap/kvproto.git", features = [ "prost-codec" ], default-features = false }
 lazy_static = "1"
 log = "0.4"
 rand = "0.7"
@@ -32,6 +32,10 @@ serde_derive = "1.0"
 futures-timer = "3.0"
 async-trait = "0.1.27"
 tokio = { version = "0.2", features = ["sync"] }
+
+tikv-client-common = { path = "tikv-client-common" }
+tikv-client-pd = { path = "tikv-client-pd" }
+tikv-client-store = { path = "tikv-client-store" }
 
 [dependencies.prometheus]
 version = "0.8"
@@ -48,4 +52,10 @@ fail = { version = "0.3", features = [ "failpoints" ] }
 
 [patch.crates-io]
 raft-proto = { git = "https://github.com/tikv/raft-rs", rev = "e624c1d48460940a40d8aa69b5329460d9af87dd" }
-grpcio-compiler = { git = "https://github.com/tikv/grpc-rs.git", version = "0.5.0", default-features = false }
+
+[workspace]
+members = [
+    "tikv-client-common",
+    "tikv-client-pd",
+    "tikv-client-store"
+]

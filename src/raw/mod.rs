@@ -11,8 +11,9 @@
 //!
 
 pub use self::client::Client;
-
-use std::fmt;
+use crate::Error;
+use std::{convert::TryFrom, fmt};
+use tikv_client_common::errors::ErrorKind::ColumnFamilyError;
 
 mod client;
 mod requests;
@@ -33,27 +34,53 @@ mod requests;
 ///
 /// ```rust
 /// # use tikv_client::ColumnFamily;
+/// # use std::convert::TryFrom;
 ///
-/// let cf = ColumnFamily::from("write");
-/// let cf = ColumnFamily::from(String::from("write"));
-/// let cf = ColumnFamily::from(&String::from("write"));
+/// let cf = ColumnFamily::try_from("write").unwrap();
+/// let cf = ColumnFamily::try_from(String::from("write")).unwrap();
 /// ```
 ///
 /// **But, you should not need to worry about all this:** Many functions which accept a
 /// `ColumnFamily` accept an `Into<ColumnFamily>`, which means all of the above types can be passed
 /// directly to those functions.
-#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
-pub struct ColumnFamily(String);
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub enum ColumnFamily {
+    Default,
+    Lock,
+    Write,
+    VersionDefault,
+}
 
-impl<T: Into<String>> From<T> for ColumnFamily {
-    fn from(i: T) -> ColumnFamily {
-        ColumnFamily(i.into())
+impl TryFrom<&str> for ColumnFamily {
+    type Error = Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "default" => Ok(ColumnFamily::Default),
+            "lock" => Ok(ColumnFamily::Lock),
+            "write" => Ok(ColumnFamily::Write),
+            "ver_default" => Ok(ColumnFamily::VersionDefault),
+            s => Err(ColumnFamilyError(s.to_owned()).into()),
+        }
+    }
+}
+
+impl TryFrom<String> for ColumnFamily {
+    type Error = Error;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        TryFrom::try_from(&*value)
     }
 }
 
 impl fmt::Display for ColumnFamily {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
+        match self {
+            ColumnFamily::Default => f.write_str("default"),
+            ColumnFamily::Lock => f.write_str("lock"),
+            ColumnFamily::Write => f.write_str("write"),
+            ColumnFamily::VersionDefault => f.write_str("ver_default"),
+        }
     }
 }
 
