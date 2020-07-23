@@ -1,19 +1,15 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-// FIXME: Remove this when txn is done.
-#![allow(dead_code)]
-
-use crate::timestamp::TimestampOracle;
+use crate::{timestamp::TimestampOracle, PdResponse};
+use async_trait::async_trait;
 use grpcio::{CallOption, Environment};
-use kvproto::{metapb, pdpb};
+use kvproto::pdpb::{self, Timestamp};
 use std::{
     collections::HashSet,
     sync::Arc,
     time::{Duration, Instant},
 };
-use tikv_client_common::{
-    security::SecurityManager, stats::pd_stats, Error, Region, RegionId, Result, StoreId, Timestamp,
-};
+use tikv_client_common::{security::SecurityManager, Error, Result};
 
 /// A PD cluster.
 pub struct Cluster {
@@ -35,47 +31,35 @@ macro_rules! pd_request {
 
 // These methods make a single attempt to make a request.
 impl Cluster {
-    pub async fn get_region(&self, key: Vec<u8>, timeout: Duration) -> Result<Region> {
-        let context = pd_stats(pdpb::GetRegionRequest::TAG);
-
+    pub async fn get_region(
+        &self,
+        key: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<pdpb::GetRegionResponse> {
         let mut req = pd_request!(self.id, pdpb::GetRegionRequest);
         req.set_region_key(key.clone());
-        let resp = req.send(&self.client, timeout).await;
-
-        let resp = context.done(resp)?;
-        region_from_response(resp, || Error::region_for_key_not_found(key))
+        req.send(&self.client, timeout).await
     }
 
-    pub async fn get_region_by_id(&self, id: RegionId, timeout: Duration) -> Result<Region> {
-        let context = pd_stats(pdpb::GetRegionByIdRequest::TAG);
-
+    pub async fn get_region_by_id(
+        &self,
+        id: u64,
+        timeout: Duration,
+    ) -> Result<pdpb::GetRegionResponse> {
         let mut req = pd_request!(self.id, pdpb::GetRegionByIdRequest);
         req.set_region_id(id);
-        let resp = req.send(&self.client, timeout).await;
-
-        let resp = context.done(resp)?;
-        region_from_response(resp, || Error::region_not_found(id))
+        req.send(&self.client, timeout).await
     }
 
-    pub async fn get_store(&self, id: StoreId, timeout: Duration) -> Result<metapb::Store> {
-        let context = pd_stats(pdpb::GetStoreRequest::TAG);
-
+    pub async fn get_store(&self, id: u64, timeout: Duration) -> Result<pdpb::GetStoreResponse> {
         let mut req = pd_request!(self.id, pdpb::GetStoreRequest);
         req.set_store_id(id);
-        let resp = req.send(&self.client, timeout).await;
-
-        let mut resp = context.done(resp)?;
-        Ok(resp.take_store())
+        req.send(&self.client, timeout).await
     }
 
-    pub async fn get_all_stores(&self, timeout: Duration) -> Result<Vec<metapb::Store>> {
-        let context = pd_stats(pdpb::GetAllStoresRequest::TAG);
-
+    pub async fn get_all_stores(&self, timeout: Duration) -> Result<pdpb::GetAllStoresResponse> {
         let req = pd_request!(self.id, pdpb::GetAllStoresRequest);
-        let resp = req.send(&self.client, timeout).await;
-
-        let mut resp = context.done(resp)?;
-        Ok(resp.take_stores().into_iter().map(Into::into).collect())
+        req.send(&self.client, timeout).await
     }
 
     pub async fn get_timestamp(&self) -> Result<Timestamp> {
@@ -277,7 +261,6 @@ type GrpcResult<T> = std::result::Result<T, grpcio::Error>;
 #[async_trait]
 trait PdMessage {
     type Response: PdResponse;
-    const TAG: &'static str;
 
     async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response>;
 
@@ -293,37 +276,13 @@ trait PdMessage {
     }
 }
 
-trait PdResponse {
-    fn header(&self) -> &pdpb::ResponseHeader;
-}
-
-impl PdResponse for pdpb::GetRegionResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.get_header()
-    }
-}
-
-impl PdResponse for pdpb::GetStoreResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.get_header()
-    }
-}
-
-impl PdResponse for pdpb::GetAllStoresResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.get_header()
-    }
-}
-
 #[async_trait]
 impl PdMessage for pdpb::GetRegionRequest {
     type Response = pdpb::GetRegionResponse;
-    const TAG: &'static str = "get_region";
 
     async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
         client
             .get_region_async_opt(self, opt)
-            .map(Compat01As03::new)
             .unwrap()
             .await
     }
@@ -332,12 +291,10 @@ impl PdMessage for pdpb::GetRegionRequest {
 #[async_trait]
 impl PdMessage for pdpb::GetRegionByIdRequest {
     type Response = pdpb::GetRegionResponse;
-    const TAG: &'static str = "get_region_by_id";
 
     async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
         client
             .get_region_by_id_async_opt(self, opt)
-            .map(Compat01As03::new)
             .unwrap()
             .await
     }
@@ -346,12 +303,10 @@ impl PdMessage for pdpb::GetRegionByIdRequest {
 #[async_trait]
 impl PdMessage for pdpb::GetStoreRequest {
     type Response = pdpb::GetStoreResponse;
-    const TAG: &'static str = "get_store";
 
     async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
         client
             .get_store_async_opt(self, opt)
-            .map(Compat01As03::new)
             .unwrap()
             .await
     }
@@ -360,21 +315,11 @@ impl PdMessage for pdpb::GetStoreRequest {
 #[async_trait]
 impl PdMessage for pdpb::GetAllStoresRequest {
     type Response = pdpb::GetAllStoresResponse;
-    const TAG: &'static str = "get_all_stores";
 
     async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
         client
             .get_all_stores_async_opt(self, opt)
-            .map(Compat01As03::new)
             .unwrap()
             .await
     }
-}
-
-fn region_from_response(
-    resp: pdpb::GetRegionResponse,
-    err: impl FnOnce() -> Error,
-) -> Result<Region> {
-    let region = resp.region.ok_or_else(err)?;
-    Ok(Region::new(region, resp.leader))
 }

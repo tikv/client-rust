@@ -4,7 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-use tikv_client_common::{ErrorKind, Key, RegionVerId, Result, Timestamp};
+use tikv_client_common::{timestamp::TimestampExt, ErrorKind, Key, RegionVerId, Result, Timestamp};
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 

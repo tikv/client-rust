@@ -21,7 +21,7 @@ use futures::{
 use grpcio::WriteFlags;
 use kvproto::pdpb::*;
 use std::{cell::RefCell, collections::VecDeque, pin::Pin, rc::Rc, thread};
-use tikv_client_common::{Error, Result, Timestamp};
+use tikv_client_common::{Error, Result};
 
 /// It is an empirical value.
 const MAX_BATCH_SIZE: usize = 64;

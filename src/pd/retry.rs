@@ -5,13 +5,15 @@
 use async_trait::async_trait;
 use futures_timer::Delay;
 use grpcio::Environment;
-use kvproto::metapb;
+use kvproto::{metapb, pdpb};
 use std::{
     fmt,
     sync::Arc,
     time::{Duration, Instant},
 };
-use tikv_client_common::{security::SecurityManager, Region, RegionId, Result, StoreId, Timestamp};
+use tikv_client_common::{
+    security::SecurityManager, stats::pd_stats, Error, Region, RegionId, Result, StoreId, Timestamp,
+};
 use tikv_client_pd::cluster::{Cluster, Connection};
 use tokio::sync::RwLock;
 
@@ -47,11 +49,12 @@ impl<Cl> RetryClient<Cl> {
 }
 
 macro_rules! retry {
-    ($self: ident, |$cluster: ident| $call: expr) => {{
+    ($self: ident, $tag: literal, |$cluster: ident| $call: expr) => {{
+        let context = pd_stats($tag);
         let mut last_err = Ok(());
         for _ in 0..LEADER_CHANGE_RETRY {
             let $cluster = &$self.cluster.read().await.0;
-            match $call.await {
+            match context.done($call.await) {
                 Ok(r) => return Ok(r),
                 Err(e) => last_err = Err(e),
             }
@@ -92,25 +95,49 @@ impl RetryClient<Cluster> {
 
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
     pub async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<Region> {
-        retry!(self, |cluster| cluster
-            .get_region(key.clone(), self.timeout))
+        retry!(self, "get_region", |cluster| {
+            let key = key.clone();
+            async {
+                cluster
+                    .get_region(key.clone(), self.timeout)
+                    .await
+                    .and_then(|resp| {
+                        region_from_response(resp, || Error::region_for_key_not_found(key))
+                    })
+            }
+        })
     }
 
     pub async fn get_region_by_id(self: Arc<Self>, id: RegionId) -> Result<Region> {
-        retry!(self, |cluster| cluster.get_region_by_id(id, self.timeout))
+        retry!(self, "get_region_by_id", |cluster| async {
+            cluster
+                .get_region_by_id(id, self.timeout)
+                .await
+                .and_then(|resp| region_from_response(resp, || Error::region_not_found(id)))
+        })
     }
 
     pub async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store> {
-        retry!(self, |cluster| cluster.get_store(id, self.timeout))
+        retry!(self, "get_store", |cluster| async {
+            cluster
+                .get_store(id, self.timeout)
+                .await
+                .map(|mut resp| resp.take_store())
+        })
     }
 
     #[allow(dead_code)]
     pub async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
-        retry!(self, |cluster| cluster.get_all_stores(self.timeout))
+        retry!(self, "get_all_stores", |cluster| async {
+            cluster
+                .get_all_stores(self.timeout)
+                .await
+                .map(|mut resp| resp.take_stores().into_iter().map(Into::into).collect())
+        })
     }
 
     pub async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
-        retry!(self, |cluster| cluster.get_timestamp())
+        retry!(self, "get_timestamp", |cluster| cluster.get_timestamp())
     }
 }
 
@@ -120,6 +147,14 @@ impl fmt::Debug for RetryClient {
             .field("timeout", &self.timeout)
             .finish()
     }
+}
+
+fn region_from_response(
+    resp: pdpb::GetRegionResponse,
+    err: impl FnOnce() -> Error,
+) -> Result<Region> {
+    let region = resp.region.ok_or_else(err)?;
+    Ok(Region::new(region, resp.leader))
 }
 
 // A node-like thing that can be connected to.
@@ -174,11 +209,11 @@ mod test {
         }
 
         async fn retry_err(client: Arc<MockClient>) -> Result<()> {
-            retry!(client, |_c| ready(Err(internal_err!("whoops"))))
+            retry!(client, "test", |_c| ready(Err(internal_err!("whoops"))))
         }
 
         async fn retry_ok(client: Arc<MockClient>) -> Result<()> {
-            retry!(client, |_c| ready(Ok::<_, Error>(())))
+            retry!(client, "test", |_c| ready(Ok::<_, Error>(())))
         }
 
         executor::block_on(async {
@@ -215,7 +250,7 @@ mod test {
             client: Arc<MockClient>,
             max_retries: Arc<Mutex<usize>>,
         ) -> Result<()> {
-            retry!(client, |c| {
+            retry!(client, "test", |c| {
                 let mut c = c.lock().unwrap();
                 *c += 1;
 
@@ -233,7 +268,7 @@ mod test {
             client: Arc<MockClient>,
             max_retries: Arc<Mutex<usize>>,
         ) -> Result<()> {
-            retry!(client, |c| {
+            retry!(client, "test", |c| {
                 let mut c = c.lock().unwrap();
                 *c += 1;
 
