@@ -24,7 +24,8 @@ const LEADER_CHANGE_RETRY: usize = 10;
 
 /// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
 pub struct RetryClient<Cl = Cluster> {
-    cluster: RwLock<Cl>,
+    // Tuple is the cluster and the time of the cluster's last reconnect.
+    cluster: RwLock<(Cl, Instant)>,
     connection: Connection,
     timeout: Duration,
 }
@@ -39,7 +40,7 @@ impl<Cl> RetryClient<Cl> {
     ) -> RetryClient<Cl> {
         let connection = Connection::new(env, security_mgr);
         RetryClient {
-            cluster: RwLock::new(cluster),
+            cluster: RwLock::new((cluster, Instant::now())),
             connection,
             timeout,
         }
@@ -54,7 +55,10 @@ impl RetryClient<Cluster> {
         timeout: Duration,
     ) -> Result<RetryClient> {
         let connection = Connection::new(env, security_mgr);
-        let cluster = RwLock::new(connection.connect_cluster(endpoints, timeout).await?);
+        let cluster = RwLock::new((
+            connection.connect_cluster(endpoints, timeout).await?,
+            Instant::now(),
+        ));
         Ok(RetryClient {
             cluster,
             connection,
@@ -114,19 +118,20 @@ impl Reconnect for RetryClient<Cluster> {
 
     async fn reconnect(&self, interval_sec: u64) -> Result<()> {
         let reconnect_begin = Instant::now();
-        let write_lock = self.cluster.write().await;
+        let mut lock = self.cluster.write().await;
+        let (cluster, last_connected) = &mut *lock;
         // If `last_connected + interval_sec` is larger or equal than reconnect_begin,
         // a concurrent reconnect is just succeed when this thread trying to get write lock
-        let should_connect =
-            reconnect_begin > write_lock.last_connected + Duration::from_secs(interval_sec);
+        let should_connect = reconnect_begin > *last_connected + Duration::from_secs(interval_sec);
         if should_connect {
-            self.connection.reconnect(write_lock, self.timeout).await?;
+            self.connection.reconnect(cluster, self.timeout).await?;
+            *last_connected = Instant::now();
         }
         Ok(())
     }
 
     async fn with_cluster<T, F: Fn(&Cluster) -> T + Send + Sync>(&self, f: F) -> T {
-        f(&*self.cluster.read().await)
+        f(&self.cluster.read().await.0)
     }
 }
 

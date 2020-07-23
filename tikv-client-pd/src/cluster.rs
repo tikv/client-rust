@@ -15,7 +15,6 @@ use std::{
 use tikv_client_common::{
     security::SecurityManager, stats::pd_stats, Error, Region, RegionId, Result, StoreId, Timestamp,
 };
-use tokio::sync::RwLockWriteGuard;
 
 macro_rules! pd_request {
     ($cluster_id:expr, $type:ty) => {{
@@ -30,7 +29,6 @@ macro_rules! pd_request {
 /// A PD cluster.
 pub struct Cluster {
     pub id: u64,
-    pub last_connected: Instant,
     pub(super) client: pdpb::PdClient,
     members: pdpb::GetMembersResponse,
     tso: TimestampOracle,
@@ -174,7 +172,6 @@ impl Connection {
         let tso = TimestampOracle::new(id, &client)?;
         let cluster = Cluster {
             id,
-            last_connected: Instant::now(),
             members,
             client,
             tso,
@@ -183,28 +180,19 @@ impl Connection {
     }
 
     // Re-establish connection with PD leader in asynchronous fashion.
-    pub async fn reconnect(
-        &self,
-        mut cluster_guard: RwLockWriteGuard<'_, Cluster>,
-        timeout: Duration,
-    ) -> Result<()> {
+    pub async fn reconnect(&self, cluster: &mut Cluster, timeout: Duration) -> Result<()> {
         warn!("updating pd client");
         let start = Instant::now();
-        let (client, members) = self
-            .try_connect_leader(&cluster_guard.members, timeout)
-            .await?;
-        let tso = TimestampOracle::new(cluster_guard.id, &client)?;
-        let last_connected = Instant::now();
-        let cluster = Cluster {
-            id: cluster_guard.id,
-            last_connected,
+        let (client, members) = self.try_connect_leader(&cluster.members, timeout).await?;
+        let tso = TimestampOracle::new(cluster.id, &client)?;
+        *cluster = Cluster {
+            id: cluster.id,
             client,
             members,
             tso,
         };
 
-        warn!("updating PD client done, spent {:?}", start.elapsed());
-        *cluster_guard = cluster;
+        info!("updating PD client done, spent {:?}", start.elapsed());
         Ok(())
     }
 
