@@ -1,15 +1,12 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-pub use cluster::Cluster;
+pub use cluster::{Cluster, Connection};
 use kvproto::pdpb;
 
 #[macro_use]
-extern crate tikv_client_common;
-#[macro_use]
 extern crate log;
 
-#[macro_use]
-pub mod cluster;
+mod cluster;
 mod timestamp;
 
 trait PdResponse {

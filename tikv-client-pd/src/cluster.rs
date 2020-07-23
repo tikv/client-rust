@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tikv_client_common::{security::SecurityManager, Error, Result};
+use tikv_client_common::{internal_err, security::SecurityManager, Error, Result};
 
 /// A PD cluster.
 pub struct Cluster {
@@ -281,10 +281,7 @@ impl PdMessage for pdpb::GetRegionRequest {
     type Response = pdpb::GetRegionResponse;
 
     async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
-        client
-            .get_region_async_opt(self, opt)
-            .unwrap()
-            .await
+        client.get_region_async_opt(self, opt).unwrap().await
     }
 }
 
@@ -293,10 +290,7 @@ impl PdMessage for pdpb::GetRegionByIdRequest {
     type Response = pdpb::GetRegionResponse;
 
     async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
-        client
-            .get_region_by_id_async_opt(self, opt)
-            .unwrap()
-            .await
+        client.get_region_by_id_async_opt(self, opt).unwrap().await
     }
 }
 
@@ -305,10 +299,7 @@ impl PdMessage for pdpb::GetStoreRequest {
     type Response = pdpb::GetStoreResponse;
 
     async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
-        client
-            .get_store_async_opt(self, opt)
-            .unwrap()
-            .await
+        client.get_store_async_opt(self, opt).unwrap().await
     }
 }
 
@@ -317,9 +308,6 @@ impl PdMessage for pdpb::GetAllStoresRequest {
     type Response = pdpb::GetAllStoresResponse;
 
     async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
-        client
-            .get_all_stores_async_opt(self, opt)
-            .unwrap()
-            .await
+        client.get_all_stores_async_opt(self, opt).unwrap().await
     }
 }

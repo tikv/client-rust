@@ -8,7 +8,7 @@ use crate::{
 use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
 use kvproto::{kvrpcpb, pdpb::Timestamp, tikvpb::TikvClient};
 use std::{mem, sync::Arc};
-use tikv_client_common::timestamp::TimestampExt;
+use tikv_client_common::TimestampExt;
 use tikv_client_store::{KvClient, RpcFnType, Store};
 
 impl KvRequest for kvrpcpb::GetRequest {

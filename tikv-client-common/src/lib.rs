@@ -6,7 +6,7 @@ pub mod errors;
 pub mod kv;
 pub mod security;
 pub mod stats;
-pub mod timestamp;
+mod timestamp;
 
 #[macro_use]
 extern crate lazy_static;
@@ -26,4 +26,4 @@ pub use crate::errors::Result;
 #[doc(inline)]
 pub use crate::kv::{BoundRange, Key, KvPair, ToOwnedRange, Value};
 #[doc(inline)]
-pub use crate::timestamp::Timestamp;
+pub use crate::timestamp::{Timestamp, TimestampExt};

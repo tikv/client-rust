@@ -7,11 +7,9 @@ use crate::{
 };
 use derive_new::new;
 use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
-use kvproto::kvrpcpb;
+use kvproto::{kvrpcpb, pdpb::Timestamp};
 use std::{mem, ops::RangeBounds, sync::Arc};
-use tikv_client_common::{
-    timestamp::TimestampExt, BoundRange, Error, ErrorKind, Key, KvPair, Result, Timestamp, Value,
-};
+use tikv_client_common::{BoundRange, Error, ErrorKind, Key, KvPair, Result, TimestampExt, Value};
 
 /// A undo-able set of actions on the dataset.
 ///

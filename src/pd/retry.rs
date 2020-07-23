@@ -3,18 +3,20 @@
 //! A utility module for managing and retrying PD requests.
 
 use crate::{Region, RegionId, StoreId};
-
 use async_trait::async_trait;
 use futures_timer::Delay;
 use grpcio::Environment;
-use kvproto::{metapb, pdpb};
+use kvproto::{
+    metapb,
+    pdpb::{self, Timestamp},
+};
 use std::{
     fmt,
     sync::Arc,
     time::{Duration, Instant},
 };
-use tikv_client_common::{security::SecurityManager, stats::pd_stats, Error, Result, Timestamp};
-use tikv_client_pd::cluster::{Cluster, Connection};
+use tikv_client_common::{security::SecurityManager, stats::pd_stats, Error, Result};
+use tikv_client_pd::{Cluster, Connection};
 use tokio::sync::RwLock;
 
 // FIXME: these numbers and how they are used are all just cargo-culted in, there
@@ -186,7 +188,6 @@ impl Reconnect for RetryClient<Cluster> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::Error;
     use futures::{executor, future::ready};
     use std::sync::Mutex;
 
