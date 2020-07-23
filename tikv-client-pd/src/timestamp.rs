@@ -33,7 +33,7 @@ type TimestampRequest = oneshot::Sender<Timestamp>;
 
 /// The timestamp oracle (TSO) which provides monotonically increasing timestamps.
 #[derive(Clone)]
-pub struct TimestampOracle {
+pub(crate) struct TimestampOracle {
     /// The transmitter of a bounded channel which transports requests of getting a single
     /// timestamp to the TSO working thread. A bounded channel is used to prevent using
     /// too much memory unexpectedly.
@@ -43,7 +43,7 @@ pub struct TimestampOracle {
 }
 
 impl TimestampOracle {
-    pub fn new(cluster_id: u64, pd_client: &PdClient) -> Result<TimestampOracle> {
+    pub(crate) fn new(cluster_id: u64, pd_client: &PdClient) -> Result<TimestampOracle> {
         let (request_tx, request_rx) = mpsc::channel(MAX_BATCH_SIZE);
         // FIXME: use tso_opt
         let (rpc_sender, rpc_receiver) = pd_client.tso()?;
@@ -61,7 +61,7 @@ impl TimestampOracle {
         Ok(TimestampOracle { request_tx })
     }
 
-    pub async fn get_timestamp(mut self) -> Result<Timestamp> {
+    pub(crate) async fn get_timestamp(mut self) -> Result<Timestamp> {
         let (request, response) = oneshot::channel();
         self.request_tx
             .send(request)
