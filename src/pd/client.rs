@@ -1,6 +1,6 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{pd::RetryClient, Config, Key};
+use crate::{pd::RetryClient, Config, Key, Region, RegionId};
 use futures::{
     future::{ready, BoxFuture, Either},
     prelude::*,
@@ -15,7 +15,7 @@ use std::{
 use tikv_client_common::{
     compat::{stream_fn, ClientFutureExt},
     security::SecurityManager,
-    BoundRange, Region, RegionId, Result, Timestamp,
+    BoundRange, Result, Timestamp,
 };
 use tikv_client_pd::Cluster;
 use tikv_client_store::{KvClient, KvConnect, Store, TikvConnect};

@@ -4,10 +4,8 @@ pub mod compat;
 pub mod config;
 pub mod errors;
 pub mod kv;
-pub mod region;
 pub mod security;
 pub mod stats;
-pub mod store_builder;
 pub mod timestamp;
 
 #[macro_use]
@@ -27,9 +25,5 @@ pub use crate::errors::ErrorKind;
 pub use crate::errors::Result;
 #[doc(inline)]
 pub use crate::kv::{BoundRange, Key, KvPair, ToOwnedRange, Value};
-#[doc(inline)]
-pub use crate::region::{Region, RegionId, RegionVerId, StoreId};
-#[doc(inline)]
-pub use crate::store_builder::StoreBuilder;
 #[doc(inline)]
 pub use crate::timestamp::Timestamp;
