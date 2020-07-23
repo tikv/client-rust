@@ -4,7 +4,6 @@
 #![allow(dead_code)]
 
 use crate::timestamp::TimestampOracle;
-use futures::prelude::*;
 use grpcio::{CallOption, Environment};
 use kvproto::{metapb, pdpb};
 use std::{
@@ -16,6 +15,14 @@ use tikv_client_common::{
     security::SecurityManager, stats::pd_stats, Error, Region, RegionId, Result, StoreId, Timestamp,
 };
 
+/// A PD cluster.
+pub struct Cluster {
+    id: u64,
+    client: pdpb::PdClient,
+    members: pdpb::GetMembersResponse,
+    tso: TimestampOracle,
+}
+
 macro_rules! pd_request {
     ($cluster_id:expr, $type:ty) => {{
         let mut request = <$type>::default();
@@ -26,126 +33,53 @@ macro_rules! pd_request {
     }};
 }
 
-/// A PD cluster.
-pub struct Cluster {
-    pub id: u64,
-    pub(super) client: pdpb::PdClient,
-    members: pdpb::GetMembersResponse,
-    tso: TimestampOracle,
-}
-
 // These methods make a single attempt to make a request.
 impl Cluster {
-    pub fn get_region(
-        &self,
-        key: Vec<u8>,
-        timeout: Duration,
-    ) -> impl Future<Output = Result<Region>> {
-        let context = pd_stats("get_region");
-        let option = CallOption::default().timeout(timeout);
+    pub async fn get_region(&self, key: Vec<u8>, timeout: Duration) -> Result<Region> {
+        let context = pd_stats(pdpb::GetRegionRequest::TAG);
 
         let mut req = pd_request!(self.id, pdpb::GetRegionRequest);
         req.set_region_key(key.clone());
+        let resp = req.send(&self.client, timeout).await;
 
-        self.client
-            .get_region_async_opt(&req, option)
-            .unwrap()
-            .map(move |r| context.done(r.map_err(|e| e.into())))
-            .and_then(move |resp| {
-                if resp.get_header().has_error() {
-                    return future::ready(Err(internal_err!(resp
-                        .get_header()
-                        .get_error()
-                        .get_message())));
-                }
-                let region = resp
-                    .region
-                    .ok_or_else(|| Error::region_for_key_not_found(key));
-                let leader = resp.leader;
-                future::ready(region.map(move |r| Region::new(r, leader)))
-            })
+        let resp = context.done(resp)?;
+        region_from_response(resp, || Error::region_for_key_not_found(key))
     }
 
-    pub fn get_region_by_id(
-        &self,
-        id: RegionId,
-        timeout: Duration,
-    ) -> impl Future<Output = Result<Region>> {
-        let context = pd_stats("get_region_by_id");
-        let option = CallOption::default().timeout(timeout);
+    pub async fn get_region_by_id(&self, id: RegionId, timeout: Duration) -> Result<Region> {
+        let context = pd_stats(pdpb::GetRegionByIdRequest::TAG);
 
         let mut req = pd_request!(self.id, pdpb::GetRegionByIdRequest);
         req.set_region_id(id);
+        let resp = req.send(&self.client, timeout).await;
 
-        self.client
-            .get_region_by_id_async_opt(&req, option)
-            .unwrap()
-            .map(move |r| context.done(r.map_err(|e| e.into())))
-            .and_then(move |resp| {
-                if resp.get_header().has_error() {
-                    return future::ready(Err(internal_err!(resp
-                        .get_header()
-                        .get_error()
-                        .get_message())));
-                }
-                let region = resp.region.ok_or_else(|| Error::region_not_found(id));
-                let leader = resp.leader;
-                future::ready(region.map(move |r| Region::new(r, leader)))
-            })
+        let resp = context.done(resp)?;
+        region_from_response(resp, || Error::region_not_found(id))
     }
 
-    pub fn get_store(
-        &self,
-        id: StoreId,
-        timeout: Duration,
-    ) -> impl Future<Output = Result<metapb::Store>> {
-        let context = pd_stats("get_store");
-        let option = CallOption::default().timeout(timeout);
+    pub async fn get_store(&self, id: StoreId, timeout: Duration) -> Result<metapb::Store> {
+        let context = pd_stats(pdpb::GetStoreRequest::TAG);
 
         let mut req = pd_request!(self.id, pdpb::GetStoreRequest);
         req.set_store_id(id);
+        let resp = req.send(&self.client, timeout).await;
 
-        self.client
-            .get_store_async_opt(&req, option)
-            .unwrap()
-            .map(move |r| context.done(r.map_err(|e| e.into())))
-            .and_then(|mut resp| {
-                if resp.get_header().has_error() {
-                    return future::ready(Err(internal_err!(resp
-                        .get_header()
-                        .get_error()
-                        .get_message())));
-                }
-                future::ready(Ok(resp.take_store()))
-            })
+        let mut resp = context.done(resp)?;
+        Ok(resp.take_store())
     }
 
-    pub fn get_all_stores(
-        &self,
-        timeout: Duration,
-    ) -> impl Future<Output = Result<Vec<metapb::Store>>> {
-        let context = pd_stats("get_all_stores");
-        let option = CallOption::default().timeout(timeout);
+    pub async fn get_all_stores(&self, timeout: Duration) -> Result<Vec<metapb::Store>> {
+        let context = pd_stats(pdpb::GetAllStoresRequest::TAG);
 
         let req = pd_request!(self.id, pdpb::GetAllStoresRequest);
+        let resp = req.send(&self.client, timeout).await;
 
-        self.client
-            .get_all_stores_async_opt(&req, option)
-            .unwrap()
-            .map(move |r| context.done(r.map_err(|e| e.into())))
-            .and_then(|mut resp| {
-                if resp.get_header().has_error() {
-                    return future::ready(Err(internal_err!(resp
-                        .get_header()
-                        .get_error()
-                        .get_message())));
-                }
-                future::ready(Ok(resp.take_stores().into_iter().map(Into::into).collect()))
-            })
+        let mut resp = context.done(resp)?;
+        Ok(resp.take_stores().into_iter().map(Into::into).collect())
     }
 
-    pub fn get_timestamp(&self) -> impl Future<Output = Result<Timestamp>> {
-        self.tso.clone().get_timestamp()
+    pub async fn get_timestamp(&self) -> Result<Timestamp> {
+        self.tso.clone().get_timestamp().await
     }
 }
 
@@ -214,7 +148,7 @@ impl Connection {
                 Ok(resp) => resp,
                 // Ignore failed PD node.
                 Err(e) => {
-                    error!("PD endpoint {} failed to respond: {:?}", ep, e);
+                    warn!("PD endpoint {} failed to respond: {:?}", ep, e);
                     continue;
                 }
             };
@@ -336,4 +270,111 @@ impl Connection {
 
         Err(internal_err!("failed to connect to {:?}", members))
     }
+}
+
+type GrpcResult<T> = std::result::Result<T, grpcio::Error>;
+
+#[async_trait]
+trait PdMessage {
+    type Response: PdResponse;
+    const TAG: &'static str;
+
+    async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response>;
+
+    async fn send(&self, client: &pdpb::PdClient, timeout: Duration) -> Result<Self::Response> {
+        let option = CallOption::default().timeout(timeout);
+        let response = self.rpc(client, option).await?;
+
+        if response.header().has_error() {
+            Err(internal_err!(response.header().get_error().get_message()))
+        } else {
+            Ok(response)
+        }
+    }
+}
+
+trait PdResponse {
+    fn header(&self) -> &pdpb::ResponseHeader;
+}
+
+impl PdResponse for pdpb::GetRegionResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.get_header()
+    }
+}
+
+impl PdResponse for pdpb::GetStoreResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.get_header()
+    }
+}
+
+impl PdResponse for pdpb::GetAllStoresResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.get_header()
+    }
+}
+
+#[async_trait]
+impl PdMessage for pdpb::GetRegionRequest {
+    type Response = pdpb::GetRegionResponse;
+    const TAG: &'static str = "get_region";
+
+    async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
+        client
+            .get_region_async_opt(self, opt)
+            .map(Compat01As03::new)
+            .unwrap()
+            .await
+    }
+}
+
+#[async_trait]
+impl PdMessage for pdpb::GetRegionByIdRequest {
+    type Response = pdpb::GetRegionResponse;
+    const TAG: &'static str = "get_region_by_id";
+
+    async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
+        client
+            .get_region_by_id_async_opt(self, opt)
+            .map(Compat01As03::new)
+            .unwrap()
+            .await
+    }
+}
+
+#[async_trait]
+impl PdMessage for pdpb::GetStoreRequest {
+    type Response = pdpb::GetStoreResponse;
+    const TAG: &'static str = "get_store";
+
+    async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
+        client
+            .get_store_async_opt(self, opt)
+            .map(Compat01As03::new)
+            .unwrap()
+            .await
+    }
+}
+
+#[async_trait]
+impl PdMessage for pdpb::GetAllStoresRequest {
+    type Response = pdpb::GetAllStoresResponse;
+    const TAG: &'static str = "get_all_stores";
+
+    async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
+        client
+            .get_all_stores_async_opt(self, opt)
+            .map(Compat01As03::new)
+            .unwrap()
+            .await
+    }
+}
+
+fn region_from_response(
+    resp: pdpb::GetRegionResponse,
+    err: impl FnOnce() -> Error,
+) -> Result<Region> {
+    let region = resp.region.ok_or_else(err)?;
+    Ok(Region::new(region, resp.leader))
 }
