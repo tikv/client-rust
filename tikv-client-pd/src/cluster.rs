@@ -4,7 +4,7 @@
 #![allow(dead_code)]
 
 use crate::timestamp::TimestampOracle;
-use futures::{compat::Compat01As03, prelude::*};
+use futures::prelude::*;
 use grpcio::{CallOption, Environment};
 use kvproto::{metapb, pdpb};
 use std::{
@@ -15,9 +15,6 @@ use std::{
 use tikv_client_common::{
     security::SecurityManager, stats::pd_stats, Error, Region, RegionId, Result, StoreId, Timestamp,
 };
-use futures::prelude::*;
-use grpcio::{CallOption, Environment};
-use kvproto::{metapb, pdpb};
 use tokio::sync::RwLockWriteGuard;
 
 macro_rules! pd_request {

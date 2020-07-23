@@ -6,8 +6,8 @@ edition = "2018"
 
 [dependencies]
 failure = "0.1"
-grpcio = { version = "0.5.0", features = [ "secure", "prost-codec" ], default-features = false }
-futures = { version = "0.3.1", features = ["compat", "async-await", "thread-pool"] }
+grpcio = { git = "https://github.com/tikv/grpc-rs.git", features = [ "secure", "prost-codec" ], default-features = false }
+futures = { version = "0.3.5", features = ["compat", "async-await", "thread-pool"] }
 lazy_static = "1"
 regex = "1"
 serde = "1.0"
@@ -16,7 +16,7 @@ log = "0.4"
 proptest = "0.9"
 proptest-derive = "0.1.0"
 derive-new = "0.5"
-kvproto = { git = "https://github.com/pingcap/kvproto.git", features = [ "prost-codec" ], default-features = false }
+kvproto = { git = "https://github.com/longfangsong/kvproto.git", features = [ "prost-codec" ], default-features = false }
 
 [dependencies.prometheus]
 version = "0.8"

@@ -11,10 +11,7 @@ use crate::{
     Config, Error, Key, Result, Timestamp,
 };
 use fail::fail_point;
-use futures::{
-    compat::Compat01As03,
-    future::{ready, BoxFuture, FutureExt},
-};
+use futures::future::{ready, BoxFuture, FutureExt};
 use grpcio::CallOption;
 use kvproto::{errorpb, kvrpcpb, metapb, tikvpb::TikvClient};
 use std::{future::Future, sync::Arc, time::Duration};
@@ -59,7 +56,7 @@ impl KvClient for MockKvClient {
         _fut: grpcio::Result<RpcFuture>,
     ) -> BoxFuture<'static, Result<Resp>>
     where
-        Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
+        RpcFuture: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
         Resp: HasError + Sized + Clone + Send + 'static,
         RpcFuture: Send + 'static,
     {
