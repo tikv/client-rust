@@ -6,10 +6,10 @@ edition = "2018"
 
 [dependencies]
 derive-new = "0.5"
-kvproto = { git = "https://github.com/longfangsong/kvproto.git", features = [ "prost-codec" ], default-features = false }
+kvproto = { git = "https://github.com/pingcap/kvproto.git", rev = "1e28226154c374788f38d3a542fc505cd74720f3", features = [ "prost-codec" ], default-features = false }
 futures = { version = "0.3.5", features = ["compat", "async-await", "thread-pool"] }
 tokio = { version = "0.2", features = ["sync"] }
-grpcio = { git = "https://github.com/tikv/grpc-rs.git", features = [ "secure", "prost-codec" ], default-features = false }
+grpcio = { version = "0.6", features = [ "secure", "prost-codec" ], default-features = false }
 log = "0.4"
 
 tikv-client-common = { path = "../tikv-client-common" }
