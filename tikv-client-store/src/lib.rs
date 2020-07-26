@@ -7,7 +7,7 @@ mod errors;
 
 pub use self::errors::{HasError, HasRegionError};
 use derive_new::new;
-use futures::{compat::Compat01As03, future::BoxFuture, prelude::*};
+use futures::{future::BoxFuture, prelude::*};
 use grpcio::{CallOption, Environment};
 pub use kvproto::tikvpb::TikvClient;
 use std::{sync::Arc, time::Duration};
@@ -53,7 +53,7 @@ pub trait KvClient {
         fut: ::grpcio::Result<RpcFuture>,
     ) -> BoxFuture<'static, Result<Resp>>
     where
-        Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
+        RpcFuture: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
         Resp: HasError + Sized + Clone + Send + 'static,
         RpcFuture: Send + 'static;
 
@@ -74,7 +74,7 @@ impl KvClient for KvRpcClient {
         fut: ::grpcio::Result<RpcFuture>,
     ) -> BoxFuture<'static, Result<Resp>>
     where
-        Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
+        RpcFuture: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
         Resp: HasError + Sized + Clone + Send + 'static,
         RpcFuture: Send + 'static,
     {
@@ -114,7 +114,7 @@ impl<Client: KvClient> Store<Client> {
         fut: ::grpcio::Result<RpcFuture>,
     ) -> BoxFuture<'static, Result<Resp>>
     where
-        Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
+        RpcFuture: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
         Resp: HasError + Sized + Clone + Send + 'static,
         RpcFuture: Send + 'static,
     {
@@ -127,11 +127,11 @@ async fn map_errors_and_trace<Resp, RpcFuture>(
     fut: ::grpcio::Result<RpcFuture>,
 ) -> Result<Resp>
 where
-    Compat01As03<RpcFuture>: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
+    RpcFuture: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
     Resp: HasError + Sized + Clone + Send + 'static,
 {
     let res = match fut {
-        Ok(f) => Compat01As03::new(f).await,
+        Ok(f) => f.await,
         Err(e) => Err(e),
     };
 
