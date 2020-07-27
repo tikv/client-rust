@@ -1820,6 +1820,7 @@ dependencies = [
 name = "tikv-client-pd"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "clap",
  "derive-new",
  "fail",

@@ -6,9 +6,9 @@ use crate::{
     BoundRange, Error, Key, KvPair, Result, Value,
 };
 use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
-use kvproto::{kvrpcpb, tikvpb::TikvClient};
+use kvproto::{kvrpcpb, pdpb::Timestamp, tikvpb::TikvClient};
 use std::{mem, sync::Arc};
-use tikv_client_common::Timestamp;
+use tikv_client_common::TimestampExt;
 use tikv_client_store::{KvClient, RpcFnType, Store};
 
 impl KvRequest for kvrpcpb::GetRequest {
@@ -65,7 +65,7 @@ impl HasLocks for kvrpcpb::GetResponse {
 pub fn new_mvcc_get_request(key: impl Into<Key>, timestamp: Timestamp) -> kvrpcpb::GetRequest {
     let mut req = kvrpcpb::GetRequest::default();
     req.set_key(key.into().into());
-    req.set_version(timestamp.into_version());
+    req.set_version(timestamp.version());
     req
 }
 
@@ -118,7 +118,7 @@ pub fn new_mvcc_get_batch_request(
 ) -> kvrpcpb::BatchGetRequest {
     let mut req = kvrpcpb::BatchGetRequest::default();
     req.set_keys(keys.into_iter().map(Into::into).collect());
-    req.set_version(timestamp.into_version());
+    req.set_version(timestamp.version());
     req
 }
 
@@ -177,7 +177,7 @@ pub fn new_mvcc_scan_request(
     req.set_end_key(end_key.unwrap_or_default().into());
     req.set_limit(limit);
     req.set_key_only(key_only);
-    req.set_version(timestamp.into_version());
+    req.set_version(timestamp.version());
     req
 }
 

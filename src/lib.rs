@@ -100,3 +100,5 @@ pub use crate::transaction::{Client as TransactionClient, Snapshot, Transaction}
 pub use tikv_client_common::{
     BoundRange, Config, Error, ErrorKind, Key, KvPair, Result, Timestamp, ToOwnedRange, Value,
 };
+#[doc(inline)]
+pub use tikv_client_store::region::{Region, RegionId, RegionVerId, StoreId};

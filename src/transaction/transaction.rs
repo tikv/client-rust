@@ -7,9 +7,9 @@ use crate::{
 };
 use derive_new::new;
 use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
-use kvproto::kvrpcpb;
+use kvproto::{kvrpcpb, pdpb::Timestamp};
 use std::{mem, ops::RangeBounds, sync::Arc};
-use tikv_client_common::{BoundRange, Error, ErrorKind, Key, KvPair, Result, Timestamp, Value};
+use tikv_client_common::{BoundRange, Error, ErrorKind, Key, KvPair, Result, TimestampExt, Value};
 
 /// A undo-able set of actions on the dataset.
 ///
@@ -67,7 +67,7 @@ impl Transaction {
         let key = key.into();
         self.buffer
             .get_or_else(key, |key| {
-                new_mvcc_get_request(key, self.timestamp).execute(self.rpc.clone())
+                new_mvcc_get_request(key, self.timestamp.clone()).execute(self.rpc.clone())
             })
             .await
     }
@@ -95,7 +95,7 @@ impl Transaction {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = (Key, Option<Value>)>> {
-        let timestamp = self.timestamp;
+        let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         self.buffer
             .batch_get_or_else(keys.into_iter().map(|k| k.into()), move |keys| {
@@ -130,7 +130,7 @@ impl Transaction {
         limit: u32,
         key_only: bool,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        let timestamp = self.timestamp;
+        let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         let pairs = new_mvcc_scan_request(range, timestamp, limit, key_only)
             .execute(rpc)
@@ -217,7 +217,7 @@ impl Transaction {
     pub async fn commit(&mut self) -> Result<()> {
         TwoPhaseCommitter::new(
             self.buffer.to_proto_mutations(),
-            self.timestamp.into_version(),
+            self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
         )
@@ -287,7 +287,7 @@ impl TwoPhaseCommitter {
     /// Commits the primary key and returns the commit version
     async fn commit_primary(&mut self) -> Result<u64> {
         let primary_key = vec![self.mutations[0].key.clone().into()];
-        let commit_version = self.rpc.clone().get_timestamp().await?.into_version();
+        let commit_version = self.rpc.clone().get_timestamp().await?.version();
         new_commit_request(primary_key, self.start_version, commit_version)
             .execute(self.rpc.clone())
             .inspect_err(|e| {

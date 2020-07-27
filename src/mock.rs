@@ -15,8 +15,7 @@ use futures::future::{ready, BoxFuture, FutureExt};
 use grpcio::CallOption;
 use kvproto::{errorpb, kvrpcpb, metapb, tikvpb::TikvClient};
 use std::{future::Future, sync::Arc, time::Duration};
-use tikv_client_common::{Region, RegionId};
-use tikv_client_store::{HasError, KvClient, KvConnect, Store};
+use tikv_client_store::{HasError, KvClient, KvConnect, Region, RegionId, Store};
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.

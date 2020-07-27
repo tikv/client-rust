@@ -2,18 +2,21 @@
 
 //! A utility module for managing and retrying PD requests.
 
+use crate::{Region, RegionId, StoreId};
 use async_trait::async_trait;
-use futures::prelude::*;
 use futures_timer::Delay;
 use grpcio::Environment;
-use kvproto::metapb;
+use kvproto::{
+    metapb,
+    pdpb::{self, Timestamp},
+};
 use std::{
     fmt,
     sync::Arc,
     time::{Duration, Instant},
 };
-use tikv_client_common::{security::SecurityManager, Region, RegionId, Result, StoreId, Timestamp};
-use tikv_client_pd::cluster::{Cluster, Connection};
+use tikv_client_common::{security::SecurityManager, stats::pd_stats, Error, Result};
+use tikv_client_pd::{Cluster, Connection};
 use tokio::sync::RwLock;
 
 // FIXME: these numbers and how they are used are all just cargo-culted in, there
@@ -24,7 +27,8 @@ const LEADER_CHANGE_RETRY: usize = 10;
 
 /// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
 pub struct RetryClient<Cl = Cluster> {
-    cluster: RwLock<Cl>,
+    // Tuple is the cluster and the time of the cluster's last reconnect.
+    cluster: RwLock<(Cl, Instant)>,
     connection: Connection,
     timeout: Duration,
 }
@@ -39,11 +43,37 @@ impl<Cl> RetryClient<Cl> {
     ) -> RetryClient<Cl> {
         let connection = Connection::new(env, security_mgr);
         RetryClient {
-            cluster: RwLock::new(cluster),
+            cluster: RwLock::new((cluster, Instant::now())),
             connection,
             timeout,
         }
     }
+}
+
+macro_rules! retry {
+    ($self: ident, $tag: literal, |$cluster: ident| $call: expr) => {{
+        let context = pd_stats($tag);
+        let mut last_err = Ok(());
+        for _ in 0..LEADER_CHANGE_RETRY {
+            let $cluster = &$self.cluster.read().await.0;
+            match context.done($call.await) {
+                Ok(r) => return Ok(r),
+                Err(e) => last_err = Err(e),
+            }
+
+            let mut reconnect_count = MAX_REQUEST_COUNT;
+            while let Err(e) = $self.reconnect(RECONNECT_INTERVAL_SEC).await {
+                reconnect_count -= 1;
+                if reconnect_count == 0 {
+                    return Err(e);
+                }
+                Delay::new(Duration::from_secs(RECONNECT_INTERVAL_SEC)).await;
+            }
+        }
+
+        last_err?;
+        unreachable!();
+    }};
 }
 
 impl RetryClient<Cluster> {
@@ -54,7 +84,10 @@ impl RetryClient<Cluster> {
         timeout: Duration,
     ) -> Result<RetryClient> {
         let connection = Connection::new(env, security_mgr);
-        let cluster = RwLock::new(connection.connect_cluster(endpoints, timeout).await?);
+        let cluster = RwLock::new((
+            connection.connect_cluster(endpoints, timeout).await?,
+            Instant::now(),
+        ));
         Ok(RetryClient {
             cluster,
             connection,
@@ -64,31 +97,49 @@ impl RetryClient<Cluster> {
 
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
     pub async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<Region> {
-        let timeout = self.timeout;
-        retry_request(self, move |cluster| {
-            cluster.get_region(key.clone(), timeout)
+        retry!(self, "get_region", |cluster| {
+            let key = key.clone();
+            async {
+                cluster
+                    .get_region(key.clone(), self.timeout)
+                    .await
+                    .and_then(|resp| {
+                        region_from_response(resp, || Error::region_for_key_not_found(key))
+                    })
+            }
         })
-        .await
     }
 
     pub async fn get_region_by_id(self: Arc<Self>, id: RegionId) -> Result<Region> {
-        let timeout = self.timeout;
-        retry_request(self, move |cluster| cluster.get_region_by_id(id, timeout)).await
+        retry!(self, "get_region_by_id", |cluster| async {
+            cluster
+                .get_region_by_id(id, self.timeout)
+                .await
+                .and_then(|resp| region_from_response(resp, || Error::region_not_found(id)))
+        })
     }
 
     pub async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store> {
-        let timeout = self.timeout;
-        retry_request(self, move |cluster| cluster.get_store(id, timeout)).await
+        retry!(self, "get_store", |cluster| async {
+            cluster
+                .get_store(id, self.timeout)
+                .await
+                .map(|mut resp| resp.take_store())
+        })
     }
 
     #[allow(dead_code)]
     pub async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
-        let timeout = self.timeout;
-        retry_request(self, move |cluster| cluster.get_all_stores(timeout)).await
+        retry!(self, "get_all_stores", |cluster| async {
+            cluster
+                .get_all_stores(self.timeout)
+                .await
+                .map(|mut resp| resp.take_stores().into_iter().map(Into::into).collect())
+        })
     }
 
     pub async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
-        retry_request(self, move |cluster| cluster.get_timestamp()).await
+        retry!(self, "get_timestamp", |cluster| cluster.get_timestamp())
     }
 }
 
@@ -100,12 +151,19 @@ impl fmt::Debug for RetryClient {
     }
 }
 
+fn region_from_response(
+    resp: pdpb::GetRegionResponse,
+    err: impl FnOnce() -> Error,
+) -> Result<Region> {
+    let region = resp.region.ok_or_else(err)?;
+    Ok(Region::new(region, resp.leader))
+}
+
 // A node-like thing that can be connected to.
 #[async_trait]
 trait Reconnect {
     type Cl;
     async fn reconnect(&self, interval_sec: u64) -> Result<()>;
-    async fn with_cluster<T, F: Fn(&Self::Cl) -> T + Send + Sync>(&self, f: F) -> T;
 }
 
 #[async_trait]
@@ -114,56 +172,22 @@ impl Reconnect for RetryClient<Cluster> {
 
     async fn reconnect(&self, interval_sec: u64) -> Result<()> {
         let reconnect_begin = Instant::now();
-        let write_lock = self.cluster.write().await;
+        let mut lock = self.cluster.write().await;
+        let (cluster, last_connected) = &mut *lock;
         // If `last_connected + interval_sec` is larger or equal than reconnect_begin,
         // a concurrent reconnect is just succeed when this thread trying to get write lock
-        let should_connect =
-            reconnect_begin > write_lock.last_connected + Duration::from_secs(interval_sec);
+        let should_connect = reconnect_begin > *last_connected + Duration::from_secs(interval_sec);
         if should_connect {
-            self.connection.reconnect(write_lock, self.timeout).await?;
+            self.connection.reconnect(cluster, self.timeout).await?;
+            *last_connected = Instant::now();
         }
         Ok(())
     }
-
-    async fn with_cluster<T, F: Fn(&Cluster) -> T + Send + Sync>(&self, f: F) -> T {
-        f(&*self.cluster.read().await)
-    }
-}
-
-async fn retry_request<Rc, Resp, Func, RespFuture>(client: Arc<Rc>, func: Func) -> Result<Resp>
-where
-    Rc: Reconnect,
-    Resp: Send + 'static,
-    Func: Fn(&Rc::Cl) -> RespFuture + Send + Sync,
-    RespFuture: Future<Output = Result<Resp>> + Send + 'static,
-{
-    let mut last_err = Ok(());
-    for _ in 0..LEADER_CHANGE_RETRY {
-        let fut = client.with_cluster(&func).await;
-        match fut.await {
-            Ok(r) => return Ok(r),
-            Err(e) => last_err = Err(e),
-        }
-
-        // Reconnect.
-        let mut reconnect_count = MAX_REQUEST_COUNT;
-        while let Err(e) = client.reconnect(RECONNECT_INTERVAL_SEC).await {
-            reconnect_count -= 1;
-            if reconnect_count == 0 {
-                return Err(e);
-            }
-            Delay::new(Duration::from_secs(RECONNECT_INTERVAL_SEC)).await;
-        }
-    }
-
-    last_err?;
-    unreachable!();
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::Error;
     use futures::{executor, future::ready};
     use std::sync::Mutex;
 
@@ -171,6 +195,7 @@ mod test {
     fn test_reconnect() {
         struct MockClient {
             reconnect_count: Mutex<usize>,
+            cluster: RwLock<((), Instant)>,
         }
 
         #[async_trait]
@@ -182,82 +207,101 @@ mod test {
                 // Not actually unimplemented, we just don't care about the error.
                 Err(Error::unimplemented())
             }
-
-            async fn with_cluster<T, F: Fn(&Self::Cl) -> T + Send + Sync>(&self, f: F) -> T {
-                f(&())
-            }
         }
 
-        let client = Arc::new(MockClient {
-            reconnect_count: Mutex::new(0),
-        });
-
-        fn ready_err(_: &()) -> impl Future<Output = Result<()>> + Send + 'static {
-            ready(Err(internal_err!("whoops")))
+        async fn retry_err(client: Arc<MockClient>) -> Result<()> {
+            retry!(client, "test", |_c| ready(Err(internal_err!("whoops"))))
         }
 
-        let result = executor::block_on(retry_request(client.clone(), ready_err));
-        assert!(result.is_err());
-        assert_eq!(*client.reconnect_count.lock().unwrap(), MAX_REQUEST_COUNT);
+        async fn retry_ok(client: Arc<MockClient>) -> Result<()> {
+            retry!(client, "test", |_c| ready(Ok::<_, Error>(())))
+        }
 
-        *client.reconnect_count.lock().unwrap() = 0;
-        let result = executor::block_on(retry_request(client.clone(), |_| ready(Ok(()))));
-        assert!(result.is_ok());
-        assert_eq!(*client.reconnect_count.lock().unwrap(), 0);
+        executor::block_on(async {
+            let client = Arc::new(MockClient {
+                reconnect_count: Mutex::new(0),
+                cluster: RwLock::new(((), Instant::now())),
+            });
+
+            assert!(retry_err(client.clone()).await.is_err());
+            assert_eq!(*client.reconnect_count.lock().unwrap(), MAX_REQUEST_COUNT);
+
+            *client.reconnect_count.lock().unwrap() = 0;
+            assert!(retry_ok(client.clone()).await.is_ok());
+            assert_eq!(*client.reconnect_count.lock().unwrap(), 0);
+        })
     }
 
     #[test]
     fn test_retry() {
         struct MockClient {
-            retry_count: Mutex<usize>,
+            cluster: RwLock<(Mutex<usize>, Instant)>,
         }
 
         #[async_trait]
         impl Reconnect for MockClient {
-            type Cl = ();
+            type Cl = Mutex<usize>;
 
             async fn reconnect(&self, _: u64) -> Result<()> {
                 Ok(())
             }
-
-            async fn with_cluster<T, F: Fn(&Self::Cl) -> T + Send + Sync>(&self, f: F) -> T {
-                *self.retry_count.lock().unwrap() += 1;
-                f(&())
-            }
         }
 
-        let client = Arc::new(MockClient {
-            retry_count: Mutex::new(0),
-        });
-        let max_retries = Arc::new(Mutex::new(1000));
+        async fn retry_max_err(
+            client: Arc<MockClient>,
+            max_retries: Arc<Mutex<usize>>,
+        ) -> Result<()> {
+            retry!(client, "test", |c| {
+                let mut c = c.lock().unwrap();
+                *c += 1;
 
-        let result = executor::block_on(retry_request(client.clone(), |_| {
-            let mut max_retries = max_retries.lock().unwrap();
-            *max_retries -= 1;
-            if *max_retries == 0 {
-                ready(Ok(()))
-            } else {
-                ready(Err(internal_err!("whoops")))
-            }
-        }));
-        assert!(result.is_err());
-        assert_eq!(*client.retry_count.lock().unwrap(), LEADER_CHANGE_RETRY);
+                let mut max_retries = max_retries.lock().unwrap();
+                *max_retries -= 1;
+                if *max_retries == 0 {
+                    ready(Ok(()))
+                } else {
+                    ready(Err(internal_err!("whoops")))
+                }
+            })
+        }
 
-        let client = Arc::new(MockClient {
-            retry_count: Mutex::new(0),
-        });
-        let max_retries = Arc::new(Mutex::new(2));
+        async fn retry_max_ok(
+            client: Arc<MockClient>,
+            max_retries: Arc<Mutex<usize>>,
+        ) -> Result<()> {
+            retry!(client, "test", |c| {
+                let mut c = c.lock().unwrap();
+                *c += 1;
 
-        let result = executor::block_on(retry_request(client.clone(), |_| {
-            let mut max_retries = max_retries.lock().unwrap();
-            *max_retries -= 1;
-            if *max_retries == 0 {
-                ready(Ok(()))
-            } else {
-                ready(Err(internal_err!("whoops")))
-            }
-        }));
-        assert!(result.is_ok());
-        assert_eq!(*client.retry_count.lock().unwrap(), 2);
+                let mut max_retries = max_retries.lock().unwrap();
+                *max_retries -= 1;
+                if *max_retries == 0 {
+                    ready(Ok(()))
+                } else {
+                    ready(Err(internal_err!("whoops")))
+                }
+            })
+        }
+
+        executor::block_on(async {
+            let client = Arc::new(MockClient {
+                cluster: RwLock::new((Mutex::new(0), Instant::now())),
+            });
+            let max_retries = Arc::new(Mutex::new(1000));
+
+            assert!(retry_max_err(client.clone(), max_retries).await.is_err());
+            assert_eq!(
+                *client.cluster.read().await.0.lock().unwrap(),
+                LEADER_CHANGE_RETRY
+            );
+
+            let client = Arc::new(MockClient {
+                cluster: RwLock::new((Mutex::new(0), Instant::now())),
+            });
+            let max_retries = Arc::new(Mutex::new(2));
+
+            assert!(retry_max_ok(client.clone(), max_retries).await.is_ok());
+            assert_eq!(*client.cluster.read().await.0.lock().unwrap(), 2);
+        })
     }
 }
