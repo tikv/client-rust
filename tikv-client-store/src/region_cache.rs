@@ -1,7 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::Key;
-use tikv_client_store::{Region, RegionId};
+use crate::{Region, RegionId};
+use tikv_client_common::Key;
 
 use derive_new::new;
 use std::collections::{BTreeMap, HashMap};

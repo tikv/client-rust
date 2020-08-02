@@ -13,12 +13,10 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tikv_client_common::{security::SecurityManager, stats::pd_stats, Error, Result};
+use tikv_client_common::{security::SecurityManager, stats::pd_stats, Error, Key, Result};
 use tikv_client_pd::{Cluster, Connection};
-use tikv_client_store::{Region, RegionId, StoreId};
+use tikv_client_store::{Region, RegionCache, RegionId, StoreId};
 use tokio::sync::RwLock;
-
-use crate::{pd::region_cache::RegionCache, Key};
 
 // FIXME: these numbers and how they are used are all just cargo-culted in, there
 // may be more optimal values.

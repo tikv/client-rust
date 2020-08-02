@@ -5,6 +5,7 @@ extern crate log;
 
 mod errors;
 pub mod region;
+mod region_cache;
 mod store_builder;
 
 pub use crate::errors::{HasError, HasRegionError};
@@ -13,6 +14,7 @@ pub use crate::region::{Region, RegionId, RegionVerId, StoreId};
 #[doc(inline)]
 pub use crate::store_builder::StoreBuilder;
 pub use kvproto::tikvpb::TikvClient;
+pub use region_cache::RegionCache;
 
 use derive_new::new;
 use futures::{future::BoxFuture, prelude::*};
