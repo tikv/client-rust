@@ -31,18 +31,26 @@ pub trait PdClient: Send + Sync + 'static {
         region: Region,
     ) -> BoxFuture<'static, Result<Store<Self::KvClient>>>;
 
-    fn region_for_key(&self, key: &Key, skip_cache: bool) -> BoxFuture<'static, Result<Region>>;
+    fn region_for_key(
+        &self,
+        key: &Key,
+        error_region: Option<Region>,
+    ) -> BoxFuture<'static, Result<Region>>;
 
-    fn region_for_id(&self, id: RegionId, skip_cache: bool) -> BoxFuture<'static, Result<Region>>;
+    fn region_for_id(
+        &self,
+        id: RegionId,
+        error_region: Option<Region>,
+    ) -> BoxFuture<'static, Result<Region>>;
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>>;
 
     fn store_for_key(
         self: Arc<Self>,
         key: &Key,
-        skip_cache: bool,
+        error_region: Option<Region>,
     ) -> BoxFuture<'static, Result<Store<Self::KvClient>>> {
-        self.region_for_key(key, skip_cache)
+        self.region_for_key(key, error_region)
             .and_then(move |region| self.map_region_to_store(region))
             .boxed()
     }
@@ -50,9 +58,9 @@ pub trait PdClient: Send + Sync + 'static {
     fn store_for_id(
         self: Arc<Self>,
         id: RegionId,
-        skip_cache: bool,
+        error_region: Option<Region>,
     ) -> BoxFuture<'static, Result<Store<Self::KvClient>>> {
-        self.region_for_id(id, skip_cache)
+        self.region_for_id(id, error_region)
             .and_then(move |region| self.map_region_to_store(region).boxed())
             .boxed()
     }
@@ -60,13 +68,13 @@ pub trait PdClient: Send + Sync + 'static {
     fn group_keys_by_region<K: AsRef<Key> + Send + Sync + 'static>(
         self: Arc<Self>,
         keys: impl Iterator<Item = K> + Send + Sync + 'static,
-        skip_cache: bool,
+        error_region: Option<Region>,
     ) -> BoxStream<'static, Result<(RegionId, Vec<K>)>> {
         let keys = keys.peekable();
         stream_fn(keys, move |mut keys| {
             if let Some(key) = keys.next() {
                 Either::Left(
-                    self.region_for_key(key.as_ref(), skip_cache)
+                    self.region_for_key(key.as_ref(), error_region.clone())
                         .map_ok(move |region| {
                             let id = region.id();
                             let mut grouped = vec![key];
@@ -90,7 +98,7 @@ pub trait PdClient: Send + Sync + 'static {
     fn stores_for_range(
         self: Arc<Self>,
         range: BoundRange,
-        skip_cache: bool,
+        error_region: Option<Region>,
     ) -> BoxStream<'static, Result<Store<Self::KvClient>>> {
         let (start_key, end_key) = range.into_keys();
         stream_fn(Some(start_key), move |start_key| {
@@ -102,7 +110,7 @@ pub trait PdClient: Send + Sync + 'static {
 
             let this = self.clone();
             Either::Left(
-                self.region_for_key(&start_key, skip_cache)
+                self.region_for_key(&start_key, error_region.clone())
                     .and_then(move |region| {
                         let region_end = region.end_key();
                         this.map_region_to_store(region).map_ok(move |store| {
@@ -123,7 +131,7 @@ pub trait PdClient: Send + Sync + 'static {
     fn group_ranges_by_region(
         self: Arc<Self>,
         mut ranges: Vec<BoundRange>,
-        skip_cache: bool,
+        error_region: Option<Region>,
     ) -> BoxStream<'static, Result<(RegionId, Vec<BoundRange>)>> {
         ranges.reverse();
         stream_fn(Some(ranges), move |ranges| {
@@ -135,7 +143,7 @@ pub trait PdClient: Send + Sync + 'static {
             if let Some(range) = ranges.pop() {
                 let (start_key, end_key) = range.clone().into_keys();
                 Either::Left(
-                    self.region_for_key(&start_key, skip_cache)
+                    self.region_for_key(&start_key, error_region.clone())
                         .map_ok(move |region| {
                             let id = region.id();
                             let region_start = region.start_key();
@@ -203,16 +211,24 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
             .boxed()
     }
 
-    fn region_for_key(&self, key: &Key, skip_cache: bool) -> BoxFuture<'static, Result<Region>> {
+    fn region_for_key(
+        &self,
+        key: &Key,
+        error_region: Option<Region>,
+    ) -> BoxFuture<'static, Result<Region>> {
         let key: &[u8] = key.into();
         self.pd
             .clone()
-            .get_region(key.to_owned().into(), skip_cache)
+            .get_region(key.to_owned().into(), error_region)
             .boxed()
     }
 
-    fn region_for_id(&self, id: RegionId, skip_cache: bool) -> BoxFuture<'static, Result<Region>> {
-        self.pd.clone().get_region_by_id(id, skip_cache).boxed()
+    fn region_for_id(
+        &self,
+        id: RegionId,
+        error_region: Option<Region>,
+    ) -> BoxFuture<'static, Result<Region>> {
+        self.pd.clone().get_region_by_id(id, error_region).boxed()
     }
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
@@ -322,7 +338,8 @@ pub mod test {
             vec![11, 4].into(),
         ];
 
-        let stream = Arc::new(client).group_keys_by_region(tasks.into_iter(), true);
+        let stream =
+            Arc::new(client).group_keys_by_region(tasks.into_iter(), Some(Region::default()));
         let mut stream = executor::block_on_stream(stream);
 
         assert_eq!(
@@ -348,12 +365,17 @@ pub mod test {
         let k2: Key = vec![5, 2].into();
         let k3: Key = vec![11, 4].into();
         let range1 = (k1, k2.clone()).into();
-        let mut stream = executor::block_on_stream(client.clone().stores_for_range(range1, true));
+        let mut stream = executor::block_on_stream(
+            client
+                .clone()
+                .stores_for_range(range1, Some(Region::default())),
+        );
         assert_eq!(stream.next().unwrap().unwrap().region.id(), 1);
         assert!(stream.next().is_none());
 
         let range2 = (k2, k3).into();
-        let mut stream = executor::block_on_stream(client.stores_for_range(range2, true));
+        let mut stream =
+            executor::block_on_stream(client.stores_for_range(range2, Some(Region::default())));
         assert_eq!(stream.next().unwrap().unwrap().region.id(), 1);
         assert_eq!(stream.next().unwrap().unwrap().region.id(), 2);
         assert!(stream.next().is_none());
@@ -372,7 +394,9 @@ pub mod test {
         let range3 = (k2.clone(), k4.clone()).into();
         let ranges: Vec<BoundRange> = vec![range1, range2, range3];
 
-        let mut stream = executor::block_on_stream(client.group_ranges_by_region(ranges, true));
+        let mut stream = executor::block_on_stream(
+            client.group_ranges_by_region(ranges, Some(Region::default())),
+        );
         let ranges1 = stream.next().unwrap().unwrap();
         let ranges2 = stream.next().unwrap().unwrap();
         let ranges3 = stream.next().unwrap().unwrap();

@@ -9,7 +9,7 @@ use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
 use kvproto::{kvrpcpb, pdpb::Timestamp, tikvpb::TikvClient};
 use std::{mem, sync::Arc};
 use tikv_client_common::TimestampExt;
-use tikv_client_store::{KvClient, RpcFnType, Store};
+use tikv_client_store::{KvClient, Region, RpcFnType, Store};
 
 impl KvRequest for kvrpcpb::GetRequest {
     type Result = Option<Value>;
@@ -21,10 +21,10 @@ impl KvRequest for kvrpcpb::GetRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-        is_retry: bool,
+        error_region: Option<Region>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let key = mem::take(&mut self.key).into();
-        store_stream_for_key(key, pd_client, is_retry)
+        store_stream_for_key(key, pd_client, error_region)
     }
 
     fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
@@ -88,10 +88,10 @@ impl KvRequest for kvrpcpb::BatchGetRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-        is_retry: bool,
+        error_region: Option<Region>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let keys = mem::take(&mut self.keys);
-        store_stream_for_keys(keys, pd_client, is_retry)
+        store_stream_for_keys(keys, pd_client, error_region)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
@@ -149,12 +149,12 @@ impl KvRequest for kvrpcpb::ScanRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-        is_retry: bool,
+        error_region: Option<Region>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let start_key = mem::take(&mut self.start_key);
         let end_key = mem::take(&mut self.end_key);
         let range = BoundRange::from((start_key, end_key));
-        store_stream_for_range(range, pd_client, is_retry)
+        store_stream_for_range(range, pd_client, error_region)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
@@ -220,6 +220,7 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
 
     fn on_region_error(
         self,
+        _region: Region,
         region_error: Error,
         _pd_client: Arc<impl PdClient>,
         _backoff: impl Backoff,
@@ -230,7 +231,7 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-        is_retry: bool,
+        error_region: Option<Region>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let context = self
             .context
@@ -238,7 +239,7 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
             .expect("ResolveLockRequest context must be given ");
         let keys = mem::take(&mut self.keys);
         pd_client
-            .store_for_id(context.region_id, is_retry)
+            .store_for_id(context.region_id, error_region)
             .map_ok(move |store| ((context, keys), store))
             .into_stream()
             .boxed()
@@ -287,10 +288,10 @@ impl KvRequest for kvrpcpb::CleanupRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-        is_retry: bool,
+        error_region: Option<Region>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let key = mem::take(&mut self.key).into();
-        store_stream_for_key(key, pd_client, is_retry)
+        store_stream_for_key(key, pd_client, error_region)
     }
 
     fn map_result(resp: Self::RpcResponse) -> Self::Result {
@@ -341,10 +342,10 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-        is_retry: bool,
+        error_region: Option<Region>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let mutations = mem::take(&mut self.mutations);
-        store_stream_for_keys(mutations, pd_client, is_retry)
+        store_stream_for_keys(mutations, pd_client, error_region)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -404,10 +405,10 @@ impl KvRequest for kvrpcpb::CommitRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-        is_retry: bool,
+        error_region: Option<Region>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let keys = mem::take(&mut self.keys);
-        store_stream_for_keys(keys, pd_client, is_retry)
+        store_stream_for_keys(keys, pd_client, error_region)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
@@ -453,10 +454,10 @@ impl KvRequest for kvrpcpb::BatchRollbackRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-        is_retry: bool,
+        error_region: Option<Region>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         let keys = mem::take(&mut self.keys);
-        store_stream_for_keys(keys, pd_client, is_retry)
+        store_stream_for_keys(keys, pd_client, error_region)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}

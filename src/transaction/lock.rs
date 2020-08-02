@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
 };
 use tikv_client_common::{ErrorKind, Key, Result, TimestampExt};
+use tikv_client_store::Region;
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 
@@ -38,7 +39,7 @@ pub async fn resolve_locks(
         let region_ver_id = pd_client
             // FIXME: this always skips the region cache, we can use the region cache
             // if we add retry logic (I think).
-            .region_for_key(&primary_key, true)
+            .region_for_key(&primary_key, Some(Region::default()))
             .await?
             .ver_id();
         // skip if the region is cleaned
@@ -84,10 +85,10 @@ async fn resolve_lock_with_retry(
 ) -> Result<RegionVerId> {
     // TODO: Add backoff
     let mut error = None;
-    let mut invalidate_cache = false;
+    let mut error_region = None;
 
     for _ in 0..RESOLVE_LOCK_RETRY_LIMIT {
-        let region = pd_client.region_for_key(&key, invalidate_cache).await?;
+        let region = pd_client.region_for_key(&key, error_region.clone()).await?;
         let context = match region.context() {
             Ok(context) => context,
             Err(e) => {
@@ -109,7 +110,7 @@ async fn resolve_lock_with_retry(
                     error = Some(e);
                     // If there was a region error, then next time around invalidate the
                     // key in the region cache and try again without caching.
-                    invalidate_cache = true;
+                    error_region = Some(region);
                     continue;
                 }
                 _ => return Err(e),

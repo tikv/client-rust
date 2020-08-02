@@ -98,13 +98,18 @@ impl RetryClient<Cluster> {
     }
 
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
-    pub async fn get_region(self: Arc<Self>, key: Key, skip_cache: bool) -> Result<Region> {
-        if skip_cache {
+    pub async fn get_region(
+        self: Arc<Self>,
+        key: Key,
+        error_region: Option<Region>,
+    ) -> Result<Region> {
+        if error_region.is_some() {
             self.cache.write().await.remove_region_by_start_key(&key);
         } else if let Some(cached) = self.cache.read().await.find_region_by_key(&key) {
             return Ok(cached);
         }
 
+        // TODO: check region version for whether or not to do a new request
         let s = self.clone();
         match self.do_get_region(key).await {
             Ok(region) => {
@@ -132,14 +137,15 @@ impl RetryClient<Cluster> {
     pub async fn get_region_by_id(
         self: Arc<Self>,
         id: RegionId,
-        skip_cache: bool,
+        error_region: Option<Region>,
     ) -> Result<Region> {
-        if skip_cache {
+        if error_region.is_some() {
             self.cache.write().await.remove_region_by_id(id);
         } else if let Some(cached) = self.cache.read().await.find_region_by_id(id) {
             return Ok(cached);
         }
 
+        // TODO: check region version for whether or not to do a new request
         let s = self.clone();
         match self.do_get_region_by_id(id).await {
             Ok(region) => {
