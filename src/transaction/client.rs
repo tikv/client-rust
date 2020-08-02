@@ -1,13 +1,11 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    pd::{PdClient, PdRpcClient},
-    transaction::{Snapshot, Timestamp, Transaction},
-    Config, Result,
-};
+use crate::transaction::{Snapshot, Transaction};
 
+use crate::pd::{PdClient, PdRpcClient};
 use futures::executor::ThreadPool;
 use std::sync::Arc;
+use tikv_client_common::{Config, Result, Timestamp};
 
 /// The TiKV transactional `Client` is used to issue requests to the TiKV server and PD cluster.
 pub struct Client {

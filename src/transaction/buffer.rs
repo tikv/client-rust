@@ -1,11 +1,8 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{Key, KvPair, Result, Value};
-
 use kvproto::kvrpcpb;
-use std::collections::BTreeMap;
-use std::future::Future;
-use std::sync::Mutex;
+use std::{collections::BTreeMap, future::Future, sync::Mutex};
+use tikv_client_common::{Key, KvPair, Result, Value};
 
 /// A caching layer which buffers reads and writes in a transaction.
 #[derive(Default)]
@@ -139,7 +136,7 @@ impl Mutation {
             Mutation::Cached(_) => return None,
             Mutation::Put(v) => {
                 pb.set_op(kvrpcpb::Op::Put);
-                pb.set_value(v.clone().into());
+                pb.set_value(v.clone());
             }
             Mutation::Del => pb.set_op(kvrpcpb::Op::Del),
             Mutation::Lock => pb.set_op(kvrpcpb::Op::Lock),
@@ -179,8 +176,7 @@ impl MutationValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::executor::block_on;
-    use futures::future::ready;
+    use futures::{executor::block_on, future::ready};
 
     #[test]
     #[allow(unreachable_code)]
@@ -192,7 +188,7 @@ mod tests {
             block_on(buffer.get_or_else(b"key1".to_vec().into(), move |_| ready(panic!())))
                 .unwrap()
                 .unwrap(),
-            b"value1".to_vec().into()
+            b"value1".to_vec()
         );
 
         buffer.delete(b"key2".to_vec().into());

@@ -2,7 +2,6 @@
 
 use super::RawRpcRequest;
 use crate::{
-    kv_client::{KvClient, RpcFnType, Store},
     pd::PdClient,
     request::{
         store_stream_for_key, store_stream_for_keys, store_stream_for_range,
@@ -11,14 +10,11 @@ use crate::{
     transaction::HasLocks,
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
+use tikv_client_store::{KvClient, RpcFnType, Store};
 
-use futures::future::BoxFuture;
-use futures::prelude::*;
-use futures::stream::BoxStream;
-use kvproto::kvrpcpb;
-use kvproto::tikvpb::TikvClient;
-use std::mem;
-use std::sync::Arc;
+use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
+use kvproto::{kvrpcpb, tikvpb::TikvClient};
+use std::{mem, sync::Arc};
 
 impl KvRequest for kvrpcpb::RawGetRequest {
     type Result = Option<Value>;
@@ -26,14 +22,6 @@ impl KvRequest for kvrpcpb::RawGetRequest {
     type KeyData = Key;
     const REQUEST_NAME: &'static str = "raw_get";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_get_async_opt;
-
-    fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = store.request::<Self>();
-        req.set_key(key.into());
-        req.set_cf(self.cf.clone());
-
-        req
-    }
 
     fn store_stream<PdC: PdClient>(
         &mut self,
@@ -44,12 +32,19 @@ impl KvRequest for kvrpcpb::RawGetRequest {
         store_stream_for_key(key, pd_client, is_retry)
     }
 
+    fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
+        let mut req = self.request_from_store(store);
+        req.set_key(key.into());
+        req.set_cf(self.cf.clone());
+
+        req
+    }
+
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
-        let result: Value = resp.take_value().into();
-        if result.is_empty() {
+        if resp.not_found {
             None
         } else {
-            Some(result)
+            Some(resp.take_value())
         }
     }
 
@@ -82,7 +77,7 @@ impl KvRequest for kvrpcpb::RawBatchGetRequest {
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_get_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(&self, keys: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = store.request::<Self>();
+        let mut req = self.request_from_store(store);
         req.set_keys(keys.into_iter().map(Into::into).collect());
         req.set_cf(self.cf.clone());
 
@@ -128,9 +123,9 @@ impl KvRequest for kvrpcpb::RawPutRequest {
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_put_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = store.request::<Self>();
+        let mut req = self.request_from_store(store);
         req.set_key(key.0.into());
-        req.set_value(key.1.into());
+        req.set_value(key.1);
         req.set_cf(self.cf.clone());
 
         req
@@ -166,7 +161,7 @@ pub fn new_raw_put_request(
 ) -> kvrpcpb::RawPutRequest {
     let mut req = kvrpcpb::RawPutRequest::default();
     req.set_key(key.into().into());
-    req.set_value(value.into().into());
+    req.set_value(value.into());
     req.maybe_set_cf(cf);
 
     req
@@ -180,7 +175,7 @@ impl KvRequest for kvrpcpb::RawBatchPutRequest {
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_put_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(&self, pairs: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = store.request::<Self>();
+        let mut req = self.request_from_store(store);
         req.set_pairs(pairs.into_iter().map(Into::into).collect());
         req.set_cf(self.cf.clone());
 
@@ -224,7 +219,7 @@ impl KvRequest for kvrpcpb::RawDeleteRequest {
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_delete_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = store.request::<Self>();
+        let mut req = self.request_from_store(store);
         req.set_key(key.into());
         req.set_cf(self.cf.clone());
 
@@ -271,7 +266,7 @@ impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_delete_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(&self, keys: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = store.request::<Self>();
+        let mut req = self.request_from_store(store);
         req.set_keys(keys.into_iter().map(Into::into).collect());
         req.set_cf(self.cf.clone());
 
@@ -319,7 +314,7 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
         (start_key, end_key): Self::KeyData,
         store: &Store<KvC>,
     ) -> Self {
-        let mut req = store.request::<Self>();
+        let mut req = self.request_from_store(store);
         req.set_start_key(start_key.into());
         req.set_end_key(end_key.into());
         req.set_cf(self.cf.clone());
@@ -375,7 +370,7 @@ impl KvRequest for kvrpcpb::RawScanRequest {
         (start_key, end_key): Self::KeyData,
         store: &Store<KvC>,
     ) -> Self {
-        let mut req = store.request::<Self>();
+        let mut req = self.request_from_store(store);
         req.set_start_key(start_key.into());
         req.set_end_key(end_key.into());
         req.set_limit(self.limit);
@@ -432,7 +427,7 @@ impl KvRequest for kvrpcpb::RawBatchScanRequest {
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_scan_async_opt;
 
     fn make_rpc_request<KvC: KvClient>(&self, ranges: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = store.request::<Self>();
+        let mut req = self.request_from_store(store);
         req.set_ranges(ranges.into_iter().map(Into::into).collect());
         req.set_each_limit(self.each_limit);
         req.set_key_only(self.key_only);
@@ -513,11 +508,12 @@ impl HasLocks for kvrpcpb::RawDeleteRangeResponse {}
 mod test {
     use super::*;
 
-    use crate::mock::MockPdClient;
-    use crate::request::DispatchHook;
+    use crate::{mock::MockPdClient, request::DispatchHook};
 
-    use futures::executor;
-    use futures::future::{ready, BoxFuture};
+    use futures::{
+        executor,
+        future::{ready, BoxFuture},
+    };
     use grpcio::CallOption;
     use kvproto::kvrpcpb;
 

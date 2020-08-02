@@ -1,6 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::{Region, RegionId};
+use tikv_client_store::{Region, RegionId};
 use crate::Key;
 
 use derive_new::new;

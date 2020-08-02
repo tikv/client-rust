@@ -2,8 +2,7 @@
 
 use failure::Fallible;
 use futures::prelude::*;
-use std::collections::HashMap;
-use std::env;
+use std::{collections::HashMap, env};
 use tikv_client::{Config, Key, Result, TransactionClient, Value};
 
 #[tokio::test]
