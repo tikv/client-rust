@@ -1,5 +1,5 @@
-use derive_new::new;
 use kvproto::{kvrpcpb, metapb};
+use std::time::Instant;
 use tikv_client_common::{Error, Key, Result};
 
 pub type RegionId = u64;
@@ -12,13 +12,31 @@ pub struct RegionVerId {
     pub ver: u64,
 }
 
-#[derive(new, Clone, Default, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Region {
     pub region: metapb::Region,
     pub leader: Option<metapb::Peer>,
+    pub ts: Option<Instant>,
+    pub status: Status,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Status {
+    NotInit,
+    Refreshing,
+    Refreshed,
 }
 
 impl Region {
+    pub fn new(region: metapb::Region, leader: Option<metapb::Peer>) -> Self {
+        Region {
+            region,
+            leader,
+            ts: Some(Instant::now()),
+            status: Status::Refreshed,
+        }
+    }
+
     #[allow(dead_code)]
     pub fn switch_peer(&mut self, _to: StoreId) -> Result<()> {
         unimplemented!()
@@ -77,5 +95,28 @@ impl Region {
             .cloned()
             .ok_or_else(|| Error::leader_not_found(self.id()))
             .map(|s| s.get_store_id())
+    }
+
+    pub fn is_refreshing(&self) -> bool {
+        self.status == Status::Refreshing
+    }
+
+    pub fn is_refreshed(&self) -> bool {
+        self.status == Status::Refreshed
+    }
+
+    pub fn set_refreshing(&mut self) {
+        self.status = Status::Refreshing
+    }
+}
+
+impl Default for Region {
+    fn default() -> Self {
+        Region {
+            region: metapb::Region::default(),
+            leader: None,
+            ts: None,
+            status: Status::NotInit,
+        }
     }
 }

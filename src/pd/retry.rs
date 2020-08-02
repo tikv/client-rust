@@ -16,7 +16,7 @@ use std::{
 use tikv_client_common::{security::SecurityManager, stats::pd_stats, Error, Key, Result};
 use tikv_client_pd::{Cluster, Connection};
 use tikv_client_store::{Region, RegionCache, RegionId, StoreId};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 // FIXME: these numbers and how they are used are all just cargo-culted in, there
 // may be more optimal values.
@@ -29,7 +29,7 @@ pub struct RetryClient<Cl = Cluster> {
     // Tuple is the cluster and the time of the cluster's last reconnect.
     cluster: RwLock<(Cl, Instant)>,
     connection: Connection,
-    cache: RwLock<RegionCache>,
+    cache: Mutex<RegionCache>,
     timeout: Duration,
 }
 
@@ -46,7 +46,7 @@ impl<Cl> RetryClient<Cl> {
             cluster: RwLock::new((cluster, Instant::now())),
             connection,
             timeout,
-            cache: RwLock::new(RegionCache::new()),
+            cache: Mutex::new(RegionCache::new()),
         }
     }
 }
@@ -93,7 +93,7 @@ impl RetryClient<Cluster> {
             cluster,
             connection,
             timeout,
-            cache: RwLock::new(RegionCache::new()),
+            cache: Mutex::new(RegionCache::new()),
         })
     }
 
@@ -103,17 +103,26 @@ impl RetryClient<Cluster> {
         key: Key,
         error_region: Option<Region>,
     ) -> Result<Region> {
-        if error_region.is_some() {
-            self.cache.write().await.remove_region_by_start_key(&key);
-        } else if let Some(cached) = self.cache.read().await.find_region_by_key(&key) {
-            return Ok(cached);
+        {
+            if let Some(mut cached) = self.cache.lock().await.find_region_by_key(&key) {
+                if let Some(error_region) = error_region {
+                    if error_region.ts < cached.ts && cached.is_refreshed() {
+                        return Ok(cached);
+                    } else if cached.is_refreshing() {
+                        //TODO: back off
+                    } else {
+                        cached.set_refreshing();
+                    }
+                }
+            }
         }
 
-        // TODO: check region version for whether or not to do a new request
         let s = self.clone();
-        match self.do_get_region(key).await {
+        match self.do_get_region(key.clone()).await {
             Ok(region) => {
-                s.cache.write().await.add_region(region.clone());
+                let mut cache = s.cache.lock().await;
+                cache.remove_region_by_start_key(&key);
+                cache.add_region(region.clone());
                 Ok(region)
             }
             Err(e) => Err(e),
@@ -139,17 +148,26 @@ impl RetryClient<Cluster> {
         id: RegionId,
         error_region: Option<Region>,
     ) -> Result<Region> {
-        if error_region.is_some() {
-            self.cache.write().await.remove_region_by_id(id);
-        } else if let Some(cached) = self.cache.read().await.find_region_by_id(id) {
-            return Ok(cached);
+        {
+            if let Some(mut cached) = self.cache.lock().await.find_region_by_id(id) {
+                if let Some(error_region) = error_region {
+                    if error_region.ts < cached.ts && cached.is_refreshed() {
+                        return Ok(cached);
+                    } else if cached.is_refreshing() {
+                        //TODO: back off
+                    } else {
+                        cached.set_refreshing();
+                    }
+                }
+            }
         }
 
-        // TODO: check region version for whether or not to do a new request
         let s = self.clone();
         match self.do_get_region_by_id(id).await {
             Ok(region) => {
-                s.cache.write().await.add_region(region.clone());
+                let mut cache = s.cache.lock().await;
+                cache.remove_region_by_id(id);
+                cache.add_region(region.clone());
                 Ok(region)
             }
             Err(e) => Err(e),
