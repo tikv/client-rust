@@ -77,6 +77,12 @@ impl RegionCache {
         }
     }
 
+    pub fn set_region_refreshing(&mut self, region: Region) {
+        if let Some(region) = self.regions.get_mut(&region.start_key()) {
+            region.set_refreshing()
+        }
+    }
+
     fn clear(&mut self) {
         self.regions.clear();
         self.id_to_start_key.clear();

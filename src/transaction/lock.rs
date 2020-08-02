@@ -39,7 +39,7 @@ pub async fn resolve_locks(
         let region_ver_id = pd_client
             // FIXME: this always skips the region cache, we can use the region cache
             // if we add retry logic (I think).
-            .region_for_key(&primary_key, Some(Region::default()))
+            .region_for_key(&primary_key, Some(Region::new_for_refresh()))
             .await?
             .ver_id();
         // skip if the region is cleaned

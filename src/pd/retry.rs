@@ -103,16 +103,18 @@ impl RetryClient<Cluster> {
         key: Key,
         error_region: Option<Region>,
     ) -> Result<Region> {
-        {
-            if let Some(mut cached) = self.cache.lock().await.find_region_by_key(&key) {
-                if let Some(error_region) = error_region {
-                    if error_region.ts < cached.ts && cached.is_refreshed() {
-                        return Ok(cached);
-                    } else if cached.is_refreshing() {
-                        //TODO: back off
-                    } else {
-                        cached.set_refreshing();
-                    }
+        // TODO: simplify
+        if let Some(error_region) = error_region {
+            let mut guard = self.cache.lock().await;
+            if let Some(cached) = guard.find_region_by_key(&key) {
+                if error_region.is_force_refresh() {
+                    guard.set_region_refreshing(cached)
+                } else if error_region.ts < cached.ts && cached.is_refreshed() {
+                    return Ok(cached);
+                } else if cached.is_refreshing() {
+                    //TODO: back off
+                } else {
+                    guard.set_region_refreshing(cached)
                 }
             }
         }
@@ -148,16 +150,18 @@ impl RetryClient<Cluster> {
         id: RegionId,
         error_region: Option<Region>,
     ) -> Result<Region> {
-        {
-            if let Some(mut cached) = self.cache.lock().await.find_region_by_id(id) {
-                if let Some(error_region) = error_region {
-                    if error_region.ts < cached.ts && cached.is_refreshed() {
-                        return Ok(cached);
-                    } else if cached.is_refreshing() {
-                        //TODO: back off
-                    } else {
-                        cached.set_refreshing();
-                    }
+        // TODO: simplify
+        if let Some(error_region) = error_region {
+            let mut guard = self.cache.lock().await;
+            if let Some(cached) = guard.find_region_by_id(id) {
+                if error_region.is_force_refresh() {
+                    guard.set_region_refreshing(cached)
+                } else if error_region.ts < cached.ts && cached.is_refreshed() {
+                    return Ok(cached);
+                } else if cached.is_refreshing() {
+                    //TODO: back off
+                } else {
+                    guard.set_region_refreshing(cached)
                 }
             }
         }

@@ -23,6 +23,7 @@ pub struct Region {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Status {
     NotInit,
+    ForceRefresh,
     Refreshing,
     Refreshed,
 }
@@ -101,12 +102,25 @@ impl Region {
         self.status == Status::Refreshing
     }
 
+    pub fn is_force_refresh(&self) -> bool {
+        self.status == Status::ForceRefresh
+    }
+
     pub fn is_refreshed(&self) -> bool {
         self.status == Status::Refreshed
     }
 
     pub fn set_refreshing(&mut self) {
         self.status = Status::Refreshing
+    }
+
+    pub fn new_for_refresh() -> Self {
+        Region {
+            region: metapb::Region::default(),
+            leader: None,
+            ts: None,
+            status: Status::ForceRefresh,
+        }
     }
 }
 
@@ -118,5 +132,18 @@ impl Default for Region {
             ts: None,
             status: Status::NotInit,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn compare_region() {
+        let cached = Region::new(metapb::Region::default(), None);
+        let d = Region::default();
+
+        assert!(cached.ts > d.ts);
     }
 }
