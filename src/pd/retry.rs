@@ -1,7 +1,6 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 //! A utility module for managing and retrying PD requests.
-
 use async_trait::async_trait;
 use futures_timer::Delay;
 use grpcio::Environment;
@@ -112,9 +111,9 @@ impl RetryClient<Cluster> {
         match self.do_get_region(key).await {
             Ok(region) => {
                 s.cache.write().await.add_region(region.clone());
-                return Ok(region);
+                Ok(region)
             }
-            Err(e) => return Err(e),
+            Err(e) => Err(e),
         }
     }
 
