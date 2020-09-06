@@ -49,6 +49,7 @@ tokio = { version = "0.2", features = ["rt-threaded", "macros"] }
 proptest = "0.9"
 proptest-derive = "0.1.0"
 fail = { version = "0.3", features = [ "failpoints" ] }
+simple_logger = "1.9.0"
 
 [patch.crates-io]
 raft-proto = { git = "https://github.com/tikv/raft-rs", rev = "e624c1d48460940a40d8aa69b5329460d9af87dd" }

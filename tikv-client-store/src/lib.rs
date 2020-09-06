@@ -98,6 +98,12 @@ pub struct Store<Client: KvClient> {
     timeout: Duration,
 }
 
+impl<Client: KvClient> Drop for Store<Client> {
+    fn drop(&mut self) {
+        debug!("drop store");
+    }
+}
+
 impl<Client: KvClient> Store<Client> {
     pub fn from_builder<T>(builder: StoreBuilder, connect: Arc<T>) -> Result<Store<Client>>
     where
@@ -135,6 +141,7 @@ where
     RpcFuture: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
     Resp: HasError + Sized + Clone + Send + 'static,
 {
+    debug! {"in map_errors_and_trace, gonna await grpc future"};
     let res = match fut {
         Ok(f) => f.await,
         Err(e) => Err(e),

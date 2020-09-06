@@ -1,10 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-//! Various mock versions of the various clients and other objects.
-//!
-//! The goal is to be able to test functionality independently of the rest of
-//! the system, in particular without requiring a TiKV or PD server, or RPC layer.
-
+use super::{MockKvClient, MockKvConnect, PORT};
 use crate::{
     pd::{PdClient, PdRpcClient, RetryClient},
     request::DispatchHook,
@@ -12,10 +8,13 @@ use crate::{
 };
 use fail::fail_point;
 use futures::future::{ready, BoxFuture, FutureExt};
-use grpcio::CallOption;
+use grpcio::{CallOption, Environment};
 use kvproto::{errorpb, kvrpcpb, metapb, tikvpb::TikvClient};
 use std::{future::Future, sync::Arc, time::Duration};
-use tikv_client_store::{HasError, KvClient, KvConnect, Region, RegionId, Store};
+use tikv_client_common::security::SecurityManager;
+use tikv_client_store::{
+    HasError, KvClient, KvConnect, KvRpcClient, Region, RegionId, Store, TikvConnect,
+};
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
@@ -36,46 +35,9 @@ pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
     .await
     .unwrap()
 }
-
-#[derive(Clone, Eq, PartialEq, Debug)]
-pub struct MockKvClient {
-    addr: String,
-}
-
-pub struct MockKvConnect;
-
-pub struct MockCluster;
-
 pub struct MockPdClient;
 
-impl KvClient for MockKvClient {
-    fn dispatch<Resp, RpcFuture>(
-        &self,
-        _request_name: &'static str,
-        _fut: grpcio::Result<RpcFuture>,
-    ) -> BoxFuture<'static, Result<Resp>>
-    where
-        RpcFuture: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
-        Resp: HasError + Sized + Clone + Send + 'static,
-        RpcFuture: Send + 'static,
-    {
-        unimplemented!()
-    }
-
-    fn get_rpc_client(&self) -> Arc<TikvClient> {
-        unimplemented!()
-    }
-}
-
-impl KvConnect for MockKvConnect {
-    type KvClient = MockKvClient;
-
-    fn connect(&self, address: &str) -> Result<Self::KvClient> {
-        Ok(MockKvClient {
-            addr: address.to_owned(),
-        })
-    }
-}
+pub struct MockCluster;
 
 impl MockPdClient {
     pub fn region1() -> Region {
@@ -106,7 +68,7 @@ impl MockPdClient {
 }
 
 impl PdClient for MockPdClient {
-    type KvClient = MockKvClient;
+    type KvClient = KvRpcClient;
 
     fn map_region_to_store(
         self: Arc<Self>,
@@ -114,9 +76,12 @@ impl PdClient for MockPdClient {
     ) -> BoxFuture<'static, Result<Store<Self::KvClient>>> {
         Box::pin(ready(Ok(Store::new(
             region,
-            MockKvClient {
-                addr: String::new(),
-            },
+            TikvConnect::new(
+                Arc::new(Environment::new(1)),
+                Arc::new(SecurityManager::default()),
+            )
+            .connect(format!("localhost:{}", PORT).as_str())
+            .unwrap(),
             Duration::from_secs(60),
         ))))
     }
@@ -144,19 +109,5 @@ impl PdClient for MockPdClient {
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
         unimplemented!()
-    }
-}
-
-impl DispatchHook for kvrpcpb::ResolveLockRequest {
-    fn dispatch_hook(
-        &self,
-        _opt: CallOption,
-    ) -> Option<BoxFuture<'static, Result<kvrpcpb::ResolveLockResponse>>> {
-        fail_point!("region-error", |_| {
-            let mut resp = kvrpcpb::ResolveLockResponse::default();
-            resp.region_error = Some(errorpb::Error::default());
-            Some(ready(Ok(resp)).boxed())
-        });
-        Some(ready(Ok(kvrpcpb::ResolveLockResponse::default())).boxed())
     }
 }
