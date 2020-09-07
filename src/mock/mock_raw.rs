@@ -1,9 +1,13 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::MockPdClient;
+use super::{mock_tikv::PORT, MockRpcPdClient};
 use crate::{raw::requests, request::KvRequest, ColumnFamily};
+use grpcio::Environment;
 use std::{sync::Arc, u32};
-use tikv_client_common::{BoundRange, Config, Error, Key, KvPair, Result, Value};
+use tikv_client_common::{
+    security::SecurityManager, BoundRange, Config, Error, Key, KvPair, Result, Value,
+};
+use tikv_client_store::{KvConnect, TikvConnect};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
@@ -11,14 +15,20 @@ const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 // should modify client so that it is compatible with and type of pd clients and use that for test.
 #[derive(Clone)]
 pub struct MockRawClient {
-    rpc: Arc<MockPdClient>,
+    rpc: Arc<MockRpcPdClient>,
     cf: Option<ColumnFamily>,
     key_only: bool,
 }
 
 impl MockRawClient {
-    pub async fn new(config: Config) -> Result<MockRawClient> {
-        let rpc = Arc::new(MockPdClient {});
+    pub async fn new(_config: Config) -> Result<MockRawClient> {
+        let rpc_client = TikvConnect::new(
+            Arc::new(Environment::new(1)),
+            Arc::new(SecurityManager::default()),
+        )
+        .connect(format!("localhost:{}", PORT).as_str())
+        .unwrap();
+        let rpc = Arc::new(MockRpcPdClient::new(rpc_client));
         Ok(MockRawClient {
             rpc,
             cf: None,
@@ -120,19 +130,17 @@ impl MockRawClient {
 
 #[cfg(test)]
 mod test {
-    use std::{sync::Arc, thread, time::Duration};
 
     use super::MockRawClient;
     use crate::{
-        mock::{start_server, MockPdClient},
+        mock::{start_server, MockRpcPdClient},
         pd::PdClient,
         request::KvRequest,
     };
     use grpcio::redirect_log;
-    use kvproto::{kvrpcpb::*, tikvpb::*};
+
     use simple_logger::SimpleLogger;
     use tikv_client_common::{Config, KvPair};
-    use tikv_client_store::KvClient;
 
     #[tokio::test]
     async fn test_raw_put_get() {
@@ -140,28 +148,6 @@ mod test {
         redirect_log();
 
         let mut server = start_server();
-
-        // FIXME: this is a workaround to solve the issue of channel destruction before using it.
-        // Cause of the bug is unknown yet.
-        //      TikvClient is dropped even though the async func(`map_errors_and_trace`) that use it hasn't been awaited.
-        //      When the func is awaited, the channel is destroyed and "2-Unknown Channel Destroyed" error is thrown.
-        // By manually constructing a store, which contains a TikvClient,
-        // subsequent client calls can share the connection.
-        let req = RawGetRequest::default();
-        let pd_client = Arc::new(MockPdClient {});
-        let region = pd_client
-            .region_for_key(&"some_key".to_owned().into())
-            .await
-            .unwrap();
-        let store = pd_client.map_region_to_store(region).await.unwrap();
-        let request = req.make_rpc_request("some_key".to_owned().into(), &store);
-        let _ = RawGetRequest::RPC_FN(
-            &store.client.get_rpc_client(),
-            &request,
-            store.call_options(),
-        );
-        // drop(store);
-
         let mock_client = MockRawClient::new(Config::default()).await.unwrap();
 
         // empty; get non-existent key
@@ -224,11 +210,7 @@ mod test {
         assert!(res.is_err());
 
         let res = mock_client
-            .batch_delete(vec![
-                "k1".to_owned(),
-                "k2".to_owned(),
-                "k4".to_owned(),
-            ])
+            .batch_delete(vec!["k1".to_owned(), "k2".to_owned(), "k4".to_owned()])
             .await;
         assert!(res.is_ok());
 

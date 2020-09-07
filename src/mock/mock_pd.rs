@@ -1,17 +1,16 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::{MockKvClient, MockKvConnect, PORT};
+use super::{MockKvClient, MockKvConnect};
 use crate::{
     pd::{PdClient, PdRpcClient, RetryClient},
-    request::DispatchHook,
     Config, Error, Key, Result, Timestamp,
 };
-use fail::fail_point;
-use futures::future::{ready, BoxFuture, FutureExt};
-use grpcio::{CallOption, Environment};
+
+use futures::future::{ready, BoxFuture};
+
 use kvproto::{errorpb, kvrpcpb, metapb, tikvpb::TikvClient};
-use std::{future::Future, sync::Arc, time::Duration};
-use tikv_client_common::security::SecurityManager;
+use std::{sync::Arc, time::Duration};
+
 use tikv_client_store::{
     HasError, KvClient, KvConnect, KvRpcClient, Region, RegionId, Store, TikvConnect,
 };
@@ -68,7 +67,7 @@ impl MockPdClient {
 }
 
 impl PdClient for MockPdClient {
-    type KvClient = KvRpcClient;
+    type KvClient = MockKvClient;
 
     fn map_region_to_store(
         self: Arc<Self>,
@@ -76,12 +75,9 @@ impl PdClient for MockPdClient {
     ) -> BoxFuture<'static, Result<Store<Self::KvClient>>> {
         Box::pin(ready(Ok(Store::new(
             region,
-            TikvConnect::new(
-                Arc::new(Environment::new(1)),
-                Arc::new(SecurityManager::default()),
-            )
-            .connect(format!("localhost:{}", PORT).as_str())
-            .unwrap(),
+            MockKvClient {
+                addr: String::new(),
+            },
             Duration::from_secs(60),
         ))))
     }
