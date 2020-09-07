@@ -128,11 +128,10 @@ mod test {
         pd::PdClient,
         request::KvRequest,
     };
-    use failure::Fallible;
     use grpcio::redirect_log;
     use kvproto::{kvrpcpb::*, tikvpb::*};
     use simple_logger::SimpleLogger;
-    use tikv_client_common::Config;
+    use tikv_client_common::{Config, KvPair};
     use tikv_client_store::KvClient;
 
     #[tokio::test]
@@ -161,6 +160,7 @@ mod test {
             &request,
             store.call_options(),
         );
+        // drop(store);
 
         let mock_client = MockRawClient::new(Config::default()).await.unwrap();
 
@@ -186,6 +186,21 @@ mod test {
 
         let res = mock_client.get("k1".to_owned()).await;
         assert_eq!(res.unwrap().unwrap(), "v1".as_bytes());
+
+        let _ = mock_client
+            .batch_put(vec![
+                KvPair::new("k3".to_owned(), "v3".to_owned()),
+                KvPair::new("k4".to_owned(), "v4".to_owned()),
+            ])
+            .await
+            .unwrap();
+
+        let res = mock_client
+            .batch_get(vec!["k4".to_owned(), "k3".to_owned()])
+            .await
+            .unwrap();
+        assert_eq!(res[0].1, "v4".as_bytes());
+        assert_eq!(res[1].1, "v3".as_bytes());
 
         let _ = server.shutdown().await;
     }
