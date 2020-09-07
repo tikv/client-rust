@@ -5,12 +5,12 @@ use crate::{
     request::DispatchHook,
     Config, Error, Key, Result, Timestamp,
 };
-use fail::fail_point;
+
 use futures::future::{ready, BoxFuture, FutureExt};
-use grpcio::CallOption;
-use kvproto::{errorpb, kvrpcpb, metapb, tikvpb::TikvClient};
-use std::{future::Future, sync::Arc, time::Duration};
-use tikv_client_store::{HasError, KvClient, KvConnect, Region, RegionId, Store};
+
+use kvproto::tikvpb::TikvClient;
+use std::{future::Future, sync::Arc};
+use tikv_client_store::{HasError, KvClient, KvConnect};
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct MockKvClient {

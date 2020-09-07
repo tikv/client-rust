@@ -8,11 +8,13 @@
 mod mock_kv;
 mod mock_pd;
 mod mock_raw;
+mod mock_rpcpd;
 mod mock_tikv;
 
 pub use mock_kv::{MockKvClient, MockKvConnect};
 pub use mock_pd::{pd_rpc_client, MockPdClient};
 pub use mock_raw::MockRawClient;
+pub use mock_rpcpd::MockRpcPdClient;
 pub use mock_tikv::{start_server, MockTikv, PORT};
 
 use crate::{
@@ -23,9 +25,7 @@ use crate::{
 use fail::fail_point;
 use futures::future::{ready, BoxFuture, FutureExt};
 use grpcio::CallOption;
-use kvproto::{errorpb, kvrpcpb, metapb, tikvpb::TikvClient};
-use std::{future::Future, sync::Arc, time::Duration};
-use tikv_client_store::{KvClient, KvConnect, Region, RegionId, Store};
+use kvproto::{errorpb, kvrpcpb};
 
 impl DispatchHook for kvrpcpb::ResolveLockRequest {
     fn dispatch_hook(

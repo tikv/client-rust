@@ -72,12 +72,6 @@ pub struct KvRpcClient {
     pub rpc_client: Arc<TikvClient>,
 }
 
-impl Drop for KvRpcClient {
-    fn drop(&mut self) {
-        debug!("drop KvRpcClient");
-    }
-}
-
 impl KvClient for KvRpcClient {
     fn dispatch<Resp, RpcFuture>(
         &self,
@@ -141,7 +135,6 @@ where
     RpcFuture: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
     Resp: HasError + Sized + Clone + Send + 'static,
 {
-    debug! {"in map_errors_and_trace, gonna await grpc future"};
     let res = match fut {
         Ok(f) => f.await,
         Err(e) => Err(e),

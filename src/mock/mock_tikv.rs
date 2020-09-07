@@ -1,6 +1,6 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
-use futures::{channel::oneshot, executor::block_on, FutureExt, TryFutureExt};
+use futures::{FutureExt, TryFutureExt};
 use grpcio::{ChannelBuilder, EnvBuilder, Environment, ResourceQuota, Server, ServerBuilder};
 use io::Read;
 use kvproto::{kvrpcpb::*, tikvpb::*};
@@ -8,8 +8,6 @@ use std::{
     collections::HashMap,
     io,
     sync::{Arc, RwLock},
-    thread,
-    time::Duration,
 };
 
 pub const PORT: u16 = 50019;
@@ -56,135 +54,135 @@ impl Tikv for MockTikv {
 
     fn kv_scan(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::ScanRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::ScanResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::ScanRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::ScanResponse>,
     ) {
         todo!()
     }
 
     fn kv_prewrite(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::PrewriteRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::PrewriteResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::PrewriteRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::PrewriteResponse>,
     ) {
         todo!()
     }
 
     fn kv_pessimistic_lock(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::PessimisticLockRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::PessimisticLockResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::PessimisticLockRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::PessimisticLockResponse>,
     ) {
         todo!()
     }
 
     fn kv_pessimistic_rollback(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::PessimisticRollbackRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::PessimisticRollbackResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::PessimisticRollbackRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::PessimisticRollbackResponse>,
     ) {
         todo!()
     }
 
     fn kv_txn_heart_beat(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::TxnHeartBeatRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::TxnHeartBeatResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::TxnHeartBeatRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::TxnHeartBeatResponse>,
     ) {
         todo!()
     }
 
     fn kv_check_txn_status(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::CheckTxnStatusRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::CheckTxnStatusResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::CheckTxnStatusRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::CheckTxnStatusResponse>,
     ) {
         todo!()
     }
 
     fn kv_commit(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::CommitRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::CommitResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::CommitRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::CommitResponse>,
     ) {
         todo!()
     }
 
     fn kv_import(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::ImportRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::ImportResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::ImportRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::ImportResponse>,
     ) {
         todo!()
     }
 
     fn kv_cleanup(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::CleanupRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::CleanupResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::CleanupRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::CleanupResponse>,
     ) {
         todo!()
     }
 
     fn kv_batch_get(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::BatchGetRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::BatchGetResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::BatchGetRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::BatchGetResponse>,
     ) {
         todo!()
     }
 
     fn kv_batch_rollback(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::BatchRollbackRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::BatchRollbackResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::BatchRollbackRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::BatchRollbackResponse>,
     ) {
         todo!()
     }
 
     fn kv_scan_lock(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::ScanLockRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::ScanLockResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::ScanLockRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::ScanLockResponse>,
     ) {
         todo!()
     }
 
     fn kv_resolve_lock(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::ResolveLockRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::ResolveLockResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::ResolveLockRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::ResolveLockResponse>,
     ) {
         todo!()
     }
 
     fn kv_gc(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::GcRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::GcResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::GcRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::GcResponse>,
     ) {
         todo!()
     }
 
     fn kv_delete_range(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::DeleteRangeRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::DeleteRangeResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::DeleteRangeRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::DeleteRangeResponse>,
     ) {
         todo!()
     }
@@ -315,225 +313,225 @@ impl Tikv for MockTikv {
 
     fn raw_scan(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::RawScanRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::RawScanResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::RawScanRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::RawScanResponse>,
     ) {
         todo!()
     }
 
     fn raw_delete_range(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::RawDeleteRangeRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::RawDeleteRangeResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::RawDeleteRangeRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::RawDeleteRangeResponse>,
     ) {
         todo!()
     }
 
     fn raw_batch_scan(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::RawBatchScanRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::RawBatchScanResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::RawBatchScanRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::RawBatchScanResponse>,
     ) {
         todo!()
     }
 
     fn ver_get(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::VerGetRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::VerGetResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::VerGetRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::VerGetResponse>,
     ) {
         todo!()
     }
 
     fn ver_batch_get(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::VerBatchGetRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::VerBatchGetResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::VerBatchGetRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::VerBatchGetResponse>,
     ) {
         todo!()
     }
 
     fn ver_mut(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::VerMutRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::VerMutResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::VerMutRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::VerMutResponse>,
     ) {
         todo!()
     }
 
     fn ver_batch_mut(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::VerBatchMutRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::VerBatchMutResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::VerBatchMutRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::VerBatchMutResponse>,
     ) {
         todo!()
     }
 
     fn ver_scan(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::VerScanRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::VerScanResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::VerScanRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::VerScanResponse>,
     ) {
         todo!()
     }
 
     fn ver_delete_range(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::VerDeleteRangeRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::VerDeleteRangeResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::VerDeleteRangeRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::VerDeleteRangeResponse>,
     ) {
         todo!()
     }
 
     fn unsafe_destroy_range(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::UnsafeDestroyRangeRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::UnsafeDestroyRangeResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::UnsafeDestroyRangeRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::UnsafeDestroyRangeResponse>,
     ) {
         todo!()
     }
 
     fn register_lock_observer(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::RegisterLockObserverRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::RegisterLockObserverResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::RegisterLockObserverRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::RegisterLockObserverResponse>,
     ) {
         todo!()
     }
 
     fn check_lock_observer(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::CheckLockObserverRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::CheckLockObserverResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::CheckLockObserverRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::CheckLockObserverResponse>,
     ) {
         todo!()
     }
 
     fn remove_lock_observer(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::RemoveLockObserverRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::RemoveLockObserverResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::RemoveLockObserverRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::RemoveLockObserverResponse>,
     ) {
         todo!()
     }
 
     fn physical_scan_lock(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::PhysicalScanLockRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::PhysicalScanLockResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::PhysicalScanLockRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::PhysicalScanLockResponse>,
     ) {
         todo!()
     }
 
     fn coprocessor(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::coprocessor::Request,
-        sink: grpcio::UnarySink<kvproto::coprocessor::Response>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::coprocessor::Request,
+        _sink: grpcio::UnarySink<kvproto::coprocessor::Response>,
     ) {
         todo!()
     }
 
     fn coprocessor_stream(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::coprocessor::Request,
-        sink: grpcio::ServerStreamingSink<kvproto::coprocessor::Response>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::coprocessor::Request,
+        _sink: grpcio::ServerStreamingSink<kvproto::coprocessor::Response>,
     ) {
         todo!()
     }
 
     fn batch_coprocessor(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::coprocessor::BatchRequest,
-        sink: grpcio::ServerStreamingSink<kvproto::coprocessor::BatchResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::coprocessor::BatchRequest,
+        _sink: grpcio::ServerStreamingSink<kvproto::coprocessor::BatchResponse>,
     ) {
         todo!()
     }
 
     fn raft(
         &mut self,
-        ctx: grpcio::RpcContext,
-        stream: grpcio::RequestStream<kvproto::raft_serverpb::RaftMessage>,
-        sink: grpcio::ClientStreamingSink<kvproto::raft_serverpb::Done>,
+        _ctx: grpcio::RpcContext,
+        _stream: grpcio::RequestStream<kvproto::raft_serverpb::RaftMessage>,
+        _sink: grpcio::ClientStreamingSink<kvproto::raft_serverpb::Done>,
     ) {
         todo!()
     }
 
     fn batch_raft(
         &mut self,
-        ctx: grpcio::RpcContext,
-        stream: grpcio::RequestStream<kvproto::tikvpb::BatchRaftMessage>,
-        sink: grpcio::ClientStreamingSink<kvproto::raft_serverpb::Done>,
+        _ctx: grpcio::RpcContext,
+        _stream: grpcio::RequestStream<kvproto::tikvpb::BatchRaftMessage>,
+        _sink: grpcio::ClientStreamingSink<kvproto::raft_serverpb::Done>,
     ) {
         todo!()
     }
 
     fn snapshot(
         &mut self,
-        ctx: grpcio::RpcContext,
-        stream: grpcio::RequestStream<kvproto::raft_serverpb::SnapshotChunk>,
-        sink: grpcio::ClientStreamingSink<kvproto::raft_serverpb::Done>,
+        _ctx: grpcio::RpcContext,
+        _stream: grpcio::RequestStream<kvproto::raft_serverpb::SnapshotChunk>,
+        _sink: grpcio::ClientStreamingSink<kvproto::raft_serverpb::Done>,
     ) {
         todo!()
     }
 
     fn split_region(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::SplitRegionRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::SplitRegionResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::SplitRegionRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::SplitRegionResponse>,
     ) {
         todo!()
     }
 
     fn read_index(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::ReadIndexRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::ReadIndexResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::ReadIndexRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::ReadIndexResponse>,
     ) {
         todo!()
     }
 
     fn mvcc_get_by_key(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::MvccGetByKeyRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::MvccGetByKeyResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::MvccGetByKeyRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::MvccGetByKeyResponse>,
     ) {
         todo!()
     }
 
     fn mvcc_get_by_start_ts(
         &mut self,
-        ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::MvccGetByStartTsRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::MvccGetByStartTsResponse>,
+        _ctx: grpcio::RpcContext,
+        _req: kvproto::kvrpcpb::MvccGetByStartTsRequest,
+        _sink: grpcio::UnarySink<kvproto::kvrpcpb::MvccGetByStartTsResponse>,
     ) {
         todo!()
     }
 
     fn batch_commands(
         &mut self,
-        ctx: grpcio::RpcContext,
-        stream: grpcio::RequestStream<kvproto::tikvpb::BatchCommandsRequest>,
-        sink: grpcio::DuplexSink<kvproto::tikvpb::BatchCommandsResponse>,
+        _ctx: grpcio::RpcContext,
+        _stream: grpcio::RequestStream<kvproto::tikvpb::BatchCommandsRequest>,
+        _sink: grpcio::DuplexSink<kvproto::tikvpb::BatchCommandsResponse>,
     ) {
         todo!()
     }
