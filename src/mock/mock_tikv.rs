@@ -5,7 +5,7 @@ use grpcio::{ChannelBuilder, EnvBuilder, Environment, ResourceQuota, Server, Ser
 use io::Read;
 use kvproto::{kvrpcpb::*, tikvpb::*};
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     io,
     sync::{Arc, RwLock},
     thread,
@@ -16,13 +16,13 @@ pub const PORT: u16 = 50019;
 
 #[derive(Debug, Clone)]
 pub struct MockTikv {
-    data: Arc<RwLock<HashMap<Vec<u8>, Vec<u8>>>>,
+    data: Arc<RwLock<BTreeMap<Vec<u8>, Vec<u8>>>>,
 }
 
 impl MockTikv {
     fn new() -> MockTikv {
         MockTikv {
-            data: Arc::new(RwLock::new(HashMap::new())),
+            data: Arc::new(RwLock::new(BTreeMap::new())),
         }
     }
 }
@@ -253,7 +253,17 @@ impl Tikv for MockTikv {
         req: kvproto::kvrpcpb::RawBatchPutRequest,
         sink: grpcio::UnarySink<kvproto::kvrpcpb::RawBatchPutResponse>,
     ) {
-        todo!()
+        let pairs = req.get_pairs();
+        let mut data = self.data.write().unwrap();
+        for pair in pairs {
+            *data.entry(pair.get_key().to_vec()).or_default() = pair.get_value().to_vec();
+        }
+        let resp = RawBatchPutResponse::default();
+        let f = sink
+            .success(resp)
+            .map_err(move |e| panic!("failed to reply {:?}: {:?}", req, e))
+            .map(|_| ());
+        ctx.spawn(f)
     }
 
     fn raw_delete(

@@ -72,6 +72,12 @@ pub struct KvRpcClient {
     pub rpc_client: Arc<TikvClient>,
 }
 
+impl Drop for KvRpcClient {
+    fn drop(&mut self) {
+        debug!("drop KvRpcClient");
+    }
+}
+
 impl KvClient for KvRpcClient {
     fn dispatch<Resp, RpcFuture>(
         &self,
@@ -96,12 +102,6 @@ pub struct Store<Client: KvClient> {
     pub region: Region,
     pub client: Client,
     timeout: Duration,
-}
-
-impl<Client: KvClient> Drop for Store<Client> {
-    fn drop(&mut self) {
-        debug!("drop store");
-    }
 }
 
 impl<Client: KvClient> Store<Client> {
