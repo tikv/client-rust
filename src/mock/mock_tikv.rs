@@ -5,7 +5,7 @@ use grpcio::{ChannelBuilder, EnvBuilder, Environment, ResourceQuota, Server, Ser
 use io::Read;
 use kvproto::{kvrpcpb::*, tikvpb::*};
 use std::{
-    collections::BTreeMap,
+    collections::HashMap,
     io,
     sync::{Arc, RwLock},
     thread,
@@ -16,13 +16,13 @@ pub const PORT: u16 = 50019;
 
 #[derive(Debug, Clone)]
 pub struct MockTikv {
-    data: Arc<RwLock<BTreeMap<Vec<u8>, Vec<u8>>>>,
+    data: Arc<RwLock<HashMap<Vec<u8>, Vec<u8>>>>,
 }
 
 impl MockTikv {
     fn new() -> MockTikv {
         MockTikv {
-            data: Arc::new(RwLock::new(BTreeMap::new())),
+            data: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
@@ -272,7 +272,18 @@ impl Tikv for MockTikv {
         req: kvproto::kvrpcpb::RawDeleteRequest,
         sink: grpcio::UnarySink<kvproto::kvrpcpb::RawDeleteResponse>,
     ) {
-        todo!()
+        let key = req.get_key();
+        let mut data = self.data.write().unwrap();
+        let res = data.remove(key);
+        let mut resp = RawDeleteResponse::default();
+        if res.is_none() {
+            resp.set_error("Key not exist".to_owned());
+        }
+        let f = sink
+            .success(resp)
+            .map_err(move |e| panic!("failed to reply {:?}: {:?}", req, e))
+            .map(|_| ());
+        ctx.spawn(f)
     }
 
     fn raw_batch_delete(
@@ -281,7 +292,25 @@ impl Tikv for MockTikv {
         req: kvproto::kvrpcpb::RawBatchDeleteRequest,
         sink: grpcio::UnarySink<kvproto::kvrpcpb::RawBatchDeleteResponse>,
     ) {
-        todo!()
+        let keys: &[Vec<u8>] = req.get_keys();
+        let mut data = self.data.write().unwrap();
+        let mut pairs = vec![];
+        keys.iter()
+            .filter(|&key| !data.contains_key(key))
+            .for_each(|key| pairs.push(std::str::from_utf8(key).unwrap()));
+        let mut resp = RawBatchDeleteResponse::default();
+        if pairs.is_empty() {
+            keys.iter().for_each(|key| {
+                data.remove(key).unwrap();
+            });
+        } else {
+            resp.set_error(format!("Non-existent keys:[{}]", pairs.join(", ")).to_owned());
+        }
+        let f = sink
+            .success(resp)
+            .map_err(move |e| panic!("failed to reply {:?}: {:?}", req, e))
+            .map(|_| ());
+        ctx.spawn(f)
     }
 
     fn raw_scan(
