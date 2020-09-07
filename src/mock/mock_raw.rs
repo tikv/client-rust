@@ -164,9 +164,11 @@ mod test {
 
         let mock_client = MockRawClient::new(Config::default()).await.unwrap();
 
+        // empty; get non-existent key
         let res = mock_client.get("k1".to_owned()).await;
         assert_eq!(res.unwrap().unwrap(), vec![]);
 
+        // empty; put then batch_get
         let _ = mock_client
             .put("k1".to_owned(), "v1".to_owned())
             .await
@@ -184,9 +186,7 @@ mod test {
         assert_eq!(res[1].1, "v2".as_bytes());
         assert_eq!(res[2].1, "".as_bytes());
 
-        let res = mock_client.get("k1".to_owned()).await;
-        assert_eq!(res.unwrap().unwrap(), "v1".as_bytes());
-
+        // k1,k2; batch_put then batch_get
         let _ = mock_client
             .batch_put(vec![
                 KvPair::new("k3".to_owned(), "v3".to_owned()),
@@ -201,6 +201,49 @@ mod test {
             .unwrap();
         assert_eq!(res[0].1, "v4".as_bytes());
         assert_eq!(res[1].1, "v3".as_bytes());
+
+        // k1,k2,k3,k4; delete then get
+        let res = mock_client.delete("k3".to_owned()).await;
+        assert!(res.is_ok());
+
+        let res = mock_client.delete("key-not-exist".to_owned()).await;
+        assert!(res.is_err());
+
+        let res = mock_client.get("k3".to_owned()).await;
+        assert_eq!(res.unwrap().unwrap(), "".as_bytes());
+
+        // k1,k2,k4; batch_delete then batch_get
+        let res = mock_client
+            .batch_delete(vec![
+                "k1".to_owned(),
+                "k2".to_owned(),
+                "k3".to_owned(),
+                "k4".to_owned(),
+            ])
+            .await;
+        assert!(res.is_err());
+
+        let res = mock_client
+            .batch_delete(vec![
+                "k1".to_owned(),
+                "k2".to_owned(),
+                "k4".to_owned(),
+            ])
+            .await;
+        assert!(res.is_ok());
+
+        let res = mock_client
+            .batch_get(vec![
+                "k1".to_owned(),
+                "k2".to_owned(),
+                "k3".to_owned(),
+                "k4".to_owned(),
+            ])
+            .await
+            .unwrap();
+        for i in 0..3 {
+            assert_eq!(res[i].1, "".as_bytes());
+        }
 
         let _ = server.shutdown().await;
     }
