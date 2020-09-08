@@ -1,0 +1,10 @@
+[package]
+name = "mock-tikv"
+version = "0.0.0"
+edition = "2018"
+
+[dependencies]
+futures = "0.3"
+grpcio = { version = "0.6", features = [ "secure", "prost-codec" ], default-features = false }
+kvproto = { git = "https://github.com/pingcap/kvproto.git", rev = "1e28226154c374788f38d3a542fc505cd74720f3", features = [ "prost-codec" ], default-features = false }
+

@@ -36,6 +36,7 @@ tokio = { version = "0.2", features = ["sync"] }
 tikv-client-common = { path = "tikv-client-common" }
 tikv-client-pd = { path = "tikv-client-pd" }
 tikv-client-store = { path = "tikv-client-store" }
+mock-tikv = {path = "mock-tikv"}
 
 [dependencies.prometheus]
 version = "0.8"
@@ -58,5 +59,6 @@ raft-proto = { git = "https://github.com/tikv/raft-rs", rev = "e624c1d48460940a4
 members = [
     "tikv-client-common",
     "tikv-client-pd",
-    "tikv-client-store"
+    "tikv-client-store",
+    "mock-tikv"
 ]
