@@ -136,9 +136,9 @@ mod test {
     use crate::{mock::MockRpcPdClient, pd::PdClient, request::KvRequest};
     use grpcio::redirect_log;
 
+    use mock_tikv::start_server;
     use simple_logger::SimpleLogger;
-        use mock_tikv::start_server;
-use tikv_client_common::{Config, KvPair};
+    use tikv_client_common::{Config, KvPair};
 
     #[tokio::test]
     async fn test_raw_put_get() {
