@@ -9,13 +9,11 @@ mod mock_kv;
 mod mock_pd;
 mod mock_raw;
 mod mock_rpcpd;
-mod mock_tikv;
 
 pub use mock_kv::{MockKvClient, MockKvConnect};
 pub use mock_pd::{pd_rpc_client, MockPdClient};
 pub use mock_raw::MockRawClient;
 pub use mock_rpcpd::MockRpcPdClient;
-pub use mock_tikv::{start_server, MockTikv, PORT};
 
 use crate::{
     pd::{PdClient, PdRpcClient, RetryClient},

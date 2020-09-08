@@ -892,6 +892,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mock-tikv"
+version = "0.0.0"
+dependencies = [
+ "futures 0.3.5",
+ "grpcio",
+ "kvproto",
+]
+
+[[package]]
 name = "multimap"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1824,6 +1833,7 @@ dependencies = [
  "kvproto",
  "lazy_static",
  "log",
+ "mock-tikv",
  "prometheus",
  "proptest",
  "proptest-derive",

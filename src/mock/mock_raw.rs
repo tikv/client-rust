@@ -1,8 +1,9 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::{mock_tikv::PORT, MockRpcPdClient};
+use super::MockRpcPdClient;
 use crate::{raw::requests, request::KvRequest, ColumnFamily};
 use grpcio::Environment;
+pub use mock_tikv::{start_server, MockTikv, PORT};
 use std::{sync::Arc, u32};
 use tikv_client_common::{
     security::SecurityManager, BoundRange, Config, Error, Key, KvPair, Result, Value,
@@ -132,15 +133,12 @@ impl MockRawClient {
 mod test {
 
     use super::MockRawClient;
-    use crate::{
-        mock::{start_server, MockRpcPdClient},
-        pd::PdClient,
-        request::KvRequest,
-    };
+    use crate::{mock::MockRpcPdClient, pd::PdClient, request::KvRequest};
     use grpcio::redirect_log;
 
     use simple_logger::SimpleLogger;
-    use tikv_client_common::{Config, KvPair};
+        use mock_tikv::start_server;
+use tikv_client_common::{Config, KvPair};
 
     #[tokio::test]
     async fn test_raw_put_get() {
