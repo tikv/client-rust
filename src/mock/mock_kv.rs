@@ -1,12 +1,8 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    pd::{PdClient, PdRpcClient, RetryClient},
-    request::DispatchHook,
-    Config, Error, Key, Result, Timestamp,
-};
+use crate::Result;
 
-use futures::future::{ready, BoxFuture, FutureExt};
+use futures::future::BoxFuture;
 
 use kvproto::tikvpb::TikvClient;
 use std::{future::Future, sync::Arc};

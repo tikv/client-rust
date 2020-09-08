@@ -12,8 +12,7 @@ use tikv_client_store::{KvConnect, TikvConnect};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
-// TODO: remove this struct later.
-// should modify client so that it is compatible with and type of pd clients and use that for test.
+// TODO: remove this struct later. This is only used to verify mock tikv server.
 #[derive(Clone)]
 pub struct MockRawClient {
     rpc: Arc<MockRpcPdClient>,
@@ -133,7 +132,6 @@ impl MockRawClient {
 mod test {
 
     use super::MockRawClient;
-    use crate::{mock::MockRpcPdClient, pd::PdClient, request::KvRequest};
     use grpcio::redirect_log;
 
     use mock_tikv::start_server;

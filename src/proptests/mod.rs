@@ -3,7 +3,6 @@
 // Note: This module exists and includes some integration tests because the `/tests/`
 // directory tests don't have access to `cfg(tests)` functions and we don't want to force
 // users to depend on proptest or manually enable features to test.
-
 use proptest::strategy::Strategy;
 use std::env::var;
 

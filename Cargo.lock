@@ -895,9 +895,11 @@ dependencies = [
 name = "mock-tikv"
 version = "0.0.0"
 dependencies = [
+ "derive-new",
  "futures 0.3.5",
  "grpcio",
  "kvproto",
+ "tikv-client-common",
 ]
 
 [[package]]
