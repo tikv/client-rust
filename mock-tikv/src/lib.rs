@@ -1,12 +1,10 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
 use futures::{FutureExt, TryFutureExt};
-use grpcio::{ChannelBuilder, EnvBuilder, Environment, ResourceQuota, Server, ServerBuilder};
-use io::Read;
+use grpcio::{Environment, Server, ServerBuilder};
 use kvproto::{kvrpcpb::*, tikvpb::*};
 use std::{
     collections::HashMap,
-    io,
     sync::{Arc, RwLock},
 };
 
@@ -302,7 +300,7 @@ impl Tikv for MockTikv {
                 data.remove(key).unwrap();
             });
         } else {
-            resp.set_error(format!("Non-existent keys:[{}]", pairs.join(", ")).to_owned());
+            resp.set_error(format!("Non-existent keys:[{}]", pairs.join(", ")));
         }
         let f = sink
             .success(resp)
