@@ -15,11 +15,7 @@ pub use mock_pd::{pd_rpc_client, MockPdClient};
 pub use mock_raw::MockRawClient;
 pub use mock_rpcpd::MockRpcPdClient;
 
-use crate::{
-    pd::{PdClient, PdRpcClient, RetryClient},
-    request::DispatchHook,
-    Config, Error, Key, Result, Timestamp,
-};
+use crate::{request::DispatchHook, Result};
 use fail::fail_point;
 use futures::future::{ready, BoxFuture, FutureExt};
 use grpcio::CallOption;

@@ -3,8 +3,6 @@
 use super::Key;
 use crate::{Error, Result};
 use kvproto::kvrpcpb;
-#[cfg(test)]
-use proptest_derive::Arbitrary;
 use std::{
     borrow::Borrow,
     cmp::{Eq, PartialEq},

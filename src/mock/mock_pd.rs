@@ -8,12 +8,10 @@ use crate::{
 
 use futures::future::{ready, BoxFuture};
 
-use kvproto::{errorpb, kvrpcpb, metapb, tikvpb::TikvClient};
+use kvproto::metapb;
 use std::{sync::Arc, time::Duration};
 
-use tikv_client_store::{
-    HasError, KvClient, KvConnect, KvRpcClient, Region, RegionId, Store, TikvConnect,
-};
+use tikv_client_store::{Region, RegionId, Store};
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
