@@ -31,14 +31,14 @@ impl KvStore {
 
     pub fn raw_batch_get(&self, keys: &[Vec<u8>]) -> Vec<KvPair> {
         let data = self.data.read().unwrap();
-        let mut pairs = vec![];
-        for key in keys {
-            let mut pair = KvPair::default();
-            pair.set_value(data.get(key).unwrap_or(&vec![]).to_vec());
-            pair.set_key(key.to_vec());
-            pairs.push(pair);
-        }
-        pairs
+        keys.iter()
+            .map(|key| {
+                let mut pair = KvPair::default();
+                pair.set_value(data.get(key).unwrap_or(&vec![]).to_vec());
+                pair.set_key(key.to_vec());
+                pair
+            })
+            .collect::<Vec<_>>()
     }
 
     pub fn raw_put(&self, key: &[u8], value: &[u8]) {
@@ -62,10 +62,11 @@ impl KvStore {
     // if any of the key does not exist, return non-existent keys
     pub fn raw_batch_delete<'a>(&self, keys: &'a [Vec<u8>]) -> Result<(), Vec<&'a str>> {
         let mut data = self.data.write().unwrap();
-        let mut non_exist_keys = vec![];
-        keys.iter()
+        let non_exist_keys = keys
+            .iter()
             .filter(|&key| !data.contains_key(key))
-            .for_each(|key| non_exist_keys.push(std::str::from_utf8(key).unwrap()));
+            .map(|key| std::str::from_utf8(key).unwrap())
+            .collect::<Vec<_>>();
         if !non_exist_keys.is_empty() {
             Err(non_exist_keys)
         } else {
