@@ -11,15 +11,17 @@ pub struct KvStore {
     data: Arc<RwLock<HashMap<Vec<u8>, Vec<u8>>>>,
 }
 
+impl Default for KvStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KvStore {
     pub fn new() -> KvStore {
         KvStore {
             data: Arc::new(RwLock::new(HashMap::new())),
         }
-    }
-
-    pub fn default() -> KvStore {
-        Self::new()
     }
 
     pub fn raw_get(&self, key: &[u8]) -> Vec<u8> {

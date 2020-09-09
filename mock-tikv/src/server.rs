@@ -1,19 +1,19 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::KvStore;
+use crate::{spawn_unary_success, KvStore};
 use derive_new::new;
 use futures::{FutureExt, TryFutureExt};
 use grpcio::{Environment, Server, ServerBuilder};
 use kvproto::{kvrpcpb::*, tikvpb::*};
 use std::sync::Arc;
 
-pub const PORT: u16 = 50019;
+pub const MOCK_TIKV_PORT: u16 = 50019;
 
-pub fn start_server() -> Server {
+pub fn start_mock_tikv_server() -> Server {
     let env = Arc::new(Environment::new(1));
     let mut server = ServerBuilder::new(env)
         .register_service(create_tikv(MockTikv::new(KvStore::new())))
-        .bind("localhost", PORT)
+        .bind("localhost", MOCK_TIKV_PORT)
         .build()
         .unwrap();
     server.start();
@@ -178,11 +178,7 @@ impl Tikv for MockTikv {
     ) {
         let mut resp = RawGetResponse::default();
         resp.set_value(self.inner.raw_get(req.get_key()));
-        let f = sink
-            .success(resp)
-            .map_err(move |e| panic!("failed to reply {:?}: {:?}", req, e))
-            .map(|_| ());
-        ctx.spawn(f)
+        spawn_unary_success!(ctx, req, resp, sink);
     }
 
     fn raw_batch_get(
@@ -193,11 +189,7 @@ impl Tikv for MockTikv {
     ) {
         let mut resp = kvproto::kvrpcpb::RawBatchGetResponse::default();
         resp.set_pairs(self.inner.raw_batch_get(req.get_keys()));
-        let f = sink
-            .success(resp)
-            .map_err(move |e| panic!("failed to reply {:?}: {:?}", req, e))
-            .map(|_| ());
-        ctx.spawn(f)
+        spawn_unary_success!(ctx, req, resp, sink);
     }
 
     fn raw_put(
@@ -208,11 +200,7 @@ impl Tikv for MockTikv {
     ) {
         self.inner.raw_put(req.get_key(), req.get_value());
         let resp = RawPutResponse::default();
-        let f = sink
-            .success(resp)
-            .map_err(move |e| panic!("failed to reply {:?}: {:?}", req, e))
-            .map(|_| ());
-        ctx.spawn(f)
+        spawn_unary_success!(ctx, req, resp, sink);
     }
 
     fn raw_batch_put(
@@ -224,11 +212,7 @@ impl Tikv for MockTikv {
         let pairs = req.get_pairs();
         self.inner.raw_batch_put(pairs);
         let resp = RawBatchPutResponse::default();
-        let f = sink
-            .success(resp)
-            .map_err(move |e| panic!("failed to reply {:?}: {:?}", req, e))
-            .map(|_| ());
-        ctx.spawn(f)
+        spawn_unary_success!(ctx, req, resp, sink);
     }
 
     fn raw_delete(
@@ -243,11 +227,7 @@ impl Tikv for MockTikv {
         if res.is_err() {
             resp.set_error("Key not exist".to_owned());
         }
-        let f = sink
-            .success(resp)
-            .map_err(move |e| panic!("failed to reply {:?}: {:?}", req, e))
-            .map(|_| ());
-        ctx.spawn(f)
+        spawn_unary_success!(ctx, req, resp, sink);
     }
 
     fn raw_batch_delete(
@@ -265,11 +245,7 @@ impl Tikv for MockTikv {
                 res.err().unwrap().join(", ")
             ));
         }
-        let f = sink
-            .success(resp)
-            .map_err(move |e| panic!("failed to reply {:?}: {:?}", req, e))
-            .map(|_| ());
-        ctx.spawn(f)
+        spawn_unary_success!(ctx, req, resp, sink);
     }
 
     fn raw_scan(

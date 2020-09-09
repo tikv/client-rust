@@ -7,13 +7,9 @@
 
 mod mock_kv;
 mod mock_pd;
-mod mock_raw;
-mod mock_rpcpd;
 
 pub use mock_kv::{MockKvClient, MockKvConnect};
 pub use mock_pd::{pd_rpc_client, MockPdClient};
-pub use mock_raw::MockRawClient;
-pub use mock_rpcpd::MockRpcPdClient;
 
 use crate::{request::DispatchHook, Result};
 use fail::fail_point;
