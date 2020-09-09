@@ -3,11 +3,14 @@
 // Note: This module exists and includes some integration tests because the `/tests/`
 // directory tests don't have access to `cfg(tests)` functions and we don't want to force
 // users to depend on proptest or manually enable features to test.
+
+/*
+ *  Temporarily disabled
+
 use proptest::strategy::Strategy;
 use std::env::var;
 
 mod raw;
-
 pub(crate) const ENV_PD_ADDRS: &str = "PD_ADDRS";
 pub(crate) const PROPTEST_BATCH_SIZE_MAX: usize = 16;
 
@@ -26,3 +29,4 @@ pub fn pd_addrs() -> Vec<String> {
         .map(From::from)
         .collect()
 }
+*/
