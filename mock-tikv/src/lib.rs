@@ -7,6 +7,8 @@ pub use pd::{start_mock_pd_server, MockPd, MOCK_PD_PORT};
 pub use server::{start_mock_tikv_server, MockTikv, MOCK_TIKV_PORT};
 pub use store::KvStore;
 
+/// A common pattern for implementing an unary RPC call.
+/// Successfully returns the result.
 #[macro_export]
 macro_rules! spawn_unary_success {
     ($ctx:ident, $req:ident, $resp:ident, $sink:ident) => {

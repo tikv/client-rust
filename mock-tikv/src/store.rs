@@ -26,7 +26,7 @@ impl KvStore {
 
     pub fn raw_get(&self, key: &[u8]) -> Vec<u8> {
         let data = self.data.read().unwrap();
-        data.get(key).unwrap_or(&vec![]).to_vec()
+        data.get(key).map(|v| v.to_vec()).unwrap_or_else(Vec::new)
     }
 
     pub fn raw_batch_get(&self, keys: &[Vec<u8>]) -> Vec<KvPair> {
@@ -34,38 +34,37 @@ impl KvStore {
         keys.iter()
             .map(|key| {
                 let mut pair = KvPair::default();
-                pair.set_value(data.get(key).unwrap_or(&vec![]).to_vec());
+                pair.set_value(data.get(key).map(|v| v.to_vec()).unwrap_or_else(Vec::new));
                 pair.set_key(key.to_vec());
                 pair
             })
-            .collect::<Vec<_>>()
+            .collect()
     }
 
-    pub fn raw_put(&self, key: &[u8], value: &[u8]) {
+    pub fn raw_put(&self, key: Vec<u8>, value: Vec<u8>) {
         let mut data = self.data.write().unwrap();
-        *data.entry(key.to_vec()).or_default() = value.to_vec();
+        data.insert(key, value);
     }
 
     pub fn raw_batch_put(&self, pairs: &[KvPair]) {
         let mut data = self.data.write().unwrap();
         for pair in pairs {
-            *data.entry(pair.get_key().to_vec()).or_default() = pair.get_value().to_vec();
+            data.insert(pair.get_key().to_vec(), pair.get_value().to_vec());
         }
     }
 
     // if success, return the key deleted
-    pub fn raw_delete(&self, key: &[u8]) -> Result<Vec<u8>, ()> {
+    pub fn raw_delete(&self, key: &[u8]) -> Option<Vec<u8>> {
         let mut data = self.data.write().unwrap();
-        data.remove(key).ok_or(())
+        data.remove(key)
     }
 
     // if any of the key does not exist, return non-existent keys
-    pub fn raw_batch_delete<'a>(&self, keys: &'a [Vec<u8>]) -> Result<(), Vec<&'a str>> {
+    pub fn raw_batch_delete<'a>(&self, keys: &'a [Vec<u8>]) -> Result<(), Vec<&'a Vec<u8>>> {
         let mut data = self.data.write().unwrap();
         let non_exist_keys = keys
             .iter()
             .filter(|&key| !data.contains_key(key))
-            .map(|key| std::str::from_utf8(key).unwrap())
             .collect::<Vec<_>>();
         if !non_exist_keys.is_empty() {
             Err(non_exist_keys)
