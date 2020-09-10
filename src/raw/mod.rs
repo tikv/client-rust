@@ -16,7 +16,7 @@ use std::{convert::TryFrom, fmt};
 use tikv_client_common::errors::ErrorKind::ColumnFamilyError;
 
 mod client;
-pub(crate) mod requests;
+mod requests;
 
 /// A [`ColumnFamily`](ColumnFamily) is an optional parameter for [`raw::Client`](Client) requests.
 ///

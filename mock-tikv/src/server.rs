@@ -4,6 +4,7 @@ use crate::{spawn_unary_success, KvStore};
 use derive_new::new;
 use futures::{FutureExt, TryFutureExt};
 use grpcio::{Environment, Server, ServerBuilder};
+use itertools::Itertools;
 use kvproto::{kvrpcpb::*, tikvpb::*};
 use std::sync::Arc;
 
@@ -198,7 +199,8 @@ impl Tikv for MockTikv {
         req: kvproto::kvrpcpb::RawPutRequest,
         sink: grpcio::UnarySink<kvproto::kvrpcpb::RawPutResponse>,
     ) {
-        self.inner.raw_put(req.get_key(), req.get_value());
+        self.inner
+            .raw_put(req.get_key().to_vec(), req.get_value().to_vec());
         let resp = RawPutResponse::default();
         spawn_unary_success!(ctx, req, resp, sink);
     }
@@ -224,7 +226,7 @@ impl Tikv for MockTikv {
         let key = req.get_key();
         let res = self.inner.raw_delete(key);
         let mut resp = RawDeleteResponse::default();
-        if res.is_err() {
+        if res.is_none() {
             resp.set_error("Key not exist".to_owned());
         }
         spawn_unary_success!(ctx, req, resp, sink);
@@ -242,7 +244,11 @@ impl Tikv for MockTikv {
         if res.is_err() {
             resp.set_error(format!(
                 "Non-existent keys:[{}]",
-                res.err().unwrap().join(", ")
+                res.err()
+                    .unwrap()
+                    .iter()
+                    .map(|k| std::str::from_utf8(k).unwrap())
+                    .join(", ")
             ));
         }
         spawn_unary_success!(ctx, req, resp, sink);

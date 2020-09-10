@@ -19,12 +19,12 @@ impl MockPd {
     }
 
     fn region() -> kvproto::metapb::Region {
-        let mut meta_region = kvproto::metapb::Region::default();
-        meta_region.set_end_key(vec![0xff; 20]);
-        meta_region.set_start_key(vec![0x00]);
-        meta_region.set_id(0);
-        meta_region.set_peers(vec![Self::leader()]);
-        meta_region
+        kvproto::metapb::Region {
+            start_key: vec![],
+            end_key: vec![],
+            peers: vec![Self::leader()],
+            ..Default::default()
+        }
     }
 
     fn leader() -> kvproto::metapb::Peer {
@@ -32,10 +32,11 @@ impl MockPd {
     }
 
     fn store() -> kvproto::metapb::Store {
-        let mut store = kvproto::metapb::Store::default();
-        store.set_address(format!("localhost:{}", MOCK_TIKV_PORT));
         // TODO: start_timestamp?
-        store
+        kvproto::metapb::Store {
+            address: format!("localhost:{}", MOCK_TIKV_PORT),
+            ..Default::default()
+        }
     }
 }
 
@@ -57,15 +58,16 @@ impl Pd for MockPd {
         req: GetMembersRequest,
         sink: ::grpcio::UnarySink<GetMembersResponse>,
     ) {
-        let mut resp = GetMembersResponse::default();
-        resp.set_header(ResponseHeader::default());
-        let mut member = Member::default();
-        member.set_name("mock tikv".to_owned());
-        member.set_member_id(0);
-        member.set_client_urls(vec![format!("localhost:{}", MOCK_PD_PORT)]);
-        // member.set_peer_urls(vec![format!("localhost:{}", MOCK_PD_PORT)]);
-        resp.set_members(vec![member.clone()]);
-        resp.set_leader(member);
+        let member = Member {
+            name: "mock tikv".to_owned(),
+            client_urls: vec![format!("localhost:{}", MOCK_PD_PORT)],
+            ..Default::default()
+        };
+        let resp = GetMembersResponse {
+            members: vec![member.clone()],
+            leader: Some(member),
+            ..Default::default()
+        };
         spawn_unary_success!(ctx, req, resp, sink);
     }
 
@@ -77,9 +79,8 @@ impl Pd for MockPd {
     ) {
         let f = stream
             .map(|_| {
-                let mut resp = TsoResponse::default();
+                let resp = TsoResponse::default();
                 // TODO: make ts monotonic
-                resp.set_timestamp(Timestamp::default());
                 Ok((resp, WriteFlags::default()))
             })
             .forward(sink)
@@ -120,8 +121,10 @@ impl Pd for MockPd {
         req: GetStoreRequest,
         sink: ::grpcio::UnarySink<GetStoreResponse>,
     ) {
-        let mut resp = GetStoreResponse::default();
-        resp.set_store(Self::store());
+        let resp = GetStoreResponse {
+            store: Some(Self::store()),
+            ..Default::default()
+        };
         spawn_unary_success!(ctx, req, resp, sink);
     }
 
@@ -167,9 +170,11 @@ impl Pd for MockPd {
         req: GetRegionRequest,
         sink: ::grpcio::UnarySink<GetRegionResponse>,
     ) {
-        let mut resp = GetRegionResponse::default();
-        resp.set_region(Self::region());
-        resp.set_leader(Self::leader());
+        let resp = GetRegionResponse {
+            region: Some(Self::region()),
+            leader: Some(Self::leader()),
+            ..Default::default()
+        };
         spawn_unary_success!(ctx, req, resp, sink);
     }
 
@@ -188,9 +193,11 @@ impl Pd for MockPd {
         req: GetRegionByIdRequest,
         sink: ::grpcio::UnarySink<GetRegionResponse>,
     ) {
-        let mut resp = GetRegionResponse::default();
-        resp.set_region(Self::region());
-        resp.set_leader(Self::leader());
+        let resp = GetRegionResponse {
+            region: Some(Self::region()),
+            leader: Some(Self::leader()),
+            ..Default::default()
+        };
         spawn_unary_success!(ctx, req, resp, sink);
     }
 
