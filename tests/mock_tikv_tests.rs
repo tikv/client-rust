@@ -62,16 +62,6 @@ mod test {
 
         // k1,k2,k4; batch_delete then batch_get
         let res = client
-            .batch_delete(vec![
-                "k1".to_owned(),
-                "k2".to_owned(),
-                "k3".to_owned(),
-                "k4".to_owned(),
-            ])
-            .await;
-        assert!(res.is_err());
-
-        let res = client
             .batch_delete(vec!["k1".to_owned(), "k2".to_owned(), "k4".to_owned()])
             .await;
         assert!(res.is_ok());
