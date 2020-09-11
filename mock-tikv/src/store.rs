@@ -59,20 +59,17 @@ impl KvStore {
         data.remove(key)
     }
 
-    // if any of the key does not exist, return non-existent keys
-    pub fn raw_batch_delete<'a>(&self, keys: &'a [Vec<u8>]) -> Result<(), Vec<&'a Vec<u8>>> {
+    // if any of the key does not exist, return non-existent keys; delete other keys
+    pub fn raw_batch_delete(&self, keys: &[Vec<u8>]) -> Result<(), Vec<Vec<u8>>> {
         let mut data = self.data.write().unwrap();
-        let non_exist_keys = keys
+        let non_exist: Vec<_> = keys
             .iter()
-            .filter(|&key| !data.contains_key(key))
-            .collect::<Vec<_>>();
-        if !non_exist_keys.is_empty() {
-            Err(non_exist_keys)
-        } else {
-            keys.iter().for_each(|key| {
-                data.remove(key).unwrap();
-            });
+            .filter_map(|k| data.remove(k).xor(Some(k.to_vec())))
+            .collect();
+        if non_exist.is_empty() {
             Ok(())
+        } else {
+            Err(non_exist)
         }
     }
 }
