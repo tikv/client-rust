@@ -98,7 +98,7 @@ pub trait PdClient: Send + Sync + 'static {
             Either::Left(self.region_for_key(&start_key).and_then(move |region| {
                 let region_end = region.end_key();
                 this.map_region_to_store(region).map_ok(move |store| {
-                    if end_key.map(|x| x < region_end).unwrap_or(false) || region_end.is_empty() {
+                    if end_key.map(|x| x <= region_end).unwrap_or(false) || region_end.is_empty() {
                         return Some((None, store));
                     }
                     Some((Some(region_end), store))
