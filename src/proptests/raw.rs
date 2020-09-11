@@ -1,9 +1,4 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
-
-/*
-* FIXME: temporarily disable proptest because proptest-derive doesn't work in Rust 1.48.0 nightly.
-* Resume them when the issue is fixed.
-
 use super::{arb_batch, pd_addrs};
 use crate::{raw::Client, Config, KvPair, Value};
 use futures::executor::block_on;
@@ -63,5 +58,3 @@ proptest! {
         }
     }
 }
-
-*/

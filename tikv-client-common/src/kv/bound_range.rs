@@ -3,6 +3,8 @@
 use super::Key;
 use crate::{Error, Result};
 use kvproto::kvrpcpb;
+#[cfg(test)]
+use proptest_derive::Arbitrary;
 use std::{
     borrow::Borrow,
     cmp::{Eq, PartialEq},
@@ -53,7 +55,7 @@ use std::{
 /// on ranges will accept any types  which implement `Into<BoundRange>`.
 /// which means all of the above types can be passed directly to those functions.
 #[derive(Clone, Debug, Eq, PartialEq)]
-// #[cfg_attr(test, derive(Arbitrary))]
+#[cfg_attr(test, derive(Arbitrary))]
 pub struct BoundRange {
     from: Bound<Key>,
     to: Bound<Key>,
