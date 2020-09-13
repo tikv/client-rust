@@ -1,7 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    pd::{PdClient, PdRpcClient},
+    pd::{PdClient, PdCodecClient},
     request::KvRequest,
     transaction::{buffer::Buffer, requests::*},
 };
@@ -32,14 +32,14 @@ pub struct Transaction {
     timestamp: Timestamp,
     buffer: Buffer,
     bg_worker: ThreadPool,
-    rpc: Arc<PdRpcClient>,
+    rpc: Arc<PdCodecClient>,
 }
 
 impl Transaction {
     pub(crate) fn new(
         timestamp: Timestamp,
         bg_worker: ThreadPool,
-        rpc: Arc<PdRpcClient>,
+        rpc: Arc<PdCodecClient>,
     ) -> Transaction {
         Transaction {
             timestamp,
@@ -234,7 +234,7 @@ struct TwoPhaseCommitter {
     mutations: Vec<kvrpcpb::Mutation>,
     start_version: u64,
     bg_worker: ThreadPool,
-    rpc: Arc<PdRpcClient>,
+    rpc: Arc<PdCodecClient>,
     #[new(default)]
     committed: bool,
     #[new(default)]

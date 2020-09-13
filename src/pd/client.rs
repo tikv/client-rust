@@ -266,6 +266,42 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
     }
 }
 
+/// This client converts requests for the logical TiKV cluster into requests
+/// for a single TiKV store using PD and internal logic and codec.
+pub struct PdCodecClient<PdClient = PdRpcClient> {
+    pd: Arc<PdClient>
+}
+
+impl<PdC: PdClient + Send + Sync + 'static> PdClient for PdCodecClient<PdC> {
+    type KvClient = PdC::KvClient;
+
+    fn map_region_to_store(
+        self: Arc<Self>,
+        region: Region,
+    ) -> BoxFuture<'static, Result<Store<PdC::KvClient>>> {
+        self.pd.clone().map_region_to_store(region)
+    }
+
+    fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>> {
+        self.pd.clone().region_for_key(&key.clone().as_encoded())
+    }
+
+    fn region_for_id(&self, id: RegionId) -> BoxFuture<'static, Result<Region>> {
+        self.pd.clone().region_for_id(id)
+    }
+
+    fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
+        self.pd.clone().get_timestamp()
+    }
+}
+
+impl PdCodecClient<PdCodecClient> {
+    pub async fn connect(config: &Config) -> Result<PdCodecClient> {
+        let pd = PdRpcClient::connect(config).await?;
+        Ok(PdCodecClient{ pd: Arc::new(pd) })
+    }
+}
+
 #[cfg(test)]
 pub mod test {
     use super::*;

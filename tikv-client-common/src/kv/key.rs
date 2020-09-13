@@ -6,6 +6,7 @@ use kvproto::kvrpcpb;
 use proptest::{arbitrary::any_with, collection::size_range};
 use proptest_derive::Arbitrary;
 use std::{fmt, ops::Bound, u8};
+use crate::kv::codec::{self, BytesEncoder};
 
 const _PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
 
@@ -100,6 +101,14 @@ impl Key {
         } else {
             Bound::Excluded(self)
         }
+    }
+
+    #[inline]
+    pub fn as_encoded(&self) -> Key {
+        let len = codec::max_encoded_bytes_size(self.0.len());
+        let mut encoded = Vec::with_capacity(len);
+        encoded.encode_bytes(self.into(), false).unwrap();
+        Key(encoded)
     }
 }
 
