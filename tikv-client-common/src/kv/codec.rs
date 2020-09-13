@@ -61,26 +61,26 @@ fn adjust_bytes_order<'a>(bs: &'a [u8], desc: bool, buf: &'a mut [u8]) -> &'a [u
     }
 }
 
-pub fn encode_bytes(bs: &[u8]) -> Vec<u8> {
-    encode_order_bytes(bs, false)
-}
-
-pub fn encode_bytes_desc(bs: &[u8]) -> Vec<u8> {
-    encode_order_bytes(bs, true)
-}
-
-fn encode_order_bytes(bs: &[u8], desc: bool) -> Vec<u8> {
-    let cap = max_encoded_bytes_size(bs.len());
-    let mut encoded = Vec::with_capacity(cap);
-    encoded.encode_bytes(bs, desc).unwrap();
-    encoded
-}
-
 #[cfg(test)]
 pub mod test {
     use super::*;
     use crate::codec::{bytes, number};
     use std::cmp::Ordering;
+
+    fn encode_bytes(bs: &[u8]) -> Vec<u8> {
+        encode_order_bytes(bs, false)
+    }
+
+    fn encode_bytes_desc(bs: &[u8]) -> Vec<u8> {
+        encode_order_bytes(bs, true)
+    }
+
+    fn encode_order_bytes(bs: &[u8], desc: bool) -> Vec<u8> {
+        let cap = max_encoded_bytes_size(bs.len());
+        let mut encoded = Vec::with_capacity(cap);
+        encoded.encode_bytes(bs, desc).unwrap();
+        encoded
+    }
 
     #[test]
     fn test_enc_dec_bytes() {
