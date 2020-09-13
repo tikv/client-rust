@@ -1,11 +1,7 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{pd::RetryClient, Config, Key, Region, RegionId};
-use futures::{
-    future::{ready, BoxFuture, Either},
-    prelude::*,
-    stream::BoxStream,
-};
+use futures::{future::{ready, BoxFuture, Either}, prelude::*, stream::BoxStream, TryFutureExt, FutureExt};
 use grpcio::{EnvBuilder, Environment};
 use std::{
     collections::HashMap,
@@ -19,6 +15,7 @@ use tikv_client_common::{
 };
 use tikv_client_pd::Cluster;
 use tikv_client_store::{KvClient, KvConnect, Store, TikvConnect};
+use crate::tikv_client_common::kv::codec;
 
 const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";
@@ -266,8 +263,8 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
     }
 }
 
-/// This client converts requests for the logical TiKV cluster into requests
-/// for a single TiKV store using PD and internal logic and codec.
+/// This client wraps a PdClient and encodes/decodes keys and regions according to
+/// TiKV transaction codec.
 pub struct PdCodecClient<PdClient = PdRpcClient> {
     pd: Arc<PdClient>
 }
@@ -284,14 +281,27 @@ impl<PdC: PdClient + Send + Sync + 'static> PdClient for PdCodecClient<PdC> {
 
     fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>> {
         self.pd.clone().region_for_key(&key.clone().as_encoded())
+            .ok_and_then(move |region| PdCodecClient::decode_region(region))
+            .boxed()
     }
 
     fn region_for_id(&self, id: RegionId) -> BoxFuture<'static, Result<Region>> {
         self.pd.clone().region_for_id(id)
+            .ok_and_then(move |region| PdCodecClient::decode_region(region))
+            .boxed()
     }
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
         self.pd.clone().get_timestamp()
+    }
+
+}
+
+impl PdCodecClient {
+    fn decode_region(mut region: Region) -> Result<Region> {
+        codec::decode_bytes_in_place(&mut region.region.mut_start_key(), false)?;
+        codec::decode_bytes_in_place(&mut region.region.mut_end_key(), false)?;
+        Ok(region)
     }
 }
 

@@ -1,5 +1,7 @@
 use crate::errors::Result;
 use std::io::{Write};
+use crate::Error;
+use std::ptr;
 
 const ENC_GROUP_SIZE: usize = 8;
 const ENC_MARKER: u8 = b'\xff';
@@ -7,12 +9,16 @@ const ENC_ASC_PADDING: [u8; ENC_GROUP_SIZE] = [0; ENC_GROUP_SIZE];
 const ENC_DESC_PADDING: [u8; ENC_GROUP_SIZE] = [!0; ENC_GROUP_SIZE];
 
 /// Returns the maximum encoded bytes size.
+///
+/// Duplicate from components/tikv_util/src/codec/bytes.rs.
 pub fn max_encoded_bytes_size(n: usize) -> usize {
     (n / ENC_GROUP_SIZE + 1) * (ENC_GROUP_SIZE + 1)
 }
 
 pub trait BytesEncoder : Write {
     /// Refer: https://github.com/facebook/mysql-5.6/wiki/MyRocks-record-format#memcomparable-format
+    ///
+    /// Duplicate from components/tikv_util/src/codec/bytes.rs.
     fn encode_bytes(&mut self, key: &[u8], desc: bool) -> Result<()> {
         let len = key.len();
         let mut index = 0;
@@ -58,6 +64,67 @@ fn adjust_bytes_order<'a>(bs: &'a [u8], desc: bool, buf: &'a mut [u8]) -> &'a [u
         &buf[..buf_idx]
     } else {
         bs
+    }
+}
+
+/// Decodes bytes which are encoded by `encode_bytes` before just in place without malloc.
+///
+/// Duplicate from components/tikv_util/src/codec/bytes.rs.
+pub fn decode_bytes_in_place(data: &mut Vec<u8>, desc: bool) -> Result<()> {
+    let mut write_offset = 0;
+    let mut read_offset = 0;
+    loop {
+        let marker_offset = read_offset + ENC_GROUP_SIZE;
+        if marker_offset >= data.len() {
+            return Err(Error::internal_error("unexpected EOF"));
+        };
+
+        unsafe {
+            // it is semantically equivalent to C's memmove()
+            // and the src and dest may overlap
+            // if src == dest do nothing
+            ptr::copy(
+                data.as_ptr().add(read_offset),
+                data.as_mut_ptr().add(write_offset),
+                ENC_GROUP_SIZE,
+            );
+        }
+        write_offset += ENC_GROUP_SIZE;
+        // everytime make ENC_GROUP_SIZE + 1 elements as a decode unit
+        read_offset += ENC_GROUP_SIZE + 1;
+
+        // the last byte in decode unit is for marker which indicates pad size
+        let marker = data[marker_offset];
+        let pad_size = if desc {
+            marker as usize
+        } else {
+            (ENC_MARKER - marker) as usize
+        };
+
+        if pad_size > 0 {
+            if pad_size > ENC_GROUP_SIZE {
+                return Err(Error::internal_error("invalid key padding"));
+            }
+
+            // check the padding pattern whether validate or not
+            let padding_slice = if desc {
+                &ENC_DESC_PADDING[..pad_size]
+            } else {
+                &ENC_ASC_PADDING[..pad_size]
+            };
+            if &data[write_offset - pad_size..write_offset] != padding_slice {
+                return Err(Error::internal_error("invalid key padding"));
+            }
+            unsafe {
+                data.set_len(write_offset - pad_size);
+            }
+            if desc {
+                for k in data {
+                    *k = !*k;
+                }
+            }
+            return Ok(());
+        }
     }
 }
 
@@ -138,6 +205,10 @@ pub mod test {
         for (source, mut asc, mut desc) in pairs {
             assert_eq!(encode_bytes(&source), asc);
             assert_eq!(encode_bytes_desc(&source), desc);
+            decode_bytes_in_place(&mut asc, false).unwrap();
+            assert_eq!(source, asc);
+            decode_bytes_in_place(&mut desc, true).unwrap();
+            assert_eq!(source, desc);
         }
     }
 }

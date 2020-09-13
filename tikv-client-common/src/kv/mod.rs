@@ -5,7 +5,7 @@ mod bound_range;
 mod key;
 mod kvpair;
 mod value;
-mod codec;
+pub mod codec;
 
 pub use bound_range::{BoundRange, ToOwnedRange};
 pub use key::Key;
