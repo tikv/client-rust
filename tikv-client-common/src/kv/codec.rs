@@ -64,8 +64,7 @@ fn adjust_bytes_order<'a>(bs: &'a [u8], desc: bool, buf: &'a mut [u8]) -> &'a [u
 #[cfg(test)]
 pub mod test {
     use super::*;
-    use crate::codec::{bytes, number};
-    use std::cmp::Ordering;
+    use crate::kv::codec::bytes;
 
     fn encode_bytes(bs: &[u8]) -> Vec<u8> {
         encode_order_bytes(bs, false)
