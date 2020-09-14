@@ -469,12 +469,12 @@ impl Tikv for MockTikv {
         todo!()
     }
 
-    // fn kv_check_secondary_locks(
-    //     &mut self,
-    //     _: grpcio::RpcContext<'_>,
-    //     _: kvproto::kvrpcpb::CheckSecondaryLocksRequest,
-    //     _: grpcio::UnarySink<kvproto::kvrpcpb::CheckSecondaryLocksResponse>,
-    // ) {
-    //     todo!()
-    // }
+    fn kv_check_secondary_locks(
+        &mut self,
+        _: grpcio::RpcContext<'_>,
+        _: kvproto::kvrpcpb::CheckSecondaryLocksRequest,
+        _: grpcio::UnarySink<kvproto::kvrpcpb::CheckSecondaryLocksResponse>,
+    ) {
+        todo!()
+    }
 }
