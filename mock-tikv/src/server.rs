@@ -4,7 +4,6 @@ use crate::{spawn_unary_success, KvStore};
 use derive_new::new;
 use futures::{FutureExt, TryFutureExt};
 use grpcio::{Environment, Server, ServerBuilder};
-use itertools::Itertools;
 use kvproto::{kvrpcpb::*, tikvpb::*};
 use std::sync::Arc;
 
@@ -189,11 +188,11 @@ impl Tikv for MockTikv {
     fn raw_batch_get(
         &mut self,
         ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::RawBatchGetRequest,
+        mut req: kvproto::kvrpcpb::RawBatchGetRequest,
         sink: grpcio::UnarySink<kvproto::kvrpcpb::RawBatchGetResponse>,
     ) {
         let mut resp = kvproto::kvrpcpb::RawBatchGetResponse::default();
-        resp.set_pairs(self.inner.raw_batch_get(req.get_keys()));
+        resp.set_pairs(self.inner.raw_batch_get(req.take_keys()));
         spawn_unary_success!(ctx, req, resp, sink);
     }
 
@@ -212,10 +211,10 @@ impl Tikv for MockTikv {
     fn raw_batch_put(
         &mut self,
         ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::RawBatchPutRequest,
+        mut req: kvproto::kvrpcpb::RawBatchPutRequest,
         sink: grpcio::UnarySink<kvproto::kvrpcpb::RawBatchPutResponse>,
     ) {
-        let pairs = req.get_pairs();
+        let pairs = req.take_pairs();
         self.inner.raw_batch_put(pairs);
         let resp = RawBatchPutResponse::default();
         spawn_unary_success!(ctx, req, resp, sink);
@@ -228,33 +227,20 @@ impl Tikv for MockTikv {
         sink: grpcio::UnarySink<kvproto::kvrpcpb::RawDeleteResponse>,
     ) {
         let key = req.get_key();
-        let res = self.inner.raw_delete(key);
-        let mut resp = RawDeleteResponse::default();
-        if res.is_none() {
-            resp.set_error("Key not exist".to_owned());
-        }
+        self.inner.raw_delete(key);
+        let resp = RawDeleteResponse::default();
         spawn_unary_success!(ctx, req, resp, sink);
     }
 
     fn raw_batch_delete(
         &mut self,
         ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::RawBatchDeleteRequest,
+        mut req: kvproto::kvrpcpb::RawBatchDeleteRequest,
         sink: grpcio::UnarySink<kvproto::kvrpcpb::RawBatchDeleteResponse>,
     ) {
-        let keys: &[Vec<u8>] = req.get_keys();
-        let res = self.inner.raw_batch_delete(keys);
-        let mut resp = RawBatchDeleteResponse::default();
-        if res.is_err() {
-            resp.set_error(format!(
-                "Non-existent keys:[{}]",
-                res.err()
-                    .unwrap()
-                    .iter()
-                    .map(|k| std::str::from_utf8(k).unwrap())
-                    .join(", ")
-            ));
-        }
+        let keys = req.take_keys();
+        self.inner.raw_batch_delete(keys);
+        let resp = RawBatchDeleteResponse::default();
         spawn_unary_success!(ctx, req, resp, sink);
     }
 
