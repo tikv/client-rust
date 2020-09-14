@@ -1,7 +1,5 @@
-use crate::errors::Result;
-use std::io::{Write};
-use crate::Error;
-use std::ptr;
+use crate::{errors::Result, Error};
+use std::{io::Write, ptr};
 
 const ENC_GROUP_SIZE: usize = 8;
 const ENC_MARKER: u8 = b'\xff';
@@ -15,7 +13,7 @@ pub fn max_encoded_bytes_size(n: usize) -> usize {
     (n / ENC_GROUP_SIZE + 1) * (ENC_GROUP_SIZE + 1)
 }
 
-pub trait BytesEncoder : Write {
+pub trait BytesEncoder: Write {
     /// Refer: https://github.com/facebook/mysql-5.6/wiki/MyRocks-record-format#memcomparable-format
     ///
     /// Duplicate from components/tikv_util/src/codec/bytes.rs.
@@ -131,7 +129,6 @@ pub fn decode_bytes_in_place(data: &mut Vec<u8>, desc: bool) -> Result<()> {
 #[cfg(test)]
 pub mod test {
     use super::*;
-    use crate::kv::codec::bytes;
 
     fn encode_bytes(bs: &[u8]) -> Vec<u8> {
         encode_order_bytes(bs, false)
