@@ -178,7 +178,11 @@ impl Tikv for MockTikv {
         sink: grpcio::UnarySink<kvproto::kvrpcpb::RawGetResponse>,
     ) {
         let mut resp = RawGetResponse::default();
-        resp.set_value(self.inner.raw_get(req.get_key()));
+        if let Some(v) = self.inner.raw_get(req.get_key()) {
+            resp.set_value(v);
+        } else {
+            resp.set_not_found(true);
+        }
         spawn_unary_success!(ctx, req, resp, sink);
     }
 

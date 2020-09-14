@@ -20,7 +20,7 @@ mod test {
 
         // empty; get non-existent key
         let res = client.get("k1".to_owned()).await;
-        assert_eq!(res.unwrap().unwrap(), vec![]);
+        assert_eq!(res.unwrap(), None);
 
         // empty; put then batch_get
         let _ = client.put("k1".to_owned(), "v1".to_owned()).await.unwrap();
@@ -30,9 +30,9 @@ mod test {
             .batch_get(vec!["k1".to_owned(), "k2".to_owned(), "k3".to_owned()])
             .await
             .unwrap();
+        assert_eq!(res.len(), 2);
         assert_eq!(res[0].1, "v1".as_bytes());
         assert_eq!(res[1].1, "v2".as_bytes());
-        assert_eq!(res[2].1, "".as_bytes());
 
         // k1,k2; batch_put then batch_get
         let _ = client
@@ -58,7 +58,7 @@ mod test {
         assert!(res.is_err());
 
         let res = client.get("k3".to_owned()).await;
-        assert_eq!(res.unwrap().unwrap(), "".as_bytes());
+        assert_eq!(res.unwrap(), None);
 
         // k1,k2,k4; batch_delete then batch_get
         let res = client
@@ -75,9 +75,7 @@ mod test {
             ])
             .await
             .unwrap();
-        for i in 0..3 {
-            assert_eq!(res[i].1, "".as_bytes());
-        }
+        assert_eq!(res.len(), 0);
 
         debug!("Pass all tests");
 
