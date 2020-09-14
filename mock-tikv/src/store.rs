@@ -24,19 +24,23 @@ impl KvStore {
         }
     }
 
-    pub fn raw_get(&self, key: &[u8]) -> Vec<u8> {
+    pub fn raw_get(&self, key: &[u8]) -> Option<Vec<u8>> {
         let data = self.data.read().unwrap();
-        data.get(key).map(|v| v.to_vec()).unwrap_or_else(Vec::new)
+        data.get(key).map(|v| v.to_vec())
     }
 
     pub fn raw_batch_get(&self, keys: &[Vec<u8>]) -> Vec<KvPair> {
         let data = self.data.read().unwrap();
         keys.iter()
-            .map(|key| {
-                let mut pair = KvPair::default();
-                pair.set_value(data.get(key).map(|v| v.to_vec()).unwrap_or_else(Vec::new));
-                pair.set_key(key.to_vec());
-                pair
+            .filter_map(|key| {
+                if data.contains_key(key) {
+                    let mut pair = KvPair::default();
+                    pair.set_value(data.get(key).map(|v| v.to_vec()).unwrap_or_else(Vec::new));
+                    pair.set_key(key.to_vec());
+                    Some(pair)
+                } else {
+                    None
+                }
             })
             .collect()
     }
