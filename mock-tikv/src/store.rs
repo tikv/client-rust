@@ -29,14 +29,14 @@ impl KvStore {
         data.get(key).map(|v| v.to_vec())
     }
 
-    pub fn raw_batch_get(&self, keys: &[Vec<u8>]) -> Vec<KvPair> {
+    pub fn raw_batch_get(&self, keys: Vec<Vec<u8>>) -> Vec<KvPair> {
         let data = self.data.read().unwrap();
-        keys.iter()
+        keys.into_iter()
             .filter_map(|key| {
-                if data.contains_key(key) {
+                if data.contains_key(&key) {
                     let mut pair = KvPair::default();
-                    pair.set_value(data.get(key).map(|v| v.to_vec()).unwrap_or_else(Vec::new));
-                    pair.set_key(key.to_vec());
+                    pair.set_value(data.get(&key).unwrap().to_vec());
+                    pair.set_key(key);
                     Some(pair)
                 } else {
                     None
@@ -50,30 +50,26 @@ impl KvStore {
         data.insert(key, value);
     }
 
-    pub fn raw_batch_put(&self, pairs: &[KvPair]) {
+    pub fn raw_batch_put(&self, pairs: Vec<KvPair>) {
         let mut data = self.data.write().unwrap();
-        for pair in pairs {
-            data.insert(pair.get_key().to_vec(), pair.get_value().to_vec());
-        }
+        data.extend(
+            pairs
+                .into_iter()
+                .map(|mut pair| (pair.take_key(), pair.take_value())),
+        );
     }
 
     // if success, return the key deleted
-    pub fn raw_delete(&self, key: &[u8]) -> Option<Vec<u8>> {
+    pub fn raw_delete(&self, key: &[u8]) {
         let mut data = self.data.write().unwrap();
-        data.remove(key)
+        data.remove(key);
     }
 
     // if any of the key does not exist, return non-existent keys; delete other keys
-    pub fn raw_batch_delete(&self, keys: &[Vec<u8>]) -> Result<(), Vec<Vec<u8>>> {
+    pub fn raw_batch_delete(&self, keys: Vec<Vec<u8>>) {
         let mut data = self.data.write().unwrap();
-        let non_exist: Vec<_> = keys
-            .iter()
-            .filter_map(|k| data.remove(k).xor(Some(k.to_vec())))
-            .collect();
-        if non_exist.is_empty() {
-            Ok(())
-        } else {
-            Err(non_exist)
-        }
+        keys.iter().for_each(|k| {
+            data.remove(k);
+        });
     }
 }

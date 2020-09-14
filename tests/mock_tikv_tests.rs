@@ -54,9 +54,6 @@ mod test {
         let res = client.delete("k3".to_owned()).await;
         assert!(res.is_ok());
 
-        let res = client.delete("key-not-exist".to_owned()).await;
-        assert!(res.is_err());
-
         let res = client.get("k3".to_owned()).await;
         assert_eq!(res.unwrap(), None);
 
