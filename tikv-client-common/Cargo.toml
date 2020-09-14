@@ -16,7 +16,7 @@ log = "0.4"
 proptest = "0.9"
 proptest-derive = "0.1.0"
 derive-new = "0.5"
-kvproto = { git = "https://github.com/pingcap/kvproto.git", rev = "1e28226154c374788f38d3a542fc505cd74720f3", features = [ "prost-codec" ], default-features = false }
+kvproto = { git = "https://github.com/pingcap/kvproto.git", features = [ "prost-codec" ], default-features = false }
 
 [dependencies.prometheus]
 version = "0.8"
