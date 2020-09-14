@@ -188,14 +188,28 @@ pub fn store_stream_for_range<PdC: PdClient>(
     pd_client: Arc<PdC>,
 ) -> BoxStream<'static, Result<((Key, Key), Store<PdC::KvClient>)>> {
     pd_client
-        .stores_for_range(range)
+        .stores_for_range(range.clone())
         .map_ok(move |store| {
-            // FIXME should be bounded by self.range
-            let range = store.region.range();
-            (range, store)
+            let region_range = store.region.range();
+            (bound_range(region_range, range.clone()), store)
         })
         .into_stream()
         .boxed()
+}
+
+/// The range used for request should be the common range of `region_range` and `range`.
+fn bound_range(region_range: (Key, Key), range: BoundRange) -> (Key, Key) {
+    let (mut lower, mut upper) = region_range;
+    let (lower_bound, upper_bound) = range.into_keys();
+    if lower_bound > lower {
+        lower = lower_bound;
+    }
+    if let Some(up) = upper_bound {
+        if up < upper || upper.is_empty() {
+            upper = up;
+        }
+    }
+    (lower, upper)
 }
 
 pub fn store_stream_for_ranges<PdC: PdClient>(
