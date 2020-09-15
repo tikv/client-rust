@@ -177,14 +177,17 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         region: Region,
     ) -> BoxFuture<'static, Result<Store<KvC::KvClient>>> {
         let timeout = self.timeout;
-        // FIXME propagate this error instead of using `unwrap`.
-        let store_id = region.get_store_id().unwrap();
-        self.pd
-            .clone()
-            .get_store(store_id)
-            .ok_and_then(move |store| self.kv_client(store.get_address()))
-            .map_ok(move |kv_client| Store::new(region, kv_client, timeout))
-            .boxed()
+        let store_id_res = region.get_store_id();
+        match store_id_res {
+            Err(e) => future::err(e).boxed(),
+            Ok(store_id) => self
+                .pd
+                .clone()
+                .get_store(store_id)
+                .ok_and_then(move |store| self.kv_client(store.get_address()))
+                .map_ok(move |kv_client| Store::new(region, kv_client, timeout))
+                .boxed(),
+        }
     }
 
     fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>> {
