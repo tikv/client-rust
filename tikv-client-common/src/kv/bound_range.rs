@@ -189,11 +189,7 @@ impl Into<kvrpcpb::KeyRange> for BoundRange {
         let (start, end) = self.into_keys();
         let mut range = kvrpcpb::KeyRange::default();
         range.set_start_key(start.into());
-        let end_key = match end {
-            Some(k) => k.into(),
-            None => vec![],
-        };
-        range.set_end_key(end_key);
+        range.set_end_key(end.unwrap_or_default().into());
         range
     }
 }
