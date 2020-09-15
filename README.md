@@ -1,6 +1,7 @@
 # TiKV Client (Rust)
 
-[![Build Status](https://travis-ci.org/tikv/client-rust.svg?branch=master)](https://travis-ci.org/tikv/client-rust)
+[![Build Status](https://travis-ci.org/tikv/client-rust.svg?branch=master)](https://travis-ci.org/tikv/client-rust)[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Ftikv%2Fclient-rust.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Ftikv%2Fclient-rust?ref=badge_shield)
+
 [![Documentation](https://docs.rs/tikv-client/badge.svg)](https://docs.rs/tikv-client/)
 
 > Currently this crate is experimental and some portions (e.g. the Transactional API) are still in active development. You're encouraged to use this library for testing and to help us find problems!
@@ -47,3 +48,6 @@ cargo doc --package tikv-client --open
 This crate supports Rust 1.40 and above.
 
 For development, a nightly Rust compiler is needed to compile the tests.
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Ftikv%2Fclient-rust.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Ftikv%2Fclient-rust?ref=badge_large)
