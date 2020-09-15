@@ -108,12 +108,14 @@ async fn run_tso(
 
             allocate_timestamps(&resp, &mut pending_requests)?;
         }
-        Err(Error::internal_error("TSO stream terminated"))
+        // TODO: distinguish between unexpected stream termination and expected end of test
+        info!("TSO stream terminated");
+        Ok(())
     };
 
     let (send_res, recv_res): (_, Result<()>) = join!(send_requests, receive_and_handle_responses);
-    error!("TSO send error: {:?}", send_res);
-    error!("TSO receive error: {:?}", recv_res);
+    info!("TSO send termination: {:?}", send_res);
+    info!("TSO receive termination: {:?}", recv_res);
 }
 
 struct RequestGroup {
