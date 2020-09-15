@@ -189,8 +189,11 @@ impl Into<kvrpcpb::KeyRange> for BoundRange {
         let (start, end) = self.into_keys();
         let mut range = kvrpcpb::KeyRange::default();
         range.set_start_key(start.into());
-        // FIXME handle end = None rather than unwrapping
-        end.map(|k| range.set_end_key(k.into())).unwrap();
+        let end_key = match end {
+            Some(k) => k.into(),
+            None => vec![],
+        };
+        range.set_end_key(end_key);
         range
     }
 }
