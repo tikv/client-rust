@@ -59,13 +59,11 @@ impl KvStore {
         );
     }
 
-    // if success, return the key deleted
     pub fn raw_delete(&self, key: &[u8]) {
         let mut data = self.data.write().unwrap();
         data.remove(key);
     }
 
-    // if any of the key does not exist, return non-existent keys; delete other keys
     pub fn raw_batch_delete(&self, keys: Vec<Vec<u8>>) {
         let mut data = self.data.write().unwrap();
         keys.iter().for_each(|k| {
