@@ -212,7 +212,7 @@ impl Client {
 
     /// Create a new 'delete range' request.
     ///
-    /// Once resolved this request will result in the deletion of all keys over the given range.
+    /// Once resolved this request will result in the deletion of all keys over the given range `[start_key, end_key)`.
     ///
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};

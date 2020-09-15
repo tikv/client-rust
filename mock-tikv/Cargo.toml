@@ -1,0 +1,12 @@
+[package]
+name = "mock-tikv"
+version = "0.0.0"
+edition = "2018"
+
+[dependencies]
+futures = "0.3"
+grpcio = { version = "0.6", features = [ "secure", "prost-codec" ], default-features = false }
+kvproto = { git = "https://github.com/pingcap/kvproto.git", features = [ "prost-codec" ], default-features = false }
+derive-new = "0.5.8"
+tikv-client-common = { path = "../tikv-client-common"}
+log = "0.4"

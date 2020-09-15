@@ -85,7 +85,6 @@ impl Connection {
     ) -> Result<Cluster> {
         let members = self.validate_endpoints(endpoints, timeout).await?;
         let (client, members) = self.try_connect_leader(&members, timeout).await?;
-
         let id = members.get_header().get_cluster_id();
         let tso = TimestampOracle::new(id, &client)?;
         let cluster = Cluster {
