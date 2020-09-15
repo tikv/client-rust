@@ -205,11 +205,10 @@ pub fn store_stream_for_range<PdC: PdClient>(
 fn bound_range(region_range: (Key, Key), range: BoundRange) -> (Key, Key) {
     let (lower, upper) = region_range;
     let (lower_bound, upper_bound) = range.into_keys();
-    let upper_bound = upper_bound.unwrap_or_default();
-    let up = match (upper.is_empty(), upper_bound.is_empty()) {
-        (_, true) => upper,
-        (true, _) => upper_bound,
-        _ => min(upper, upper_bound),
+    let up = match (upper.is_empty(), upper_bound) {
+        (_, None) => upper,
+        (true, Some(ub)) => ub,
+        (_, Some(ub)) => min(upper, ub),
     };
     (max(lower, lower_bound), up)
 }
