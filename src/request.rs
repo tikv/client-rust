@@ -8,7 +8,11 @@ use crate::{
 use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
 use grpcio::CallOption;
 use kvproto::kvrpcpb;
-use std::{sync::Arc, time::Duration};
+use std::{
+    cmp::{max, min},
+    sync::Arc,
+    time::Duration,
+};
 use tikv_client_common::{BoundRange, Error, Key, Result};
 use tikv_client_store::{HasError, HasRegionError, KvClient, RpcFnType, Store};
 
@@ -197,19 +201,17 @@ pub fn store_stream_for_range<PdC: PdClient>(
         .boxed()
 }
 
-/// The range used for request should be the common range of `region_range` and `range`.
+/// The range used for request should be the intersection of `region_range` and `range`.
 fn bound_range(region_range: (Key, Key), range: BoundRange) -> (Key, Key) {
-    let (mut lower, mut upper) = region_range;
+    let (lower, upper) = region_range;
     let (lower_bound, upper_bound) = range.into_keys();
-    if lower_bound > lower {
-        lower = lower_bound;
-    }
-    if let Some(up) = upper_bound {
-        if up < upper || upper.is_empty() {
-            upper = up;
-        }
-    }
-    (lower, upper)
+    let upper_bound = upper_bound.unwrap_or_default();
+    let up = match (upper.is_empty(), upper_bound.is_empty()) {
+        (_, true) => upper,
+        (true, _) => upper_bound,
+        _ => min(upper, upper_bound),
+    };
+    (max(lower, lower_bound), up)
 }
 
 pub fn store_stream_for_ranges<PdC: PdClient>(
