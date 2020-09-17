@@ -74,6 +74,7 @@ impl Buffer {
         Ok(results)
     }
 
+    /// Run `f` to fetch entries in `range` from TiKV. Combine them with mutations in local buffer. Returns the results.
     pub async fn scan_and_fetch<F, Fut>(
         &self,
         range: BoundRange,
@@ -85,7 +86,7 @@ impl Buffer {
         Fut: Future<Output = Result<Vec<KvPair>>>,
     {
         // read from local buffer
-        let mutations = self.mutations.lock().unwrap();
+        let mut mutations = self.mutations.lock().unwrap();
         let mutation_range = mutations.range(range.clone());
 
         // fetch from TiKV
@@ -115,11 +116,16 @@ impl Buffer {
             }
         }
 
+        // update local buffer
+        for (k, v) in &results {
+            mutations.insert(k.clone(), Mutation::Cached(Some(v.clone())));
+        }
+
         let mut res = results
             .into_iter()
             .map(|(k, v)| KvPair::new(k, v))
             .collect::<Vec<_>>();
-        res.sort_by(|x, y| x.key().cmp(&y.key()));
+        res.sort_by_cached_key(|x| x.key().clone());
 
         Ok(res.into_iter().take(limit as usize))
     }
