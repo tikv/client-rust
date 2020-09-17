@@ -132,10 +132,12 @@ impl Transaction {
     ) -> Result<impl Iterator<Item = KvPair>> {
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
-        let pairs = new_mvcc_scan_request(range, timestamp, limit, key_only)
-            .execute(rpc)
-            .await?;
-        Ok(pairs.into_iter())
+
+        self.buffer
+            .scan_and_fetch(range.into(), limit, move |new_range, new_limit| {
+                new_mvcc_scan_request(new_range, timestamp, new_limit, key_only).execute(rpc)
+            })
+            .await
     }
 
     pub fn scan_reverse(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {

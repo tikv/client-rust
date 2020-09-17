@@ -9,7 +9,7 @@ use std::{
     borrow::Borrow,
     cmp::{Eq, PartialEq},
     convert::TryFrom,
-    ops::{Bound, Range, RangeFrom, RangeInclusive},
+    ops::{Bound, Range, RangeBounds, RangeFrom, RangeInclusive},
 };
 
 /// A struct for expressing ranges. This type is semi-opaque and is not really meant for users to
@@ -116,6 +116,36 @@ impl BoundRange {
             Bound::Unbounded => None,
         };
         (start, end)
+    }
+}
+
+impl RangeBounds<Key> for BoundRange {
+    fn start_bound(&self) -> Bound<&Key> {
+        match &self.from {
+            Bound::Included(f) => Bound::Included(f),
+            Bound::Excluded(f) => Bound::Excluded(f),
+            Bound::Unbounded => Bound::Unbounded,
+        }
+    }
+
+    fn end_bound(&self) -> Bound<&Key> {
+        match &self.to {
+            Bound::Included(t) => {
+                if t.is_empty() {
+                    Bound::Unbounded
+                } else {
+                    Bound::Included(t)
+                }
+            }
+            Bound::Excluded(t) => {
+                if t.is_empty() {
+                    Bound::Unbounded
+                } else {
+                    Bound::Excluded(t)
+                }
+            }
+            Bound::Unbounded => Bound::Unbounded,
+        }
     }
 }
 

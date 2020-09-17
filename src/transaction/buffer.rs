@@ -1,8 +1,12 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use kvproto::kvrpcpb;
-use std::{collections::BTreeMap, future::Future, sync::Mutex};
-use tikv_client_common::{Key, KvPair, Result, Value};
+use std::{
+    collections::{BTreeMap, HashMap},
+    future::Future,
+    sync::Mutex,
+};
+use tikv_client_common::{BoundRange, Key, KvPair, Result, Value};
 
 /// A caching layer which buffers reads and writes in a transaction.
 #[derive(Default)]
@@ -68,6 +72,56 @@ impl Buffer {
 
         let results = cached_results.chain(fetched_results.into_iter().map(|p| (p.0, Some(p.1))));
         Ok(results)
+    }
+
+    pub async fn scan_and_fetch<F, Fut>(
+        &self,
+        range: BoundRange,
+        limit: u32,
+        f: F,
+    ) -> Result<impl Iterator<Item = KvPair>>
+    where
+        F: FnOnce(BoundRange, u32) -> Fut,
+        Fut: Future<Output = Result<Vec<KvPair>>>,
+    {
+        // read from local buffer
+        let mutations = self.mutations.lock().unwrap();
+        let mutation_range = mutations.range(range.clone());
+
+        // fetch from TiKV
+        // fetch more entries because some of them may be deleted.
+        let redundant_limit = limit
+            + mutation_range
+                .clone()
+                .filter(|(_, m)| matches!(m, Mutation::Del))
+                .count() as u32;
+
+        let mut results = f(range, redundant_limit)
+            .await?
+            .into_iter()
+            .map(|pair| pair.into())
+            .collect::<HashMap<Key, Value>>();
+
+        // override using local data
+        for (k, m) in mutation_range {
+            match m {
+                Mutation::Put(v) => {
+                    results.insert(k.clone(), v.clone());
+                }
+                Mutation::Del => {
+                    results.remove(k);
+                }
+                _ => {}
+            }
+        }
+
+        let mut res = results
+            .into_iter()
+            .map(|(k, v)| KvPair::new(k, v))
+            .collect::<Vec<_>>();
+        res.sort_by(|x, y| x.key().cmp(&y.key()));
+
+        Ok(res.into_iter().take(limit as usize))
     }
 
     /// Lock the given key if necessary.
