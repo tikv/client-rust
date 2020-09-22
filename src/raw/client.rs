@@ -12,7 +12,6 @@ const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 pub struct Client {
     rpc: Arc<PdRpcClient>,
     cf: Option<ColumnFamily>,
-    key_only: bool,
 }
 
 impl Client {
@@ -27,11 +26,7 @@ impl Client {
     /// ```
     pub async fn new(config: Config) -> Result<Client> {
         let rpc = Arc::new(PdRpcClient::connect(&config).await?);
-        Ok(Client {
-            rpc,
-            cf: None,
-            key_only: false,
-        })
+        Ok(Client { rpc, cf: None })
     }
 
     /// Set the column family of requests.
@@ -52,30 +47,6 @@ impl Client {
         Client {
             rpc: self.rpc.clone(),
             cf: Some(cf),
-            key_only: self.key_only,
-        }
-    }
-
-    /// Set the `key_only` option of requests.
-    ///
-    /// This function returns a new `Client`, requests created with it will have the
-    /// supplied `key_only` option. The original `Client` can still be used. `key_only`
-    /// is only relevant for `scan`-like requests, for other kinds of request, it
-    /// will be ignored.
-    ///
-    /// ```rust,no_run
-    /// # use tikv_client::{Config, RawClient, ToOwnedRange};
-    /// # use futures::prelude::*;
-    /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(Config::default()).await.unwrap().with_key_only(true);
-    /// let scan_request = client.scan(("TiKV"..="TiDB").to_owned(), 2);
-    /// # });
-    /// ```
-    pub fn with_key_only(&self, key_only: bool) -> Client {
-        Client {
-            rpc: self.rpc.clone(),
-            cf: self.cf.clone(),
-            key_only,
         }
     }
 
@@ -240,16 +211,21 @@ impl Client {
     /// # futures::executor::block_on(async {
     /// # let client = RawClient::new(Config::default()).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
-    /// let req = client.scan(inclusive_range.to_owned(), 2);
+    /// let req = client.scan(inclusive_range.to_owned(), 2, false);
     /// let result: Vec<KvPair> = req.await.unwrap();
     /// # });
     /// ```
-    pub async fn scan(&self, range: impl Into<BoundRange>, limit: u32) -> Result<Vec<KvPair>> {
+    pub async fn scan(
+        &self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+        key_only: bool,
+    ) -> Result<Vec<KvPair>> {
         if limit > MAX_RAW_KV_SCAN_LIMIT {
             return Err(Error::max_scan_limit_exceeded(limit, MAX_RAW_KV_SCAN_LIMIT));
         }
 
-        requests::new_raw_scan_request(range, limit, self.key_only, self.cf.clone())
+        requests::new_raw_scan_request(range, limit, key_only, self.cf.clone())
             .execute(self.rpc.clone())
             .await
     }
@@ -266,7 +242,7 @@ impl Client {
     /// let inclusive_range1 = "TiDB"..="TiKV";
     /// let inclusive_range2 = "TiKV"..="TiSpark";
     /// let iterable = vec![inclusive_range1.to_owned(), inclusive_range2.to_owned()];
-    /// let req = client.batch_scan(iterable, 2);
+    /// let req = client.batch_scan(iterable, 2, false);
     /// let result = req.await;
     /// # });
     /// ```
@@ -274,6 +250,7 @@ impl Client {
         &self,
         ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
         each_limit: u32,
+        key_only: bool,
     ) -> Result<Vec<KvPair>> {
         if each_limit > MAX_RAW_KV_SCAN_LIMIT {
             return Err(Error::max_scan_limit_exceeded(
@@ -282,7 +259,7 @@ impl Client {
             ));
         }
 
-        requests::new_raw_batch_scan_request(ranges, each_limit, self.key_only, self.cf.clone())
+        requests::new_raw_batch_scan_request(ranges, each_limit, key_only, self.cf.clone())
             .execute(self.rpc.clone())
             .await
     }
