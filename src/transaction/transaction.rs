@@ -154,12 +154,12 @@ impl Transaction {
     /// let mut txn = client.begin().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let val = "TiKV".to_owned();
-    /// txn.set(key, val);
+    /// txn.put(key, val);
     /// // Finish the transaction...
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn set(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
+    pub async fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
         self.buffer.put(key.into(), value.into());
         Ok(())
     }

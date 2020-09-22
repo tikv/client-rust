@@ -40,8 +40,8 @@ async fn crud() -> Fallible<()> {
         0
     );
 
-    txn.set("foo".to_owned(), "bar".to_owned()).await?;
-    txn.set("bar".to_owned(), "foo".to_owned()).await?;
+    txn.put("foo".to_owned(), "bar".to_owned()).await?;
+    txn.put("bar".to_owned(), "foo".to_owned()).await?;
     // Read buffered values
     assert_eq!(
         txn.get("foo".to_owned()).await?,
@@ -81,7 +81,7 @@ async fn crud() -> Fallible<()> {
         batch_get_res.get(&Key::from("bar".to_owned())),
         Some(Value::from("foo".to_owned())).as_ref()
     );
-    txn.set("foo".to_owned(), "foo".to_owned()).await?;
+    txn.put("foo".to_owned(), "foo".to_owned()).await?;
     txn.delete("bar".to_owned()).await?;
     txn.commit().await?;
 
