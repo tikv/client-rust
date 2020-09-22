@@ -13,6 +13,7 @@ pub struct Client {
     /// The thread pool for background tasks including committing secondary keys and failed
     /// transaction cleanups.
     bg_worker: ThreadPool,
+    key_only: bool,
 }
 
 impl Client {
@@ -29,8 +30,20 @@ impl Client {
         let bg_worker = ThreadPool::new()?;
         // TODO: PdRpcClient::connect currently uses a blocking implementation.
         //       Make it asynchronous later.
-        let pd = Arc::new(PdCodecClient::connect(&config).await?);
-        Ok(Client { pd, bg_worker })
+        let pd = Arc::new(PdRpcClient::connect(&config).await?);
+        Ok(Client {
+            pd,
+            bg_worker,
+            key_only: false,
+        })
+    }
+
+    pub fn with_key_only(&self, key_only: bool) -> Client {
+        Client {
+            pd: self.pd.clone(),
+            bg_worker: self.bg_worker.clone(),
+            key_only,
+        }
     }
 
     /// Creates a new [`Transaction`](Transaction).
@@ -73,6 +86,11 @@ impl Client {
     }
 
     fn new_transaction(&self, timestamp: Timestamp) -> Transaction {
-        Transaction::new(timestamp, self.bg_worker.clone(), self.pd.clone())
+        Transaction::new(
+            timestamp,
+            self.bg_worker.clone(),
+            self.pd.clone(),
+            self.key_only,
+        )
     }
 }

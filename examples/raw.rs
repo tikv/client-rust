@@ -86,7 +86,8 @@ async fn main() -> Result<()> {
     let start = "k1";
     let end = "k2";
     let pairs = client
-        .scan((start..=end).to_owned(), 10, false)
+        .with_key_only(true)
+        .scan((start..=end).to_owned(), 10)
         .await
         .expect("Could not scan");
 
@@ -110,7 +111,7 @@ async fn main() -> Result<()> {
         (k1.to_owned()..=k3.to_owned()),
     ];
     let kv_pairs = client
-        .batch_scan(batch_scan_keys.to_owned(), 10, true)
+        .batch_scan(batch_scan_keys.to_owned(), 10)
         .await
         .expect("Could not batch scan");
     let vals: Vec<_> = kv_pairs
