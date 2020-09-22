@@ -9,7 +9,7 @@ async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>
     let mut txn = client.begin().await.expect("Could not begin a transaction");
     for pair in pairs {
         let (key, value) = pair.into().into();
-        txn.set(key, value).await.expect("Could not set key value");
+        txn.put(key, value).await.expect("Could not set key value");
     }
     txn.commit().await.expect("Could not commit transaction");
 }
