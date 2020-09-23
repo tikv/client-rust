@@ -35,11 +35,11 @@ async fn delete_all_raw() -> Fallible<()> {
 
 async fn delete_all_txn() -> Fallible<()> {
     let config = Config::new(pd_addrs());
-    let txn_client = TransactionClient::new(config).await?;
+    let txn_client = TransactionClient::new(config).await?.with_key_only(true);
     let mut txn = txn_client.begin().await?;
 
     loop {
-        let mut keys = txn.scan(vec![].., SCAN_BATCH_SIZE, true).await?.peekable();
+        let mut keys = txn.scan(vec![].., SCAN_BATCH_SIZE).await?.peekable();
 
         if keys.peek().is_none() {
             break;
@@ -93,8 +93,8 @@ async fn crud() -> Fallible<()> {
         0
     );
 
-    txn.set("foo".to_owned(), "bar".to_owned()).await?;
-    txn.set("bar".to_owned(), "foo".to_owned()).await?;
+    txn.put("foo".to_owned(), "bar".to_owned()).await?;
+    txn.put("bar".to_owned(), "foo".to_owned()).await?;
     // Read buffered values
     assert_eq!(
         txn.get("foo".to_owned()).await?,
@@ -134,7 +134,7 @@ async fn crud() -> Fallible<()> {
         batch_get_res.get(&Key::from("bar".to_owned())),
         Some(Value::from("foo".to_owned())).as_ref()
     );
-    txn.set("foo".to_owned(), "foo".to_owned()).await?;
+    txn.put("foo".to_owned(), "foo".to_owned()).await?;
     txn.delete("bar".to_owned()).await?;
     txn.commit().await?;
 
@@ -179,6 +179,9 @@ async fn raw_bank_transfer() -> Fallible<()> {
         let mut alice_balance = get_u32(&client, alice.clone()).await?;
         let bob = chosen_people[1];
         let mut bob_balance = get_u32(&client, bob.clone()).await?;
+        if alice_balance == 0 {
+            continue;
+        }
         let transfer = rng.gen_range(0, alice_balance);
         alice_balance -= transfer;
         bob_balance += transfer;
@@ -213,7 +216,7 @@ async fn txn_bank_transfer() -> Fallible<()> {
     for person in &people {
         let init = rng.gen::<u8>() as u32;
         sum += init as u32;
-        txn.set(person.clone(), init.to_be_bytes().to_vec()).await?;
+        txn.put(person.clone(), init.to_be_bytes().to_vec()).await?;
     }
     txn.commit().await?;
 
@@ -225,12 +228,15 @@ async fn txn_bank_transfer() -> Fallible<()> {
         let mut alice_balance = get_txn_u32(&txn, alice.clone()).await?;
         let bob = chosen_people[1];
         let mut bob_balance = get_txn_u32(&txn, bob.clone()).await?;
+        if alice_balance == 0 {
+            continue;
+        }
         let transfer = rng.gen_range(0, alice_balance);
         alice_balance -= transfer;
         bob_balance += transfer;
-        txn.set(alice.clone(), alice_balance.to_be_bytes().to_vec())
+        txn.put(alice.clone(), alice_balance.to_be_bytes().to_vec())
             .await?;
-        txn.set(bob.clone(), bob_balance.to_be_bytes().to_vec())
+        txn.put(bob.clone(), bob_balance.to_be_bytes().to_vec())
             .await?;
         txn.commit().await?;
     }
