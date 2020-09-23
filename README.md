@@ -31,6 +31,8 @@ In the current version (0.0.0), the transactional API only supports optimistic t
 
 Important note: It is **not recommended or supported** to use both the raw and transactional APIs on the same database.
 
+### Code examples
+
 Raw mode:
 
 ```rust
@@ -46,12 +48,50 @@ Transactional mode:
 let config = Config::new(vec!["127.0.0.1:2379"]);
 let txn_client = TransactionClient::new(config).await?;
 let mut txn = txn_client.begin().await?;
-txn.set("key".to_owned(), "value".to_owned()).await?;
+txn.put("key".to_owned(), "value".to_owned()).await?;
 let value = txn.get("key".to_owned()).await;
 txn.commit().await?;
 ```
 
 There are some [examples](examples) which show how to use the client in a Rust program.
+
+### API
+
+| Mode | Request        | Main parameter type | Successful result type |
+| ---- | -------------- | ------------------- | ---------------------- |
+| raw  | `put`          | `KvPair`            | `()`                   |
+| raw  | `get`          | `Key`               | `Option<Value>`        |
+| raw  | `delete`       | `Key`               | `()`                   |
+| raw  | `scan`         | `BoundRange`        | `Vec<KvPair>`          |
+| raw  | `batch_put`    | `Iter<KvPair>`      | `()`                   |
+| raw  | `batch_get`    | `Iter<Key>`         | `Vec<KvPair>`          |
+| raw  | `batch_delete` | `Iter<Key>`         | `()`                   |
+| raw  | `batch_scan`   | `Iter<BoundRange>`  | `Vec<KvPair>`          |
+| raw  | `delete_range` | `BoundRange`        | `()`                   |
+| txn  | `put`          | `KvPair`            | `()`                   |
+| txn  | `get`          | `Key`               | `Option<value>`        |
+| txn  | `delete`       | `Key`               | `()`                   |
+| txn  | `scan`         | `BoundRange`        | `Iter<KvPair>`         |
+| txn  | `batch_get`    | `Iter<Key>`         | `Iter<KvPair>`         |
+| txn  | `lock_keys`    | `KvPair`            | `()`                   |
+
+For detailed behavior of each reqeust, please refer to the [doc](#Access-the-documentation).
+
+### Useful types
+
+To use the client, there are 4 types you will need. 
+
+`Key` is simply a vector of bytes(`Vec<u8>`). `String` and `Vec<u8>` implements `Into<Key>`, so you can directly pass them to clients.
+
+`Value` is just an alias of `Vec<u8>`.
+
+`KvPair` is a tuple consisting of a `Key` and a `Value`. It also provides some convenience methods for conversion to and from other types.
+
+`BoundRange` is used for range related requests like `scan`. It implements `From` for usual ranges so you can just create a range and pass them to the request.For instance, `client.scan("k2".to_owned()..="k5".to_owned(), 5)` or `client.delete_range(vec![]..)`.
+
+
+
+
 
 ## Access the documentation
 
