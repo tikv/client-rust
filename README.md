@@ -57,23 +57,30 @@ There are some [examples](examples) which show how to use the client in a Rust p
 
 ### API
 
-| Mode | Request        | Main parameter type | Successful result type |
-| ---- | -------------- | ------------------- | ---------------------- |
-| raw  | `put`          | `KvPair`            | `()`                   |
-| raw  | `get`          | `Key`               | `Option<Value>`        |
-| raw  | `delete`       | `Key`               | `()`                   |
-| raw  | `scan`         | `BoundRange`        | `Vec<KvPair>`          |
-| raw  | `batch_put`    | `Iter<KvPair>`      | `()`                   |
-| raw  | `batch_get`    | `Iter<Key>`         | `Vec<KvPair>`          |
-| raw  | `batch_delete` | `Iter<Key>`         | `()`                   |
-| raw  | `batch_scan`   | `Iter<BoundRange>`  | `Vec<KvPair>`          |
-| raw  | `delete_range` | `BoundRange`        | `()`                   |
-| txn  | `put`          | `KvPair`            | `()`                   |
-| txn  | `get`          | `Key`               | `Option<value>`        |
-| txn  | `delete`       | `Key`               | `()`                   |
-| txn  | `scan`         | `BoundRange`        | `Iter<KvPair>`         |
-| txn  | `batch_get`    | `Iter<Key>`         | `Iter<KvPair>`         |
-| txn  | `lock_keys`    | `KvPair`            | `()`                   |
+#### Raw requests
+
+| Request        | Main parameter type | Successful result type |
+| -------------- | ------------------- | ---------------------- |
+| `put`          | `KvPair`            | `()`                   |
+| `get`          | `Key`               | `Option<Value>`        |
+| `delete`       | `Key`               | `()`                   |
+| `scan`         | `BoundRange`        | `Vec<KvPair>`          |
+| `batch_put`    | `Iter<KvPair>`      | `()`                   |
+| `batch_get`    | `Iter<Key>`         | `Vec<KvPair>`          |
+| `batch_delete` | `Iter<Key>`         | `()`                   |
+| `batch_scan`   | `Iter<BoundRange>`  | `Vec<KvPair>`          |
+| `delete_range` | `BoundRange`        | `()`                   |
+
+#### Transactional requests
+
+| Request        | Main parameter type | Successful result type |
+| -------------- | ------------------- | ---------------------- |
+| `put`          | `KvPair`            | `()`                   |
+| `get`          | `Key`               | `Option<value>`        |
+| `delete`       | `Key`               | `()`                   |
+| `scan`         | `BoundRange`        | `Iter<KvPair>`         |
+| `batch_get`    | `Iter<Key>`         | `Iter<KvPair>`         |
+| `lock_keys`    | `KvPair`            | `()`                   |
 
 For detailed behavior of each reqeust, please refer to the [doc](#Access-the-documentation).
 
