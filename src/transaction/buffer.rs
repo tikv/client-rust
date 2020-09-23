@@ -39,7 +39,7 @@ impl Buffer {
         &self,
         keys: impl Iterator<Item = Key>,
         f: F,
-    ) -> Result<impl Iterator<Item = (Key, Option<Value>)>>
+    ) -> Result<impl Iterator<Item = KvPair>>
     where
         F: FnOnce(Vec<Key>) -> Fut,
         Fut: Future<Output = Result<Vec<KvPair>>>,
@@ -48,7 +48,10 @@ impl Buffer {
             let mutations = self.mutations.lock().unwrap();
             // Partition the keys into those we have buffered and those we have to
             // get from the store.
-            let (undetermined_keys, cached_results): (Vec<(Key, MutationValue)>, _) = keys
+            let (undetermined_keys, cached_results): (
+                Vec<(Key, MutationValue)>,
+                Vec<(Key, MutationValue)>,
+            ) = keys
                 .map(|key| {
                     let value = mutations
                         .get(&key)
@@ -58,7 +61,12 @@ impl Buffer {
                 })
                 .partition(|(_, v)| *v == MutationValue::Undetermined);
 
-            let cached_results = cached_results.into_iter().map(|(k, v)| (k, v.unwrap()));
+            let cached_results = cached_results
+                .into_iter()
+                .filter_map(|(k, v)| match v.unwrap() {
+                    Some(v) => Some(KvPair(k, v)),
+                    None => None,
+                });
 
             let undetermined_keys = undetermined_keys.into_iter().map(|(k, _)| k).collect();
             (cached_results, undetermined_keys)
@@ -70,7 +78,7 @@ impl Buffer {
             mutations.insert(pair.0.clone(), Mutation::Cached(Some(pair.1.clone())));
         }
 
-        let results = cached_results.chain(fetched_results.into_iter().map(|p| (p.0, Some(p.1))));
+        let results = cached_results.chain(fetched_results.into_iter());
         Ok(results)
     }
 
@@ -260,13 +268,10 @@ mod tests {
             ))
             .unwrap()
             .collect::<Vec<_>>(),
-            vec![
-                (Key::from(b"key2".to_vec()), None),
-                (
-                    Key::from(b"key1".to_vec()),
-                    Some(Value::from(b"value".to_vec()))
-                ),
-            ]
+            vec![KvPair(
+                Key::from(b"key1".to_vec()),
+                Value::from(b"value".to_vec())
+            ),]
         );
     }
 
@@ -304,16 +309,16 @@ mod tests {
         assert_eq!(
             r1.unwrap().collect::<Vec<_>>(),
             vec![
-                (k1.clone(), Some(v1.clone())),
-                (k2.clone(), Some(v2.clone()))
+                KvPair(k1.clone(), v1.clone()),
+                KvPair(k2.clone(), v2.clone())
             ]
         );
         assert_eq!(r2.unwrap().unwrap(), v2.clone());
         assert_eq!(
             r3.unwrap().collect::<Vec<_>>(),
             vec![
-                (k1.clone(), Some(v1.clone())),
-                (k2.clone(), Some(v2.clone()))
+                KvPair(k1.clone(), v1.clone()),
+                KvPair(k2.clone(), v2.clone())
             ]
         );
     }

@@ -103,7 +103,7 @@ impl Client {
     /// Create a new 'batch get' request.
     ///
     /// Once resolved this request will result in the fetching of the values associated with the
-    /// given keys.
+    /// given keys, skipping non-existent entris.
     ///
     /// ```rust,no_run
     /// # use tikv_client::{KvPair, Config, RawClient};
