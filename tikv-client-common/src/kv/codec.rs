@@ -69,6 +69,9 @@ fn adjust_bytes_order<'a>(bs: &'a [u8], desc: bool, buf: &'a mut [u8]) -> &'a [u
 ///
 /// Duplicate from components/tikv_util/src/codec/bytes.rs.
 pub fn decode_bytes_in_place(data: &mut Vec<u8>, desc: bool) -> Result<()> {
+    if data.is_empty() {
+        return Ok(());
+    }
     let mut write_offset = 0;
     let mut read_offset = 0;
     loop {
