@@ -9,7 +9,7 @@ async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>
     let mut txn = client.begin().await.expect("Could not begin a transaction");
     for pair in pairs {
         let (key, value) = pair.into().into();
-        txn.set(key, value).await.expect("Could not set key value");
+        txn.put(key, value).await.expect("Could not set key value");
     }
     txn.commit().await.expect("Could not commit transaction");
 }
@@ -21,7 +21,7 @@ async fn get(client: &Client, key: Key) -> Option<Value> {
 
 async fn scan(client: &Client, range: impl Into<BoundRange>, limit: u32) {
     let mut txn = client.begin().await.expect("Could not begin a transaction");
-    txn.scan(range, limit, false)
+    txn.scan(range, limit)
         .await
         .expect("Could not scan key-value pairs in range")
         .for_each(|pair| println!("{:?}", pair));
