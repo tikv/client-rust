@@ -9,48 +9,29 @@ use std::{
     convert::TryInto,
     env,
 };
-use tikv_client::{Config, Key, RawClient, Result, Transaction, TransactionClient, Value};
-
-/// The limit of scan in each iteration in `clear_tikv`.
-const SCAN_BATCH_SIZE: u32 = 1000;
+use tikv_client::{
+    ColumnFamily, Config, Key, RawClient, Result, Transaction, TransactionClient, Value,
+};
 
 // Parameters used in test
 const NUM_PEOPLE: u32 = 100;
 const NUM_TRNASFER: u32 = 100;
 
 /// Delete all entris in TiKV to leave a clean space for following tests.
-/// TiKV does not provide an elegant way to do this, so it is done by scanning and deletions.
 async fn clear_tikv() -> Fallible<()> {
-    delete_all_raw().await?;
-    delete_all_txn().await?;
-    Fallible::Ok(())
-}
-
-async fn delete_all_raw() -> Fallible<()> {
-    let config = Config::new(pd_addrs());
-    let raw_client = RawClient::new(config).await?.with_key_only(true);
-    raw_client.delete_range(vec![]..).await?;
-    Fallible::Ok(())
-}
-
-async fn delete_all_txn() -> Fallible<()> {
-    let config = Config::new(pd_addrs());
-    let txn_client = TransactionClient::new(config).await?.with_key_only(true);
-    let mut txn = txn_client.begin().await?;
-
-    loop {
-        let mut keys = txn.scan(vec![].., SCAN_BATCH_SIZE).await?.peekable();
-
-        if keys.peek().is_none() {
-            break;
-        }
-
-        for kv in keys {
-            txn.delete(kv.into_key()).await?;
-        }
+    let cfs = vec![
+        ColumnFamily::Default,
+        ColumnFamily::Lock,
+        ColumnFamily::Write,
+    ];
+    for cf in cfs {
+        let config = Config::new(pd_addrs());
+        let raw_client = RawClient::new(config)
+            .await?
+            .with_key_only(true)
+            .with_cf(cf);
+        raw_client.delete_range(vec![]..).await?;
     }
-
-    txn.commit().await?;
     Fallible::Ok(())
 }
 
