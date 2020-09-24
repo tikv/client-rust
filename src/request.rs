@@ -208,6 +208,7 @@ fn bound_range(region_range: (Key, Key), range: BoundRange) -> (Key, Key) {
     let up = match (upper.is_empty(), upper_bound) {
         (_, None) => upper,
         (true, Some(ub)) => ub,
+        (_, Some(ub)) if ub.is_empty() => upper,
         (_, Some(ub)) => min(upper, ub),
     };
     (max(lower, lower_bound), up)
