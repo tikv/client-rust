@@ -10,11 +10,10 @@ use crate::{
     transaction::HasLocks,
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
-use tikv_client_store::{KvClient, RpcFnType, Store};
-
 use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
 use kvproto::{kvrpcpb, tikvpb::TikvClient};
 use std::{mem, sync::Arc};
+use tikv_client_store::{KvClient, RpcFnType, Store};
 
 impl KvRequest for kvrpcpb::RawGetRequest {
     type Result = Option<Value>;
@@ -332,8 +331,14 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
         results
-            .into_future()
-            .map(|(f, _)| f.expect("no results should be impossible"))
+            .fold(Ok(()), |acc, res| {
+                let res = match (acc, res) {
+                    (Err(e), _) => Err(e),
+                    (_, Err(e)) => Err(e),
+                    _ => Ok(()),
+                };
+                future::ready(res)
+            })
             .boxed()
     }
 }

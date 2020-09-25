@@ -347,8 +347,14 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
         results
-            .into_future()
-            .map(|(f, _)| f.expect("no results should be impossible"))
+            .fold(Ok(()), |acc, res| {
+                let res = match (acc, res) {
+                    (Err(e), _) => Err(e),
+                    (_, Err(e)) => Err(e),
+                    _ => Ok(()),
+                };
+                future::ready(res)
+            })
             .boxed()
     }
 }
@@ -409,8 +415,14 @@ impl KvRequest for kvrpcpb::CommitRequest {
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
         results
-            .into_future()
-            .map(|(f, _)| f.expect("no results should be impossible"))
+            .fold(Ok(()), |acc, res| {
+                let res = match (acc, res) {
+                    (Err(e), _) => Err(e),
+                    (_, Err(e)) => Err(e),
+                    _ => Ok(()),
+                };
+                future::ready(res)
+            })
             .boxed()
     }
 }
@@ -457,8 +469,14 @@ impl KvRequest for kvrpcpb::BatchRollbackRequest {
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
         results
-            .into_future()
-            .map(|(f, _)| f.expect("no results should be impossible"))
+            .fold(Ok(()), |acc, res| {
+                let res = match (acc, res) {
+                    (Err(e), _) => Err(e),
+                    (_, Err(e)) => Err(e),
+                    _ => Ok(()),
+                };
+                future::ready(res)
+            })
             .boxed()
     }
 }
