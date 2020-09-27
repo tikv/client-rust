@@ -10,6 +10,7 @@ use futures::{
 use grpcio::{EnvBuilder, Environment};
 use std::{
     collections::HashMap,
+    fmt::Debug,
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -27,17 +28,21 @@ const CLIENT_PREFIX: &str = "tikv-client";
 pub trait PdClient: Send + Sync + 'static {
     type KvClient: KvClient + Send + Sync + 'static;
 
+    // raw region
     fn map_region_to_store(
         self: Arc<Self>,
         region: Region,
     ) -> BoxFuture<'static, Result<Store<Self::KvClient>>>;
 
+    // raw region for raw key
     fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>>;
 
+    // raw region for id
     fn region_for_id(&self, id: RegionId) -> BoxFuture<'static, Result<Region>>;
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>>;
 
+    // store for raw key
     fn store_for_key(
         self: Arc<Self>,
         key: &Key,
@@ -56,7 +61,7 @@ pub trait PdClient: Send + Sync + 'static {
             .boxed()
     }
 
-    fn group_keys_by_region<K: AsRef<Key> + Send + Sync + 'static>(
+    fn group_keys_by_region<K: AsRef<Key> + Send + Sync + Debug + 'static>(
         self: Arc<Self>,
         keys: impl Iterator<Item = K> + Send + Sync + 'static,
     ) -> BoxStream<'static, Result<(RegionId, Vec<K>)>> {
@@ -81,7 +86,7 @@ pub trait PdClient: Send + Sync + 'static {
         .boxed()
     }
 
-    // Returns a Steam which iterates over the contexts for each region covered by range.
+    // Returns a Stream which iterates over the contexts for each region covered by range.
     fn stores_for_range(
         self: Arc<Self>,
         range: BoundRange,
@@ -93,12 +98,15 @@ pub trait PdClient: Send + Sync + 'static {
                 Some(sk) => sk,
             };
             let end_key = end_key.clone();
-
             let this = self.clone();
             Either::Left(self.region_for_key(&start_key).and_then(move |region| {
                 let region_end = region.end_key();
                 this.map_region_to_store(region).map_ok(move |store| {
-                    if end_key.map(|x| x <= region_end).unwrap_or(false) || region_end.is_empty() {
+                    if end_key
+                        .map(|x| x <= region_end && !x.is_empty())
+                        .unwrap_or(false)
+                        || region_end.is_empty()
+                    {
                         return Some((None, store));
                     }
                     Some((Some(region_end), store))
@@ -159,6 +167,14 @@ pub trait PdClient: Send + Sync + 'static {
         })
         .boxed()
     }
+
+    fn decode_region(mut region: Region, enable_codec: bool) -> Result<Region> {
+        if enable_codec {
+            codec::decode_bytes_in_place(&mut region.region.mut_start_key(), false)?;
+            codec::decode_bytes_in_place(&mut region.region.mut_end_key(), false)?;
+        }
+        Ok(region)
+    }
 }
 
 /// This client converts requests for the logical TiKV cluster into requests
@@ -168,6 +184,7 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     kv_connect: KvC,
     kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
     timeout: Duration,
+    enable_codec: bool,
 }
 
 impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
@@ -192,12 +209,24 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     }
 
     fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>> {
-        let key: &[u8] = key.into();
-        self.pd.clone().get_region(key.to_owned()).boxed()
+        let enable_codec = self.enable_codec;
+        let key = if enable_codec {
+            key.to_encoded().into()
+        } else {
+            key.clone().into()
+        };
+        let region = self.pd.clone().get_region(key).boxed();
+        region
+            .ok_and_then(move |region| Self::decode_region(region, enable_codec))
+            .boxed()
     }
 
     fn region_for_id(&self, id: RegionId) -> BoxFuture<'static, Result<Region>> {
-        self.pd.clone().get_region_by_id(id).boxed()
+        let region = self.pd.clone().get_region_by_id(id).boxed();
+        let enable_codec = self.enable_codec;
+        region
+            .ok_and_then(move |region| Self::decode_region(region, enable_codec))
+            .boxed()
     }
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
@@ -206,13 +235,14 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 }
 
 impl PdRpcClient<TikvConnect, Cluster> {
-    pub async fn connect(config: &Config) -> Result<PdRpcClient> {
+    pub async fn connect(config: &Config, enable_codec: bool) -> Result<PdRpcClient> {
         PdRpcClient::new(
             config,
             |env, security_mgr| TikvConnect::new(env, security_mgr),
             |env, security_mgr| {
                 RetryClient::connect(env, &config.pd_endpoints, security_mgr, config.timeout)
             },
+            enable_codec,
         )
         .await
     }
@@ -223,6 +253,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         config: &Config,
         kv_connect: MakeKvC,
         pd: MakePd,
+        enable_codec: bool,
     ) -> Result<PdRpcClient<KvC, Cl>>
     where
         PdFut: Future<Output = Result<RetryClient<Cl>>>,
@@ -252,6 +283,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             kv_client_cache,
             kv_connect: kv_connect(env, security_mgr),
             timeout: config.timeout,
+            enable_codec,
         })
     }
 
@@ -267,58 +299,6 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
                 .insert(address.to_owned(), client.clone());
             client
         })
-    }
-}
-
-/// This client wraps a PdClient and encodes/decodes keys and regions according to
-/// TiKV transaction codec.
-pub struct PdCodecClient<PdClient = PdRpcClient> {
-    pd: Arc<PdClient>,
-}
-
-impl<PdC: PdClient + Send + Sync + 'static> PdClient for PdCodecClient<PdC> {
-    type KvClient = PdC::KvClient;
-
-    fn map_region_to_store(
-        self: Arc<Self>,
-        region: Region,
-    ) -> BoxFuture<'static, Result<Store<PdC::KvClient>>> {
-        self.pd.clone().map_region_to_store(region)
-    }
-
-    fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>> {
-        self.pd
-            .clone()
-            .region_for_key(&key.clone().as_encoded())
-            .ok_and_then(move |region| PdCodecClient::decode_region(region))
-            .boxed()
-    }
-
-    fn region_for_id(&self, id: RegionId) -> BoxFuture<'static, Result<Region>> {
-        self.pd
-            .clone()
-            .region_for_id(id)
-            .ok_and_then(move |region| PdCodecClient::decode_region(region))
-            .boxed()
-    }
-
-    fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
-        self.pd.clone().get_timestamp()
-    }
-}
-
-impl PdCodecClient {
-    fn decode_region(mut region: Region) -> Result<Region> {
-        codec::decode_bytes_in_place(&mut region.region.mut_start_key(), false)?;
-        codec::decode_bytes_in_place(&mut region.region.mut_end_key(), false)?;
-        Ok(region)
-    }
-}
-
-impl PdCodecClient<PdCodecClient> {
-    pub async fn connect(config: &Config) -> Result<PdCodecClient> {
-        let pd = PdRpcClient::connect(config).await?;
-        Ok(PdCodecClient { pd: Arc::new(pd) })
     }
 }
 

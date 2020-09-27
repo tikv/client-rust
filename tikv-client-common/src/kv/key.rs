@@ -107,7 +107,7 @@ impl Key {
     }
 
     #[inline]
-    pub fn as_encoded(&self) -> Key {
+    pub fn to_encoded(&self) -> Key {
         let len = codec::max_encoded_bytes_size(self.0.len());
         let mut encoded = Vec::with_capacity(len);
         encoded.encode_bytes(self.into(), false).unwrap();

@@ -1,15 +1,18 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::transaction::{Snapshot, Transaction};
+use crate::{
+    pd::PdRpcClient,
+    transaction::{Snapshot, Transaction},
+};
 
-use crate::pd::{PdClient, PdCodecClient};
+use crate::pd::PdClient;
 use futures::executor::ThreadPool;
 use std::sync::Arc;
 use tikv_client_common::{Config, Result, Timestamp};
 
 /// The TiKV transactional `Client` is used to issue requests to the TiKV server and PD cluster.
 pub struct Client {
-    pd: Arc<PdCodecClient>,
+    pd: Arc<PdRpcClient>,
     /// The thread pool for background tasks including committing secondary keys and failed
     /// transaction cleanups.
     bg_worker: ThreadPool,
@@ -30,7 +33,7 @@ impl Client {
         let bg_worker = ThreadPool::new()?;
         // TODO: PdRpcClient::connect currently uses a blocking implementation.
         //       Make it asynchronous later.
-        let pd = Arc::new(PdRpcClient::connect(&config).await?);
+        let pd = Arc::new(PdRpcClient::connect(&config, true).await?);
         Ok(Client {
             pd,
             bg_worker,

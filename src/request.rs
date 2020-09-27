@@ -10,6 +10,7 @@ use grpcio::CallOption;
 use kvproto::kvrpcpb;
 use std::{
     cmp::{max, min},
+    fmt::Debug,
     sync::Arc,
     time::Duration,
 };
@@ -164,12 +165,13 @@ where
         .boxed()
 }
 
+/// Maps keys to a stream of stores. `key_data` must be sorted in increasing order
 pub fn store_stream_for_keys<KeyData, IntoKey, I, PdC>(
     key_data: I,
     pd_client: Arc<PdC>,
 ) -> BoxStream<'static, Result<(Vec<KeyData>, Store<PdC::KvClient>)>>
 where
-    KeyData: AsRef<Key> + Send + Sync + 'static,
+    KeyData: AsRef<Key> + Send + Sync + Debug + 'static,
     IntoKey: Into<KeyData> + 'static,
     I: IntoIterator<Item = IntoKey>,
     I::IntoIter: Send + Sync + 'static,
@@ -208,6 +210,7 @@ fn bound_range(region_range: (Key, Key), range: BoundRange) -> (Key, Key) {
     let up = match (upper.is_empty(), upper_bound) {
         (_, None) => upper,
         (true, Some(ub)) => ub,
+        (_, Some(ub)) if ub.is_empty() => upper,
         (_, Some(ub)) => min(upper, ub),
     };
     (max(lower, lower_bound), up)

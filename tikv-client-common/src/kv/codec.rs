@@ -2,7 +2,7 @@ use crate::{errors::Result, Error};
 use std::{io::Write, ptr};
 
 const ENC_GROUP_SIZE: usize = 8;
-const ENC_MARKER: u8 = b'\xff';
+const ENC_MARKER: u8 = 0xff;
 const ENC_ASC_PADDING: [u8; ENC_GROUP_SIZE] = [0; ENC_GROUP_SIZE];
 const ENC_DESC_PADDING: [u8; ENC_GROUP_SIZE] = [!0; ENC_GROUP_SIZE];
 
@@ -77,7 +77,10 @@ pub fn decode_bytes_in_place(data: &mut Vec<u8>, desc: bool) -> Result<()> {
     loop {
         let marker_offset = read_offset + ENC_GROUP_SIZE;
         if marker_offset >= data.len() {
-            return Err(Error::internal_error("unexpected EOF"));
+            return Err(Error::internal_error(format!(
+                "unexpected EOF, original key = {:?}",
+                data
+            )));
         };
 
         unsafe {

@@ -1,7 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    pd::{PdClient, PdCodecClient},
+    pd::{PdClient, PdRpcClient},
     request::KvRequest,
     transaction::{buffer::Buffer, requests::*},
 };
@@ -239,7 +239,7 @@ struct TwoPhaseCommitter {
     mutations: Vec<kvrpcpb::Mutation>,
     start_version: u64,
     bg_worker: ThreadPool,
-    rpc: Arc<PdCodecClient>,
+    rpc: Arc<PdRpcClient>,
     #[new(default)]
     committed: bool,
     #[new(default)]
@@ -304,6 +304,7 @@ impl TwoPhaseCommitter {
                 }
             })
             .await?;
+
         Ok(commit_version)
     }
 

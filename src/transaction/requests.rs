@@ -88,6 +88,7 @@ impl KvRequest for kvrpcpb::BatchGetRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        self.keys.sort();
         let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
     }
@@ -337,6 +338,7 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        self.mutations.sort_by(|a, b| a.key.cmp(&b.key));
         let mutations = mem::take(&mut self.mutations);
         store_stream_for_keys(mutations, pd_client)
     }
@@ -347,8 +349,14 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
         results
-            .into_future()
-            .map(|(f, _)| f.expect("no results should be impossible"))
+            .fold(Ok(()), |acc, res| {
+                let res = match (acc, res) {
+                    (Err(e), _) => Err(e),
+                    (_, Err(e)) => Err(e),
+                    _ => Ok(()),
+                };
+                future::ready(res)
+            })
             .boxed()
     }
 }
@@ -399,6 +407,7 @@ impl KvRequest for kvrpcpb::CommitRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        self.keys.sort();
         let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
     }
@@ -409,8 +418,14 @@ impl KvRequest for kvrpcpb::CommitRequest {
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
         results
-            .into_future()
-            .map(|(f, _)| f.expect("no results should be impossible"))
+            .fold(Ok(()), |acc, res| {
+                let res = match (acc, res) {
+                    (Err(e), _) => Err(e),
+                    (_, Err(e)) => Err(e),
+                    _ => Ok(()),
+                };
+                future::ready(res)
+            })
             .boxed()
     }
 }
@@ -447,6 +462,7 @@ impl KvRequest for kvrpcpb::BatchRollbackRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        self.keys.sort();
         let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
     }
@@ -457,8 +473,14 @@ impl KvRequest for kvrpcpb::BatchRollbackRequest {
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
         results
-            .into_future()
-            .map(|(f, _)| f.expect("no results should be impossible"))
+            .fold(Ok(()), |acc, res| {
+                let res = match (acc, res) {
+                    (Err(e), _) => Err(e),
+                    (_, Err(e)) => Err(e),
+                    _ => Ok(()),
+                };
+                future::ready(res)
+            })
             .boxed()
     }
 }

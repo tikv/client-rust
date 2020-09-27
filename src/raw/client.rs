@@ -26,7 +26,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn new(config: Config) -> Result<Client> {
-        let rpc = Arc::new(PdRpcClient::connect(&config).await?);
+        let rpc = Arc::new(PdRpcClient::connect(&config, false).await?);
         Ok(Client {
             rpc,
             cf: None,
