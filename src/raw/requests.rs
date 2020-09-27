@@ -330,16 +330,7 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
     fn reduce(
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
-        results
-            .fold(Ok(()), |acc, res| {
-                let res = match (acc, res) {
-                    (Err(e), _) => Err(e),
-                    (_, Err(e)) => Err(e),
-                    _ => Ok(()),
-                };
-                future::ready(res)
-            })
-            .boxed()
+        results.try_for_each(|_| future::ready(Ok(()))).boxed()
     }
 }
 
