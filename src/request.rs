@@ -10,7 +10,6 @@ use grpcio::CallOption;
 use kvproto::kvrpcpb;
 use std::{
     cmp::{max, min},
-    fmt::Debug,
     sync::Arc,
     time::Duration,
 };
@@ -171,7 +170,7 @@ pub fn store_stream_for_keys<KeyData, IntoKey, I, PdC>(
     pd_client: Arc<PdC>,
 ) -> BoxStream<'static, Result<(Vec<KeyData>, Store<PdC::KvClient>)>>
 where
-    KeyData: AsRef<Key> + Send + Sync + Debug + 'static,
+    KeyData: AsRef<Key> + Send + Sync + 'static,
     IntoKey: Into<KeyData> + 'static,
     I: IntoIterator<Item = IntoKey>,
     I::IntoIter: Send + Sync + 'static,

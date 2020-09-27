@@ -10,7 +10,6 @@ use futures::{
 use grpcio::{EnvBuilder, Environment};
 use std::{
     collections::HashMap,
-    fmt::Debug,
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -61,7 +60,7 @@ pub trait PdClient: Send + Sync + 'static {
             .boxed()
     }
 
-    fn group_keys_by_region<K: AsRef<Key> + Send + Sync + Debug + 'static>(
+    fn group_keys_by_region<K: AsRef<Key> + Send + Sync + 'static>(
         self: Arc<Self>,
         keys: impl Iterator<Item = K> + Send + Sync + 'static,
     ) -> BoxStream<'static, Result<(RegionId, Vec<K>)>> {
