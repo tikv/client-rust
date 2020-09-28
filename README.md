@@ -59,28 +59,28 @@ There are some [examples](examples) which show how to use the client in a Rust p
 
 #### Raw requests
 
-| Request        | Main parameter type | Successful result type |
-| -------------- | ------------------- | ---------------------- |
-| `put`          | `KvPair`            | `()`                   |
-| `get`          | `Key`               | `Option<Value>`        |
-| `delete`       | `Key`               | `()`                   |
-| `scan`         | `BoundRange`        | `Vec<KvPair>`          |
-| `batch_put`    | `Iter<KvPair>`      | `()`                   |
-| `batch_get`    | `Iter<Key>`         | `Vec<KvPair>`          |
-| `batch_delete` | `Iter<Key>`         | `()`                   |
-| `batch_scan`   | `Iter<BoundRange>`  | `Vec<KvPair>`          |
-| `delete_range` | `BoundRange`        | `()`                   |
+| Request        | Main parameter type | Successful result type | Noteworthy Behavior                           |
+| -------------- | ------------------- | ---------------------- | --------------------------------------------- |
+| `put`          | `KvPair`            | `()`                   |                                               |
+| `get`          | `Key`               | `Option<Value>`        |                                               |
+| `delete`       | `Key`               | `()`                   |                                               |
+| `scan`         | `BoundRange`        | `Vec<KvPair>`          |                                               |
+| `batch_put`    | `Iter<KvPair>`      | `()`                   |                                               |
+| `batch_get`    | `Iter<Key>`         | `Vec<KvPair>`          | Skip non-existent keys; Does not retain order |
+| `batch_delete` | `Iter<Key>`         | `()`                   |                                               |
+| `batch_scan`   | `Iter<BoundRange>`  | `Vec<KvPair>`          | Results are flattened; Retain order of ranges |
+| `delete_range` | `BoundRange`        | `()`                   |                                               |
 
 #### Transactional requests
 
-| Request        | Main parameter type | Successful result type |
-| -------------- | ------------------- | ---------------------- |
-| `put`          | `KvPair`            | `()`                   |
-| `get`          | `Key`               | `Option<value>`        |
-| `delete`       | `Key`               | `()`                   |
-| `scan`         | `BoundRange`        | `Iter<KvPair>`         |
-| `batch_get`    | `Iter<Key>`         | `Iter<KvPair>`         |
-| `lock_keys`    | `KvPair`            | `()`                   |
+| Request     | Main parameter type | Successful result type | Noteworthy Behavior                           |
+| ----------- | ------------------- | ---------------------- | --------------------------------------------- |
+| `put`       | `KvPair`            | `()`                   |                                               |
+| `get`       | `Key`               | `Option<value>`        |                                               |
+| `delete`    | `Key`               | `()`                   |                                               |
+| `scan`      | `BoundRange`        | `Iter<KvPair>`         |                                               |
+| `batch_get` | `Iter<Key>`         | `Iter<KvPair>`         | Skip non-existent keys; Does not retain order |
+| `lock_keys` | `KvPair`            | `()`                   |                                               |
 
 For detailed behavior of each reqeust, please refer to the [doc](#Access-the-documentation).
 
