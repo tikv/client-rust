@@ -104,6 +104,7 @@ impl Client {
     ///
     /// Once resolved this request will result in the fetching of the values associated with the
     /// given keys.
+    /// Non-existent entries will be skipped. The order of the keys is not retained.
     ///
     /// ```rust,no_run
     /// # use tikv_client::{KvPair, Config, RawClient};
