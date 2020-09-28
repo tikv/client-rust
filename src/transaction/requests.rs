@@ -346,10 +346,7 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
     fn reduce(
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
-        results
-            .into_future()
-            .map(|(f, _)| f.expect("no results should be impossible"))
-            .boxed()
+        results.try_for_each(|_| future::ready(Ok(()))).boxed()
     }
 }
 
@@ -408,10 +405,7 @@ impl KvRequest for kvrpcpb::CommitRequest {
     fn reduce(
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
-        results
-            .into_future()
-            .map(|(f, _)| f.expect("no results should be impossible"))
-            .boxed()
+        results.try_for_each(|_| future::ready(Ok(()))).boxed()
     }
 }
 
@@ -456,10 +450,7 @@ impl KvRequest for kvrpcpb::BatchRollbackRequest {
     fn reduce(
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
-        results
-            .into_future()
-            .map(|(f, _)| f.expect("no results should be impossible"))
-            .boxed()
+        results.try_for_each(|_| future::ready(Ok(()))).boxed()
     }
 }
 
