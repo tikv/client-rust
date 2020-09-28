@@ -94,11 +94,7 @@ async fn main() -> Result<()> {
     let keys: Vec<_> = pairs.into_iter().map(|p| p.key().clone()).collect();
     assert_eq!(
         &keys,
-        &[
-            Key::from("k1".to_owned()),
-            Key::from("k2".to_owned()),
-            Key::from("k3".to_owned())
-        ]
+        &[Key::from("k1".to_owned()), Key::from("k2".to_owned()),]
     );
     println!("Scaning from {:?} to {:?} gives: {:?}", start, end, keys);
 
