@@ -24,24 +24,42 @@ use tikv_client_store::{KvClient, KvConnect, Store, TikvConnect};
 const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";
 
+// The PdClient handles all the encoding stuff.
+//
+// Raw APIs does not require encoding/decoding at all.
+// All keys in all places (client, PD, TiKV) are in the same encoding (here called "raw format").
+//
+// Transactional APIs are a bit complicated.
+// We need encode and decode keys when we communicate with PD, but not with TiKV.
+// We encode keys before sending requests to PD, and decode keys in the response from PD.
+// That's all we need to do with encoding.
+//
+//  client -encoded-> PD, PD -encoded-> client
+//  client -raw-> TiKV, TiKV -raw-> client
+//
+// The reason for the behavior is that in transaction mode, TiKV encode keys for MVCC.
+// In raw mode, TiKV doesn't encode them.
+// TiKV tells PD using its internal representation, whatever the encoding is.
+// So if we use transactional APIs, keys in PD are encoded and PD does not know about the encoding stuff.
+//
 pub trait PdClient: Send + Sync + 'static {
     type KvClient: KvClient + Send + Sync + 'static;
 
-    // raw region
+    // In transactional API, `region` is decoded (keys in raw format).
     fn map_region_to_store(
         self: Arc<Self>,
         region: Region,
     ) -> BoxFuture<'static, Result<Store<Self::KvClient>>>;
 
-    // raw region for raw key
+    // In transactional API, the key and returned region are both decoded (keys in raw format).
     fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>>;
 
-    // raw region for id
+    // In transactional API, the returned region is decoded (keys in raw format)
     fn region_for_id(&self, id: RegionId) -> BoxFuture<'static, Result<Region>>;
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>>;
 
-    // store for raw key
+    // In transactional API, `key` is in raw format
     fn store_for_key(
         self: Arc<Self>,
         key: &Key,
