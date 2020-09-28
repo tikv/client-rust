@@ -346,7 +346,9 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
     fn reduce(
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_for_each(|_| future::ready(Ok(()))).boxed()
+        results
+            .try_for_each_concurrent(None, |_| future::ready(Ok(())))
+            .boxed()
     }
 }
 
@@ -405,7 +407,9 @@ impl KvRequest for kvrpcpb::CommitRequest {
     fn reduce(
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_for_each(|_| future::ready(Ok(()))).boxed()
+        results
+            .try_for_each_concurrent(None, |_| future::ready(Ok(())))
+            .boxed()
     }
 }
 
@@ -450,7 +454,9 @@ impl KvRequest for kvrpcpb::BatchRollbackRequest {
     fn reduce(
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_for_each(|_| future::ready(Ok(()))).boxed()
+        results
+            .try_for_each_concurrent(None, |_| future::ready(Ok(())))
+            .boxed()
     }
 }
 
