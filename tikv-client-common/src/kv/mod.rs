@@ -2,6 +2,7 @@
 use std::{fmt, u8};
 
 mod bound_range;
+pub mod codec;
 mod key;
 mod kvpair;
 mod value;

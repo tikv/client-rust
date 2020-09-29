@@ -164,6 +164,7 @@ where
         .boxed()
 }
 
+/// Maps keys to a stream of stores. `key_data` must be sorted in increasing order
 pub fn store_stream_for_keys<KeyData, IntoKey, I, PdC>(
     key_data: I,
     pd_client: Arc<PdC>,

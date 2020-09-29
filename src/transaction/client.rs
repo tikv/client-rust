@@ -1,8 +1,11 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::transaction::{Snapshot, Transaction};
+use crate::{
+    pd::PdRpcClient,
+    transaction::{Snapshot, Transaction},
+};
 
-use crate::pd::{PdClient, PdRpcClient};
+use crate::pd::PdClient;
 use futures::executor::ThreadPool;
 use std::sync::Arc;
 use tikv_client_common::{Config, Result, Timestamp};
@@ -30,7 +33,7 @@ impl Client {
         let bg_worker = ThreadPool::new()?;
         // TODO: PdRpcClient::connect currently uses a blocking implementation.
         //       Make it asynchronous later.
-        let pd = Arc::new(PdRpcClient::connect(&config).await?);
+        let pd = Arc::new(PdRpcClient::connect(&config, true).await?);
         Ok(Client {
             pd,
             bg_worker,
