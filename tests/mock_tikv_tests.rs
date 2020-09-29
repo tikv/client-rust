@@ -47,8 +47,8 @@ mod test {
             .batch_get(vec!["k4".to_owned(), "k3".to_owned()])
             .await
             .unwrap();
-        assert_eq!(res[0].1, "v4".as_bytes());
-        assert_eq!(res[1].1, "v3".as_bytes());
+        assert_eq!(res[0].1, "v3".as_bytes());
+        assert_eq!(res[1].1, "v4".as_bytes());
 
         // k1,k2,k3,k4; delete then get
         let res = client.delete("k3".to_owned()).await;

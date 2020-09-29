@@ -26,7 +26,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn new(config: Config) -> Result<Client> {
-        let rpc = Arc::new(PdRpcClient::connect(&config).await?);
+        let rpc = Arc::new(PdRpcClient::connect(&config, false).await?);
         Ok(Client {
             rpc,
             cf: None,
@@ -104,6 +104,7 @@ impl Client {
     ///
     /// Once resolved this request will result in the fetching of the values associated with the
     /// given keys.
+    /// Non-existent entries will be skipped. The order of the keys is not retained.
     ///
     /// ```rust,no_run
     /// # use tikv_client::{KvPair, Config, RawClient};
