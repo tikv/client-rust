@@ -47,4 +47,3 @@ cargo doc --package tikv-client --open
 This crate supports Rust 1.40 and above.
 
 For development, a nightly Rust compiler is needed to compile the tests.
-
