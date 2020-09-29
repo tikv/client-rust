@@ -485,7 +485,7 @@ async fn raw_write_million() -> Fallible<()> {
         let _ = client
             .batch_scan(iter::repeat(vec![]..).take(batch_num), limit)
             .await?;
-        // FIXME: `each_limit` parameter does no work as expected. 
+        // FIXME: `each_limit` parameter does no work as expected.
         // It limits the entries on each region of each rangqe, instead of each range.
         // assert_eq!(res.len(), limit as usize * batch_num);
     }
