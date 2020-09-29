@@ -68,7 +68,6 @@ There are some [examples](examples) which show how to use the client in a Rust p
 | `batch_put`    | `Iter<KvPair>`      | `()`                   |                                               |
 | `batch_get`    | `Iter<Key>`         | `Vec<KvPair>`          | Skip non-existent keys; Does not retain order |
 | `batch_delete` | `Iter<Key>`         | `()`                   |                                               |
-| `batch_scan`   | `Iter<BoundRange>`  | `Vec<KvPair>`          | Results are flattened; Retain order of ranges |
 | `delete_range` | `BoundRange`        | `()`                   |                                               |
 
 #### Transactional requests
@@ -83,6 +82,18 @@ There are some [examples](examples) which show how to use the client in a Rust p
 | `lock_keys` | `KvPair`            | `()`                   |                                               |
 
 For detailed behavior of each reqeust, please refer to the [doc](#Access-the-documentation).
+
+#### Experimental raw requests
+
+You must be careful if you want to use the following request(s). Read the description for reasons.
+
+| Request        | Main parameter type | Successful result type |
+| -------------- | ------------------- | ---------------------- |
+| `batch_scan`   | `Iter<BoundRange>`  | `Vec<KvPair>`          |
+
+The `each_limit` parameter does not work as expected. It does not limit the number of results returned of each range, instead it limits the number of results in each region of each range. As a result, you may get **more than** `each_limit` key-value pairs for each range. But you should not miss any entries.
+
+The results of `batch_scan` are flattened. The order of ranges is retained.
 
 ### Useful types
 
