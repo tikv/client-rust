@@ -10,11 +10,10 @@ use crate::{
     transaction::HasLocks,
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
-use tikv_client_store::{KvClient, RpcFnType, Store};
-
 use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
 use kvproto::{kvrpcpb, tikvpb::TikvClient};
 use std::{mem, sync::Arc};
+use tikv_client_store::{KvClient, RpcFnType, Store};
 
 impl KvRequest for kvrpcpb::RawGetRequest {
     type Result = Option<Value>;
@@ -87,6 +86,7 @@ impl KvRequest for kvrpcpb::RawBatchGetRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        self.keys.sort();
         let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
     }
@@ -183,6 +183,7 @@ impl KvRequest for kvrpcpb::RawBatchPutRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        self.pairs.sort_by(|a, b| a.key.cmp(&b.key));
         let pairs = mem::take(&mut self.pairs);
         store_stream_for_keys(pairs, pd_client)
     }
@@ -272,6 +273,7 @@ impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        self.keys.sort();
         let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
     }
@@ -331,10 +333,7 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
     fn reduce(
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
-        results
-            .into_future()
-            .map(|(f, _)| f.expect("no results should be impossible"))
-            .boxed()
+        results.try_for_each(|_| future::ready(Ok(()))).boxed()
     }
 }
 
