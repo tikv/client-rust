@@ -133,7 +133,7 @@ pub trait PdClient: Send + Sync + 'static {
         .boxed()
     }
 
-    // Returns a Steam which iterates over the contexts for ranges in the same region.
+    // Returns a Stream which iterates over the contexts for ranges in the same region.
     fn group_ranges_by_region(
         self: Arc<Self>,
         mut ranges: Vec<BoundRange>,

@@ -250,9 +250,13 @@ impl Client {
             return Err(Error::max_scan_limit_exceeded(limit, MAX_RAW_KV_SCAN_LIMIT));
         }
 
-        requests::new_raw_scan_request(range, limit, self.key_only, self.cf.clone())
+        let res = requests::new_raw_scan_request(range, limit, self.key_only, self.cf.clone())
             .execute(self.rpc.clone())
-            .await
+            .await;
+        res.map(|mut s| {
+            s.truncate(limit as usize);
+            s
+        })
     }
 
     /// Create a new 'batch scan' request.
