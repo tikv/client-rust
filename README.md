@@ -107,10 +107,6 @@ To use the client, there are 4 types you will need.
 
 `BoundRange` is used for range related requests like `scan`. It implements `From` for usual ranges so you can just create a range and pass them to the request.For instance, `client.scan("k2".to_owned()..="k5".to_owned(), 5)` or `client.delete_range(vec![]..)`.
 
-
-
-
-
 ## Access the documentation
 
 We recommend using the cargo-generated documentation to browse and understand the API. We've done
@@ -123,7 +119,12 @@ cargo doc --package tikv-client --open
 # If it didn't work, browse file URL it tried to open with your browser.
 ```
 
-## Minimal Rust Version
+## Known issues
+
+If you use transactional APIs, you'll need to perform GC in TiKV to save storage.
+However, current implementation does not provide a direct way to do this. A workaround is described in [#180](https://github.com/tikv/client-rust/issues/180).
+
+## Minimal Rust version
 
 This crate supports Rust 1.40 and above.
 
