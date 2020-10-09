@@ -3,27 +3,7 @@
 mod common;
 
 use crate::common::parse_args;
-use tikv_client::{BoundRange, Config, Key, KvPair, TransactionClient as Client, Value};
-
-async fn puts(client: &Client, pairs: impl IntoIterator<Item=impl Into<KvPair>>) {
-    let mut txn = client.begin().await.expect("Could not begin a transaction");
-    for pair in pairs {
-        let (key, value) = pair.into().into();
-        txn.put(key, value).await.expect("Could not set key value");
-    }
-    txn.commit().await.expect("Could not commit transaction");
-}
-
-async fn get(client: &Client, key: Key) -> Option<Value> {
-    let txn = client.begin().await.expect("Could not begin a transaction");
-    txn.get(key).await.expect("Could not get value")
-}
-
-async fn lock(client: &Client, key: Key) {
-    let txn = client.begin().await.expect("Could not begin a transaction");
-    txn.pessimistic_lock().await.expect("Could not lock key")
-
-}
+use tikv_client::{Config, Key, TransactionClient as Client, Value};
 
 #[tokio::main]
 async fn main() {
@@ -39,30 +19,36 @@ async fn main() {
         Config::new(args.pd)
     };
 
-    let txn = Client::new(config)
+    // init
+    let client = Client::new(config)
         .await
         .expect("Could not connect to tikv");
 
-    // set
     let key1: Key = b"key1".to_vec().into();
     let value1: Value = b"value1".to_vec().into();
     let key2: Key = b"key2".to_vec().into();
     let value2: Value = b"value2".to_vec().into();
-    puts(&txn, vec![(key1, value1), (key2, value2)]).await;
+    let txn = client.begin().await.expect("Could not begin a transaction");
+    for (key, value) in vec![(key1, value1), (key2, value2)] {
+        txn.put(key, value).await.expect("Could not set key value");
+    }
 
-
-    // lock and get
+    let mut txn = client.begin().await.expect("Could not begin a transaction");
+    // lock the key
     let key1: Key = b"key1".to_vec().into();
-    lock(&txn, &[key1]);
-    let value1 = get(&txn, key1.clone()).await;
-    println!("{:?}", (key1, value1));
-    //
-    // // scan
-    // let key1: Key = b"key1".to_vec().into();
-    // scan(&txn, key1.., 10).await;
-    //
-    // // delete
-    // let key1: Key = b"key1".to_vec().into();
-    // let key2: Key = b"key2".to_vec().into();
-    // dels(&txn, vec![key1, key2]).await;
+    txn.pessimistic_lock(vec![key1.clone()]).await.expect("Could not lock the key");
+    {
+        // another txn cannot write to the locked key
+        let mut txn = client.begin().await.expect("Could not begin a transaction");
+        let key1: Key = b"key1".to_vec().into();
+        let value2: Value = b"value2".to_vec().into();
+        txn.put(key1, value2).await.unwrap();
+        let result = txn.commit().await;
+        assert!(result.is_err());
+    }
+    // while this txn can still write it
+    let value3: Value = b"value3".to_vec().into();
+    let result = txn.put(key1, value3).await;
+    assert!(result.is_ok());
+    println!("done");
 }
