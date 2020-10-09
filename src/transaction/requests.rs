@@ -513,13 +513,19 @@ impl KvRequest for kvrpcpb::PessimisticLockRequest {
 }
 
 pub fn new_pessimistic_lock_request(
-    mutations: Vec<kvrpcpb::Mutation>,
+    keys: Vec<Vec<u8>>,
     primary_lock: Vec<u8>,
     start_version: u64,
     lock_ttl: u64,
     for_update_ts: u64,
 ) -> kvrpcpb::PessimisticLockRequest {
     let mut req = kvrpcpb::PessimisticLockRequest::default();
+    let mutations = keys.into_iter().map(|key| {
+        let mut mutation = kvrpcpb::Mutation::default();
+        mutation.set_op(kvrpcpb::Op::PessimisticLock);
+        mutation.set_key(key);
+        mutation
+    }).collect();
     req.set_mutations(mutations);
     req.set_primary_lock(primary_lock);
     req.set_start_version(start_version);

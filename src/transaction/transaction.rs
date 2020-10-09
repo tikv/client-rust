@@ -134,7 +134,7 @@ impl Transaction {
         &self,
         range: impl Into<BoundRange>,
         limit: u32,
-    ) -> Result<impl Iterator<Item = KvPair>> {
+    ) -> Result<impl Iterator<Item=KvPair>> {
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
 
@@ -202,7 +202,7 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn lock_keys(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
+    pub async fn lock_keys(&self, keys: impl IntoIterator<Item=impl Into<Key>>) -> Result<()> {
         for key in keys {
             self.buffer.lock(key.into());
         }
@@ -229,8 +229,27 @@ impl Transaction {
             self.bg_worker.clone(),
             self.rpc.clone(),
         )
-        .commit()
-        .await
+            .commit()
+            .await
+    }
+
+    // todo: documentation
+    pub async fn pessimistic_lock(&mut self, keys: impl IntoIterator<Item=impl Into<Key>>) -> Result<()> {
+        let mut keys: Vec<Vec<u8>> = keys.into_iter()
+            .map(|it| it.into())
+            .map(|it: Key| it.into())
+            .collect();
+        keys.sort();
+        let primary_lock = keys[0].clone().into();
+        let lock_ttl = DEFAULT_LOCK_TTL;
+        let for_update_ts = self.rpc.clone().get_timestamp().await.unwrap().version();
+        new_pessimistic_lock_request(
+            keys,
+            primary_lock,
+            self.timestamp.version(),
+            lock_ttl,
+            for_update_ts,
+        ).execute(self.rpc.clone()).await
     }
 }
 
@@ -288,8 +307,8 @@ impl TwoPhaseCommitter {
             self.start_version,
             lock_ttl,
         )
-        .execute(self.rpc.clone())
-        .await
+            .execute(self.rpc.clone())
+            .await
     }
 
     /// Commits the primary key and returns the commit version
@@ -328,7 +347,7 @@ impl TwoPhaseCommitter {
             .await
     }
 
-    fn rollback(&mut self) -> impl Future<Output = Result<()>> + 'static {
+    fn rollback(&mut self) -> impl Future<Output=Result<()>> + 'static {
         let mutations = mem::take(&mut self.mutations);
         let keys = mutations
             .into_iter()
