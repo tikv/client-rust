@@ -475,6 +475,67 @@ pub fn new_batch_rollback_request(
     req
 }
 
+impl KvRequest for kvrpcpb::PessimisticLockRequest {
+    type Result = ();
+    type RpcResponse = kvrpcpb::PessimisticLockResponse;
+    type KeyData = Vec<kvrpcpb::Mutation>;
+    const REQUEST_NAME: &'static str = "kv_pessimistic_lock";
+    const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_pessimistic_lock_async_opt;
+
+    fn store_stream<PdC: PdClient>(&mut self, pd_client: Arc<PdC>) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        self.mutations.sort_by(|a, b| a.key.cmp(&b.key));
+        let mutations = mem::take(&mut self.mutations);
+        store_stream_for_keys(mutations, pd_client)
+    }
+
+    fn make_rpc_request<KvC: KvClient>(&self, mutations: Self::KeyData, store: &Store<KvC>) -> Self {
+        let mut req = self.request_from_store(store);
+        req.set_mutations(mutations);
+        req.set_primary_lock(self.primary_lock.clone());
+        req.set_start_version(self.start_version);
+        req.set_lock_ttl(self.lock_ttl);
+        req.set_for_update_ts(self.for_update_ts);
+        req.set_is_first_lock(self.is_first_lock);
+        req.set_wait_timeout(self.wait_timeout);
+        req.set_force(self.force);
+        req.set_return_values(self.return_values);
+        req.set_min_commit_ts(self.min_commit_ts);
+
+        req
+    }
+
+    fn map_result(_result: Self::RpcResponse) -> Self::Result {
+    }
+
+    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> BoxFuture<'static, Result<Self::Result>> {
+        results.try_for_each(|_| future::ready(Ok(()))).boxed()
+    }
+}
+
+pub fn new_pessimistic_lock_request(
+    mutations: Vec<kvrpcpb::Mutation>,
+    primary_lock: Vec<u8>,
+    start_version: u64,
+    lock_ttl: u64,
+    for_update_ts: u64,
+) -> kvrpcpb::PessimisticLockRequest {
+    let mut req = kvrpcpb::PessimisticLockRequest::default();
+    req.set_mutations(mutations);
+    req.set_primary_lock(primary_lock);
+    req.set_start_version(start_version);
+    req.set_lock_ttl(lock_ttl);
+    req.set_for_update_ts(for_update_ts);
+    // todo: make them configurable
+    req.set_is_first_lock(false);
+    req.set_wait_timeout(0);
+    req.set_force(false);
+    req.set_return_values(false);
+    // todo: support large transaction
+    req.set_min_commit_ts(0);
+
+    req
+}
+
 impl KvRequest for kvrpcpb::ScanLockRequest {
     type Result = Vec<kvrpcpb::LockInfo>;
 
@@ -535,3 +596,4 @@ impl HasLocks for kvrpcpb::CleanupResponse {}
 impl HasLocks for kvrpcpb::BatchRollbackResponse {}
 impl HasLocks for kvrpcpb::ResolveLockResponse {}
 impl HasLocks for kvrpcpb::ScanLockResponse {}
+impl HasLocks for kvrpcpb::PessimisticLockResponse {}

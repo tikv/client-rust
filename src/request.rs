@@ -284,6 +284,7 @@ impl_kv_rpc_request!(BatchGetRequest);
 impl_kv_rpc_request!(BatchRollbackRequest);
 impl_kv_rpc_request!(ResolveLockRequest);
 impl_kv_rpc_request!(ScanLockRequest);
+impl_kv_rpc_request!(PessimisticLockRequest);
 
 #[cfg(test)]
 mod test {
