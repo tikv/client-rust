@@ -283,6 +283,7 @@ impl_kv_rpc_request!(CleanupRequest);
 impl_kv_rpc_request!(BatchGetRequest);
 impl_kv_rpc_request!(BatchRollbackRequest);
 impl_kv_rpc_request!(ResolveLockRequest);
+impl_kv_rpc_request!(ScanLockRequest);
 
 #[cfg(test)]
 mod test {

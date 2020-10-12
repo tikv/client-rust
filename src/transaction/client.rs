@@ -1,14 +1,17 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use super::{requests::new_scan_lock_request, resolve_locks};
 use crate::{
-    pd::PdRpcClient,
+    pd::{PdClient, PdRpcClient},
+    request::KvRequest,
     transaction::{Snapshot, Transaction},
 };
-
-use crate::pd::PdClient;
 use futures::executor::ThreadPool;
+use kvproto::kvrpcpb;
 use std::sync::Arc;
-use tikv_client_common::{Config, Result, Timestamp};
+use tikv_client_common::{Config, Result, Timestamp, TimestampExt};
+
+const SCAN_LOCK_BATCH_SIZE: u32 = 1024; // TODO: cargo-culted value
 
 /// The TiKV transactional `Client` is used to issue requests to the TiKV server and PD cluster.
 pub struct Client {
@@ -86,6 +89,43 @@ impl Client {
     /// ```
     pub async fn current_timestamp(&self) -> Result<Timestamp> {
         self.pd.clone().get_timestamp().await
+    }
+
+    pub async fn gc(&self, safepoint: Timestamp) -> Result<bool> {
+        /* TODO
+           1. scan all locks with ts <= safepoint, resolve them all
+           2. (ignored) delete_range
+           3. update safepoint to PD
+        */
+
+        // scan all locks with ts <= safepoint
+        let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
+        let mut start_key = vec![];
+        loop {
+            let req =
+                new_scan_lock_request(start_key.clone(), safepoint.clone(), SCAN_LOCK_BATCH_SIZE);
+            let res: Vec<kvrpcpb::LockInfo> = req.execute(self.pd.clone()).await?;
+            if res.is_empty() {
+                break;
+            }
+            start_key = res.last().unwrap().key.clone();
+            start_key.push(0);
+            locks.extend(res);
+        }
+
+        // resolve locks
+        resolve_locks(locks, self.pd.clone()).await?;
+
+        // update safepoint to PD
+        let res: bool = self
+            .pd
+            .clone()
+            .update_safepoint(safepoint.version())
+            .await?;
+        if !res {
+            info!("new safepoint != user-specified safepoint");
+        }
+        Ok(res)
     }
 
     fn new_transaction(&self, timestamp: Timestamp) -> Transaction {

@@ -469,7 +469,63 @@ pub fn new_batch_rollback_request(
     req
 }
 
+impl KvRequest for kvrpcpb::ScanLockRequest {
+    type Result = Vec<kvrpcpb::LockInfo>;
+
+    type RpcResponse = kvrpcpb::ScanLockResponse;
+
+    type KeyData = (Key, Key); // end_key should always be empty. Used to satisfy `store_stream_for_range`
+
+    const REQUEST_NAME: &'static str = "kv_scan_lock";
+
+    const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_scan_lock_async_opt;
+
+    fn store_stream<PdC: PdClient>(
+        &mut self,
+        pd_client: Arc<PdC>,
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        let start_key = mem::take(&mut self.start_key);
+        let range = BoundRange::from((start_key, vec![]));
+        store_stream_for_range(range, pd_client)
+    }
+
+    fn make_rpc_request<KvC: KvClient>(
+        &self,
+        (start_key, _): Self::KeyData,
+        store: &Store<KvC>,
+    ) -> Self {
+        let mut req = self.request_from_store(store);
+        req.set_max_version(self.max_version);
+        req.set_start_key(start_key.into());
+        req.set_limit(self.limit);
+        req
+    }
+
+    fn map_result(mut result: Self::RpcResponse) -> Self::Result {
+        result.take_locks()
+    }
+
+    fn reduce(
+        results: BoxStream<'static, Result<Self::Result>>,
+    ) -> BoxFuture<'static, Result<Self::Result>> {
+        results.try_concat().boxed()
+    }
+}
+
+pub fn new_scan_lock_request(
+    start_key: impl Into<Key>,
+    safepoint: Timestamp,
+    limit: u32,
+) -> kvrpcpb::ScanLockRequest {
+    let mut req = kvrpcpb::ScanLockRequest::default();
+    req.set_start_key(start_key.into().into());
+    req.set_max_version(safepoint.version());
+    req.set_limit(limit);
+    req
+}
+
 impl HasLocks for kvrpcpb::CommitResponse {}
 impl HasLocks for kvrpcpb::CleanupResponse {}
 impl HasLocks for kvrpcpb::BatchRollbackResponse {}
 impl HasLocks for kvrpcpb::ResolveLockResponse {}
+impl HasLocks for kvrpcpb::ScanLockResponse {}

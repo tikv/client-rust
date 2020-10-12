@@ -142,6 +142,15 @@ impl RetryClient<Cluster> {
     pub async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
         retry!(self, "get_timestamp", |cluster| cluster.get_timestamp())
     }
+
+    pub async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
+        retry!(self, "update_gc_safepoint", |cluster| async {
+            cluster
+                .update_safepoint(safepoint, self.timeout)
+                .await
+                .map(|resp| resp.get_new_safe_point() == safepoint)
+        })
+    }
 }
 
 impl fmt::Debug for RetryClient {

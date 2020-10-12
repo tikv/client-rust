@@ -59,6 +59,8 @@ pub trait PdClient: Send + Sync + 'static {
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>>;
 
+    fn update_safepoint(self: Arc<Self>, safepoint: u64) -> BoxFuture<'static, Result<bool>>;
+
     // In transactional API, `key` is in raw format
     fn store_for_key(
         self: Arc<Self>,
@@ -248,6 +250,10 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
         self.pd.clone().get_timestamp().boxed()
+    }
+
+    fn update_safepoint(self: Arc<Self>, safepoint: u64) -> BoxFuture<'static, Result<bool>> {
+        self.pd.clone().update_safepoint(safepoint).boxed()
     }
 }
 
