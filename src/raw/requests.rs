@@ -86,6 +86,7 @@ impl KvRequest for kvrpcpb::RawBatchGetRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        self.keys.sort();
         let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
     }
@@ -182,6 +183,7 @@ impl KvRequest for kvrpcpb::RawBatchPutRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        self.pairs.sort_by(|a, b| a.key.cmp(&b.key));
         let pairs = mem::take(&mut self.pairs);
         store_stream_for_keys(pairs, pd_client)
     }
@@ -271,6 +273,7 @@ impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
         &mut self,
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        self.keys.sort();
         let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
     }
