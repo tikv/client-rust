@@ -1,10 +1,11 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{pd::RetryClient, Config, Key, Region, RegionId};
+use crate::{pd::RetryClient, tikv_client_common::kv::codec, Config, Key, Region, RegionId};
 use futures::{
     future::{ready, BoxFuture, Either},
     prelude::*,
     stream::BoxStream,
+    FutureExt, TryFutureExt,
 };
 use grpcio::{EnvBuilder, Environment};
 use std::{
@@ -23,20 +24,42 @@ use tikv_client_store::{KvClient, KvConnect, Store, TikvConnect};
 const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";
 
+// The PdClient handles all the encoding stuff.
+//
+// Raw APIs does not require encoding/decoding at all.
+// All keys in all places (client, PD, TiKV) are in the same encoding (here called "raw format").
+//
+// Transactional APIs are a bit complicated.
+// We need encode and decode keys when we communicate with PD, but not with TiKV.
+// We encode keys before sending requests to PD, and decode keys in the response from PD.
+// That's all we need to do with encoding.
+//
+//  client -encoded-> PD, PD -encoded-> client
+//  client -raw-> TiKV, TiKV -raw-> client
+//
+// The reason for the behavior is that in transaction mode, TiKV encode keys for MVCC.
+// In raw mode, TiKV doesn't encode them.
+// TiKV tells PD using its internal representation, whatever the encoding is.
+// So if we use transactional APIs, keys in PD are encoded and PD does not know about the encoding stuff.
+//
 pub trait PdClient: Send + Sync + 'static {
     type KvClient: KvClient + Send + Sync + 'static;
 
+    // In transactional API, `region` is decoded (keys in raw format).
     fn map_region_to_store(
         self: Arc<Self>,
         region: Region,
     ) -> BoxFuture<'static, Result<Store<Self::KvClient>>>;
 
+    // In transactional API, the key and returned region are both decoded (keys in raw format).
     fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>>;
 
+    // In transactional API, the returned region is decoded (keys in raw format)
     fn region_for_id(&self, id: RegionId) -> BoxFuture<'static, Result<Region>>;
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>>;
 
+    // In transactional API, `key` is in raw format
     fn store_for_key(
         self: Arc<Self>,
         key: &Key,
@@ -80,7 +103,7 @@ pub trait PdClient: Send + Sync + 'static {
         .boxed()
     }
 
-    // Returns a Steam which iterates over the contexts for each region covered by range.
+    // Returns a Stream which iterates over the contexts for each region covered by range.
     fn stores_for_range(
         self: Arc<Self>,
         range: BoundRange,
@@ -92,12 +115,15 @@ pub trait PdClient: Send + Sync + 'static {
                 Some(sk) => sk,
             };
             let end_key = end_key.clone();
-
             let this = self.clone();
             Either::Left(self.region_for_key(&start_key).and_then(move |region| {
                 let region_end = region.end_key();
                 this.map_region_to_store(region).map_ok(move |store| {
-                    if end_key.map(|x| x <= region_end).unwrap_or(false) || region_end.is_empty() {
+                    if end_key
+                        .map(|x| x <= region_end && !x.is_empty())
+                        .unwrap_or(false)
+                        || region_end.is_empty()
+                    {
                         return Some((None, store));
                     }
                     Some((Some(region_end), store))
@@ -158,6 +184,14 @@ pub trait PdClient: Send + Sync + 'static {
         })
         .boxed()
     }
+
+    fn decode_region(mut region: Region, enable_codec: bool) -> Result<Region> {
+        if enable_codec {
+            codec::decode_bytes_in_place(&mut region.region.mut_start_key(), false)?;
+            codec::decode_bytes_in_place(&mut region.region.mut_end_key(), false)?;
+        }
+        Ok(region)
+    }
 }
 
 /// This client converts requests for the logical TiKV cluster into requests
@@ -167,6 +201,7 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     kv_connect: KvC,
     kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
     timeout: Duration,
+    enable_codec: bool,
 }
 
 impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
@@ -191,12 +226,24 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     }
 
     fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>> {
-        let key: &[u8] = key.into();
-        self.pd.clone().get_region(key.to_owned()).boxed()
+        let enable_codec = self.enable_codec;
+        let key = if enable_codec {
+            key.to_encoded().into()
+        } else {
+            key.clone().into()
+        };
+        let region = self.pd.clone().get_region(key).boxed();
+        region
+            .ok_and_then(move |region| Self::decode_region(region, enable_codec))
+            .boxed()
     }
 
     fn region_for_id(&self, id: RegionId) -> BoxFuture<'static, Result<Region>> {
-        self.pd.clone().get_region_by_id(id).boxed()
+        let region = self.pd.clone().get_region_by_id(id).boxed();
+        let enable_codec = self.enable_codec;
+        region
+            .ok_and_then(move |region| Self::decode_region(region, enable_codec))
+            .boxed()
     }
 
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
@@ -205,13 +252,14 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 }
 
 impl PdRpcClient<TikvConnect, Cluster> {
-    pub async fn connect(config: &Config) -> Result<PdRpcClient> {
+    pub async fn connect(config: &Config, enable_codec: bool) -> Result<PdRpcClient> {
         PdRpcClient::new(
             config,
             |env, security_mgr| TikvConnect::new(env, security_mgr),
             |env, security_mgr| {
                 RetryClient::connect(env, &config.pd_endpoints, security_mgr, config.timeout)
             },
+            enable_codec,
         )
         .await
     }
@@ -222,6 +270,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         config: &Config,
         kv_connect: MakeKvC,
         pd: MakePd,
+        enable_codec: bool,
     ) -> Result<PdRpcClient<KvC, Cl>>
     where
         PdFut: Future<Output = Result<RetryClient<Cl>>>,
@@ -251,6 +300,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             kv_client_cache,
             kv_connect: kv_connect(env, security_mgr),
             timeout: config.timeout,
+            enable_codec,
         })
     }
 

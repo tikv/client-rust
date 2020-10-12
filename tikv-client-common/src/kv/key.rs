@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::HexRepr;
+use crate::kv::codec::{self, BytesEncoder};
 use kvproto::kvrpcpb;
 #[allow(unused_imports)]
 #[cfg(test)]
@@ -103,6 +104,14 @@ impl Key {
         } else {
             Bound::Excluded(self)
         }
+    }
+
+    #[inline]
+    pub fn to_encoded(&self) -> Key {
+        let len = codec::max_encoded_bytes_size(self.0.len());
+        let mut encoded = Vec::with_capacity(len);
+        encoded.encode_bytes(&self.0, false).unwrap();
+        Key(encoded)
     }
 }
 
