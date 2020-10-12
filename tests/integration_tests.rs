@@ -438,6 +438,63 @@ async fn raw_req() -> Fallible<()> {
     Fallible::Ok(())
 }
 
+/// Tests raw API when there are multiple regions.
+/// Write large volumes of data to enforce region splitting.
+/// In order to test `scan`, data is uniformly inserted.
+///
+/// Ignoring this because we don't want to mess up transactional tests.
+#[tokio::test]
+#[serial]
+#[ignore]
+async fn raw_write_million() -> Fallible<()> {
+    const NUM_BITS_TXN: u32 = 9;
+    const NUM_BITS_KEY_PER_TXN: u32 = 10;
+    let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
+
+    clear_tikv().await?;
+    let config = Config::new(pd_addrs());
+    let client = RawClient::new(config).await?;
+
+    for i in 0..2u32.pow(NUM_BITS_TXN) {
+        let mut cur = i * 2u32.pow(32 - NUM_BITS_TXN);
+        let keys = iter::repeat_with(|| {
+            let v = cur;
+            cur = cur.overflowing_add(interval).0;
+            v
+        })
+        .map(|u| u.to_be_bytes().to_vec())
+        .take(2usize.pow(NUM_BITS_KEY_PER_TXN))
+        .collect::<Vec<_>>(); // each txn puts 2 ^ 12 keys. 12 = 25 - 13
+        client
+            .batch_put(
+                keys.iter()
+                    .cloned()
+                    .zip(iter::repeat(1u32.to_be_bytes().to_vec())),
+            )
+            .await?;
+
+        let res = client.batch_get(keys).await?;
+        assert_eq!(res.len(), 2usize.pow(NUM_BITS_KEY_PER_TXN));
+    }
+
+    // test scan
+    let limit = 10;
+    let res = client.scan(vec![].., limit).await?;
+    assert_eq!(res.len(), limit as usize);
+
+    // test batch_scan
+    for batch_num in 1..4 {
+        let _ = client
+            .batch_scan(iter::repeat(vec![]..).take(batch_num), limit)
+            .await?;
+        // FIXME: `each_limit` parameter does no work as expected.
+        // It limits the entries on each region of each rangqe, instead of each range.
+        // assert_eq!(res.len(), limit as usize * batch_num);
+    }
+
+    Fallible::Ok(())
+}
+
 // helper function
 async fn get_u32(client: &RawClient, key: Vec<u8>) -> Fallible<u32> {
     let x = client.get(key).await?.unwrap();
