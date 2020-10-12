@@ -63,10 +63,7 @@ impl Buffer {
 
             let cached_results = cached_results
                 .into_iter()
-                .filter_map(|(k, v)| match v.unwrap() {
-                    Some(v) => Some(KvPair(k, v)),
-                    None => None,
-                });
+                .filter_map(|(k, v)| v.unwrap().map(|v| KvPair(k, v)));
 
             let undetermined_keys = undetermined_keys.into_iter().map(|(k, _)| k).collect();
             (cached_results, undetermined_keys)

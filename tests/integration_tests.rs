@@ -18,7 +18,7 @@ const SCAN_BATCH_SIZE: u32 = 1000;
 const NUM_PEOPLE: u32 = 100;
 const NUM_TRNASFER: u32 = 100;
 
-/// Delete all entris in TiKV to leave a clean space for following tests.
+/// Delete all entries in TiKV to leave a clean space for following tests.
 /// TiKV does not provide an elegant way to do this, so it is done by scanning and deletions.
 async fn clear_tikv() -> Fallible<()> {
     delete_all_raw().await?;

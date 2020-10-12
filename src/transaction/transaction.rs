@@ -75,7 +75,7 @@ impl Transaction {
             .await
     }
 
-    /// Gets the values associated with the given keys, skipping non-existent entris.
+    /// Gets the values associated with the given keys, skipping non-existent entries.
     ///
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, transaction::Client};
