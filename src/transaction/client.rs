@@ -92,12 +92,6 @@ impl Client {
     }
 
     pub async fn gc(&self, safepoint: Timestamp) -> Result<bool> {
-        /* TODO
-           1. scan all locks with ts <= safepoint, resolve them all
-           2. (ignored) delete_range
-           3. update safepoint to PD
-        */
-
         // scan all locks with ts <= safepoint
         let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
         let mut start_key = vec![];
