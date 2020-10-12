@@ -7,50 +7,31 @@ use serial_test::serial;
 use std::{
     collections::{HashMap, HashSet},
     convert::TryInto,
-    env,
+    env, iter,
 };
-use tikv_client::{Config, Key, RawClient, Result, Transaction, TransactionClient, Value};
-
-/// The limit of scan in each iteration in `clear_tikv`.
-const SCAN_BATCH_SIZE: u32 = 1000;
+use tikv_client::{
+    ColumnFamily, Config, Key, KvPair, RawClient, Result, Transaction, TransactionClient, Value,
+};
 
 // Parameters used in test
 const NUM_PEOPLE: u32 = 100;
 const NUM_TRNASFER: u32 = 100;
 
-/// Delete all entries in TiKV to leave a clean space for following tests.
-/// TiKV does not provide an elegant way to do this, so it is done by scanning and deletions.
+/// Delete all entris in TiKV to leave a clean space for following tests.
 async fn clear_tikv() -> Fallible<()> {
-    delete_all_raw().await?;
-    delete_all_txn().await?;
-    Fallible::Ok(())
-}
-
-async fn delete_all_raw() -> Fallible<()> {
-    let config = Config::new(pd_addrs());
-    let raw_client = RawClient::new(config).await?.with_key_only(true);
-    raw_client.delete_range(vec![]..).await?;
-    Fallible::Ok(())
-}
-
-async fn delete_all_txn() -> Fallible<()> {
-    let config = Config::new(pd_addrs());
-    let txn_client = TransactionClient::new(config).await?.with_key_only(true);
-    let mut txn = txn_client.begin().await?;
-
-    loop {
-        let mut keys = txn.scan(vec![].., SCAN_BATCH_SIZE).await?.peekable();
-
-        if keys.peek().is_none() {
-            break;
-        }
-
-        for kv in keys {
-            txn.delete(kv.into_key()).await?;
-        }
+    let cfs = vec![
+        ColumnFamily::Default,
+        ColumnFamily::Lock,
+        ColumnFamily::Write,
+    ];
+    for cf in cfs {
+        let config = Config::new(pd_addrs());
+        let raw_client = RawClient::new(config)
+            .await?
+            .with_key_only(true)
+            .with_cf(cf);
+        raw_client.delete_range(vec![]..).await?;
     }
-
-    txn.commit().await?;
     Fallible::Ok(())
 }
 
@@ -73,6 +54,7 @@ async fn get_timestamp() -> Fallible<()> {
     Ok(())
 }
 
+// Tests transactional get, put, delete, batch_get
 #[tokio::test]
 #[serial]
 async fn crud() -> Fallible<()> {
@@ -202,6 +184,80 @@ async fn raw_bank_transfer() -> Fallible<()> {
     Fallible::Ok(())
 }
 
+/// Tests transactional API when there are multiple regions.
+/// Write large volumes of data to enforce region splitting.
+/// In order to test `scan`, data is uniformly inserted.
+#[tokio::test]
+#[serial]
+async fn txn_write_million() -> Fallible<()> {
+    const NUM_BITS_TXN: u32 = 7;
+    const NUM_BITS_KEY_PER_TXN: u32 = 3;
+    let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
+
+    clear_tikv().await?;
+    let config = Config::new(pd_addrs());
+    let client = TransactionClient::new(config).await?;
+
+    for i in 0..2u32.pow(NUM_BITS_TXN) {
+        let mut cur = i * 2u32.pow(32 - NUM_BITS_TXN);
+        let keys = iter::repeat_with(|| {
+            let v = cur;
+            cur = cur.overflowing_add(interval).0;
+            v
+        })
+        .map(|u| u.to_be_bytes().to_vec())
+        .take(2usize.pow(NUM_BITS_KEY_PER_TXN))
+        .collect::<Vec<_>>(); // each txn puts 2 ^ 12 keys. 12 = 25 - 13
+        let mut txn = client.begin().await?;
+        for (k, v) in keys.iter().zip(iter::repeat(1u32.to_be_bytes().to_vec())) {
+            txn.put(k.clone(), v).await?;
+        }
+        txn.commit().await?;
+
+        let mut txn = client.begin().await?;
+        let res = txn.batch_get(keys).await?;
+        assert_eq!(res.count(), 2usize.pow(NUM_BITS_KEY_PER_TXN));
+        txn.commit().await?;
+    }
+
+    // test scan
+    let limit = 2u32.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN + 2); // large enough
+    let txn = client.begin().await?;
+    let res = txn.scan(vec![].., limit).await?;
+    assert_eq!(res.count(), 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));
+
+    // scan by small range and combine them
+    let mut rng = thread_rng();
+    let mut keys = gen_u32_keys(10, &mut rng)
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    keys.sort();
+
+    let mut sum = 0;
+
+    // empty key to key[0]
+    let txn = client.begin().await?;
+    let res = txn.scan(vec![]..keys[0].clone(), limit).await?;
+    sum += res.count();
+
+    // key[i] .. key[i+1]
+    for i in 0..keys.len() - 1 {
+        let res = txn
+            .scan(keys[i].clone()..keys[i + 1].clone(), limit)
+            .await?;
+        sum += res.count();
+    }
+
+    // keys[last] to unbounded
+    let res = txn.scan(keys[keys.len() - 1].clone().., limit).await?;
+    sum += res.count();
+
+    assert_eq!(sum, 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));
+
+    Fallible::Ok(())
+}
+
 #[tokio::test]
 #[serial]
 async fn txn_bank_transfer() -> Fallible<()> {
@@ -254,7 +310,7 @@ async fn txn_bank_transfer() -> Fallible<()> {
 
 #[tokio::test]
 #[serial]
-async fn raw() -> Fallible<()> {
+async fn raw_req() -> Fallible<()> {
     clear_tikv().await?;
     let config = Config::new(pd_addrs());
     let client = RawClient::new(config).await?;
@@ -285,8 +341,8 @@ async fn raw() -> Fallible<()> {
     let res = client
         .batch_get(vec!["k4".to_owned(), "k3".to_owned()])
         .await?;
-    assert_eq!(res[0].1, "v4".as_bytes());
-    assert_eq!(res[1].1, "v3".as_bytes());
+    assert_eq!(res[0], KvPair::new("k3".to_owned(), "v3"));
+    assert_eq!(res[1], KvPair::new("k4".to_owned(), "v4"));
 
     // k1,k2,k3,k4; delete then get
     let res = client.delete("k3".to_owned()).await;

@@ -77,6 +77,8 @@ impl Transaction {
 
     /// Gets the values associated with the given keys, skipping non-existent entries.
     ///
+    /// Non-existent entries will be skipped. The order of the keys is not retained.
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, transaction::Client};
     /// # use futures::prelude::*;
@@ -305,6 +307,7 @@ impl TwoPhaseCommitter {
                 }
             })
             .await?;
+
         Ok(commit_version)
     }
 

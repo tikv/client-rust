@@ -96,6 +96,7 @@ impl RetryClient<Cluster> {
     }
 
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
+    // It does not know about encoding. Caller should take care of it.
     pub async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<Region> {
         retry!(self, "get_region", |cluster| {
             let key = key.clone();

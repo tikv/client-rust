@@ -26,7 +26,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn new(config: Config) -> Result<Client> {
-        let rpc = Arc::new(PdRpcClient::connect(&config).await?);
+        let rpc = Arc::new(PdRpcClient::connect(&config, false).await?);
         Ok(Client {
             rpc,
             cf: None,
@@ -103,7 +103,8 @@ impl Client {
     /// Create a new 'batch get' request.
     ///
     /// Once resolved this request will result in the fetching of the values associated with the
-    /// given keys, skipping non-existent entries.
+    /// given keys
+    /// Non-existent entries will be skipped. The order of the keys is not retained.
     ///
     /// ```rust,no_run
     /// # use tikv_client::{KvPair, Config, RawClient};
@@ -173,6 +174,7 @@ impl Client {
     /// Create a new 'delete' request.
     ///
     /// Once resolved this request will result in the deletion of the given key.
+    /// It does not return an error if the key does not exist.
     ///
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, RawClient};
@@ -193,6 +195,7 @@ impl Client {
     /// Create a new 'batch delete' request.
     ///
     /// Once resolved this request will result in the deletion of the given keys.
+    /// It does not return an error if some of the keys do not exist and will delete the others.
     ///
     /// ```rust,no_run
     /// # use tikv_client::{Config, RawClient};
