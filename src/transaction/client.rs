@@ -8,7 +8,7 @@ use crate::{
 };
 use futures::executor::ThreadPool;
 use kvproto::kvrpcpb;
-use std::sync::Arc;
+use std::{mem, sync::Arc};
 use tikv_client_common::{Config, Result, Timestamp, TimestampExt};
 
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024; // TODO: cargo-culted value
@@ -91,13 +91,23 @@ impl Client {
         self.pd.clone().get_timestamp().await
     }
 
+    /// Cleans stale MVCC records in TiKV.
+    ///
+    /// It is done by:
+    /// 1. resolve all locks with ts <= safepoint
+    /// 2. update safepoint to PD
+    ///
+    /// This is a simplified version of [GC in TiDB](https://docs.pingcap.com/tidb/stable/garbage-collection-overview).
     pub async fn gc(&self, safepoint: Timestamp) -> Result<bool> {
         // scan all locks with ts <= safepoint
         let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
         let mut start_key = vec![];
         loop {
-            let req =
-                new_scan_lock_request(start_key.clone(), safepoint.clone(), SCAN_LOCK_BATCH_SIZE);
+            let req = new_scan_lock_request(
+                mem::take(&mut start_key),
+                safepoint.clone(),
+                SCAN_LOCK_BATCH_SIZE,
+            );
             let res: Vec<kvrpcpb::LockInfo> = req.execute(self.pd.clone()).await?;
             if res.is_empty() {
                 break;
