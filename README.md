@@ -81,7 +81,7 @@ There are some [examples](examples) which show how to use the client in a Rust p
 | `batch_get` | `Iter<Key>`         | `Iter<KvPair>`         | Skip non-existent keys; Does not retain order |
 | `lock_keys` | `KvPair`            | `()`                   |                                               |
 
-For detailed behavior of each reqeust, please refer to the [doc](#Access-the-documentation).
+For detailed behavior of each request, please refer to the [doc](#Access-the-documentation).
 
 #### Experimental raw requests
 
