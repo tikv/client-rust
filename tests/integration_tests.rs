@@ -63,12 +63,14 @@ async fn crud() -> Fallible<()> {
 
     let client = TransactionClient::new(config).await?;
     let mut txn = client.begin().await?;
+
     // Get non-existent keys
     assert!(txn.get("foo".to_owned()).await?.is_none());
+
+    // batch_get do not return non-existent entries
     assert_eq!(
         txn.batch_get(vec!["foo".to_owned(), "bar".to_owned()])
             .await?
-            .filter(|(_, v)| v.is_some())
             .count(),
         0
     );
@@ -83,7 +85,7 @@ async fn crud() -> Fallible<()> {
     let batch_get_res: HashMap<Key, Value> = txn
         .batch_get(vec!["foo".to_owned(), "bar".to_owned()])
         .await?
-        .filter_map(|(k, v)| v.map(|v| (k, v)))
+        .map(|pair| (pair.0, pair.1))
         .collect();
     assert_eq!(
         batch_get_res.get(&Key::from("foo".to_owned())),
@@ -104,7 +106,7 @@ async fn crud() -> Fallible<()> {
     let batch_get_res: HashMap<Key, Value> = txn
         .batch_get(vec!["foo".to_owned(), "bar".to_owned()])
         .await?
-        .filter_map(|(k, v)| v.map(|v| (k, v)))
+        .map(|pair| (pair.0, pair.1))
         .collect();
     assert_eq!(
         batch_get_res.get(&Key::from("foo".to_owned())),
@@ -123,7 +125,7 @@ async fn crud() -> Fallible<()> {
     let batch_get_res: HashMap<Key, Value> = txn
         .batch_get(vec!["foo".to_owned(), "bar".to_owned()])
         .await?
-        .filter_map(|(k, v)| v.map(|v| (k, v)))
+        .map(|pair| (pair.0, pair.1))
         .collect();
     assert_eq!(
         batch_get_res.get(&Key::from("foo".to_owned())),

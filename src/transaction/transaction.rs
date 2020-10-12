@@ -75,7 +75,7 @@ impl Transaction {
             .await
     }
 
-    /// Gets the values associated with the given keys.
+    /// Gets the values associated with the given keys, skipping non-existent entries.
     ///
     /// Non-existent entries will be skipped. The order of the keys is not retained.
     ///
@@ -91,7 +91,8 @@ impl Transaction {
     ///     .batch_get(keys)
     ///     .await
     ///     .unwrap()
-    ///     .filter_map(|(k, v)| v.map(move |v| (k, v))).collect();
+    ///     .map(|pair| (pair.0, pair.1))
+    ///     .collect();
     /// // Finish the transaction...
     /// txn.commit().await.unwrap();
     /// # });
@@ -99,7 +100,7 @@ impl Transaction {
     pub async fn batch_get(
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
-    ) -> Result<impl Iterator<Item = (Key, Option<Value>)>> {
+    ) -> Result<impl Iterator<Item = KvPair>> {
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         self.buffer
