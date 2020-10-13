@@ -72,14 +72,15 @@ There are some [examples](examples) which show how to use the client in a Rust p
 
 #### Transactional requests
 
-| Request     | Main parameter type | Successful result type | Noteworthy Behavior                           |
-| ----------- | ------------------- | ---------------------- | --------------------------------------------- |
-| `put`       | `KvPair`            | `()`                   |                                               |
-| `get`       | `Key`               | `Option<value>`        |                                               |
-| `delete`    | `Key`               | `()`                   |                                               |
-| `scan`      | `BoundRange`        | `Iter<KvPair>`         |                                               |
-| `batch_get` | `Iter<Key>`         | `Iter<KvPair>`         | Skip non-existent keys; Does not retain order |
-| `lock_keys` | `KvPair`            | `()`                   |                                               |
+| Request     | Main parameter type | Successful result type | Noteworthy Behavior                                          |
+| ----------- | ------------------- | ---------------------- | ------------------------------------------------------------ |
+| `put`       | `KvPair`            | `()`                   |                                                              |
+| `get`       | `Key`               | `Option<value>`        |                                                              |
+| `delete`    | `Key`               | `()`                   |                                                              |
+| `scan`      | `BoundRange`        | `Iter<KvPair>`         |                                                              |
+| `batch_get` | `Iter<Key>`         | `Iter<KvPair>`         | Skip non-existent keys; Does not retain order                |
+| `lock_keys` | `KvPair`            | `()`                   |                                                              |
+| `gc`        | `Timestamp`         | `bool`                 | It returns whether the latest safepoint in PD equals the parameter |
 
 For detailed behavior of each request, please refer to the [doc](#Access-the-documentation).
 
@@ -87,9 +88,9 @@ For detailed behavior of each request, please refer to the [doc](#Access-the-doc
 
 You must be careful if you want to use the following request(s). Read the description for reasons.
 
-| Request        | Main parameter type | Successful result type |
-| -------------- | ------------------- | ---------------------- |
-| `batch_scan`   | `Iter<BoundRange>`  | `Vec<KvPair>`          |
+| Request      | Main parameter type | Successful result type |
+| ------------ | ------------------- | ---------------------- |
+| `batch_scan` | `Iter<BoundRange>`  | `Vec<KvPair>`          |
 
 The `each_limit` parameter does not work as expected. It does not limit the number of results returned of each range, instead it limits the number of results in each region of each range. As a result, you may get **more than** `each_limit` key-value pairs for each range. But you should not miss any entries.
 
@@ -118,11 +119,6 @@ You can access the documentation on your machine by running the following in any
 cargo doc --package tikv-client --open
 # If it didn't work, browse file URL it tried to open with your browser.
 ```
-
-## Known issues
-
-If you use transactional APIs, you'll need to perform GC in TiKV to save storage.
-However, current implementation does not provide a direct way to do this. A workaround is described in [#180](https://github.com/tikv/client-rust/issues/180).
 
 ## Minimal Rust version
 
