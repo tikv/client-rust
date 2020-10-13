@@ -146,6 +146,10 @@ impl PdClient for MockPdClient {
     fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
         unimplemented!()
     }
+
+    fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> BoxFuture<'static, Result<bool>> {
+        unimplemented!()
+    }
 }
 
 impl DispatchHook for kvrpcpb::ResolveLockRequest {

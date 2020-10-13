@@ -30,3 +30,9 @@ impl PdResponse for pdpb::GetAllStoresResponse {
         self.get_header()
     }
 }
+
+impl PdResponse for pdpb::UpdateGcSafePointResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.get_header()
+    }
+}

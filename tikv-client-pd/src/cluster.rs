@@ -65,6 +65,16 @@ impl Cluster {
     pub async fn get_timestamp(&self) -> Result<Timestamp> {
         self.tso.clone().get_timestamp().await
     }
+
+    pub async fn update_safepoint(
+        &self,
+        safepoint: u64,
+        timeout: Duration,
+    ) -> Result<pdpb::UpdateGcSafePointResponse> {
+        let mut req = pd_request!(self.id, pdpb::UpdateGcSafePointRequest);
+        req.set_safe_point(safepoint);
+        req.send(&self.client, timeout).await
+    }
 }
 
 /// An object for connecting and reconnecting to a PD cluster.
@@ -308,5 +318,17 @@ impl PdMessage for pdpb::GetAllStoresRequest {
 
     async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
         client.get_all_stores_async_opt(self, opt).unwrap().await
+    }
+}
+
+#[async_trait]
+impl PdMessage for pdpb::UpdateGcSafePointRequest {
+    type Response = pdpb::UpdateGcSafePointResponse;
+
+    async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
+        client
+            .update_gc_safe_point_async_opt(self, opt)
+            .unwrap()
+            .await
     }
 }

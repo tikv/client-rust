@@ -438,6 +438,17 @@ async fn raw_req() -> Fallible<()> {
     Fallible::Ok(())
 }
 
+/// Only checks if we successfully update safepoint to PD.
+#[tokio::test]
+#[serial]
+async fn test_update_safepoint() -> Fallible<()> {
+    clear_tikv().await?;
+    let config = Config::new(pd_addrs());
+    let client = TransactionClient::new(config).await?;
+    let res = client.gc(client.current_timestamp().await?).await?;
+    assert!(res);
+    Fallible::Ok(())
+}
 /// Tests raw API when there are multiple regions.
 /// Write large volumes of data to enforce region splitting.
 /// In order to test `scan`, data is uniformly inserted.
