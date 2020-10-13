@@ -98,6 +98,7 @@ impl Client {
     /// 2. update safepoint to PD
     ///
     /// This is a simplified version of [GC in TiDB](https://docs.pingcap.com/tidb/stable/garbage-collection-overview).
+    /// We omit the second step "delete ranges" which is an optimization for TiDB.
     pub async fn gc(&self, safepoint: Timestamp) -> Result<bool> {
         // scan all locks with ts <= safepoint
         let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
