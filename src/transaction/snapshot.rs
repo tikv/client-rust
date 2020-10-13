@@ -24,7 +24,7 @@ impl Snapshot {
     pub async fn batch_get(
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
-    ) -> Result<impl Iterator<Item = (Key, Option<Value>)>> {
+    ) -> Result<impl Iterator<Item = KvPair>> {
         self.transaction.batch_get(keys).await
     }
 
