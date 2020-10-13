@@ -135,7 +135,7 @@ pub trait PdClient: Send + Sync + 'static {
         .boxed()
     }
 
-    // Returns a Steam which iterates over the contexts for ranges in the same region.
+    // Returns a Stream which iterates over the contexts for ranges in the same region.
     fn group_ranges_by_region(
         self: Arc<Self>,
         mut ranges: Vec<BoundRange>,
@@ -155,7 +155,10 @@ pub trait PdClient: Send + Sync + 'static {
                     let region_end = region.end_key();
                     let mut grouped = vec![];
                     if !region_end.is_empty()
-                        && end_key.clone().map(|x| x > region_end).unwrap_or(true)
+                        && end_key
+                            .clone()
+                            .map(|x| x > region_end || x.is_empty())
+                            .unwrap_or(true)
                     {
                         grouped.push((start_key, region_end.clone()).into());
                         ranges.push((region_end, end_key).into());
@@ -170,7 +173,10 @@ pub trait PdClient: Send + Sync + 'static {
                             break;
                         }
                         if !region_end.is_empty()
-                            && end_key.clone().map(|x| x > region_end).unwrap_or(true)
+                            && end_key
+                                .clone()
+                                .map(|x| x > region_end || x.is_empty())
+                                .unwrap_or(true)
                         {
                             grouped.push((start_key, region_end.clone()).into());
                             ranges.push((region_end, end_key).into());
