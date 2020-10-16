@@ -235,7 +235,20 @@ impl Transaction {
         .await
     }
 
-    // todo: documentation
+    /// Pessimisticly lock the keys
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Config, transaction::Client};
+    /// # use futures::prelude::*;
+    /// # use tikv_client_common::Key;
+    /// # futures::executor::block_on(async {
+    /// # let client = Client::new(Config::default()).await.unwrap();
+    /// let mut txn = client.begin().await.unwrap();
+    /// // ... Do some actions.
+    /// let key1: Key = b"key1".to_vec().into();
+    /// let result: () = txn.pessimistic_lock(vec![key1.clone()]).await.unwrap();
+    /// # });
+    /// ```
     pub async fn pessimistic_lock(
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
@@ -261,6 +274,19 @@ impl Transaction {
         .await
     }
 
+    /// Commits the actions of the pessimistic transaction.
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Config, transaction::Client};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = Client::new(Config::default()).await.unwrap();
+    /// let mut txn = client.begin().await.unwrap();
+    /// // ... Do some actions.
+    /// let req = txn.pessimistic_commit();
+    /// let result: () = req.await.unwrap();
+    /// # });
+    /// ```
     pub async fn pessimistic_commit(&mut self) -> Result<()> {
         TwoPhaseCommitter::new(
             self.buffer.to_proto_mutations(),
