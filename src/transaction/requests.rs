@@ -7,7 +7,7 @@ use crate::{
 };
 use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
 use kvproto::{kvrpcpb, pdpb::Timestamp, tikvpb::TikvClient};
-use std::{mem, sync::Arc};
+use std::{iter, mem, sync::Arc};
 use tikv_client_common::TimestampExt;
 use tikv_client_store::{KvClient, RpcFnType, Store};
 
@@ -330,6 +330,8 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
         req.set_lock_ttl(self.lock_ttl);
         req.set_skip_constraint_check(self.skip_constraint_check);
         req.set_txn_size(self.txn_size);
+        req.set_for_update_ts(self.for_update_ts);
+        req.set_is_pessimistic_lock(self.is_pessimistic_lock.clone());
 
         req
     }
@@ -377,6 +379,20 @@ pub fn new_prewrite_request(
     // TODO: Lite resolve lock is currently disabled
     req.set_txn_size(std::u64::MAX);
 
+    req
+}
+
+pub fn new_pessimistic_prewrite_request(
+    mutations: Vec<kvrpcpb::Mutation>,
+    primary_lock: Key,
+    start_version: u64,
+    lock_ttl: u64,
+    for_update_ts: u64,
+) -> kvrpcpb::PrewriteRequest {
+    let len = mutations.len();
+    let mut req = new_prewrite_request(mutations, primary_lock, start_version, lock_ttl);
+    req.set_for_update_ts(for_update_ts);
+    req.set_is_pessimistic_lock(iter::repeat(true).take(len).collect());
     req
 }
 
@@ -482,13 +498,20 @@ impl KvRequest for kvrpcpb::PessimisticLockRequest {
     const REQUEST_NAME: &'static str = "kv_pessimistic_lock";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_pessimistic_lock_async_opt;
 
-    fn store_stream<PdC: PdClient>(&mut self, pd_client: Arc<PdC>) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    fn store_stream<PdC: PdClient>(
+        &mut self,
+        pd_client: Arc<PdC>,
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
         self.mutations.sort_by(|a, b| a.key.cmp(&b.key));
         let mutations = mem::take(&mut self.mutations);
         store_stream_for_keys(mutations, pd_client)
     }
 
-    fn make_rpc_request<KvC: KvClient>(&self, mutations: Self::KeyData, store: &Store<KvC>) -> Self {
+    fn make_rpc_request<KvC: KvClient>(
+        &self,
+        mutations: Self::KeyData,
+        store: &Store<KvC>,
+    ) -> Self {
         let mut req = self.request_from_store(store);
         req.set_mutations(mutations);
         req.set_primary_lock(self.primary_lock.clone());
@@ -504,10 +527,11 @@ impl KvRequest for kvrpcpb::PessimisticLockRequest {
         req
     }
 
-    fn map_result(_result: Self::RpcResponse) -> Self::Result {
-    }
+    fn map_result(_result: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> BoxFuture<'static, Result<Self::Result>> {
+    fn reduce(
+        results: BoxStream<'static, Result<Self::Result>>,
+    ) -> BoxFuture<'static, Result<Self::Result>> {
         results.try_for_each(|_| future::ready(Ok(()))).boxed()
     }
 }
@@ -520,12 +544,15 @@ pub fn new_pessimistic_lock_request(
     for_update_ts: u64,
 ) -> kvrpcpb::PessimisticLockRequest {
     let mut req = kvrpcpb::PessimisticLockRequest::default();
-    let mutations = keys.into_iter().map(|key| {
-        let mut mutation = kvrpcpb::Mutation::default();
-        mutation.set_op(kvrpcpb::Op::PessimisticLock);
-        mutation.set_key(key);
-        mutation
-    }).collect();
+    let mutations = keys
+        .into_iter()
+        .map(|key| {
+            let mut mutation = kvrpcpb::Mutation::default();
+            mutation.set_op(kvrpcpb::Op::PessimisticLock);
+            mutation.set_key(key);
+            mutation
+        })
+        .collect();
     req.set_mutations(mutations);
     req.set_primary_lock(primary_lock);
     req.set_start_version(start_version);

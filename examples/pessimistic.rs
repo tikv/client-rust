@@ -28,27 +28,32 @@ async fn main() {
     let value1: Value = b"value1".to_vec().into();
     let key2: Key = b"key2".to_vec().into();
     let value2: Value = b"value2".to_vec().into();
-    let txn = client.begin().await.expect("Could not begin a transaction");
+    let mut txn0 = client.begin().await.expect("Could not begin a transaction");
     for (key, value) in vec![(key1, value1), (key2, value2)] {
-        txn.put(key, value).await.expect("Could not set key value");
+        txn0.put(key, value).await.expect("Could not set key value");
     }
-
-    let mut txn = client.begin().await.expect("Could not begin a transaction");
+    txn0.commit().await.expect("");
+    drop(txn0);
+    let mut txn1 = client.begin().await.expect("Could not begin a transaction");
     // lock the key
     let key1: Key = b"key1".to_vec().into();
-    txn.pessimistic_lock(vec![key1.clone()]).await.expect("Could not lock the key");
+    txn1.pessimistic_lock(vec![key1.clone()])
+        .await
+        .expect("Could not lock the key");
     {
         // another txn cannot write to the locked key
-        let mut txn = client.begin().await.expect("Could not begin a transaction");
+        let mut txn2 = client.begin().await.expect("Could not begin a transaction");
         let key1: Key = b"key1".to_vec().into();
         let value2: Value = b"value2".to_vec().into();
-        txn.put(key1, value2).await.unwrap();
-        let result = txn.commit().await;
+        txn2.put(key1, value2).await.unwrap();
+        let result = txn2.commit().await;
         assert!(result.is_err());
     }
     // while this txn can still write it
     let value3: Value = b"value3".to_vec().into();
-    let result = txn.put(key1, value3).await;
-    assert!(result.is_ok());
-    println!("done");
+    txn1.put(key1.clone(), value3).await.unwrap();
+    txn1.pessimistic_commit().await.unwrap();
+    let txn3 = client.begin().await.expect("Could not begin a transaction");
+    let result = txn3.get(key1.clone()).await.unwrap().unwrap();
+    println!("{:?}", (key1, result));
 }

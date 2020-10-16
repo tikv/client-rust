@@ -46,7 +46,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
     fn response_stream(
         self,
         pd_client: Arc<impl PdClient>,
-        remaining_retry_count: usize
+        remaining_retry_count: usize,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         self.retry_response_stream(pd_client, DEFAULT_REGION_BACKOFF, remaining_retry_count)
     }
@@ -55,7 +55,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         mut self,
         pd_client: Arc<impl PdClient>,
         backoff: impl Backoff,
-        remaining_retry_count: usize
+        remaining_retry_count: usize,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         let stores = self.store_stream(pd_client.clone());
         stores
@@ -95,16 +95,16 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
                         })
                         .map_ok(move |_| {
                             if remaining_retry_count != 0 {
-                                request.response_stream(pd_client, remaining_retry_count - 1)
-                            } else {
                                 // todo: when met up with a long-time lock, this might be called
                                 // recusively for many times and cause a stack overflow here
                                 // currently I use a temporaray solution of limiting retry times,
                                 // a better way to handle this situation needs to be discussed
+                                request.response_stream(pd_client, remaining_retry_count - 1)
+                            } else {
                                 stream::once(future::err(ErrorKind::Unimplemented.into())).boxed()
                             }
-                        }
-                        ).try_flatten_stream()
+                        })
+                        .try_flatten_stream()
                         .boxed();
                 }
                 stream::once(future::ok(response)).boxed()
@@ -127,9 +127,11 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
                     Ok(())
                 };
 
-                fut.map_ok(move |_| self.retry_response_stream(pd_client, backoff, LOCK_RETRY_MAX_TIMES))
-                    .try_flatten_stream()
-                    .boxed()
+                fut.map_ok(move |_| {
+                    self.retry_response_stream(pd_client, backoff, LOCK_RETRY_MAX_TIMES)
+                })
+                .try_flatten_stream()
+                .boxed()
             },
         )
     }
@@ -394,7 +396,7 @@ mod test {
 
         let pd_client = Arc::new(MockPdClient);
         let backoff = NoJitterBackoff::new(1, 1, 3);
-        let stream = request.retry_response_stream(pd_client, backoff);
+        let stream = request.retry_response_stream(pd_client, backoff, LOCK_RETRY_MAX_TIMES);
 
         executor::block_on(async { stream.collect::<Vec<Result<MockRpcResponse>>>().await });
 
