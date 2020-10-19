@@ -532,7 +532,9 @@ impl KvRequest for kvrpcpb::PessimisticLockRequest {
     fn reduce(
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_for_each(|_| future::ready(Ok(()))).boxed()
+        results
+            .try_for_each_concurrent(None, |_| future::ready(Ok(())))
+            .boxed()
     }
 }
 
@@ -625,8 +627,13 @@ pub fn new_scan_lock_request(
 }
 
 impl HasLocks for kvrpcpb::CommitResponse {}
+
 impl HasLocks for kvrpcpb::CleanupResponse {}
+
 impl HasLocks for kvrpcpb::BatchRollbackResponse {}
+
 impl HasLocks for kvrpcpb::ResolveLockResponse {}
+
 impl HasLocks for kvrpcpb::ScanLockResponse {}
+
 impl HasLocks for kvrpcpb::PessimisticLockResponse {}

@@ -235,7 +235,7 @@ impl Transaction {
         .await
     }
 
-    /// Pessimisticly lock the keys
+    /// Pessimistically lock the keys
     ///
     /// ```rust,no_run
     /// # use tikv_client::{Config, transaction::Client};
