@@ -34,12 +34,17 @@ async fn main() {
     }
     txn0.commit().await.expect("");
     drop(txn0);
-    let mut txn1 = client.begin().await.expect("Could not begin a transaction");
+    let mut txn1 = client
+        .begin_pessimistic()
+        .await
+        .expect("Could not begin a transaction");
     // lock the key
     let key1: Key = b"key1".to_vec().into();
-    txn1.pessimistic_lock(vec![key1.clone()])
+    let value = txn1
+        .get_and_lock(key1.clone())
         .await
-        .expect("Could not lock the key");
+        .expect("Could not get_and_lock the key");
+    println!("{:?}", (&key1, value));
     {
         // another txn cannot write to the locked key
         let mut txn2 = client.begin().await.expect("Could not begin a transaction");
@@ -53,7 +58,7 @@ async fn main() {
     // while this txn can still write it
     let value3: Value = b"value3".to_vec().into();
     txn1.put(key1.clone(), value3).await.unwrap();
-    txn1.pessimistic_commit().await.unwrap();
+    txn1.commit().await.unwrap();
     let txn3 = client.begin().await.expect("Could not begin a transaction");
     let result = txn3.get(key1.clone()).await.unwrap().unwrap();
     println!("{:?}", (key1, result));

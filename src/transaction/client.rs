@@ -69,12 +69,17 @@ impl Client {
     /// ```
     pub async fn begin(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
-        Ok(self.new_transaction(timestamp))
+        Ok(self.new_transaction(timestamp, false))
+    }
+
+    pub async fn begin_pessimistic(&self) -> Result<Transaction> {
+        let timestamp = self.current_timestamp().await?;
+        Ok(self.new_transaction(timestamp, true))
     }
 
     /// Creates a new [`Snapshot`](Snapshot) at the given time.
     pub fn snapshot(&self, timestamp: Timestamp) -> Snapshot {
-        Snapshot::new(self.new_transaction(timestamp))
+        Snapshot::new(self.new_transaction(timestamp, false))
     }
 
     /// Retrieves the current [`Timestamp`](Timestamp).
@@ -133,13 +138,13 @@ impl Client {
         Ok(res)
     }
 
-    fn new_transaction(&self, timestamp: Timestamp) -> Transaction {
+    fn new_transaction(&self, timestamp: Timestamp, is_pessimistic: bool) -> Transaction {
         Transaction::new(
             timestamp,
             self.bg_worker.clone(),
             self.pd.clone(),
             self.key_only,
-            false,
+            is_pessimistic,
         )
     }
 }

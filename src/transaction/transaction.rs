@@ -8,7 +8,7 @@ use crate::{
 use derive_new::new;
 use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
 use kvproto::{kvrpcpb, pdpb::Timestamp};
-use std::{mem, ops::RangeBounds, sync::Arc};
+use std::{iter, mem, ops::RangeBounds, sync::Arc};
 use tikv_client_common::{BoundRange, Error, ErrorKind, Key, KvPair, Result, TimestampExt, Value};
 
 /// A undo-able set of actions on the dataset.
@@ -80,6 +80,34 @@ impl Transaction {
             .await
     }
 
+    /// Pessimistically lock and get the value associated with the given key.
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Value, Config, transaction::Client};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// let mut txn = client.begin_pessimistic().await.unwrap();
+    /// let key = "TiKV".to_owned();
+    /// let result: Option<Value> = txn.get_and_lock(key).await.unwrap();
+    /// // now the key "TiKV" is locked, other transactions cannot modify it
+    /// // Finish the transaction...
+    /// txn.commit().await.unwrap();
+    /// # });
+    /// ```
+    pub async fn get_and_lock(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
+        if !self.is_pessimistic {
+            panic!("get_and_lock is not allowed in optimistic transaction!")
+        }
+        let key = key.into();
+        self.pessimistic_lock(iter::once(key.clone())).await?;
+        self.buffer
+            .get_or_else(key, |key| {
+                new_mvcc_get_request(key, self.timestamp.clone()).execute(self.rpc.clone())
+            })
+            .await
+    }
+
     /// Gets the values associated with the given keys, skipping non-existent entries.
     ///
     /// Non-existent entries will be skipped. The order of the keys is not retained.
@@ -104,8 +132,8 @@ impl Transaction {
     /// ```
     pub async fn batch_get(
         &self,
-        keys: impl IntoIterator<Item=impl Into<Key>>,
-    ) -> Result<impl Iterator<Item=KvPair>> {
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> Result<impl Iterator<Item = KvPair>> {
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         self.buffer
@@ -113,6 +141,41 @@ impl Transaction {
                 new_mvcc_get_batch_request(keys, timestamp).execute(rpc)
             })
             .await
+    }
+
+    /// Gets the values associated with the given keys, skipping non-existent entries.
+    ///
+    /// Non-existent entries will be skipped. The order of the keys is not retained.
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Value, Config, transaction::Client};
+    /// # use futures::prelude::*;
+    /// # use std::collections::HashMap;
+    /// # futures::executor::block_on(async {
+    /// # let client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// let mut txn = client.begin_pessimistic().await.unwrap();
+    /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
+    /// let result: HashMap<Key, Value> = txn
+    ///     .batch_get_and_lock(keys)
+    ///     .await
+    ///     .unwrap()
+    ///     .map(|pair| (pair.0, pair.1))
+    ///     .collect();
+    /// // now "TiKV" and "TiDB" are both locked
+    /// // Finish the transaction...
+    /// txn.commit().await.unwrap();
+    /// # });
+    /// ```
+    pub async fn batch_get_and_lock(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> Result<impl Iterator<Item = KvPair>> {
+        if !self.is_pessimistic {
+            panic!("batch_get_and_lock is not allowed in optimistic transaction!")
+        }
+        let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
+        self.pessimistic_lock(keys.clone()).await?;
+        self.batch_get(keys).await
     }
 
     /// Scan queries continuous key-value pairs in range.
@@ -139,7 +202,7 @@ impl Transaction {
         &self,
         range: impl Into<BoundRange>,
         limit: u32,
-    ) -> Result<impl Iterator<Item=KvPair>> {
+    ) -> Result<impl Iterator<Item = KvPair>> {
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
 
@@ -170,8 +233,12 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        self.buffer.put(key.into(), value.into());
+    pub async fn put(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
+        let key = key.into();
+        if self.is_pessimistic {
+            self.pessimistic_lock(iter::once(key.clone())).await?;
+        }
+        self.buffer.put(key, value.into());
         Ok(())
     }
 
@@ -189,8 +256,12 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn delete(&self, key: impl Into<Key>) -> Result<()> {
-        self.buffer.delete(key.into());
+    pub async fn delete(&mut self, key: impl Into<Key>) -> Result<()> {
+        let key = key.into();
+        if self.is_pessimistic {
+            self.pessimistic_lock(iter::once(key.clone())).await?;
+        }
+        self.buffer.delete(key);
         Ok(())
     }
 
@@ -207,7 +278,7 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn lock_keys(&self, keys: impl IntoIterator<Item=impl Into<Key>>) -> Result<()> {
+    pub async fn lock_keys(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
         for key in keys {
             self.buffer.lock(key.into());
         }
@@ -235,27 +306,14 @@ impl Transaction {
             self.rpc.clone(),
             self.for_update_ts,
         )
-            .commit()
-            .await
+        .commit()
+        .await
     }
 
     /// Pessimistically lock the keys
-    ///
-    /// ```rust,no_run
-    /// # use tikv_client::{Config, transaction::Client};
-    /// # use futures::prelude::*;
-    /// # use tikv_client_common::Key;
-    /// # futures::executor::block_on(async {
-    /// # let client = Client::new(Config::default()).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
-    /// // ... Do some actions.
-    /// let key1: Key = b"key1".to_vec().into();
-    /// let result: () = txn.pessimistic_lock(vec![key1.clone()]).await.unwrap();
-    /// # });
-    /// ```
-    pub async fn pessimistic_lock(
+    async fn pessimistic_lock(
         &mut self,
-        keys: impl IntoIterator<Item=impl Into<Key>>,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<()> {
         let mut keys: Vec<Vec<u8>> = keys
             .into_iter()
@@ -274,32 +332,8 @@ impl Transaction {
             lock_ttl,
             for_update_ts,
         )
-            .execute(self.rpc.clone())
-            .await
-    }
-
-    /// Commits the actions of the pessimistic transaction.
-    ///
-    /// ```rust,no_run
-    /// # use tikv_client::{Config, transaction::Client};
-    /// # use futures::prelude::*;
-    /// # futures::executor::block_on(async {
-    /// # let client = Client::new(Config::default()).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
-    /// // ... Do some actions.
-    /// let req = txn.pessimistic_commit();
-    /// let result: () = req.await.unwrap();
-    /// # });
-    /// ```
-    pub async fn pessimistic_commit(&mut self) -> Result<()> {
-        TwoPhaseCommitter::new(
-            self.buffer.to_proto_mutations(),
-            self.timestamp.version(),
-            self.bg_worker.clone(),
-            self.rpc.clone(),
-            self.for_update_ts,
-        ).commit()
-            .await
+        .execute(self.rpc.clone())
+        .await
     }
 }
 
@@ -360,8 +394,8 @@ impl TwoPhaseCommitter {
                 lock_ttl,
                 self.for_update_ts,
             )
-                .execute(self.rpc.clone())
-                .await
+            .execute(self.rpc.clone())
+            .await
         } else {
             new_prewrite_request(
                 self.mutations.clone(),
@@ -369,8 +403,8 @@ impl TwoPhaseCommitter {
                 self.start_version,
                 lock_ttl,
             )
-                .execute(self.rpc.clone())
-                .await
+            .execute(self.rpc.clone())
+            .await
         }
     }
 
@@ -410,7 +444,7 @@ impl TwoPhaseCommitter {
             .await
     }
 
-    fn rollback(&mut self) -> impl Future<Output=Result<()>> + 'static {
+    fn rollback(&mut self) -> impl Future<Output = Result<()>> + 'static {
         let mutations = mem::take(&mut self.mutations);
         let keys = mutations
             .into_iter()
