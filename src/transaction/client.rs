@@ -139,6 +139,7 @@ impl Client {
             self.bg_worker.clone(),
             self.pd.clone(),
             self.key_only,
+            false,
         )
     }
 }

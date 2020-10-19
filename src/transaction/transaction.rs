@@ -35,6 +35,7 @@ pub struct Transaction {
     rpc: Arc<PdRpcClient>,
     key_only: bool,
     for_update_ts: u64,
+    is_pessimistic: bool,
 }
 
 impl Transaction {
@@ -43,6 +44,7 @@ impl Transaction {
         bg_worker: ThreadPool,
         rpc: Arc<PdRpcClient>,
         key_only: bool,
+        is_pessimistic: bool,
     ) -> Transaction {
         Transaction {
             timestamp,
@@ -51,6 +53,7 @@ impl Transaction {
             rpc,
             key_only,
             for_update_ts: 0,
+            is_pessimistic,
         }
     }
 
@@ -101,8 +104,8 @@ impl Transaction {
     /// ```
     pub async fn batch_get(
         &self,
-        keys: impl IntoIterator<Item = impl Into<Key>>,
-    ) -> Result<impl Iterator<Item = KvPair>> {
+        keys: impl IntoIterator<Item=impl Into<Key>>,
+    ) -> Result<impl Iterator<Item=KvPair>> {
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         self.buffer
@@ -136,7 +139,7 @@ impl Transaction {
         &self,
         range: impl Into<BoundRange>,
         limit: u32,
-    ) -> Result<impl Iterator<Item = KvPair>> {
+    ) -> Result<impl Iterator<Item=KvPair>> {
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
 
@@ -204,7 +207,7 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn lock_keys(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
+    pub async fn lock_keys(&self, keys: impl IntoIterator<Item=impl Into<Key>>) -> Result<()> {
         for key in keys {
             self.buffer.lock(key.into());
         }
@@ -230,9 +233,10 @@ impl Transaction {
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
+            self.for_update_ts,
         )
-        .commit()
-        .await
+            .commit()
+            .await
     }
 
     /// Pessimistically lock the keys
@@ -251,7 +255,7 @@ impl Transaction {
     /// ```
     pub async fn pessimistic_lock(
         &mut self,
-        keys: impl IntoIterator<Item = impl Into<Key>>,
+        keys: impl IntoIterator<Item=impl Into<Key>>,
     ) -> Result<()> {
         let mut keys: Vec<Vec<u8>> = keys
             .into_iter()
@@ -270,8 +274,8 @@ impl Transaction {
             lock_ttl,
             for_update_ts,
         )
-        .execute(self.rpc.clone())
-        .await
+            .execute(self.rpc.clone())
+            .await
     }
 
     /// Commits the actions of the pessimistic transaction.
@@ -293,9 +297,9 @@ impl Transaction {
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
-        )
-        .pessimistic_commit(self.for_update_ts)
-        .await
+            self.for_update_ts,
+        ).commit()
+            .await
     }
 }
 
@@ -308,6 +312,7 @@ struct TwoPhaseCommitter {
     start_version: u64,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
+    for_update_ts: u64,
     #[new(default)]
     committed: bool,
     #[new(default)]
@@ -343,61 +348,30 @@ impl TwoPhaseCommitter {
         }
     }
 
-    async fn pessimistic_commit(mut self, for_update_ts: u64) -> Result<()> {
-        if self.mutations.is_empty() {
-            self.committed = true;
-            return Ok(());
-        }
-        self.pessimistic_prewrite(for_update_ts).await?;
-        match self.commit_primary().await {
-            Ok(commit_version) => {
-                self.committed = true;
-                self.bg_worker
-                    .clone()
-                    .spawn_ok(self.commit_secondary(commit_version).map(|res| {
-                        if let Err(e) = res {
-                            warn!("Failed to commit secondary keys: {}", e);
-                        }
-                    }));
-                Ok(())
-            }
-            Err(e) => {
-                if self.undetermined {
-                    Err(Error::undetermined_error(e))
-                } else {
-                    Err(e)
-                }
-            }
-        }
-    }
-
-    async fn pessimistic_prewrite(&mut self, for_update_ts: u64) -> Result<()> {
-        let primary_lock = self.mutations[0].key.clone().into();
-        // TODO: calculate TTL for big transactions
-        let lock_ttl = DEFAULT_LOCK_TTL;
-        new_pessimistic_prewrite_request(
-            self.mutations.clone(),
-            primary_lock,
-            self.start_version,
-            lock_ttl,
-            for_update_ts,
-        )
-        .execute(self.rpc.clone())
-        .await
-    }
-
     async fn prewrite(&mut self) -> Result<()> {
         let primary_lock = self.mutations[0].key.clone().into();
         // TODO: calculate TTL for big transactions
         let lock_ttl = DEFAULT_LOCK_TTL;
-        new_prewrite_request(
-            self.mutations.clone(),
-            primary_lock,
-            self.start_version,
-            lock_ttl,
-        )
-        .execute(self.rpc.clone())
-        .await
+        if self.for_update_ts > 0 {
+            new_pessimistic_prewrite_request(
+                self.mutations.clone(),
+                primary_lock,
+                self.start_version,
+                lock_ttl,
+                self.for_update_ts,
+            )
+                .execute(self.rpc.clone())
+                .await
+        } else {
+            new_prewrite_request(
+                self.mutations.clone(),
+                primary_lock,
+                self.start_version,
+                lock_ttl,
+            )
+                .execute(self.rpc.clone())
+                .await
+        }
     }
 
     /// Commits the primary key and returns the commit version
@@ -436,7 +410,7 @@ impl TwoPhaseCommitter {
             .await
     }
 
-    fn rollback(&mut self) -> impl Future<Output = Result<()>> + 'static {
+    fn rollback(&mut self) -> impl Future<Output=Result<()>> + 'static {
         let mutations = mem::take(&mut self.mutations);
         let keys = mutations
             .into_iter()

@@ -48,6 +48,7 @@ async fn main() {
         txn2.put(key1, value2).await.unwrap();
         let result = txn2.commit().await;
         assert!(result.is_err());
+        // println!("{:?}", result);
     }
     // while this txn can still write it
     let value3: Value = b"value3".to_vec().into();
