@@ -527,6 +527,19 @@ impl KvRequest for kvrpcpb::PessimisticRollbackRequest {
     }
 }
 
+pub fn new_pessimistic_rollback_request(
+    keys: Vec<Key>,
+    start_version: u64,
+    for_update_ts: u64,
+) -> kvrpcpb::PessimisticRollbackRequest {
+    let mut req = kvrpcpb::PessimisticRollbackRequest::default();
+    req.set_keys(keys.into_iter().map(Into::into).collect());
+    req.set_start_version(start_version);
+    req.set_for_update_ts(for_update_ts);
+
+    req
+}
+
 impl KvRequest for kvrpcpb::PessimisticLockRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::PessimisticLockResponse;

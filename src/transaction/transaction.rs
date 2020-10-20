@@ -450,7 +450,12 @@ impl TwoPhaseCommitter {
             .into_iter()
             .map(|mutation| mutation.key.into())
             .collect();
-        new_batch_rollback_request(keys, self.start_version).execute(self.rpc.clone())
+        if self.for_update_ts > 0 {
+            new_pessimistic_rollback_request(keys, self.start_version, self.for_update_ts)
+                .execute(self.rpc.clone())
+        } else {
+            new_batch_rollback_request(keys, self.start_version).execute(self.rpc.clone())
+        }
     }
 }
 
