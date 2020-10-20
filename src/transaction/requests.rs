@@ -491,6 +491,42 @@ pub fn new_batch_rollback_request(
     req
 }
 
+impl KvRequest for kvrpcpb::PessimisticRollbackRequest {
+    type Result = ();
+    type RpcResponse = kvrpcpb::PessimisticRollbackResponse;
+    type KeyData = Vec<Vec<u8>>;
+    const REQUEST_NAME: &'static str = "kv_pessimistic_rollback";
+    const RPC_FN: RpcFnType<Self, Self::RpcResponse> =
+        TikvClient::kv_pessimistic_rollback_async_opt;
+
+    fn make_rpc_request<KvC: KvClient>(&self, keys: Self::KeyData, store: &Store<KvC>) -> Self {
+        let mut req = self.request_from_store(store);
+        req.set_keys(keys);
+        req.set_start_version(self.start_version);
+
+        req
+    }
+
+    fn store_stream<PdC: PdClient>(
+        &mut self,
+        pd_client: Arc<PdC>,
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        self.keys.sort();
+        let keys = mem::take(&mut self.keys);
+        store_stream_for_keys(keys, pd_client)
+    }
+
+    fn map_result(_: Self::RpcResponse) -> Self::Result {}
+
+    fn reduce(
+        results: BoxStream<'static, Result<Self::Result>>,
+    ) -> BoxFuture<'static, Result<Self::Result>> {
+        results
+            .try_for_each_concurrent(None, |_| future::ready(Ok(())))
+            .boxed()
+    }
+}
+
 impl KvRequest for kvrpcpb::PessimisticLockRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::PessimisticLockResponse;
@@ -631,6 +667,8 @@ impl HasLocks for kvrpcpb::CommitResponse {}
 impl HasLocks for kvrpcpb::CleanupResponse {}
 
 impl HasLocks for kvrpcpb::BatchRollbackResponse {}
+
+impl HasLocks for kvrpcpb::PessimisticRollbackResponse {}
 
 impl HasLocks for kvrpcpb::ResolveLockResponse {}
 

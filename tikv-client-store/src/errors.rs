@@ -32,6 +32,7 @@ has_region_error!(kvrpcpb::CommitResponse);
 has_region_error!(kvrpcpb::PessimisticLockResponse);
 has_region_error!(kvrpcpb::ImportResponse);
 has_region_error!(kvrpcpb::BatchRollbackResponse);
+has_region_error!(kvrpcpb::PessimisticRollbackResponse);
 has_region_error!(kvrpcpb::CleanupResponse);
 has_region_error!(kvrpcpb::BatchGetResponse);
 has_region_error!(kvrpcpb::ScanLockResponse);
@@ -130,6 +131,12 @@ impl HasError for kvrpcpb::PrewriteResponse {
 }
 
 impl HasError for kvrpcpb::PessimisticLockResponse {
+    fn error(&mut self) -> Option<Error> {
+        extract_errors(self.take_errors().into_iter().map(Some))
+    }
+}
+
+impl HasError for kvrpcpb::PessimisticRollbackResponse {
     fn error(&mut self) -> Option<Error> {
         extract_errors(self.take_errors().into_iter().map(Some))
     }
