@@ -89,13 +89,13 @@ impl Transaction {
     /// # let client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
-    /// let result: Option<Value> = txn.get_and_lock(key).await.unwrap();
+    /// let result: Option<Value> = txn.get_for_update(key).await.unwrap();
     /// // now the key "TiKV" is locked, other transactions cannot modify it
     /// // Finish the transaction...
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn get_and_lock(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
+    pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         if !self.is_pessimistic {
             panic!("get_and_lock is not allowed in optimistic transaction!")
         }
@@ -156,7 +156,7 @@ impl Transaction {
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let result: HashMap<Key, Value> = txn
-    ///     .batch_get_and_lock(keys)
+    ///     .batch_get_for_update(keys)
     ///     .await
     ///     .unwrap()
     ///     .map(|pair| (pair.0, pair.1))
@@ -166,7 +166,7 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn batch_get_and_lock(
+    pub async fn batch_get_for_update(
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {

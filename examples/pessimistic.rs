@@ -41,7 +41,7 @@ async fn main() {
     // lock the key
     let key1: Key = b"key1".to_vec().into();
     let value = txn1
-        .get_and_lock(key1.clone())
+        .get_for_update(key1.clone())
         .await
         .expect("Could not get_and_lock the key");
     println!("{:?}", (&key1, value));
