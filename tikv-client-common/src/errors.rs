@@ -66,6 +66,9 @@ pub enum ErrorKind {
     /// Invalid ColumnFamily
     #[fail(display = "Unsupported column family {}", _0)]
     ColumnFamilyError(String),
+    /// failed to resolve a lock
+    #[fail(display = "Failed to resolve lock")]
+    ResolveLockError,
 }
 
 impl Fail for Error {

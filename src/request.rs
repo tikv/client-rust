@@ -11,14 +11,12 @@ use kvproto::kvrpcpb;
 use std::{
     cmp::{max, min},
     sync::Arc,
-    time::Duration,
 };
 use tikv_client_common::{BoundRange, Error, ErrorKind, Key, Result};
 use tikv_client_store::{HasError, HasRegionError, KvClient, RpcFnType, Store};
 
-const LOCK_RETRY_DELAY_MS: u64 = 10;
-const LOCK_RETRY_MAX_TIMES: usize = 10;
 const DEFAULT_REGION_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);
+const DEFAULT_LOCK_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);
 
 pub trait KvRequest: Sync + Send + 'static + Sized {
     type Result;
@@ -33,7 +31,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
 
     fn execute(self, pd_client: Arc<impl PdClient>) -> BoxFuture<'static, Result<Self::Result>> {
         Self::reduce(
-            self.response_stream(pd_client, LOCK_RETRY_MAX_TIMES)
+            self.response_stream(pd_client)
                 .and_then(|mut response| match response.error() {
                     Some(e) => future::err(e),
                     None => future::ok(response),
@@ -46,16 +44,15 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
     fn response_stream(
         self,
         pd_client: Arc<impl PdClient>,
-        remaining_retry_count: usize,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
-        self.retry_response_stream(pd_client, DEFAULT_REGION_BACKOFF, remaining_retry_count)
+        self.retry_response_stream(pd_client, DEFAULT_REGION_BACKOFF, DEFAULT_LOCK_BACKOFF)
     }
 
     fn retry_response_stream(
         mut self,
         pd_client: Arc<impl PdClient>,
-        backoff: impl Backoff,
-        remaining_retry_count: usize,
+        region_backoff: impl Backoff,
+        lock_backoff: impl Backoff,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         let stores = self.store_stream(pd_client.clone());
         stores
@@ -79,29 +76,26 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
                     return request.on_region_error(
                         region_error,
                         pd_client.clone(),
-                        backoff.clone(),
+                        region_backoff.clone(),
+                        lock_backoff.clone(),
                     );
                 }
                 // Resolve locks
                 let locks = response.take_locks();
                 if !locks.is_empty() {
-                    // todo: exit directly when found PessimisticLock
                     let pd_client = pd_client.clone();
+                    let region_backoff = region_backoff.clone();
+                    let lock_backoff = lock_backoff.clone();
                     return resolve_locks(locks, pd_client.clone())
-                        .map_ok(|resolved| {
-                            // TODO: backoff
-                            let delay_ms = if resolved { 0 } else { LOCK_RETRY_DELAY_MS };
-                            futures_timer::Delay::new(Duration::from_millis(delay_ms))
-                        })
-                        .map_ok(move |_| {
-                            if remaining_retry_count != 0 {
-                                // todo: when met up with a long-time lock, this might be called
-                                // recusively for many times and cause a stack overflow here
-                                // currently I use a temporaray solution of limiting retry times,
-                                // a better way to handle this situation needs to be discussed
-                                request.response_stream(pd_client, remaining_retry_count - 1)
+                        .map_ok(move |resolved| {
+                            if !resolved {
+                                request.on_resolve_lock_failed(
+                                    pd_client,
+                                    region_backoff,
+                                    lock_backoff,
+                                )
                             } else {
-                                stream::once(future::err(ErrorKind::Unimplemented.into())).boxed()
+                                request.response_stream(pd_client)
                             }
                         })
                         .try_flatten_stream()
@@ -117,9 +111,10 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         self,
         region_error: Error,
         pd_client: Arc<impl PdClient>,
-        mut backoff: impl Backoff,
+        mut region_backoff: impl Backoff,
+        lock_backoff: impl Backoff,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
-        backoff.next_delay_duration().map_or(
+        region_backoff.next_delay_duration().map_or(
             stream::once(future::err(region_error)).boxed(),
             move |delay_duration| {
                 let fut = async move {
@@ -128,7 +123,29 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
                 };
 
                 fut.map_ok(move |_| {
-                    self.retry_response_stream(pd_client, backoff, LOCK_RETRY_MAX_TIMES)
+                    self.retry_response_stream(pd_client, region_backoff, lock_backoff)
+                })
+                .try_flatten_stream()
+                .boxed()
+            },
+        )
+    }
+
+    fn on_resolve_lock_failed(
+        self,
+        pd_client: Arc<impl PdClient>,
+        region_backoff: impl Backoff,
+        mut lock_backoff: impl Backoff,
+    ) -> BoxStream<'static, Result<Self::RpcResponse>> {
+        lock_backoff.next_delay_duration().map_or(
+            stream::once(future::err(ErrorKind::ResolveLockError.into())).boxed(),
+            move |delay_duration| {
+                let fut = async move {
+                    futures_timer::Delay::new(delay_duration).await;
+                    Ok(())
+                };
+                fut.map_ok(move |_| {
+                    self.retry_response_stream(pd_client, region_backoff, lock_backoff)
                 })
                 .try_flatten_stream()
                 .boxed()
@@ -396,8 +413,9 @@ mod test {
         };
 
         let pd_client = Arc::new(MockPdClient);
-        let backoff = NoJitterBackoff::new(1, 1, 3);
-        let stream = request.retry_response_stream(pd_client, backoff, LOCK_RETRY_MAX_TIMES);
+        let region_backoff = NoJitterBackoff::new(1, 1, 3);
+        let lock_backoff = NoJitterBackoff::new(1, 1, 3);
+        let stream = request.retry_response_stream(pd_client, region_backoff, lock_backoff);
 
         executor::block_on(async { stream.collect::<Vec<Result<MockRpcResponse>>>().await });
 
