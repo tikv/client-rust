@@ -32,7 +32,7 @@ async fn main() {
     for (key, value) in vec![(key1, value1), (key2, value2)] {
         txn0.put(key, value).await.expect("Could not set key value");
     }
-    txn0.commit().await.expect("");
+    txn0.commit().await.expect("Could not commit");
     drop(txn0);
     let mut txn1 = client
         .begin_pessimistic()
@@ -53,7 +53,6 @@ async fn main() {
         txn2.put(key1, value2).await.unwrap();
         let result = txn2.commit().await;
         assert!(result.is_err());
-        // println!("{:?}", result);
     }
     // while this txn can still write it
     let value3: Value = b"value3".to_vec().into();

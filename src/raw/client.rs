@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::requests;
+use crate::request::OPTIMISTIC_BACKOFF;
 use crate::{pd::PdRpcClient, request::KvRequest, ColumnFamily};
 use std::{sync::Arc, u32};
 use tikv_client_common::{BoundRange, Config, Error, Key, KvPair, Result, Value};
@@ -96,7 +97,7 @@ impl Client {
     /// ```
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
         requests::new_raw_get_request(key, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             .await
     }
 
@@ -121,7 +122,7 @@ impl Client {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
         requests::new_raw_batch_get_request(keys, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             .await
     }
 
@@ -142,7 +143,7 @@ impl Client {
     /// ```
     pub async fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
         requests::new_raw_put_request(key, value, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             .await
     }
 
@@ -167,7 +168,7 @@ impl Client {
         pairs: impl IntoIterator<Item = impl Into<KvPair>>,
     ) -> Result<()> {
         requests::new_raw_batch_put_request(pairs, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             .await
     }
 
@@ -188,7 +189,7 @@ impl Client {
     /// ```
     pub async fn delete(&self, key: impl Into<Key>) -> Result<()> {
         requests::new_raw_delete_request(key, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             .await
     }
 
@@ -209,7 +210,7 @@ impl Client {
     /// ```
     pub async fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
         requests::new_raw_batch_delete_request(keys, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             .await
     }
 
@@ -229,7 +230,7 @@ impl Client {
     /// ```
     pub async fn delete_range(&self, range: impl Into<BoundRange>) -> Result<()> {
         requests::new_raw_delete_range_request(range, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             .await
     }
 
@@ -253,7 +254,7 @@ impl Client {
         }
 
         let res = requests::new_raw_scan_request(range, limit, self.key_only, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             .await;
         res.map(|mut s| {
             s.truncate(limit as usize);
@@ -290,7 +291,7 @@ impl Client {
         }
 
         requests::new_raw_batch_scan_request(ranges, each_limit, self.key_only, self.cf.clone())
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             .await
     }
 }

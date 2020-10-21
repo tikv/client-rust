@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::{requests::new_scan_lock_request, resolve_locks};
+use crate::request::OPTIMISTIC_BACKOFF;
 use crate::{
     pd::{PdClient, PdRpcClient},
     request::KvRequest,
@@ -114,7 +115,8 @@ impl Client {
                 safepoint.clone(),
                 SCAN_LOCK_BATCH_SIZE,
             );
-            let res: Vec<kvrpcpb::LockInfo> = req.execute(self.pd.clone()).await?;
+            let res: Vec<kvrpcpb::LockInfo> =
+                req.execute(self.pd.clone(), OPTIMISTIC_BACKOFF).await?;
             if res.is_empty() {
                 break;
             }

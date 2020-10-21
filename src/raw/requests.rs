@@ -502,6 +502,7 @@ mod test {
 
     use crate::{mock::MockPdClient, request::DispatchHook};
 
+    use crate::request::OPTIMISTIC_BACKOFF;
     use futures::{
         executor,
         future::{ready, BoxFuture},
@@ -542,7 +543,7 @@ mod test {
             key_only: true,
             ..Default::default()
         };
-        let scan = executor::block_on(scan.execute(client)).unwrap();
+        let scan = executor::block_on(scan.execute(client, OPTIMISTIC_BACKOFF)).unwrap();
 
         assert_eq!(scan.len(), 10);
         // TODO test the keys returned.

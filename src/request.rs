@@ -1,7 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    backoff::{Backoff, NoJitterBackoff},
+    backoff::{Backoff, NoBackoff, NoJitterBackoff},
     pd::PdClient,
     transaction::{resolve_locks, HasLocks},
 };
@@ -16,7 +16,8 @@ use tikv_client_common::{BoundRange, Error, ErrorKind, Key, Result};
 use tikv_client_store::{HasError, HasRegionError, KvClient, RpcFnType, Store};
 
 const DEFAULT_REGION_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);
-const DEFAULT_LOCK_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);
+pub const OPTIMISTIC_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);
+pub const PESSIMISTIC_BACKOFF: NoBackoff = NoBackoff;
 
 pub trait KvRequest: Sync + Send + 'static + Sized {
     type Result;
@@ -29,9 +30,13 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
     const REQUEST_NAME: &'static str;
     const RPC_FN: RpcFnType<Self, Self::RpcResponse>;
 
-    fn execute(self, pd_client: Arc<impl PdClient>) -> BoxFuture<'static, Result<Self::Result>> {
+    fn execute(
+        self,
+        pd_client: Arc<impl PdClient>,
+        lock_backoff: impl Backoff,
+    ) -> BoxFuture<'static, Result<Self::Result>> {
         Self::reduce(
-            self.response_stream(pd_client)
+            self.response_stream(pd_client, lock_backoff)
                 .and_then(|mut response| match response.error() {
                     Some(e) => future::err(e),
                     None => future::ok(response),
@@ -44,8 +49,9 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
     fn response_stream(
         self,
         pd_client: Arc<impl PdClient>,
+        lock_backoff: impl Backoff,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
-        self.retry_response_stream(pd_client, DEFAULT_REGION_BACKOFF, DEFAULT_LOCK_BACKOFF)
+        self.retry_response_stream(pd_client, DEFAULT_REGION_BACKOFF, lock_backoff)
     }
 
     fn retry_response_stream(
@@ -95,7 +101,7 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
                                     lock_backoff,
                                 )
                             } else {
-                                request.response_stream(pd_client)
+                                request.response_stream(pd_client, OPTIMISTIC_BACKOFF)
                             }
                         })
                         .try_flatten_stream()

@@ -2,7 +2,7 @@
 
 use crate::{
     pd::{PdClient, PdRpcClient},
-    request::KvRequest,
+    request::{KvRequest, OPTIMISTIC_BACKOFF, PESSIMISTIC_BACKOFF},
     transaction::{buffer::Buffer, requests::*},
 };
 use derive_new::new;
@@ -75,7 +75,8 @@ impl Transaction {
         let key = key.into();
         self.buffer
             .get_or_else(key, |key| {
-                new_mvcc_get_request(key, self.timestamp.clone()).execute(self.rpc.clone())
+                new_mvcc_get_request(key, self.timestamp.clone())
+                    .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             })
             .await
     }
@@ -103,7 +104,8 @@ impl Transaction {
         self.pessimistic_lock(iter::once(key.clone())).await?;
         self.buffer
             .get_or_else(key, |key| {
-                new_mvcc_get_request(key, self.timestamp.clone()).execute(self.rpc.clone())
+                new_mvcc_get_request(key, self.timestamp.clone())
+                    .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             })
             .await
     }
@@ -138,7 +140,7 @@ impl Transaction {
         let rpc = self.rpc.clone();
         self.buffer
             .batch_get_or_else(keys.into_iter().map(|k| k.into()), move |keys| {
-                new_mvcc_get_batch_request(keys, timestamp).execute(rpc)
+                new_mvcc_get_batch_request(keys, timestamp).execute(rpc, OPTIMISTIC_BACKOFF)
             })
             .await
     }
@@ -209,7 +211,8 @@ impl Transaction {
         let key_only = self.key_only;
         self.buffer
             .scan_and_fetch(range.into(), limit, move |new_range, new_limit| {
-                new_mvcc_scan_request(new_range, timestamp, new_limit, key_only).execute(rpc)
+                new_mvcc_scan_request(new_range, timestamp, new_limit, key_only)
+                    .execute(rpc, OPTIMISTIC_BACKOFF)
             })
             .await
     }
@@ -332,7 +335,7 @@ impl Transaction {
             lock_ttl,
             for_update_ts,
         )
-        .execute(self.rpc.clone())
+        .execute(self.rpc.clone(), PESSIMISTIC_BACKOFF)
         .await
     }
 }
@@ -394,7 +397,7 @@ impl TwoPhaseCommitter {
                 lock_ttl,
                 self.for_update_ts,
             )
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), PESSIMISTIC_BACKOFF)
             .await
         } else {
             new_prewrite_request(
@@ -403,7 +406,7 @@ impl TwoPhaseCommitter {
                 self.start_version,
                 lock_ttl,
             )
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             .await
         }
     }
@@ -413,7 +416,7 @@ impl TwoPhaseCommitter {
         let primary_key = vec![self.mutations[0].key.clone().into()];
         let commit_version = self.rpc.clone().get_timestamp().await?.version();
         new_commit_request(primary_key, self.start_version, commit_version)
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             .inspect_err(|e| {
                 // We don't know whether the transaction is committed or not if we fail to receive
                 // the response. Then, we mark the transaction as undetermined and propagate the
@@ -440,7 +443,7 @@ impl TwoPhaseCommitter {
             .map(|mutation| mutation.key.into())
             .collect();
         new_commit_request(keys, self.start_version, commit_version)
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             .await
     }
 
@@ -452,9 +455,10 @@ impl TwoPhaseCommitter {
             .collect();
         if self.for_update_ts > 0 {
             new_pessimistic_rollback_request(keys, self.start_version, self.for_update_ts)
-                .execute(self.rpc.clone())
+                .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
         } else {
-            new_batch_rollback_request(keys, self.start_version).execute(self.rpc.clone())
+            new_batch_rollback_request(keys, self.start_version)
+                .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
         }
     }
 }
