@@ -1,7 +1,7 @@
 # TiKV Client (Rust)
 
 [![Build Status](https://travis-ci.org/tikv/client-rust.svg?branch=master)](https://travis-ci.org/tikv/client-rust)
-[![Documentation](https://docs.rs/tikv-client/badge.svg)](https://docs.rs/tikv-client/)
+[Docs](https://www.tikv.dev/doc/rust-client/tikv_client/)
 
 > Currently this crate is experimental and some portions (e.g. the Transactional API) are still in active development. You're encouraged to use this library for testing and to help us find problems!
 
