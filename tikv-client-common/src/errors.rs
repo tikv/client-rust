@@ -66,9 +66,12 @@ pub enum ErrorKind {
     /// Invalid ColumnFamily
     #[fail(display = "Unsupported column family {}", _0)]
     ColumnFamilyError(String),
-    /// failed to resolve a lock
+    /// Failed to resolve a lock
     #[fail(display = "Failed to resolve lock")]
     ResolveLockError,
+    /// Will raise this error when using a pessimistic txn only operation on an optimistic txn
+    #[fail(display = "Invalid operation for this type of transaction")]
+    InvalidTransactionType,
 }
 
 impl Fail for Error {

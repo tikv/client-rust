@@ -1,5 +1,9 @@
-use crate::request::OPTIMISTIC_BACKOFF;
-use crate::{pd::PdClient, request::KvRequest, transaction::requests, RegionVerId};
+use crate::{
+    pd::PdClient,
+    request::{KvRequest, OPTIMISTIC_BACKOFF},
+    transaction::requests,
+    RegionVerId,
+};
 use kvproto::{kvrpcpb, pdpb::Timestamp};
 use std::{
     collections::{HashMap, HashSet},

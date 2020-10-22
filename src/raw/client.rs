@@ -1,8 +1,11 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::requests;
-use crate::request::OPTIMISTIC_BACKOFF;
-use crate::{pd::PdRpcClient, request::KvRequest, ColumnFamily};
+use crate::{
+    pd::PdRpcClient,
+    request::{KvRequest, OPTIMISTIC_BACKOFF},
+    ColumnFamily,
+};
 use std::{sync::Arc, u32};
 use tikv_client_common::{BoundRange, Config, Error, Key, KvPair, Result, Value};
 

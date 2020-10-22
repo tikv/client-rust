@@ -1,10 +1,9 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::{requests::new_scan_lock_request, resolve_locks};
-use crate::request::OPTIMISTIC_BACKOFF;
 use crate::{
     pd::{PdClient, PdRpcClient},
-    request::KvRequest,
+    request::{KvRequest, OPTIMISTIC_BACKOFF},
     transaction::{Snapshot, Transaction},
 };
 use futures::executor::ThreadPool;

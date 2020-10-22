@@ -98,16 +98,17 @@ impl Transaction {
     /// ```
     pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         if !self.is_pessimistic {
-            panic!("get_and_lock is not allowed in optimistic transaction!")
+            Err(ErrorKind::InvalidTransactionType.into())
+        } else {
+            let key = key.into();
+            self.pessimistic_lock(iter::once(key.clone())).await?;
+            self.buffer
+                .get_or_else(key, |key| {
+                    new_mvcc_get_request(key, self.timestamp.clone())
+                        .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+                })
+                .await
         }
-        let key = key.into();
-        self.pessimistic_lock(iter::once(key.clone())).await?;
-        self.buffer
-            .get_or_else(key, |key| {
-                new_mvcc_get_request(key, self.timestamp.clone())
-                    .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
-            })
-            .await
     }
 
     /// Gets the values associated with the given keys, skipping non-existent entries.
@@ -173,11 +174,12 @@ impl Transaction {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
         if !self.is_pessimistic {
-            panic!("batch_get_and_lock is not allowed in optimistic transaction!")
+            Err(ErrorKind::InvalidTransactionType.into())
+        } else {
+            let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
+            self.pessimistic_lock(keys.clone()).await?;
+            self.batch_get(keys).await
         }
-        let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
-        self.pessimistic_lock(keys.clone()).await?;
-        self.batch_get(keys).await
     }
 
     /// Scan queries continuous key-value pairs in range.
