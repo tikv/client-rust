@@ -34,9 +34,9 @@ jobs:
       - name: FTP-Deploy-Action
         uses: SamKirkland/FTP-Deploy-Action@master
         with:
-          ftp-server: sftp://161.35.234.130:22
+          ftp-server: sftp://161.35.234.130:22/var/www/tikv-dev/doc/rust-client/
           ftp-username: docclientftp
           ftp-password: foo
           known-hosts: 161.35.234.130:22 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFvqOX8oO2T90meS1mvGSkuCjyakuFf079+q1TwYXEQdxw7bmBLO2WpzKF/aWILMbjl2nb5p0kAf5onVOOpFuu0=
           local-dir: target/doc/
-          git-ftp-args: --remote-root "/var/www/tikv-dev/doc/rust-client/" --key "~/.ssh/id_rsa"
+          git-ftp-args: --key "~/.ssh/id_rsa"
