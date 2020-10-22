@@ -9,15 +9,6 @@ jobs:
     name: FTP-Deploy-Action
     runs-on: ubuntu-latest
     steps:
-      - name: Store SSH Keys
-        run: |
-          mkdir -p ~/.ssh/
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-          sudo chmod 600 ~/.ssh/id_rsa
-        shell: bash
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.key_private }}
-
       - uses: actions/checkout@v2.1.0
         with:
           fetch-depth: 2
@@ -30,13 +21,13 @@ jobs:
 
       - name: Build docs
         run: cargo doc --document-private-items
-        
-      - name: FTP-Deploy-Action
-        uses: SamKirkland/FTP-Deploy-Action@master
+       
+      - name: sftp to server 
+        uses: wlixcc/SFTP-Deploy-Action@v1.0
         with:
-          ftp-server: sftp://161.35.234.130:22/var/www/tikv-dev/doc/rust-client/
-          ftp-username: docclientftp
-          ftp-password: foo
-          known-hosts: 161.35.234.130:22 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFvqOX8oO2T90meS1mvGSkuCjyakuFf079+q1TwYXEQdxw7bmBLO2WpzKF/aWILMbjl2nb5p0kAf5onVOOpFuu0=
-          local-dir: target/doc/
-          git-ftp-args: --key "~/.ssh/id_rsa"
+          username: 'docclientftp'
+          server: '161.35.234.130'
+          ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
+          local_path: 'target/doc/*'
+          remote_path: '/var/www/tikv-dev/doc/rust-client'
+          args: '-o ConnectTimeout=5' 
