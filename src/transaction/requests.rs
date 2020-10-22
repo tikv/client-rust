@@ -7,7 +7,7 @@ use crate::{
 };
 use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
 use kvproto::{kvrpcpb, pdpb::Timestamp, tikvpb::TikvClient};
-use std::{mem, sync::Arc};
+use std::{iter, mem, sync::Arc};
 use tikv_client_common::TimestampExt;
 use tikv_client_store::{KvClient, RpcFnType, Store};
 
@@ -220,7 +220,8 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
         self,
         region_error: Error,
         _pd_client: Arc<impl PdClient>,
-        _backoff: impl Backoff,
+        _region_backoff: impl Backoff,
+        _lock_backoff: impl Backoff,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         stream::once(future::err(region_error)).boxed()
     }
@@ -330,6 +331,8 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
         req.set_lock_ttl(self.lock_ttl);
         req.set_skip_constraint_check(self.skip_constraint_check);
         req.set_txn_size(self.txn_size);
+        req.set_for_update_ts(self.for_update_ts);
+        req.set_is_pessimistic_lock(self.is_pessimistic_lock.clone());
 
         req
     }
@@ -377,6 +380,20 @@ pub fn new_prewrite_request(
     // TODO: Lite resolve lock is currently disabled
     req.set_txn_size(std::u64::MAX);
 
+    req
+}
+
+pub fn new_pessimistic_prewrite_request(
+    mutations: Vec<kvrpcpb::Mutation>,
+    primary_lock: Key,
+    start_version: u64,
+    lock_ttl: u64,
+    for_update_ts: u64,
+) -> kvrpcpb::PrewriteRequest {
+    let len = mutations.len();
+    let mut req = new_prewrite_request(mutations, primary_lock, start_version, lock_ttl);
+    req.set_for_update_ts(for_update_ts);
+    req.set_is_pessimistic_lock(iter::repeat(true).take(len).collect());
     req
 }
 
@@ -475,6 +492,135 @@ pub fn new_batch_rollback_request(
     req
 }
 
+impl KvRequest for kvrpcpb::PessimisticRollbackRequest {
+    type Result = ();
+    type RpcResponse = kvrpcpb::PessimisticRollbackResponse;
+    type KeyData = Vec<Vec<u8>>;
+    const REQUEST_NAME: &'static str = "kv_pessimistic_rollback";
+    const RPC_FN: RpcFnType<Self, Self::RpcResponse> =
+        TikvClient::kv_pessimistic_rollback_async_opt;
+
+    fn make_rpc_request<KvC: KvClient>(&self, keys: Self::KeyData, store: &Store<KvC>) -> Self {
+        let mut req = self.request_from_store(store);
+        req.set_keys(keys);
+        req.set_start_version(self.start_version);
+
+        req
+    }
+
+    fn store_stream<PdC: PdClient>(
+        &mut self,
+        pd_client: Arc<PdC>,
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        self.keys.sort();
+        let keys = mem::take(&mut self.keys);
+        store_stream_for_keys(keys, pd_client)
+    }
+
+    fn map_result(_: Self::RpcResponse) -> Self::Result {}
+
+    fn reduce(
+        results: BoxStream<'static, Result<Self::Result>>,
+    ) -> BoxFuture<'static, Result<Self::Result>> {
+        results
+            .try_for_each_concurrent(None, |_| future::ready(Ok(())))
+            .boxed()
+    }
+}
+
+pub fn new_pessimistic_rollback_request(
+    keys: Vec<Key>,
+    start_version: u64,
+    for_update_ts: u64,
+) -> kvrpcpb::PessimisticRollbackRequest {
+    let mut req = kvrpcpb::PessimisticRollbackRequest::default();
+    req.set_keys(keys.into_iter().map(Into::into).collect());
+    req.set_start_version(start_version);
+    req.set_for_update_ts(for_update_ts);
+
+    req
+}
+
+impl KvRequest for kvrpcpb::PessimisticLockRequest {
+    type Result = ();
+    type RpcResponse = kvrpcpb::PessimisticLockResponse;
+    type KeyData = Vec<kvrpcpb::Mutation>;
+    const REQUEST_NAME: &'static str = "kv_pessimistic_lock";
+    const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::kv_pessimistic_lock_async_opt;
+
+    fn store_stream<PdC: PdClient>(
+        &mut self,
+        pd_client: Arc<PdC>,
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+        self.mutations.sort_by(|a, b| a.key.cmp(&b.key));
+        let mutations = mem::take(&mut self.mutations);
+        store_stream_for_keys(mutations, pd_client)
+    }
+
+    fn make_rpc_request<KvC: KvClient>(
+        &self,
+        mutations: Self::KeyData,
+        store: &Store<KvC>,
+    ) -> Self {
+        let mut req = self.request_from_store(store);
+        req.set_mutations(mutations);
+        req.set_primary_lock(self.primary_lock.clone());
+        req.set_start_version(self.start_version);
+        req.set_lock_ttl(self.lock_ttl);
+        req.set_for_update_ts(self.for_update_ts);
+        req.set_is_first_lock(self.is_first_lock);
+        req.set_wait_timeout(self.wait_timeout);
+        req.set_force(self.force);
+        req.set_return_values(self.return_values);
+        req.set_min_commit_ts(self.min_commit_ts);
+
+        req
+    }
+
+    fn map_result(_result: Self::RpcResponse) -> Self::Result {}
+
+    fn reduce(
+        results: BoxStream<'static, Result<Self::Result>>,
+    ) -> BoxFuture<'static, Result<Self::Result>> {
+        results
+            .try_for_each_concurrent(None, |_| future::ready(Ok(())))
+            .boxed()
+    }
+}
+
+pub fn new_pessimistic_lock_request(
+    keys: Vec<Vec<u8>>,
+    primary_lock: Vec<u8>,
+    start_version: u64,
+    lock_ttl: u64,
+    for_update_ts: u64,
+) -> kvrpcpb::PessimisticLockRequest {
+    let mut req = kvrpcpb::PessimisticLockRequest::default();
+    let mutations = keys
+        .into_iter()
+        .map(|key| {
+            let mut mutation = kvrpcpb::Mutation::default();
+            mutation.set_op(kvrpcpb::Op::PessimisticLock);
+            mutation.set_key(key);
+            mutation
+        })
+        .collect();
+    req.set_mutations(mutations);
+    req.set_primary_lock(primary_lock);
+    req.set_start_version(start_version);
+    req.set_lock_ttl(lock_ttl);
+    req.set_for_update_ts(for_update_ts);
+    // todo: make them configurable
+    req.set_is_first_lock(false);
+    req.set_wait_timeout(0);
+    req.set_force(false);
+    req.set_return_values(false);
+    // todo: support large transaction
+    req.set_min_commit_ts(0);
+
+    req
+}
+
 impl KvRequest for kvrpcpb::ScanLockRequest {
     type Result = Vec<kvrpcpb::LockInfo>;
 
@@ -531,7 +677,15 @@ pub fn new_scan_lock_request(
 }
 
 impl HasLocks for kvrpcpb::CommitResponse {}
+
 impl HasLocks for kvrpcpb::CleanupResponse {}
+
 impl HasLocks for kvrpcpb::BatchRollbackResponse {}
+
+impl HasLocks for kvrpcpb::PessimisticRollbackResponse {}
+
 impl HasLocks for kvrpcpb::ResolveLockResponse {}
+
 impl HasLocks for kvrpcpb::ScanLockResponse {}
+
+impl HasLocks for kvrpcpb::PessimisticLockResponse {}

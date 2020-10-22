@@ -10,6 +10,16 @@ pub trait Backoff: Clone + Send + 'static {
     fn next_delay_duration(&mut self) -> Option<Duration>;
 }
 
+// NoBackoff means that we don't want any retry here.
+#[derive(Clone)]
+pub struct NoBackoff;
+
+impl Backoff for NoBackoff {
+    fn next_delay_duration(&mut self) -> Option<Duration> {
+        None
+    }
+}
+
 // Exponential backoff means that the retry delay should multiply a constant
 // after each attempt, up to a maximum value. After each attempt, the new retry
 // delay should be:

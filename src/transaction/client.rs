@@ -3,7 +3,7 @@
 use super::{requests::new_scan_lock_request, resolve_locks};
 use crate::{
     pd::{PdClient, PdRpcClient},
-    request::KvRequest,
+    request::{KvRequest, OPTIMISTIC_BACKOFF},
     transaction::{Snapshot, Transaction},
 };
 use futures::executor::ThreadPool;
@@ -69,12 +69,17 @@ impl Client {
     /// ```
     pub async fn begin(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
-        Ok(self.new_transaction(timestamp))
+        Ok(self.new_transaction(timestamp, false))
+    }
+
+    pub async fn begin_pessimistic(&self) -> Result<Transaction> {
+        let timestamp = self.current_timestamp().await?;
+        Ok(self.new_transaction(timestamp, true))
     }
 
     /// Creates a new [`Snapshot`](Snapshot) at the given time.
     pub fn snapshot(&self, timestamp: Timestamp) -> Snapshot {
-        Snapshot::new(self.new_transaction(timestamp))
+        Snapshot::new(self.new_transaction(timestamp, false))
     }
 
     /// Retrieves the current [`Timestamp`](Timestamp).
@@ -109,7 +114,8 @@ impl Client {
                 safepoint.clone(),
                 SCAN_LOCK_BATCH_SIZE,
             );
-            let res: Vec<kvrpcpb::LockInfo> = req.execute(self.pd.clone()).await?;
+            let res: Vec<kvrpcpb::LockInfo> =
+                req.execute(self.pd.clone(), OPTIMISTIC_BACKOFF).await?;
             if res.is_empty() {
                 break;
             }
@@ -133,12 +139,13 @@ impl Client {
         Ok(res)
     }
 
-    fn new_transaction(&self, timestamp: Timestamp) -> Transaction {
+    fn new_transaction(&self, timestamp: Timestamp, is_pessimistic: bool) -> Transaction {
         Transaction::new(
             timestamp,
             self.bg_worker.clone(),
             self.pd.clone(),
             self.key_only,
+            is_pessimistic,
         )
     }
 }

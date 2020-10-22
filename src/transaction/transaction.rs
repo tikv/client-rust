@@ -2,13 +2,13 @@
 
 use crate::{
     pd::{PdClient, PdRpcClient},
-    request::KvRequest,
+    request::{KvRequest, OPTIMISTIC_BACKOFF, PESSIMISTIC_BACKOFF},
     transaction::{buffer::Buffer, requests::*},
 };
 use derive_new::new;
 use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
 use kvproto::{kvrpcpb, pdpb::Timestamp};
-use std::{mem, ops::RangeBounds, sync::Arc};
+use std::{iter, mem, ops::RangeBounds, sync::Arc};
 use tikv_client_common::{BoundRange, Error, ErrorKind, Key, KvPair, Result, TimestampExt, Value};
 
 /// A undo-able set of actions on the dataset.
@@ -34,6 +34,8 @@ pub struct Transaction {
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
     key_only: bool,
+    for_update_ts: u64,
+    is_pessimistic: bool,
 }
 
 impl Transaction {
@@ -42,6 +44,7 @@ impl Transaction {
         bg_worker: ThreadPool,
         rpc: Arc<PdRpcClient>,
         key_only: bool,
+        is_pessimistic: bool,
     ) -> Transaction {
         Transaction {
             timestamp,
@@ -49,6 +52,8 @@ impl Transaction {
             bg_worker,
             rpc,
             key_only,
+            for_update_ts: 0,
+            is_pessimistic,
         }
     }
 
@@ -70,9 +75,40 @@ impl Transaction {
         let key = key.into();
         self.buffer
             .get_or_else(key, |key| {
-                new_mvcc_get_request(key, self.timestamp.clone()).execute(self.rpc.clone())
+                new_mvcc_get_request(key, self.timestamp.clone())
+                    .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             })
             .await
+    }
+
+    /// Pessimistically lock and get the value associated with the given key.
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Value, Config, transaction::Client};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// let mut txn = client.begin_pessimistic().await.unwrap();
+    /// let key = "TiKV".to_owned();
+    /// let result: Option<Value> = txn.get_for_update(key).await.unwrap();
+    /// // now the key "TiKV" is locked, other transactions cannot modify it
+    /// // Finish the transaction...
+    /// txn.commit().await.unwrap();
+    /// # });
+    /// ```
+    pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
+        if !self.is_pessimistic {
+            Err(ErrorKind::InvalidTransactionType.into())
+        } else {
+            let key = key.into();
+            self.pessimistic_lock(iter::once(key.clone())).await?;
+            self.buffer
+                .get_or_else(key, |key| {
+                    new_mvcc_get_request(key, self.timestamp.clone())
+                        .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+                })
+                .await
+        }
     }
 
     /// Gets the values associated with the given keys, skipping non-existent entries.
@@ -105,9 +141,45 @@ impl Transaction {
         let rpc = self.rpc.clone();
         self.buffer
             .batch_get_or_else(keys.into_iter().map(|k| k.into()), move |keys| {
-                new_mvcc_get_batch_request(keys, timestamp).execute(rpc)
+                new_mvcc_get_batch_request(keys, timestamp).execute(rpc, OPTIMISTIC_BACKOFF)
             })
             .await
+    }
+
+    /// Gets the values associated with the given keys, skipping non-existent entries.
+    ///
+    /// Non-existent entries will be skipped. The order of the keys is not retained.
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Value, Config, transaction::Client};
+    /// # use futures::prelude::*;
+    /// # use std::collections::HashMap;
+    /// # futures::executor::block_on(async {
+    /// # let client = Client::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// let mut txn = client.begin_pessimistic().await.unwrap();
+    /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
+    /// let result: HashMap<Key, Value> = txn
+    ///     .batch_get_for_update(keys)
+    ///     .await
+    ///     .unwrap()
+    ///     .map(|pair| (pair.0, pair.1))
+    ///     .collect();
+    /// // now "TiKV" and "TiDB" are both locked
+    /// // Finish the transaction...
+    /// txn.commit().await.unwrap();
+    /// # });
+    /// ```
+    pub async fn batch_get_for_update(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> Result<impl Iterator<Item = KvPair>> {
+        if !self.is_pessimistic {
+            Err(ErrorKind::InvalidTransactionType.into())
+        } else {
+            let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
+            self.pessimistic_lock(keys.clone()).await?;
+            self.batch_get(keys).await
+        }
     }
 
     /// Scan queries continuous key-value pairs in range.
@@ -141,7 +213,8 @@ impl Transaction {
         let key_only = self.key_only;
         self.buffer
             .scan_and_fetch(range.into(), limit, move |new_range, new_limit| {
-                new_mvcc_scan_request(new_range, timestamp, new_limit, key_only).execute(rpc)
+                new_mvcc_scan_request(new_range, timestamp, new_limit, key_only)
+                    .execute(rpc, OPTIMISTIC_BACKOFF)
             })
             .await
     }
@@ -165,8 +238,12 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        self.buffer.put(key.into(), value.into());
+    pub async fn put(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
+        let key = key.into();
+        if self.is_pessimistic {
+            self.pessimistic_lock(iter::once(key.clone())).await?;
+        }
+        self.buffer.put(key, value.into());
         Ok(())
     }
 
@@ -184,8 +261,12 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn delete(&self, key: impl Into<Key>) -> Result<()> {
-        self.buffer.delete(key.into());
+    pub async fn delete(&mut self, key: impl Into<Key>) -> Result<()> {
+        let key = key.into();
+        if self.is_pessimistic {
+            self.pessimistic_lock(iter::once(key.clone())).await?;
+        }
+        self.buffer.delete(key);
         Ok(())
     }
 
@@ -228,8 +309,35 @@ impl Transaction {
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
+            self.for_update_ts,
         )
         .commit()
+        .await
+    }
+
+    /// Pessimistically lock the keys
+    async fn pessimistic_lock(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> Result<()> {
+        let mut keys: Vec<Vec<u8>> = keys
+            .into_iter()
+            .map(|it| it.into())
+            .map(|it: Key| it.into())
+            .collect();
+        keys.sort();
+        let primary_lock = keys[0].clone();
+        let lock_ttl = DEFAULT_LOCK_TTL;
+        let for_update_ts = self.rpc.clone().get_timestamp().await.unwrap().version();
+        self.for_update_ts = std::cmp::max(self.for_update_ts, for_update_ts);
+        new_pessimistic_lock_request(
+            keys,
+            primary_lock,
+            self.timestamp.version(),
+            lock_ttl,
+            for_update_ts,
+        )
+        .execute(self.rpc.clone(), PESSIMISTIC_BACKOFF)
         .await
     }
 }
@@ -243,6 +351,7 @@ struct TwoPhaseCommitter {
     start_version: u64,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
+    for_update_ts: u64,
     #[new(default)]
     committed: bool,
     #[new(default)]
@@ -282,14 +391,26 @@ impl TwoPhaseCommitter {
         let primary_lock = self.mutations[0].key.clone().into();
         // TODO: calculate TTL for big transactions
         let lock_ttl = DEFAULT_LOCK_TTL;
-        new_prewrite_request(
-            self.mutations.clone(),
-            primary_lock,
-            self.start_version,
-            lock_ttl,
-        )
-        .execute(self.rpc.clone())
-        .await
+        if self.for_update_ts > 0 {
+            new_pessimistic_prewrite_request(
+                self.mutations.clone(),
+                primary_lock,
+                self.start_version,
+                lock_ttl,
+                self.for_update_ts,
+            )
+            .execute(self.rpc.clone(), PESSIMISTIC_BACKOFF)
+            .await
+        } else {
+            new_prewrite_request(
+                self.mutations.clone(),
+                primary_lock,
+                self.start_version,
+                lock_ttl,
+            )
+            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+            .await
+        }
     }
 
     /// Commits the primary key and returns the commit version
@@ -297,7 +418,7 @@ impl TwoPhaseCommitter {
         let primary_key = vec![self.mutations[0].key.clone().into()];
         let commit_version = self.rpc.clone().get_timestamp().await?.version();
         new_commit_request(primary_key, self.start_version, commit_version)
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             .inspect_err(|e| {
                 // We don't know whether the transaction is committed or not if we fail to receive
                 // the response. Then, we mark the transaction as undetermined and propagate the
@@ -324,7 +445,7 @@ impl TwoPhaseCommitter {
             .map(|mutation| mutation.key.into())
             .collect();
         new_commit_request(keys, self.start_version, commit_version)
-            .execute(self.rpc.clone())
+            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             .await
     }
 
@@ -334,7 +455,13 @@ impl TwoPhaseCommitter {
             .into_iter()
             .map(|mutation| mutation.key.into())
             .collect();
-        new_batch_rollback_request(keys, self.start_version).execute(self.rpc.clone())
+        if self.for_update_ts > 0 {
+            new_pessimistic_rollback_request(keys, self.start_version, self.for_update_ts)
+                .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+        } else {
+            new_batch_rollback_request(keys, self.start_version)
+                .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+        }
     }
 }
 
