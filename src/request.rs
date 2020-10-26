@@ -64,20 +64,31 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         stores
             .and_then(move |(key_data, store)| {
                 let request = self.make_rpc_request(key_data, &store);
+                let mut req = None;
+                let mut err = None;
+                match request {
+                    Ok(r) => req = Some(r),
+                    Err(e) => err = Some(e),
+                }
                 self.dispatch_hook(store.call_options())
                     .unwrap_or_else(|| {
-                        store.dispatch(
-                            Self::REQUEST_NAME,
-                            Self::RPC_FN(
-                                &store.client.get_rpc_client(),
-                                &request,
-                                store.call_options(),
-                            ),
-                        )
+                        if req.is_some() {
+                            store.dispatch(
+                                Self::REQUEST_NAME,
+                                Self::RPC_FN(
+                                    &store.client.get_rpc_client(),
+                                    req.as_ref().unwrap(),
+                                    store.call_options(),
+                                ),
+                            )
+                        } else {
+                            future::err(err.unwrap()).boxed()
+                        }
                     })
-                    .map_ok(move |response| (request, response))
+                    .map_ok(move |response| (req, response))
             })
             .map_ok(move |(request, mut response)| {
+                let request = request.unwrap();
                 if let Some(region_error) = response.region_error() {
                     return request.on_region_error(
                         region_error,
@@ -164,7 +175,11 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         pd_client: Arc<PdC>,
     ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>>;
 
-    fn make_rpc_request<KvC: KvClient>(&self, key_data: Self::KeyData, store: &Store<KvC>) -> Self;
+    fn make_rpc_request<KvC: KvClient>(
+        &self,
+        key_data: Self::KeyData,
+        store: &Store<KvC>,
+    ) -> Result<Self>;
 
     fn map_result(result: Self::RpcResponse) -> Self::Result;
 
@@ -172,19 +187,13 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         results: BoxStream<'static, Result<Self::Result>>,
     ) -> BoxFuture<'static, Result<Self::Result>>;
 
-    fn request_from_store<KvC: KvClient>(&self, store: &Store<KvC>) -> Self
+    fn request_from_store<KvC: KvClient>(&self, store: &Store<KvC>) -> Result<Self>
     where
         Self: Default + KvRpcRequest,
     {
         let mut request = Self::default();
-        // FIXME propagate the error instead of using `expect`
-        request.set_context(
-            store
-                .region
-                .context()
-                .expect("Cannot create context from region"),
-        );
-        request
+        request.set_context(store.region.context()?);
+        Ok(request)
     }
 }
 
@@ -386,10 +395,10 @@ mod test {
                 &self,
                 _key_data: Self::KeyData,
                 _store: &Store<KvC>,
-            ) -> Self {
-                Self {
+            ) -> Result<Self> {
+                Ok(Self {
                     test_invoking_count: self.test_invoking_count.clone(),
-                }
+                })
             }
 
             fn map_result(_: Self::RpcResponse) -> Self::Result {}
