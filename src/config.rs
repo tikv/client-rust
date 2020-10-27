@@ -39,7 +39,7 @@ impl Config {
     /// This helps avoid having a *single point of failure*.
     ///
     /// ```rust
-    /// # use tikv_client_common::Config;
+    /// # use tikv_client::Config;
     /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"]);
     /// ```
     pub fn new(pd_endpoints: impl IntoIterator<Item = impl Into<String>>) -> Self {
@@ -59,7 +59,7 @@ impl Config {
     /// these values.
     ///
     /// ```rust
-    /// # use tikv_client_common::Config;
+    /// # use tikv_client::Config;
     /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"])
     ///     .with_security("root.ca", "internal.cert", "internal.key");
     /// ```

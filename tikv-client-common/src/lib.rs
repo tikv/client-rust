@@ -1,4 +1,3 @@
-pub mod config;
 #[macro_use]
 pub mod errors;
 pub mod kv;
@@ -13,8 +12,6 @@ extern crate log;
 #[macro_use]
 extern crate prometheus;
 
-#[doc(inline)]
-pub use crate::config::Config;
 #[doc(inline)]
 pub use crate::errors::Error;
 #[doc(inline)]
