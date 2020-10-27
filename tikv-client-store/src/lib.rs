@@ -13,12 +13,14 @@ pub use crate::region::{Region, RegionId, RegionVerId, StoreId};
 #[doc(inline)]
 pub use crate::store_builder::StoreBuilder;
 pub use kvproto::tikvpb::TikvClient;
+pub use tikv_client_common::{
+    security::SecurityManager, stats::tikv_stats, Error, ErrorKind, Key, Result,
+};
 
 use derive_new::new;
 use futures::{future::BoxFuture, prelude::*};
 use grpcio::{CallOption, Environment};
 use std::{sync::Arc, time::Duration};
-use tikv_client_common::{security::SecurityManager, stats::tikv_stats, ErrorKind, Result};
 
 /// A trait for connecting to TiKV stores.
 pub trait KvConnect: Sized + Send + Sync + 'static {

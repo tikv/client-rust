@@ -4,6 +4,7 @@ use crate::{
     backoff::{Backoff, NoBackoff, NoJitterBackoff},
     pd::PdClient,
     transaction::{resolve_locks, HasLocks},
+    BoundRange, Error, ErrorKind, Key, Result,
 };
 use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
 use grpcio::CallOption;
@@ -12,7 +13,6 @@ use std::{
     cmp::{max, min},
     sync::Arc,
 };
-use tikv_client_common::{BoundRange, Error, ErrorKind, Key, Result};
 use tikv_client_store::{HasError, HasRegionError, KvClient, RpcFnType, Store};
 
 const DEFAULT_REGION_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);

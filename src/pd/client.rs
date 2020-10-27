@@ -1,6 +1,9 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{compat::stream_fn, pd::RetryClient, Config, Key, Region, RegionId};
+use crate::{
+    compat::stream_fn, pd::RetryClient, BoundRange, Config, Key, Region, RegionId, Result,
+    SecurityManager,
+};
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
 use grpcio::{EnvBuilder, Environment};
@@ -10,7 +13,7 @@ use std::{
     thread,
     time::Duration,
 };
-use tikv_client_common::{kv::codec, security::SecurityManager, BoundRange, Result, Timestamp};
+use tikv_client_common::{kv::codec, Timestamp};
 use tikv_client_pd::Cluster;
 use tikv_client_store::{KvClient, KvConnect, Store, TikvConnect};
 

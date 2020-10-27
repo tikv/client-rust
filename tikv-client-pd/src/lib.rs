@@ -2,6 +2,7 @@
 
 pub use cluster::{Cluster, Connection};
 use kvproto::pdpb;
+pub use tikv_client_common::{security::SecurityManager, Error, Result};
 
 #[macro_use]
 extern crate log;

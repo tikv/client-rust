@@ -5,10 +5,9 @@ use crate::{
     config::Config,
     pd::PdRpcClient,
     request::{KvRequest, OPTIMISTIC_BACKOFF},
-    ColumnFamily,
+    BoundRange, ColumnFamily, Error, Key, KvPair, Result, Value,
 };
 use std::{sync::Arc, u32};
-use tikv_client_common::{BoundRange, Error, Key, KvPair, Result, Value};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 

@@ -1,6 +1,6 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{timestamp::TimestampOracle, PdResponse};
+use crate::{timestamp::TimestampOracle, Error, PdResponse, Result, SecurityManager};
 use async_trait::async_trait;
 use grpcio::{CallOption, Environment};
 use kvproto::pdpb::{self, Timestamp};
@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tikv_client_common::{internal_err, security::SecurityManager, Error, Result};
+use tikv_client_common::internal_err;
 
 /// A PD cluster.
 pub struct Cluster {
