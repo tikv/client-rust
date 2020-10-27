@@ -191,3 +191,16 @@ impl From<kvproto::kvrpcpb::KeyError> for Error {
 
 /// A result holding an [`Error`](Error).
 pub type Result<T> = result::Result<T, Error>;
+
+#[macro_export]
+macro_rules! internal_err {
+    ($e:expr) => ({
+        let kind = $crate::Error::internal_error(
+            format!("[{}:{}]: {}", file!(), line!(),  $e)
+        );
+        $crate::Error::from(kind)
+    });
+    ($f:tt, $($arg:expr),+) => ({
+        internal_err!(format!($f, $($arg),+))
+    });
+}
