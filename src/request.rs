@@ -64,26 +64,18 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
         stores
             .and_then(move |(key_data, store)| {
                 let request = self.make_rpc_request(key_data, &store);
-                let mut req = None;
-                let mut err = None;
-                match request {
-                    Ok(r) => req = Some(r),
-                    Err(e) => err = Some(e),
-                }
+                let (req, err) = match request {
+                    Ok(r) => (Some(r), None),
+                    Err(e) => (None, Some(e)),
+                };
                 self.dispatch_hook(store.call_options())
-                    .unwrap_or_else(|| {
-                        if req.is_some() {
-                            store.dispatch(
-                                Self::REQUEST_NAME,
-                                Self::RPC_FN(
-                                    &store.client.get_rpc_client(),
-                                    req.as_ref().unwrap(),
-                                    store.call_options(),
-                                ),
-                            )
-                        } else {
-                            future::err(err.unwrap()).boxed()
-                        }
+                    .unwrap_or_else(|| match (&req, err) {
+                        (Some(req), None) => store.dispatch(
+                            Self::REQUEST_NAME,
+                            Self::RPC_FN(&store.client.get_rpc_client(), req, store.call_options()),
+                        ),
+                        (None, Some(err)) => future::err(err).boxed(),
+                        _ => unreachable!(),
                     })
                     .map_ok(move |response| (req, response))
             })
