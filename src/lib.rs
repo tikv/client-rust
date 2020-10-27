@@ -89,8 +89,6 @@ mod proptests;
 
 #[macro_use]
 extern crate log;
-#[macro_use]
-extern crate tikv_client_common;
 
 #[doc(inline)]
 pub use crate::raw::{Client as RawClient, ColumnFamily};

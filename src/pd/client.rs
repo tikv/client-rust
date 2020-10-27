@@ -1,18 +1,16 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    compat::stream_fn, pd::RetryClient, tikv_client_common::kv::codec, Config, Key, Region,
-    RegionId,
-};
+use crate::{compat::stream_fn, pd::RetryClient, Config, Key, Region, RegionId};
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
 use grpcio::{EnvBuilder, Environment};
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
+    thread,
     time::Duration,
 };
-use tikv_client_common::{security::SecurityManager, BoundRange, Result, Timestamp};
+use tikv_client_common::{kv::codec, security::SecurityManager, BoundRange, Result, Timestamp};
 use tikv_client_pd::Cluster;
 use tikv_client_store::{KvClient, KvConnect, Store, TikvConnect};
 
@@ -252,6 +250,15 @@ impl PdRpcClient<TikvConnect, Cluster> {
     }
 }
 
+/// make a thread name with additional tag inheriting from current thread.
+fn thread_name(prefix: &str) -> String {
+    thread::current()
+        .name()
+        .and_then(|name| name.split("::").skip(1).last())
+        .map(|tag| format!("{}::{}", prefix, tag))
+        .unwrap_or_else(|| prefix.to_owned())
+}
+
 impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
     pub async fn new<PdFut, MakeKvC, MakePd>(
         config: &Config,
@@ -267,7 +274,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         let env = Arc::new(
             EnvBuilder::new()
                 .cq_count(CQ_COUNT)
-                .name_prefix(thread_name!(CLIENT_PREFIX))
+                .name_prefix(thread_name(CLIENT_PREFIX))
                 .build(),
         );
         let security_mgr = Arc::new(
