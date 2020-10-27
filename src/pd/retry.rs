@@ -200,6 +200,7 @@ mod test {
     use super::*;
     use futures::{executor, future::ready};
     use std::sync::Mutex;
+    use tikv_client_common::internal_err;
 
     #[test]
     fn test_reconnect() {

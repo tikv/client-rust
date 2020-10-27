@@ -198,7 +198,7 @@ where
     PdC: PdClient,
 {
     pd_client
-        .store_for_key(key_data.as_ref())
+        .store_for_key(key_data.as_ref().clone())
         .map_ok(move |store| (key_data, store))
         .into_stream()
         .boxed()

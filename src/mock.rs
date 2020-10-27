@@ -10,6 +10,7 @@ use crate::{
     request::DispatchHook,
     Config, Error, Key, Result, Timestamp,
 };
+use async_trait::async_trait;
 use fail::fail_point;
 use futures::future::{ready, BoxFuture, FutureExt};
 use grpcio::CallOption;
@@ -106,23 +107,21 @@ impl MockPdClient {
     }
 }
 
+#[async_trait]
 impl PdClient for MockPdClient {
     type KvClient = MockKvClient;
 
-    fn map_region_to_store(
-        self: Arc<Self>,
-        region: Region,
-    ) -> BoxFuture<'static, Result<Store<Self::KvClient>>> {
-        Box::pin(ready(Ok(Store::new(
+    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store<Self::KvClient>> {
+        Ok(Store::new(
             region,
             MockKvClient {
                 addr: String::new(),
             },
             Duration::from_secs(60),
-        ))))
+        ))
     }
 
-    fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>> {
+    async fn region_for_key(&self, key: &Key) -> Result<Region> {
         let bytes: &[_] = key.into();
         let region = if bytes.is_empty() || bytes[0] < 10 {
             Self::region1()
@@ -130,24 +129,22 @@ impl PdClient for MockPdClient {
             Self::region2()
         };
 
-        Box::pin(ready(Ok(region)))
+        Ok(region)
     }
 
-    fn region_for_id(&self, id: RegionId) -> BoxFuture<'static, Result<Region>> {
-        let result = match id {
+    async fn region_for_id(&self, id: RegionId) -> Result<Region> {
+        match id {
             1 => Ok(Self::region1()),
             2 => Ok(Self::region2()),
             _ => Err(Error::region_not_found(id)),
-        };
-
-        Box::pin(ready(result))
+        }
     }
 
-    fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
+    async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
         unimplemented!()
     }
 
-    fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> BoxFuture<'static, Result<bool>> {
+    async fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> Result<bool> {
         unimplemented!()
     }
 }
