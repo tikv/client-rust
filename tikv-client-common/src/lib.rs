@@ -1,6 +1,5 @@
 #[macro_use]
 pub mod util;
-pub mod compat;
 pub mod config;
 pub mod errors;
 pub mod kv;

@@ -77,6 +77,7 @@
 pub mod transaction;
 
 mod backoff;
+mod compat;
 mod pd;
 pub mod raw;
 mod request;
