@@ -1,6 +1,6 @@
 #[macro_use]
-pub mod errors;
-pub mod kv;
+mod errors;
+mod kv;
 pub mod security;
 pub mod stats;
 mod timestamp;
@@ -13,12 +13,8 @@ extern crate log;
 extern crate prometheus;
 
 #[doc(inline)]
-pub use crate::errors::Error;
+pub use crate::errors::{Error, ErrorKind, Result};
 #[doc(inline)]
-pub use crate::errors::ErrorKind;
-#[doc(inline)]
-pub use crate::errors::Result;
-#[doc(inline)]
-pub use crate::kv::{BoundRange, Key, KvPair, ToOwnedRange, Value};
+pub use crate::kv::{codec, BoundRange, Key, KvPair, ToOwnedRange, Value};
 #[doc(inline)]
 pub use crate::timestamp::{Timestamp, TimestampExt};

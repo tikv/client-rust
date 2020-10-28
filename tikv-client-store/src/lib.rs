@@ -7,11 +7,15 @@ extern crate log;
 mod client;
 mod errors;
 pub mod region;
+mod request;
 
 #[doc(inline)]
 pub use crate::{
-    client::{KvClient, KvConnect, RpcFnType, Store, TikvConnect},
+    client::{KvClient, KvConnect, Store, TikvConnect},
     errors::{HasError, HasRegionError},
     region::{Region, RegionId, RegionVerId, StoreId},
+    request::Request,
 };
-pub use tikv_client_common::{security::SecurityManager, Error, ErrorKind, Key, Result};
+pub use tikv_client_common::{
+    security::SecurityManager, stats::RequestStats, Error, ErrorKind, Key, Result,
+};

@@ -14,8 +14,8 @@ use async_trait::async_trait;
 use fail::fail_point;
 use futures::future::{ready, BoxFuture, FutureExt};
 use kvproto::{errorpb, kvrpcpb, metapb};
-use std::sync::Arc;
-use tikv_client_store::{HasError, KvClient, KvConnect, Region, RegionId, RpcFnType, Store};
+use std::{any::Any, sync::Arc};
+use tikv_client_store::{KvClient, KvConnect, Region, RegionId, Request, Store};
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
@@ -51,11 +51,7 @@ pub struct MockPdClient;
 
 #[async_trait]
 impl KvClient for MockKvClient {
-    async fn dispatch<Req, Resp>(&self, _fun: RpcFnType<Req, Resp>, _request: Req) -> Result<Resp>
-    where
-        Req: Send + Sync + 'static,
-        Resp: HasError + Sized + Clone + Send + 'static,
-    {
+    async fn dispatch(&self, _: &dyn Request) -> Result<Box<dyn Any>> {
         unimplemented!()
     }
 }
@@ -102,12 +98,12 @@ impl MockPdClient {
 impl PdClient for MockPdClient {
     type KvClient = MockKvClient;
 
-    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store<Self::KvClient>> {
+    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store> {
         Ok(Store::new(
             region,
-            MockKvClient {
+            Box::new(MockKvClient {
                 addr: String::new(),
-            },
+            }),
         ))
     }
 
