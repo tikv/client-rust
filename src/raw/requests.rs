@@ -30,12 +30,16 @@ impl KvRequest for kvrpcpb::RawGetRequest {
         store_stream_for_key(key, pd_client)
     }
 
-    fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = self.request_from_store(store);
+    fn make_rpc_request<KvC: KvClient>(
+        &self,
+        key: Self::KeyData,
+        store: &Store<KvC>,
+    ) -> Result<Self> {
+        let mut req = self.request_from_store(store)?;
         req.set_key(key.into());
         req.set_cf(self.cf.clone());
 
-        req
+        Ok(req)
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
@@ -74,12 +78,16 @@ impl KvRequest for kvrpcpb::RawBatchGetRequest {
     const REQUEST_NAME: &'static str = "raw_batch_get";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_get_async_opt;
 
-    fn make_rpc_request<KvC: KvClient>(&self, keys: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = self.request_from_store(store);
+    fn make_rpc_request<KvC: KvClient>(
+        &self,
+        keys: Self::KeyData,
+        store: &Store<KvC>,
+    ) -> Result<Self> {
+        let mut req = self.request_from_store(store)?;
         req.set_keys(keys.into_iter().map(Into::into).collect());
         req.set_cf(self.cf.clone());
 
-        req
+        Ok(req)
     }
 
     fn store_stream<PdC: PdClient>(
@@ -120,13 +128,17 @@ impl KvRequest for kvrpcpb::RawPutRequest {
     const REQUEST_NAME: &'static str = "raw_put";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_put_async_opt;
 
-    fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = self.request_from_store(store);
+    fn make_rpc_request<KvC: KvClient>(
+        &self,
+        key: Self::KeyData,
+        store: &Store<KvC>,
+    ) -> Result<Self> {
+        let mut req = self.request_from_store(store)?;
         req.set_key(key.0.into());
         req.set_value(key.1);
         req.set_cf(self.cf.clone());
 
-        req
+        Ok(req)
     }
 
     fn store_stream<PdC: PdClient>(
@@ -171,12 +183,16 @@ impl KvRequest for kvrpcpb::RawBatchPutRequest {
     const REQUEST_NAME: &'static str = "raw_batch_put";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_put_async_opt;
 
-    fn make_rpc_request<KvC: KvClient>(&self, pairs: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = self.request_from_store(store);
+    fn make_rpc_request<KvC: KvClient>(
+        &self,
+        pairs: Self::KeyData,
+        store: &Store<KvC>,
+    ) -> Result<Self> {
+        let mut req = self.request_from_store(store)?;
         req.set_pairs(pairs.into_iter().map(Into::into).collect());
         req.set_cf(self.cf.clone());
 
-        req
+        Ok(req)
     }
 
     fn store_stream<PdC: PdClient>(
@@ -215,12 +231,16 @@ impl KvRequest for kvrpcpb::RawDeleteRequest {
     const REQUEST_NAME: &'static str = "raw_delete";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_delete_async_opt;
 
-    fn make_rpc_request<KvC: KvClient>(&self, key: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = self.request_from_store(store);
+    fn make_rpc_request<KvC: KvClient>(
+        &self,
+        key: Self::KeyData,
+        store: &Store<KvC>,
+    ) -> Result<Self> {
+        let mut req = self.request_from_store(store)?;
         req.set_key(key.into());
         req.set_cf(self.cf.clone());
 
-        req
+        Ok(req)
     }
 
     fn store_stream<PdC: PdClient>(
@@ -261,12 +281,16 @@ impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
     const REQUEST_NAME: &'static str = "raw_batch_delete";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_delete_async_opt;
 
-    fn make_rpc_request<KvC: KvClient>(&self, keys: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = self.request_from_store(store);
+    fn make_rpc_request<KvC: KvClient>(
+        &self,
+        keys: Self::KeyData,
+        store: &Store<KvC>,
+    ) -> Result<Self> {
+        let mut req = self.request_from_store(store)?;
         req.set_keys(keys.into_iter().map(Into::into).collect());
         req.set_cf(self.cf.clone());
 
-        req
+        Ok(req)
     }
 
     fn store_stream<PdC: PdClient>(
@@ -309,13 +333,13 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
         &self,
         (start_key, end_key): Self::KeyData,
         store: &Store<KvC>,
-    ) -> Self {
-        let mut req = self.request_from_store(store);
+    ) -> Result<Self> {
+        let mut req = self.request_from_store(store)?;
         req.set_start_key(start_key.into());
         req.set_end_key(end_key.into());
         req.set_cf(self.cf.clone());
 
-        req
+        Ok(req)
     }
 
     fn store_stream<PdC: PdClient>(
@@ -363,15 +387,15 @@ impl KvRequest for kvrpcpb::RawScanRequest {
         &self,
         (start_key, end_key): Self::KeyData,
         store: &Store<KvC>,
-    ) -> Self {
-        let mut req = self.request_from_store(store);
+    ) -> Result<Self> {
+        let mut req = self.request_from_store(store)?;
         req.set_start_key(start_key.into());
         req.set_end_key(end_key.into());
         req.set_limit(self.limit);
         req.set_key_only(self.key_only);
         req.set_cf(self.cf.clone());
 
-        req
+        Ok(req)
     }
 
     fn store_stream<PdC: PdClient>(
@@ -419,14 +443,18 @@ impl KvRequest for kvrpcpb::RawBatchScanRequest {
     const REQUEST_NAME: &'static str = "raw_batch_scan";
     const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_scan_async_opt;
 
-    fn make_rpc_request<KvC: KvClient>(&self, ranges: Self::KeyData, store: &Store<KvC>) -> Self {
-        let mut req = self.request_from_store(store);
+    fn make_rpc_request<KvC: KvClient>(
+        &self,
+        ranges: Self::KeyData,
+        store: &Store<KvC>,
+    ) -> Result<Self> {
+        let mut req = self.request_from_store(store)?;
         req.set_ranges(ranges.into_iter().map(Into::into).collect());
         req.set_each_limit(self.each_limit);
         req.set_key_only(self.key_only);
         req.set_cf(self.cf.clone());
 
-        req
+        Ok(req)
     }
 
     fn store_stream<PdC: PdClient>(
