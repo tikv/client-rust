@@ -13,10 +13,9 @@ use crate::{
 use async_trait::async_trait;
 use fail::fail_point;
 use futures::future::{ready, BoxFuture, FutureExt};
-use grpcio::CallOption;
-use kvproto::{errorpb, kvrpcpb, metapb, tikvpb::TikvClient};
-use std::{future::Future, sync::Arc, time::Duration};
-use tikv_client_store::{HasError, KvClient, KvConnect, Region, RegionId, Store};
+use kvproto::{errorpb, kvrpcpb, metapb};
+use std::sync::Arc;
+use tikv_client_store::{HasError, KvClient, KvConnect, Region, RegionId, RpcFnType, Store};
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
@@ -50,21 +49,13 @@ pub struct MockCluster;
 
 pub struct MockPdClient;
 
+#[async_trait]
 impl KvClient for MockKvClient {
-    fn dispatch<Resp, RpcFuture>(
-        &self,
-        _request_name: &'static str,
-        _fut: grpcio::Result<RpcFuture>,
-    ) -> BoxFuture<'static, Result<Resp>>
+    async fn dispatch<Req, Resp>(&self, _fun: RpcFnType<Req, Resp>, _request: Req) -> Result<Resp>
     where
-        RpcFuture: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
+        Req: Send + Sync + 'static,
         Resp: HasError + Sized + Clone + Send + 'static,
-        RpcFuture: Send + 'static,
     {
-        unimplemented!()
-    }
-
-    fn get_rpc_client(&self) -> Arc<TikvClient> {
         unimplemented!()
     }
 }
@@ -117,7 +108,6 @@ impl PdClient for MockPdClient {
             MockKvClient {
                 addr: String::new(),
             },
-            Duration::from_secs(60),
         ))
     }
 
@@ -150,10 +140,7 @@ impl PdClient for MockPdClient {
 }
 
 impl DispatchHook for kvrpcpb::ResolveLockRequest {
-    fn dispatch_hook(
-        &self,
-        _opt: CallOption,
-    ) -> Option<BoxFuture<'static, Result<kvrpcpb::ResolveLockResponse>>> {
+    fn dispatch_hook(&self) -> Option<BoxFuture<'static, Result<kvrpcpb::ResolveLockResponse>>> {
         fail_point!("region-error", |_| {
             let mut resp = kvrpcpb::ResolveLockResponse::default();
             resp.region_error = Some(errorpb::Error::default());

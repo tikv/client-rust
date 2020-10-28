@@ -1,32 +1,35 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
+#![feature(type_alias_impl_trait)]
 
 #[macro_use]
 extern crate log;
 
 mod errors;
 pub mod region;
-mod store_builder;
 
 pub use crate::errors::{HasError, HasRegionError};
 #[doc(inline)]
 pub use crate::region::{Region, RegionId, RegionVerId, StoreId};
-#[doc(inline)]
-pub use crate::store_builder::StoreBuilder;
 pub use kvproto::tikvpb::TikvClient;
-pub use tikv_client_common::{
-    security::SecurityManager, stats::tikv_stats, Error, ErrorKind, Key, Result,
-};
+pub use tikv_client_common::{security::SecurityManager, Error, ErrorKind, Key, Result};
 
+use async_trait::async_trait;
 use derive_new::new;
-use futures::{future::BoxFuture, prelude::*};
 use grpcio::{CallOption, Environment};
 use std::{sync::Arc, time::Duration};
+use tikv_client_common::stats::tikv_stats;
 
 /// A trait for connecting to TiKV stores.
 pub trait KvConnect: Sized + Send + Sync + 'static {
     type KvClient: KvClient + Clone + Send + Sync + 'static;
 
     fn connect(&self, address: &str) -> Result<Self::KvClient>;
+
+    fn connect_to_store(&self, region: Region, address: String) -> Result<Store<Self::KvClient>> {
+        info!("connect to tikv endpoint: {:?}", &address);
+        let client = self.connect(address.as_str())?;
+        Ok(Store::new(region, client))
+    }
 }
 
 pub type RpcFnType<Req, Resp> =
@@ -41,55 +44,49 @@ pub type RpcFnType<Req, Resp> =
 pub struct TikvConnect {
     env: Arc<Environment>,
     security_mgr: Arc<SecurityManager>,
+    timeout: Duration,
 }
 
 impl KvConnect for TikvConnect {
-    type KvClient = KvRpcClient;
+    type KvClient = impl KvClient + Clone + Send + Sync + 'static;
 
-    fn connect(&self, address: &str) -> Result<KvRpcClient> {
+    fn connect(&self, address: &str) -> Result<Self::KvClient> {
         self.security_mgr
             .connect(self.env.clone(), address, TikvClient::new)
-            .map(|c| KvRpcClient::new(Arc::new(c)))
+            .map(|c| KvRpcClient::new(Arc::new(c), self.timeout))
     }
 }
 
+#[async_trait]
 pub trait KvClient {
-    fn dispatch<Resp, RpcFuture>(
-        &self,
-        request_name: &'static str,
-        fut: ::grpcio::Result<RpcFuture>,
-    ) -> BoxFuture<'static, Result<Resp>>
+    async fn dispatch<Req, Resp>(&self, fun: RpcFnType<Req, Resp>, request: Req) -> Result<Resp>
     where
-        RpcFuture: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
-        Resp: HasError + Sized + Clone + Send + 'static,
-        RpcFuture: Send + 'static;
-
-    fn get_rpc_client(&self) -> Arc<TikvClient>;
+        Req: Send + Sync + 'static,
+        Resp: HasError + Sized + Clone + Send + 'static;
 }
 
 /// This client handles requests for a single TiKV node. It converts the data
 /// types and abstractions of the client program into the grpc data types.
 #[derive(new, Clone)]
-pub struct KvRpcClient {
-    pub rpc_client: Arc<TikvClient>,
+struct KvRpcClient {
+    rpc_client: Arc<TikvClient>,
+    timeout: Duration,
 }
 
+#[async_trait]
 impl KvClient for KvRpcClient {
-    fn dispatch<Resp, RpcFuture>(
-        &self,
-        request_name: &'static str,
-        fut: ::grpcio::Result<RpcFuture>,
-    ) -> BoxFuture<'static, Result<Resp>>
+    async fn dispatch<Req, Resp>(&self, fun: RpcFnType<Req, Resp>, request: Req) -> Result<Resp>
     where
-        RpcFuture: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
+        Req: Send + Sync + 'static,
         Resp: HasError + Sized + Clone + Send + 'static,
-        RpcFuture: Send + 'static,
     {
-        map_errors_and_trace(request_name, fut).boxed()
-    }
-
-    fn get_rpc_client(&self) -> Arc<TikvClient> {
-        self.rpc_client.clone()
+        fun(
+            &self.rpc_client,
+            &request,
+            CallOption::default().timeout(self.timeout),
+        )?
+        .await
+        .map_err(|e| ErrorKind::Grpc(e).into())
     }
 }
 
@@ -97,51 +94,21 @@ impl KvClient for KvRpcClient {
 pub struct Store<Client: KvClient> {
     pub region: Region,
     pub client: Client,
-    timeout: Duration,
 }
 
 impl<Client: KvClient> Store<Client> {
-    pub fn from_builder<T>(builder: StoreBuilder, connect: Arc<T>) -> Result<Store<Client>>
-    where
-        Client: KvClient + Clone + Send + Sync + 'static,
-        T: KvConnect<KvClient = Client>,
-    {
-        info!("connect to tikv endpoint: {:?}", &builder.address);
-        let client = connect.connect(builder.address.as_str())?;
-        Ok(Store::new(builder.region, client, builder.timeout))
-    }
-
-    pub fn call_options(&self) -> CallOption {
-        CallOption::default().timeout(self.timeout)
-    }
-
-    pub fn dispatch<Resp, RpcFuture>(
+    pub async fn dispatch<Req, Resp>(
         &self,
         request_name: &'static str,
-        fut: ::grpcio::Result<RpcFuture>,
-    ) -> BoxFuture<'static, Result<Resp>>
+        fun: RpcFnType<Req, Resp>,
+        request: Req,
+    ) -> Result<Resp>
     where
-        RpcFuture: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
+        Req: Send + Sync + 'static,
         Resp: HasError + Sized + Clone + Send + 'static,
-        RpcFuture: Send + 'static,
     {
-        self.client.dispatch(request_name, fut)
+        let result = self.client.dispatch(fun, request).await;
+
+        tikv_stats(request_name).done(result)
     }
-}
-
-async fn map_errors_and_trace<Resp, RpcFuture>(
-    request_name: &'static str,
-    fut: ::grpcio::Result<RpcFuture>,
-) -> Result<Resp>
-where
-    RpcFuture: Future<Output = std::result::Result<Resp, ::grpcio::Error>>,
-    Resp: HasError + Sized + Clone + Send + 'static,
-{
-    let res = match fut {
-        Ok(f) => f.await,
-        Err(e) => Err(e),
-    };
-
-    let context = tikv_stats(request_name);
-    context.done(res.map_err(|e| ErrorKind::Grpc(e).into()))
 }

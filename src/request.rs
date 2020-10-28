@@ -7,7 +7,6 @@ use crate::{
     BoundRange, Error, ErrorKind, Key, Result,
 };
 use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
-use grpcio::CallOption;
 use kvproto::kvrpcpb;
 use std::{
     cmp::{max, min},
@@ -19,7 +18,7 @@ const DEFAULT_REGION_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10)
 pub const OPTIMISTIC_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);
 pub const PESSIMISTIC_BACKOFF: NoBackoff = NoBackoff;
 
-pub trait KvRequest: Sync + Send + 'static + Sized {
+pub trait KvRequest: Clone + Sync + Send + 'static + Sized {
     type Result;
     type RpcResponse: HasError + HasLocks + Clone + Send + 'static;
     /// A single `KvRequest` can be divided into a number of RPC requests because the keys span
@@ -68,14 +67,21 @@ pub trait KvRequest: Sync + Send + 'static + Sized {
                     Ok(r) => (Some(r), None),
                     Err(e) => (None, Some(e)),
                 };
-                self.dispatch_hook(store.call_options())
-                    .unwrap_or_else(|| match (&req, err) {
-                        (Some(req), None) => store.dispatch(
-                            Self::REQUEST_NAME,
-                            Self::RPC_FN(&store.client.get_rpc_client(), req, store.call_options()),
-                        ),
-                        (None, Some(err)) => future::err(err).boxed(),
-                        _ => unreachable!(),
+                self.dispatch_hook()
+                    .unwrap_or_else({
+                        let req = req.clone();
+                        || {
+                            async move {
+                                match (req, err) {
+                                    (Some(req), None) => {
+                                        store.dispatch(Self::REQUEST_NAME, Self::RPC_FN, req).await
+                                    }
+                                    (None, Some(err)) => Err(err),
+                                    _ => unreachable!(),
+                                }
+                            }
+                            .boxed()
+                        }
                     })
                     .map_ok(move |response| (req, response))
             })
@@ -274,20 +280,14 @@ pub fn store_stream_for_ranges<PdC: PdClient>(
 
 /// Permits easy mocking of rpc calls.
 pub trait DispatchHook: KvRequest {
-    fn dispatch_hook(
-        &self,
-        _opt: CallOption,
-    ) -> Option<BoxFuture<'static, Result<Self::RpcResponse>>> {
+    fn dispatch_hook(&self) -> Option<BoxFuture<'static, Result<Self::RpcResponse>>> {
         None
     }
 }
 
 impl<T: KvRequest> DispatchHook for T {
     #[cfg(test)]
-    default fn dispatch_hook(
-        &self,
-        _opt: CallOption,
-    ) -> Option<BoxFuture<'static, Result<Self::RpcResponse>>> {
+    default fn dispatch_hook(&self) -> Option<BoxFuture<'static, Result<Self::RpcResponse>>> {
         None
     }
 }
@@ -332,6 +332,7 @@ mod test {
     use super::*;
     use crate::mock::MockPdClient;
     use futures::executor;
+    use grpcio::CallOption;
     use kvproto::tikvpb::TikvClient;
     use std::sync::Mutex;
 
@@ -354,6 +355,7 @@ mod test {
 
         impl HasLocks for MockRpcResponse {}
 
+        #[derive(Clone)]
         struct MockKvRequest {
             test_invoking_count: Arc<Mutex<usize>>,
         }
@@ -368,10 +370,7 @@ mod test {
         }
 
         impl DispatchHook for MockKvRequest {
-            fn dispatch_hook(
-                &self,
-                _opt: CallOption,
-            ) -> Option<BoxFuture<'static, Result<Self::RpcResponse>>> {
+            fn dispatch_hook(&self) -> Option<BoxFuture<'static, Result<Self::RpcResponse>>> {
                 Some(future::ok(MockRpcResponse {}).boxed())
             }
         }

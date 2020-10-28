@@ -535,14 +535,10 @@ mod test {
         executor,
         future::{ready, BoxFuture},
     };
-    use grpcio::CallOption;
     use kvproto::kvrpcpb;
 
     impl DispatchHook for kvrpcpb::RawScanRequest {
-        fn dispatch_hook(
-            &self,
-            _opt: CallOption,
-        ) -> Option<BoxFuture<'static, Result<kvrpcpb::RawScanResponse>>> {
+        fn dispatch_hook(&self) -> Option<BoxFuture<'static, Result<kvrpcpb::RawScanResponse>>> {
             assert!(self.key_only);
             assert_eq!(self.limit, 10);
 

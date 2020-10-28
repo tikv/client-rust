@@ -11,7 +11,6 @@ use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
     thread,
-    time::Duration,
 };
 use tikv_client_common::{kv::codec, Timestamp};
 use tikv_client_pd::Cluster;
@@ -198,7 +197,6 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     pd: Arc<RetryClient<Cl>>,
     kv_connect: KvC,
     kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
-    timeout: Duration,
     enable_codec: bool,
 }
 
@@ -207,11 +205,10 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     type KvClient = KvC::KvClient;
 
     async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store<KvC::KvClient>> {
-        let timeout = self.timeout;
         let store_id = region.get_store_id()?;
         let store = self.pd.clone().get_store(store_id).await?;
         let kv_client = self.kv_client(store.get_address())?;
-        Ok(Store::new(region, kv_client, timeout))
+        Ok(Store::new(region, kv_client))
     }
 
     async fn region_for_key(&self, key: &Key) -> Result<Region> {
@@ -243,7 +240,7 @@ impl PdRpcClient<TikvConnect, Cluster> {
     pub async fn connect(config: &Config, enable_codec: bool) -> Result<PdRpcClient> {
         PdRpcClient::new(
             config,
-            |env, security_mgr| TikvConnect::new(env, security_mgr),
+            |env, security_mgr| TikvConnect::new(env, security_mgr, config.timeout),
             |env, security_mgr| {
                 RetryClient::connect(env, &config.pd_endpoints, security_mgr, config.timeout)
             },
@@ -296,7 +293,6 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             pd,
             kv_client_cache,
             kv_connect: kv_connect(env, security_mgr),
-            timeout: config.timeout,
             enable_codec,
         })
     }
