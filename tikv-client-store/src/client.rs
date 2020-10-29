@@ -70,9 +70,11 @@ pub struct Store {
 
 impl Store {
     pub async fn dispatch<Req: Request, Resp: Any>(&self, request: &Req) -> Result<Box<Resp>> {
-        let result = self.client.dispatch(request).await;
-        let result = result.map(|r| r.downcast().expect("Downcast failed"));
-
-        request.stats().done(result)
+        Ok(self
+            .client
+            .dispatch(request)
+            .await?
+            .downcast()
+            .expect("Downcast failed"))
     }
 }

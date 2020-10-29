@@ -1,7 +1,10 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::Result;
-use prometheus::{Histogram, HistogramVec, IntCounterVec};
+use prometheus::{
+    register_histogram, register_histogram_vec, register_int_counter_vec, Histogram, HistogramVec,
+    IntCounterVec,
+};
 use std::time::{Duration, Instant};
 
 pub struct RequestStats {
@@ -70,7 +73,7 @@ pub fn observe_tso_batch(batch_size: usize) {
     PD_TSO_BATCH_SIZE_HISTOGRAM.observe(batch_size as f64);
 }
 
-lazy_static! {
+lazy_static::lazy_static! {
     static ref TIKV_REQUEST_DURATION_HISTOGRAM_VEC: HistogramVec = register_histogram_vec!(
         "tikv_request_duration_seconds",
         "Bucketed histogram of TiKV requests duration",

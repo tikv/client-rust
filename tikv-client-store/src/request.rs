@@ -1,16 +1,15 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{ErrorKind, RequestStats, Result};
+use crate::{ErrorKind, Result};
 use async_trait::async_trait;
 use grpcio::CallOption;
 use kvproto::{kvrpcpb, tikvpb::TikvClient};
 use std::any::Any;
-use tikv_client_common::stats::tikv_stats;
 
 #[async_trait]
 pub trait Request: Any + Sync + Send + 'static {
     async fn dispatch(&self, client: &TikvClient, options: CallOption) -> Result<Box<dyn Any>>;
-    fn stats(&self) -> RequestStats;
+    fn label(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
     fn set_context(&mut self, context: kvrpcpb::Context);
 }
@@ -31,8 +30,8 @@ macro_rules! impl_request {
                     .map_err(|e| ErrorKind::Grpc(e).into())
             }
 
-            fn stats(&self) -> RequestStats {
-                tikv_stats($label)
+            fn label(&self) -> &'static str {
+                $label
             }
 
             fn as_any(&self) -> &dyn Any {

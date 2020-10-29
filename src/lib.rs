@@ -82,6 +82,7 @@ mod config;
 mod pd;
 pub mod raw;
 mod request;
+mod stats;
 
 #[cfg(test)]
 mod mock;

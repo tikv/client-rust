@@ -2,7 +2,7 @@
 
 //! A utility module for managing and retrying PD requests.
 
-use crate::{Error, Region, RegionId, Result, SecurityManager, StoreId};
+use crate::{stats::pd_stats, Error, Region, RegionId, Result, SecurityManager, StoreId};
 use async_trait::async_trait;
 use futures_timer::Delay;
 use grpcio::Environment;
@@ -15,7 +15,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tikv_client_common::stats::pd_stats;
 use tikv_client_pd::{Cluster, Connection};
 use tokio::sync::RwLock;
 

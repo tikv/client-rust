@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-lazy_static! {
+lazy_static::lazy_static! {
     static ref SCHEME_REG: Regex = Regex::new(r"^\s*(https?://)").unwrap();
 }
 

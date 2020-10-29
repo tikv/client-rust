@@ -16,6 +16,4 @@ pub use crate::{
     region::{Region, RegionId, RegionVerId, StoreId},
     request::Request,
 };
-pub use tikv_client_common::{
-    security::SecurityManager, stats::RequestStats, Error, ErrorKind, Key, Result,
-};
+pub use tikv_client_common::{security::SecurityManager, Error, ErrorKind, Key, Result};

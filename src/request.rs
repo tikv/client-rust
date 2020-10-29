@@ -3,6 +3,7 @@
 use crate::{
     backoff::{Backoff, NoBackoff, NoJitterBackoff},
     pd::PdClient,
+    stats::tikv_stats,
     transaction::{resolve_locks, HasLocks},
     BoundRange, Error, ErrorKind, Key, Result,
 };
@@ -62,7 +63,8 @@ pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
                 let request = self.make_rpc_request(key_data, &store);
                 async move {
                     let request = request?;
-                    let response = store.dispatch::<_, Self::RpcResponse>(&request).await?;
+                    let response = store.dispatch::<_, Self::RpcResponse>(&request).await;
+                    let response = tikv_stats(request.label()).done(response)?;
                     Ok((request, *response))
                 }
             })
@@ -263,7 +265,6 @@ mod test {
     use grpcio::CallOption;
     use kvproto::{kvrpcpb, tikvpb::TikvClient};
     use std::{any::Any, sync::Mutex};
-    use tikv_client_common::stats::{tikv_stats, RequestStats};
 
     #[test]
     fn test_region_retry() {
@@ -295,8 +296,8 @@ mod test {
                 Ok(Box::new(MockRpcResponse {}))
             }
 
-            fn stats(&self) -> RequestStats {
-                tikv_stats("mock")
+            fn label(&self) -> &'static str {
+                "mock"
             }
 
             fn as_any(&self) -> &dyn Any {
