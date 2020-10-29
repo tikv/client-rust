@@ -10,11 +10,13 @@ use crate::{
     transaction::HasLocks,
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
-use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
+use async_trait::async_trait;
+use futures::{prelude::*, stream::BoxStream};
 use kvproto::kvrpcpb;
 use std::{mem, sync::Arc};
 use tikv_client_store::Store;
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawGetRequest {
     type Result = Option<Value>;
     type RpcResponse = kvrpcpb::RawGetResponse;
@@ -44,13 +46,11 @@ impl KvRequest for kvrpcpb::RawGetRequest {
         }
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
         results
             .into_future()
             .map(|(f, _)| f.expect("no results should be impossible"))
-            .boxed()
+            .await
     }
 }
 
@@ -65,6 +65,7 @@ pub fn new_raw_get_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawBatchGetRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::RawBatchGetResponse;
@@ -91,10 +92,8 @@ impl KvRequest for kvrpcpb::RawBatchGetRequest {
         resp.take_pairs().into_iter().map(Into::into).collect()
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_concat().boxed()
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results.try_concat().await
     }
 }
 
@@ -109,6 +108,7 @@ pub fn new_raw_batch_get_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawPutRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawPutResponse;
@@ -135,13 +135,11 @@ impl KvRequest for kvrpcpb::RawPutRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
         results
             .into_future()
             .map(|(f, _)| f.expect("no results should be impossible"))
-            .boxed()
+            .await
     }
 }
 
@@ -158,6 +156,7 @@ pub fn new_raw_put_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawBatchPutRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawBatchPutResponse;
@@ -182,10 +181,8 @@ impl KvRequest for kvrpcpb::RawBatchPutRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_collect().boxed()
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results.try_collect().await
     }
 }
 
@@ -200,6 +197,7 @@ pub fn new_raw_batch_put_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawDeleteRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawDeleteResponse;
@@ -223,13 +221,11 @@ impl KvRequest for kvrpcpb::RawDeleteRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
         results
             .into_future()
             .map(|(f, _)| f.expect("no results should be impossible"))
-            .boxed()
+            .await
     }
 }
 
@@ -244,6 +240,7 @@ pub fn new_raw_delete_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawBatchDeleteResponse;
@@ -268,10 +265,8 @@ impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_collect().boxed()
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results.try_collect().await
     }
 }
 
@@ -286,6 +281,7 @@ pub fn new_raw_batch_delete_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawDeleteRangeResponse;
@@ -312,12 +308,10 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
         results
             .try_for_each_concurrent(None, |_| future::ready(Ok(())))
-            .boxed()
+            .await
     }
 }
 
@@ -334,6 +328,7 @@ pub fn new_raw_delete_range_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawScanRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::RawScanResponse;
@@ -364,10 +359,8 @@ impl KvRequest for kvrpcpb::RawScanRequest {
         resp.take_kvs().into_iter().map(Into::into).collect()
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_concat().boxed()
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results.try_concat().await
     }
 }
 
@@ -388,6 +381,7 @@ pub fn new_raw_scan_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawBatchScanRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::RawBatchScanResponse;
@@ -418,10 +412,8 @@ impl KvRequest for kvrpcpb::RawBatchScanRequest {
         resp.take_kvs().into_iter().map(Into::into).collect()
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_concat().boxed()
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results.try_concat().await
     }
 }
 

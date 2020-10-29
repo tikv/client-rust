@@ -7,7 +7,8 @@ use crate::{
     transaction::{resolve_locks, HasLocks},
     BoundRange, Error, ErrorKind, Key, Result,
 };
-use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
+use async_trait::async_trait;
+use futures::{prelude::*, stream::BoxStream};
 use std::{
     cmp::{max, min},
     sync::Arc,
@@ -18,6 +19,7 @@ const DEFAULT_REGION_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10)
 pub const OPTIMISTIC_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);
 pub const PESSIMISTIC_BACKOFF: NoBackoff = NoBackoff;
 
+#[async_trait]
 pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
     type Result;
     type RpcResponse: HasError + HasLocks + Clone + Send + 'static;
@@ -27,11 +29,11 @@ pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
     /// is the part which differs among the requests.
     type KeyData: Send;
 
-    fn execute(
+    async fn execute<Pd: PdClient, B: Backoff>(
         self,
-        pd_client: Arc<impl PdClient>,
-        lock_backoff: impl Backoff,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+        pd_client: Arc<Pd>,
+        lock_backoff: B,
+    ) -> Result<Self::Result> {
         Self::reduce(
             self.response_stream(pd_client, lock_backoff)
                 .and_then(|mut response| match response.error() {
@@ -41,6 +43,7 @@ pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
                 .map_ok(Self::map_result)
                 .boxed(),
         )
+        .await
     }
 
     fn response_stream(
@@ -159,9 +162,7 @@ pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
 
     fn map_result(result: Self::RpcResponse) -> Self::Result;
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>>;
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result>;
 
     fn request_from_store(&self, store: &Store) -> Result<Self>
     where
@@ -260,7 +261,6 @@ pub fn store_stream_for_ranges<PdC: PdClient>(
 mod test {
     use super::*;
     use crate::mock::{MockKvClient, MockPdClient};
-    use async_trait::async_trait;
     use futures::executor;
     use grpcio::CallOption;
     use kvproto::{kvrpcpb, tikvpb::TikvClient};
@@ -309,6 +309,7 @@ mod test {
             }
         }
 
+        #[async_trait]
         impl KvRequest for MockKvRequest {
             type Result = ();
             type RpcResponse = MockRpcResponse;
@@ -322,9 +323,9 @@ mod test {
 
             fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-            fn reduce(
+            async fn reduce(
                 _results: BoxStream<'static, Result<Self::Result>>,
-            ) -> BoxFuture<'static, Result<Self::Result>> {
+            ) -> Result<Self::Result> {
                 unreachable!()
             }
 

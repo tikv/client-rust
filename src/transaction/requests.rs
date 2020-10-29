@@ -1,3 +1,5 @@
+// Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
+
 use crate::{
     backoff::Backoff,
     pd::PdClient,
@@ -5,12 +7,14 @@ use crate::{
     transaction::HasLocks,
     BoundRange, Error, Key, KvPair, Result, Value,
 };
-use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
+use async_trait::async_trait;
+use futures::{prelude::*, stream::BoxStream};
 use kvproto::{kvrpcpb, pdpb::Timestamp};
 use std::{iter, mem, sync::Arc};
 use tikv_client_common::TimestampExt;
 use tikv_client_store::Store;
 
+#[async_trait]
 impl KvRequest for kvrpcpb::GetRequest {
     type Result = Option<Value>;
     type RpcResponse = kvrpcpb::GetResponse;
@@ -39,13 +43,11 @@ impl KvRequest for kvrpcpb::GetRequest {
         }
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
         results
             .into_future()
             .map(|(f, _)| f.expect("no results should be impossible"))
-            .boxed()
+            .await
     }
 }
 
@@ -66,6 +68,7 @@ pub fn new_mvcc_get_request(key: impl Into<Key>, timestamp: Timestamp) -> kvrpcp
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::BatchGetRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::BatchGetResponse;
@@ -91,10 +94,8 @@ impl KvRequest for kvrpcpb::BatchGetRequest {
         resp.take_pairs().into_iter().map(Into::into).collect()
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_concat().boxed()
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results.try_concat().await
     }
 }
 
@@ -117,6 +118,7 @@ pub fn new_mvcc_get_batch_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::ScanRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::ScanResponse;
@@ -146,10 +148,8 @@ impl KvRequest for kvrpcpb::ScanRequest {
         resp.take_pairs().into_iter().map(Into::into).collect()
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_concat().boxed()
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results.try_concat().await
     }
 }
 
@@ -181,6 +181,7 @@ impl HasLocks for kvrpcpb::ScanResponse {
 // For a ResolveLockRequest, it does not contain enough information about which region it should be
 // sent to. Therefore, the context must be specified every time the request is created and we don't
 // retry the request automatically on region errors.
+#[async_trait]
 impl KvRequest for kvrpcpb::ResolveLockRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::ResolveLockResponse;
@@ -224,10 +225,8 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_collect().boxed()
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results.try_collect().await
     }
 }
 
@@ -246,6 +245,7 @@ pub fn new_resolve_lock_request(
 
 // TODO: Add lite resolve lock (resolve specified locks only)
 
+#[async_trait]
 impl KvRequest for kvrpcpb::CleanupRequest {
     /// Commit version if the key is committed, 0 otherwise.
     type Result = u64;
@@ -271,13 +271,11 @@ impl KvRequest for kvrpcpb::CleanupRequest {
         resp.commit_version
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
         results
             .into_future()
             .map(|(f, _)| f.expect("no results should be impossible"))
-            .boxed()
+            .await
     }
 }
 
@@ -289,6 +287,7 @@ pub fn new_cleanup_request(key: impl Into<Key>, start_version: u64) -> kvrpcpb::
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::PrewriteRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::PrewriteResponse;
@@ -318,12 +317,10 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
         results
             .try_for_each_concurrent(None, |_| future::ready(Ok(())))
-            .boxed()
+            .await
     }
 }
 
@@ -367,6 +364,7 @@ pub fn new_pessimistic_prewrite_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::CommitRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::CommitResponse;
@@ -391,12 +389,10 @@ impl KvRequest for kvrpcpb::CommitRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
         results
             .try_for_each_concurrent(None, |_| future::ready(Ok(())))
-            .boxed()
+            .await
     }
 }
 
@@ -413,6 +409,7 @@ pub fn new_commit_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::BatchRollbackRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::BatchRollbackResponse;
@@ -436,12 +433,10 @@ impl KvRequest for kvrpcpb::BatchRollbackRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
         results
             .try_for_each_concurrent(None, |_| future::ready(Ok(())))
-            .boxed()
+            .await
     }
 }
 
@@ -456,6 +451,7 @@ pub fn new_batch_rollback_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::PessimisticRollbackRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::PessimisticRollbackResponse;
@@ -480,12 +476,10 @@ impl KvRequest for kvrpcpb::PessimisticRollbackRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
         results
             .try_for_each_concurrent(None, |_| future::ready(Ok(())))
-            .boxed()
+            .await
     }
 }
 
@@ -502,6 +496,7 @@ pub fn new_pessimistic_rollback_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::PessimisticLockRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::PessimisticLockResponse;
@@ -533,12 +528,10 @@ impl KvRequest for kvrpcpb::PessimisticLockRequest {
 
     fn map_result(_result: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
         results
             .try_for_each_concurrent(None, |_| future::ready(Ok(())))
-            .boxed()
+            .await
     }
 }
 
@@ -575,6 +568,7 @@ pub fn new_pessimistic_lock_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::ScanLockRequest {
     type Result = Vec<kvrpcpb::LockInfo>;
     type RpcResponse = kvrpcpb::ScanLockResponse;
@@ -600,10 +594,8 @@ impl KvRequest for kvrpcpb::ScanLockRequest {
         result.take_locks()
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_concat().boxed()
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results.try_concat().await
     }
 }
 
