@@ -12,7 +12,7 @@ use std::{
     sync::{Arc, RwLock},
     thread,
 };
-use tikv_client_common::{kv::codec, Timestamp};
+use tikv_client_common::{codec, Timestamp};
 use tikv_client_pd::Cluster;
 use tikv_client_store::{KvClient, KvConnect, Store, TikvConnect};
 
@@ -41,7 +41,7 @@ pub trait PdClient: Send + Sync + 'static {
     type KvClient: KvClient + Send + Sync + 'static;
 
     /// In transactional API, `region` is decoded (keys in raw format).
-    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store<Self::KvClient>>;
+    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store>;
 
     /// In transactional API, the key and returned region are both decoded (keys in raw format).
     async fn region_for_key(&self, key: &Key) -> Result<Region>;
@@ -54,12 +54,12 @@ pub trait PdClient: Send + Sync + 'static {
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
 
     /// In transactional API, `key` is in raw format
-    async fn store_for_key(self: Arc<Self>, key: Key) -> Result<Store<Self::KvClient>> {
+    async fn store_for_key(self: Arc<Self>, key: Key) -> Result<Store> {
         let region = self.region_for_key(&key).await?;
         self.map_region_to_store(region).await
     }
 
-    async fn store_for_id(self: Arc<Self>, id: RegionId) -> Result<Store<Self::KvClient>> {
+    async fn store_for_id(self: Arc<Self>, id: RegionId) -> Result<Store> {
         let region = self.region_for_id(id).await?;
         self.map_region_to_store(region).await
     }
@@ -92,10 +92,7 @@ pub trait PdClient: Send + Sync + 'static {
     }
 
     /// Returns a Stream which iterates over the contexts for each region covered by range.
-    fn stores_for_range(
-        self: Arc<Self>,
-        range: BoundRange,
-    ) -> BoxStream<'static, Result<Store<Self::KvClient>>> {
+    fn stores_for_range(self: Arc<Self>, range: BoundRange) -> BoxStream<'static, Result<Store>> {
         let (start_key, end_key) = range.into_keys();
         stream_fn(Some(start_key), move |start_key| {
             let end_key = end_key.clone();
@@ -204,11 +201,11 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
 impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     type KvClient = KvC::KvClient;
 
-    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store<KvC::KvClient>> {
+    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store> {
         let store_id = region.get_store_id()?;
         let store = self.pd.clone().get_store(store_id).await?;
         let kv_client = self.kv_client(store.get_address())?;
-        Ok(Store::new(region, kv_client))
+        Ok(Store::new(region, Box::new(kv_client)))
     }
 
     async fn region_for_key(&self, key: &Key) -> Result<Region> {
@@ -330,13 +327,13 @@ pub mod test {
         let kv1 = client.kv_client(&addr1).unwrap();
         let kv2 = client.kv_client(&addr2).unwrap();
         let kv3 = client.kv_client(&addr2).unwrap();
-        assert!(kv1 != kv2);
-        assert_eq!(kv2, kv3);
+        assert!(kv1.addr != kv2.addr);
+        assert_eq!(kv2.addr, kv3.addr);
     }
 
     #[test]
     fn test_group_keys_by_region() {
-        let client = MockPdClient;
+        let client = MockPdClient::default();
 
         // FIXME This only works if the keys are in order of regions. Not sure if
         // that is a reasonable constraint.
@@ -370,7 +367,7 @@ pub mod test {
 
     #[test]
     fn test_stores_for_range() {
-        let client = Arc::new(MockPdClient);
+        let client = Arc::new(MockPdClient::default());
         let k1: Key = vec![1].into();
         let k2: Key = vec![5, 2].into();
         let k3: Key = vec![11, 4].into();
@@ -388,7 +385,7 @@ pub mod test {
 
     #[test]
     fn test_group_ranges_by_region() {
-        let client = Arc::new(MockPdClient);
+        let client = Arc::new(MockPdClient::default());
         let k1: Key = vec![1].into();
         let k2: Key = vec![5, 2].into();
         let k3: Key = vec![11, 4].into();

@@ -3,37 +3,37 @@
 use crate::{
     backoff::{Backoff, NoBackoff, NoJitterBackoff},
     pd::PdClient,
+    stats::tikv_stats,
     transaction::{resolve_locks, HasLocks},
     BoundRange, Error, ErrorKind, Key, Result,
 };
-use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
-use kvproto::kvrpcpb;
+use async_trait::async_trait;
+use futures::{prelude::*, stream::BoxStream};
 use std::{
     cmp::{max, min},
     sync::Arc,
 };
-use tikv_client_store::{HasError, HasRegionError, KvClient, RpcFnType, Store};
+use tikv_client_store::{HasError, HasRegionError, Request, Store};
 
 const DEFAULT_REGION_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);
 pub const OPTIMISTIC_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);
 pub const PESSIMISTIC_BACKOFF: NoBackoff = NoBackoff;
 
-pub trait KvRequest: Clone + Sync + Send + 'static + Sized {
+#[async_trait]
+pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
     type Result;
     type RpcResponse: HasError + HasLocks + Clone + Send + 'static;
     /// A single `KvRequest` can be divided into a number of RPC requests because the keys span
     /// several regions or a single RPC request is too large. Most of the fields in these requests
     /// share the same content while `KeyData`, which contains keys (and associated data if any),
     /// is the part which differs among the requests.
-    type KeyData;
-    const REQUEST_NAME: &'static str;
-    const RPC_FN: RpcFnType<Self, Self::RpcResponse>;
+    type KeyData: Send;
 
-    fn execute(
+    async fn execute<Pd: PdClient, B: Backoff>(
         self,
-        pd_client: Arc<impl PdClient>,
-        lock_backoff: impl Backoff,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+        pd_client: Arc<Pd>,
+        lock_backoff: B,
+    ) -> Result<Self::Result> {
         Self::reduce(
             self.response_stream(pd_client, lock_backoff)
                 .and_then(|mut response| match response.error() {
@@ -43,6 +43,7 @@ pub trait KvRequest: Clone + Sync + Send + 'static + Sized {
                 .map_ok(Self::map_result)
                 .boxed(),
         )
+        .await
     }
 
     fn response_stream(
@@ -63,30 +64,15 @@ pub trait KvRequest: Clone + Sync + Send + 'static + Sized {
         stores
             .and_then(move |(key_data, store)| {
                 let request = self.make_rpc_request(key_data, &store);
-                let (req, err) = match request {
-                    Ok(r) => (Some(r), None),
-                    Err(e) => (None, Some(e)),
-                };
-                self.dispatch_hook()
-                    .unwrap_or_else({
-                        let req = req.clone();
-                        || {
-                            async move {
-                                match (req, err) {
-                                    (Some(req), None) => {
-                                        store.dispatch(Self::REQUEST_NAME, Self::RPC_FN, req).await
-                                    }
-                                    (None, Some(err)) => Err(err),
-                                    _ => unreachable!(),
-                                }
-                            }
-                            .boxed()
-                        }
-                    })
-                    .map_ok(move |response| (req, response))
+                async move {
+                    let request = request?;
+                    let stats = tikv_stats(request.label());
+                    let response = store.dispatch::<_, Self::RpcResponse>(&request).await;
+                    let response = stats.done(response)?;
+                    Ok((request, *response))
+                }
             })
             .map_ok(move |(request, mut response)| {
-                let request = request.unwrap();
                 if let Some(region_error) = response.region_error() {
                     return request.on_region_error(
                         region_error,
@@ -171,23 +157,17 @@ pub trait KvRequest: Clone + Sync + Send + 'static + Sized {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>>;
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store)>>;
 
-    fn make_rpc_request<KvC: KvClient>(
-        &self,
-        key_data: Self::KeyData,
-        store: &Store<KvC>,
-    ) -> Result<Self>;
+    fn make_rpc_request(&self, key_data: Self::KeyData, store: &Store) -> Result<Self>;
 
     fn map_result(result: Self::RpcResponse) -> Self::Result;
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>>;
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result>;
 
-    fn request_from_store<KvC: KvClient>(&self, store: &Store<KvC>) -> Result<Self>
+    fn request_from_store(&self, store: &Store) -> Result<Self>
     where
-        Self: Default + KvRpcRequest,
+        Self: Default,
     {
         let mut request = Self::default();
         request.set_context(store.region.context()?);
@@ -198,7 +178,7 @@ pub trait KvRequest: Clone + Sync + Send + 'static + Sized {
 pub fn store_stream_for_key<KeyData, PdC>(
     key_data: KeyData,
     pd_client: Arc<PdC>,
-) -> BoxStream<'static, Result<(KeyData, Store<PdC::KvClient>)>>
+) -> BoxStream<'static, Result<(KeyData, Store)>>
 where
     KeyData: AsRef<Key> + Send + 'static,
     PdC: PdClient,
@@ -214,7 +194,7 @@ where
 pub fn store_stream_for_keys<KeyData, IntoKey, I, PdC>(
     key_data: I,
     pd_client: Arc<PdC>,
-) -> BoxStream<'static, Result<(Vec<KeyData>, Store<PdC::KvClient>)>>
+) -> BoxStream<'static, Result<(Vec<KeyData>, Store)>>
 where
     KeyData: AsRef<Key> + Send + Sync + 'static,
     IntoKey: Into<KeyData> + 'static,
@@ -237,7 +217,7 @@ where
 pub fn store_stream_for_range<PdC: PdClient>(
     range: BoundRange,
     pd_client: Arc<PdC>,
-) -> BoxStream<'static, Result<((Key, Key), Store<PdC::KvClient>)>> {
+) -> BoxStream<'static, Result<((Key, Key), Store)>> {
     pd_client
         .stores_for_range(range.clone())
         .map_ok(move |store| {
@@ -264,7 +244,7 @@ fn bound_range(region_range: (Key, Key), range: BoundRange) -> (Key, Key) {
 pub fn store_stream_for_ranges<PdC: PdClient>(
     ranges: Vec<BoundRange>,
     pd_client: Arc<PdC>,
-) -> BoxStream<'static, Result<(Vec<BoundRange>, Store<PdC::KvClient>)>> {
+) -> BoxStream<'static, Result<(Vec<BoundRange>, Store)>> {
     pd_client
         .clone()
         .group_ranges_by_region(ranges)
@@ -278,68 +258,19 @@ pub fn store_stream_for_ranges<PdC: PdClient>(
         .boxed()
 }
 
-/// Permits easy mocking of rpc calls.
-pub trait DispatchHook: KvRequest {
-    fn dispatch_hook(&self) -> Option<BoxFuture<'static, Result<Self::RpcResponse>>> {
-        None
-    }
-}
-
-impl<T: KvRequest> DispatchHook for T {
-    #[cfg(test)]
-    default fn dispatch_hook(&self) -> Option<BoxFuture<'static, Result<Self::RpcResponse>>> {
-        None
-    }
-}
-
-pub trait KvRpcRequest: Default {
-    fn set_context(&mut self, context: kvrpcpb::Context);
-}
-
-macro_rules! impl_kv_rpc_request {
-    ($name: ident) => {
-        impl KvRpcRequest for kvrpcpb::$name {
-            fn set_context(&mut self, context: kvrpcpb::Context) {
-                self.set_context(context);
-            }
-        }
-    };
-}
-
-impl_kv_rpc_request!(RawGetRequest);
-impl_kv_rpc_request!(RawBatchGetRequest);
-impl_kv_rpc_request!(RawPutRequest);
-impl_kv_rpc_request!(RawBatchPutRequest);
-impl_kv_rpc_request!(RawDeleteRequest);
-impl_kv_rpc_request!(RawBatchDeleteRequest);
-impl_kv_rpc_request!(RawScanRequest);
-impl_kv_rpc_request!(RawBatchScanRequest);
-impl_kv_rpc_request!(RawDeleteRangeRequest);
-impl_kv_rpc_request!(GetRequest);
-impl_kv_rpc_request!(ScanRequest);
-impl_kv_rpc_request!(PrewriteRequest);
-impl_kv_rpc_request!(CommitRequest);
-impl_kv_rpc_request!(CleanupRequest);
-impl_kv_rpc_request!(BatchGetRequest);
-impl_kv_rpc_request!(BatchRollbackRequest);
-impl_kv_rpc_request!(PessimisticRollbackRequest);
-impl_kv_rpc_request!(ResolveLockRequest);
-impl_kv_rpc_request!(ScanLockRequest);
-impl_kv_rpc_request!(PessimisticLockRequest);
-
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::mock::MockPdClient;
+    use crate::mock::{MockKvClient, MockPdClient};
     use futures::executor;
     use grpcio::CallOption;
-    use kvproto::tikvpb::TikvClient;
-    use std::sync::Mutex;
+    use kvproto::{kvrpcpb, tikvpb::TikvClient};
+    use std::{any::Any, sync::Mutex};
 
     #[test]
     fn test_region_retry() {
         #[derive(Clone)]
-        struct MockRpcResponse {}
+        struct MockRpcResponse;
 
         impl HasError for MockRpcResponse {
             fn error(&mut self) -> Option<Error> {
@@ -360,33 +291,32 @@ mod test {
             test_invoking_count: Arc<Mutex<usize>>,
         }
 
-        fn mock_async_opt(
-            _client: &TikvClient,
-            _req: &MockKvRequest,
-            _opt: CallOption,
-        ) -> std::result::Result<::grpcio::ClientUnaryReceiver<MockRpcResponse>, ::grpcio::Error>
-        {
-            unreachable!()
-        }
+        #[async_trait]
+        impl Request for MockKvRequest {
+            async fn dispatch(&self, _: &TikvClient, _: CallOption) -> Result<Box<dyn Any>> {
+                Ok(Box::new(MockRpcResponse {}))
+            }
 
-        impl DispatchHook for MockKvRequest {
-            fn dispatch_hook(&self) -> Option<BoxFuture<'static, Result<Self::RpcResponse>>> {
-                Some(future::ok(MockRpcResponse {}).boxed())
+            fn label(&self) -> &'static str {
+                "mock"
+            }
+
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
+
+            fn set_context(&mut self, _: kvrpcpb::Context) {
+                unreachable!();
             }
         }
 
+        #[async_trait]
         impl KvRequest for MockKvRequest {
             type Result = ();
             type RpcResponse = MockRpcResponse;
             type KeyData = Key;
-            const REQUEST_NAME: &'static str = "mock";
-            const RPC_FN: RpcFnType<Self, Self::RpcResponse> = mock_async_opt;
 
-            fn make_rpc_request<KvC: KvClient>(
-                &self,
-                _key_data: Self::KeyData,
-                _store: &Store<KvC>,
-            ) -> Result<Self> {
+            fn make_rpc_request(&self, _key_data: Self::KeyData, _store: &Store) -> Result<Self> {
                 Ok(Self {
                     test_invoking_count: self.test_invoking_count.clone(),
                 })
@@ -394,16 +324,16 @@ mod test {
 
             fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-            fn reduce(
+            async fn reduce(
                 _results: BoxStream<'static, Result<Self::Result>>,
-            ) -> BoxFuture<'static, Result<Self::Result>> {
+            ) -> Result<Self::Result> {
                 unreachable!()
             }
 
             fn store_stream<PdC: PdClient>(
                 &mut self,
                 pd_client: Arc<PdC>,
-            ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+            ) -> BoxStream<'static, Result<(Self::KeyData, Store)>> {
                 // Increases by 1 for each call.
                 let mut test_invoking_count = self.test_invoking_count.lock().unwrap();
                 *test_invoking_count += 1;
@@ -418,7 +348,9 @@ mod test {
             test_invoking_count: invoking_count.clone(),
         };
 
-        let pd_client = Arc::new(MockPdClient);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |_: &dyn Any| Ok(Box::new(MockRpcResponse) as Box<dyn Any>),
+        )));
         let region_backoff = NoJitterBackoff::new(1, 1, 3);
         let lock_backoff = NoJitterBackoff::new(1, 1, 3);
         let stream = request.retry_response_stream(pd_client, region_backoff, lock_backoff);

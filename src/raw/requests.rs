@@ -10,31 +10,27 @@ use crate::{
     transaction::HasLocks,
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
-use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
-use kvproto::{kvrpcpb, tikvpb::TikvClient};
+use async_trait::async_trait;
+use futures::{prelude::*, stream::BoxStream};
+use kvproto::kvrpcpb;
 use std::{mem, sync::Arc};
-use tikv_client_store::{KvClient, RpcFnType, Store};
+use tikv_client_store::Store;
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawGetRequest {
     type Result = Option<Value>;
     type RpcResponse = kvrpcpb::RawGetResponse;
     type KeyData = Key;
-    const REQUEST_NAME: &'static str = "raw_get";
-    const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_get_async_opt;
 
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store)>> {
         let key = mem::take(&mut self.key).into();
         store_stream_for_key(key, pd_client)
     }
 
-    fn make_rpc_request<KvC: KvClient>(
-        &self,
-        key: Self::KeyData,
-        store: &Store<KvC>,
-    ) -> Result<Self> {
+    fn make_rpc_request(&self, key: Self::KeyData, store: &Store) -> Result<Self> {
         let mut req = self.request_from_store(store)?;
         req.set_key(key.into());
         req.set_cf(self.cf.clone());
@@ -50,13 +46,11 @@ impl KvRequest for kvrpcpb::RawGetRequest {
         }
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
         results
             .into_future()
             .map(|(f, _)| f.expect("no results should be impossible"))
-            .boxed()
+            .await
     }
 }
 
@@ -71,18 +65,13 @@ pub fn new_raw_get_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawBatchGetRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::RawBatchGetResponse;
     type KeyData = Vec<Key>;
-    const REQUEST_NAME: &'static str = "raw_batch_get";
-    const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_get_async_opt;
 
-    fn make_rpc_request<KvC: KvClient>(
-        &self,
-        keys: Self::KeyData,
-        store: &Store<KvC>,
-    ) -> Result<Self> {
+    fn make_rpc_request(&self, keys: Self::KeyData, store: &Store) -> Result<Self> {
         let mut req = self.request_from_store(store)?;
         req.set_keys(keys.into_iter().map(Into::into).collect());
         req.set_cf(self.cf.clone());
@@ -93,7 +82,7 @@ impl KvRequest for kvrpcpb::RawBatchGetRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store)>> {
         self.keys.sort();
         let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
@@ -103,10 +92,8 @@ impl KvRequest for kvrpcpb::RawBatchGetRequest {
         resp.take_pairs().into_iter().map(Into::into).collect()
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_concat().boxed()
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results.try_concat().await
     }
 }
 
@@ -121,18 +108,13 @@ pub fn new_raw_batch_get_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawPutRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawPutResponse;
     type KeyData = KvPair;
-    const REQUEST_NAME: &'static str = "raw_put";
-    const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_put_async_opt;
 
-    fn make_rpc_request<KvC: KvClient>(
-        &self,
-        key: Self::KeyData,
-        store: &Store<KvC>,
-    ) -> Result<Self> {
+    fn make_rpc_request(&self, key: Self::KeyData, store: &Store) -> Result<Self> {
         let mut req = self.request_from_store(store)?;
         req.set_key(key.0.into());
         req.set_value(key.1);
@@ -144,7 +126,7 @@ impl KvRequest for kvrpcpb::RawPutRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store)>> {
         let key = mem::take(&mut self.key);
         let value = mem::take(&mut self.value);
         let pair = KvPair::new(key, value);
@@ -153,13 +135,11 @@ impl KvRequest for kvrpcpb::RawPutRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
         results
             .into_future()
             .map(|(f, _)| f.expect("no results should be impossible"))
-            .boxed()
+            .await
     }
 }
 
@@ -176,18 +156,13 @@ pub fn new_raw_put_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawBatchPutRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawBatchPutResponse;
     type KeyData = Vec<KvPair>;
-    const REQUEST_NAME: &'static str = "raw_batch_put";
-    const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_put_async_opt;
 
-    fn make_rpc_request<KvC: KvClient>(
-        &self,
-        pairs: Self::KeyData,
-        store: &Store<KvC>,
-    ) -> Result<Self> {
+    fn make_rpc_request(&self, pairs: Self::KeyData, store: &Store) -> Result<Self> {
         let mut req = self.request_from_store(store)?;
         req.set_pairs(pairs.into_iter().map(Into::into).collect());
         req.set_cf(self.cf.clone());
@@ -198,7 +173,7 @@ impl KvRequest for kvrpcpb::RawBatchPutRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store)>> {
         self.pairs.sort_by(|a, b| a.key.cmp(&b.key));
         let pairs = mem::take(&mut self.pairs);
         store_stream_for_keys(pairs, pd_client)
@@ -206,10 +181,8 @@ impl KvRequest for kvrpcpb::RawBatchPutRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_collect().boxed()
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results.try_collect().await
     }
 }
 
@@ -224,18 +197,13 @@ pub fn new_raw_batch_put_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawDeleteRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawDeleteResponse;
     type KeyData = Key;
-    const REQUEST_NAME: &'static str = "raw_delete";
-    const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_delete_async_opt;
 
-    fn make_rpc_request<KvC: KvClient>(
-        &self,
-        key: Self::KeyData,
-        store: &Store<KvC>,
-    ) -> Result<Self> {
+    fn make_rpc_request(&self, key: Self::KeyData, store: &Store) -> Result<Self> {
         let mut req = self.request_from_store(store)?;
         req.set_key(key.into());
         req.set_cf(self.cf.clone());
@@ -246,20 +214,18 @@ impl KvRequest for kvrpcpb::RawDeleteRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store)>> {
         let key = mem::take(&mut self.key).into();
         store_stream_for_key(key, pd_client)
     }
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
         results
             .into_future()
             .map(|(f, _)| f.expect("no results should be impossible"))
-            .boxed()
+            .await
     }
 }
 
@@ -274,18 +240,13 @@ pub fn new_raw_delete_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawBatchDeleteResponse;
     type KeyData = Vec<Key>;
-    const REQUEST_NAME: &'static str = "raw_batch_delete";
-    const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_delete_async_opt;
 
-    fn make_rpc_request<KvC: KvClient>(
-        &self,
-        keys: Self::KeyData,
-        store: &Store<KvC>,
-    ) -> Result<Self> {
+    fn make_rpc_request(&self, keys: Self::KeyData, store: &Store) -> Result<Self> {
         let mut req = self.request_from_store(store)?;
         req.set_keys(keys.into_iter().map(Into::into).collect());
         req.set_cf(self.cf.clone());
@@ -296,7 +257,7 @@ impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store)>> {
         self.keys.sort();
         let keys = mem::take(&mut self.keys);
         store_stream_for_keys(keys, pd_client)
@@ -304,10 +265,8 @@ impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_collect().boxed()
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results.try_collect().await
     }
 }
 
@@ -322,18 +281,13 @@ pub fn new_raw_batch_delete_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::RawDeleteRangeResponse;
     type KeyData = (Key, Key);
-    const REQUEST_NAME: &'static str = "raw_delete_range";
-    const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_delete_range_async_opt;
 
-    fn make_rpc_request<KvC: KvClient>(
-        &self,
-        (start_key, end_key): Self::KeyData,
-        store: &Store<KvC>,
-    ) -> Result<Self> {
+    fn make_rpc_request(&self, (start_key, end_key): Self::KeyData, store: &Store) -> Result<Self> {
         let mut req = self.request_from_store(store)?;
         req.set_start_key(start_key.into());
         req.set_end_key(end_key.into());
@@ -345,7 +299,7 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store)>> {
         let start_key = mem::take(&mut self.start_key);
         let end_key = mem::take(&mut self.end_key);
         let range = BoundRange::from((start_key, end_key));
@@ -354,12 +308,10 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
 
     fn map_result(_: Self::RpcResponse) -> Self::Result {}
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
         results
             .try_for_each_concurrent(None, |_| future::ready(Ok(())))
-            .boxed()
+            .await
     }
 }
 
@@ -376,18 +328,13 @@ pub fn new_raw_delete_range_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawScanRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::RawScanResponse;
     type KeyData = (Key, Key);
-    const REQUEST_NAME: &'static str = "raw_scan";
-    const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_scan_async_opt;
 
-    fn make_rpc_request<KvC: KvClient>(
-        &self,
-        (start_key, end_key): Self::KeyData,
-        store: &Store<KvC>,
-    ) -> Result<Self> {
+    fn make_rpc_request(&self, (start_key, end_key): Self::KeyData, store: &Store) -> Result<Self> {
         let mut req = self.request_from_store(store)?;
         req.set_start_key(start_key.into());
         req.set_end_key(end_key.into());
@@ -401,7 +348,7 @@ impl KvRequest for kvrpcpb::RawScanRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store)>> {
         let start_key = mem::take(&mut self.start_key);
         let end_key = mem::take(&mut self.end_key);
         let range = BoundRange::from((start_key, end_key));
@@ -412,10 +359,8 @@ impl KvRequest for kvrpcpb::RawScanRequest {
         resp.take_kvs().into_iter().map(Into::into).collect()
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_concat().boxed()
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results.try_concat().await
     }
 }
 
@@ -436,18 +381,13 @@ pub fn new_raw_scan_request(
     req
 }
 
+#[async_trait]
 impl KvRequest for kvrpcpb::RawBatchScanRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::RawBatchScanResponse;
     type KeyData = Vec<BoundRange>;
-    const REQUEST_NAME: &'static str = "raw_batch_scan";
-    const RPC_FN: RpcFnType<Self, Self::RpcResponse> = TikvClient::raw_batch_scan_async_opt;
 
-    fn make_rpc_request<KvC: KvClient>(
-        &self,
-        ranges: Self::KeyData,
-        store: &Store<KvC>,
-    ) -> Result<Self> {
+    fn make_rpc_request(&self, ranges: Self::KeyData, store: &Store) -> Result<Self> {
         let mut req = self.request_from_store(store)?;
         req.set_ranges(ranges.into_iter().map(Into::into).collect());
         req.set_each_limit(self.each_limit);
@@ -460,7 +400,7 @@ impl KvRequest for kvrpcpb::RawBatchScanRequest {
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
-    ) -> BoxStream<'static, Result<(Self::KeyData, Store<PdC::KvClient>)>> {
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store)>> {
         let ranges = mem::take(&mut self.ranges)
             .into_iter()
             .map(|range| range.into())
@@ -472,10 +412,8 @@ impl KvRequest for kvrpcpb::RawBatchScanRequest {
         resp.take_kvs().into_iter().map(Into::into).collect()
     }
 
-    fn reduce(
-        results: BoxStream<'static, Result<Self::Result>>,
-    ) -> BoxFuture<'static, Result<Self::Result>> {
-        results.try_concat().boxed()
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results.try_concat().await
     }
 }
 
@@ -527,36 +465,33 @@ impl HasLocks for kvrpcpb::RawDeleteRangeResponse {}
 #[cfg(test)]
 mod test {
     use super::*;
-
-    use crate::{mock::MockPdClient, request::DispatchHook};
-
-    use crate::request::OPTIMISTIC_BACKOFF;
-    use futures::{
-        executor,
-        future::{ready, BoxFuture},
+    use crate::{
+        mock::{MockKvClient, MockPdClient},
+        request::OPTIMISTIC_BACKOFF,
     };
+    use futures::executor;
     use kvproto::kvrpcpb;
-
-    impl DispatchHook for kvrpcpb::RawScanRequest {
-        fn dispatch_hook(&self) -> Option<BoxFuture<'static, Result<kvrpcpb::RawScanResponse>>> {
-            assert!(self.key_only);
-            assert_eq!(self.limit, 10);
-
-            let mut resp = kvrpcpb::RawScanResponse::default();
-            for i in self.start_key[0]..self.end_key[0] {
-                let mut kv = kvrpcpb::KvPair::default();
-                kv.key = vec![i];
-                resp.kvs.push(kv);
-            }
-
-            Some(Box::pin(ready(Ok(resp))))
-        }
-    }
+    use std::any::Any;
 
     #[test]
     #[ignore]
     fn test_raw_scan() {
-        let client = Arc::new(MockPdClient);
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |req: &dyn Any| {
+                let req: &kvrpcpb::RawScanRequest = req.downcast_ref().unwrap();
+                assert!(req.key_only);
+                assert_eq!(req.limit, 10);
+
+                let mut resp = kvrpcpb::RawScanResponse::default();
+                for i in req.start_key[0]..req.end_key[0] {
+                    let mut kv = kvrpcpb::KvPair::default();
+                    kv.key = vec![i];
+                    resp.kvs.push(kv);
+                }
+
+                Ok(Box::new(resp) as Box<dyn Any>)
+            },
+        )));
 
         let start: Key = vec![1].into();
         let end: Key = vec![50].into();

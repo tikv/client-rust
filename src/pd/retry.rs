@@ -2,7 +2,7 @@
 
 //! A utility module for managing and retrying PD requests.
 
-use crate::{Error, Region, RegionId, Result, SecurityManager, StoreId};
+use crate::{stats::pd_stats, Error, Region, RegionId, Result, SecurityManager, StoreId};
 use async_trait::async_trait;
 use futures_timer::Delay;
 use grpcio::Environment;
@@ -15,7 +15,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tikv_client_common::stats::pd_stats;
 use tikv_client_pd::{Cluster, Connection};
 use tokio::sync::RwLock;
 
@@ -52,11 +51,11 @@ impl<Cl> RetryClient<Cl> {
 
 macro_rules! retry {
     ($self: ident, $tag: literal, |$cluster: ident| $call: expr) => {{
-        let context = pd_stats($tag);
+        let stats = pd_stats($tag);
         let mut last_err = Ok(());
         for _ in 0..LEADER_CHANGE_RETRY {
             let $cluster = &$self.cluster.read().await.0;
-            match context.done($call.await) {
+            match stats.done($call.await) {
                 Ok(r) => return Ok(r),
                 Err(e) => last_err = Err(e),
             }

@@ -74,14 +74,15 @@
 //! At this point, you should seek the documentation in the related API modules.
 
 #[macro_use]
-pub mod transaction;
+mod transaction;
 
 mod backoff;
 mod compat;
 mod config;
 mod pd;
-pub mod raw;
+mod raw;
 mod request;
+mod stats;
 
 #[cfg(test)]
 mod mock;

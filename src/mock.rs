@@ -7,15 +7,13 @@
 
 use crate::{
     pd::{PdClient, PdRpcClient, RetryClient},
-    request::DispatchHook,
     Config, Error, Key, Result, Timestamp,
 };
 use async_trait::async_trait;
-use fail::fail_point;
-use futures::future::{ready, BoxFuture, FutureExt};
-use kvproto::{errorpb, kvrpcpb, metapb};
-use std::sync::Arc;
-use tikv_client_store::{HasError, KvClient, KvConnect, Region, RegionId, RpcFnType, Store};
+use derive_new::new;
+use kvproto::metapb;
+use std::{any::Any, sync::Arc};
+use tikv_client_store::{KvClient, KvConnect, Region, RegionId, Request, Store};
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
@@ -38,25 +36,40 @@ pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
     .unwrap()
 }
 
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(new, Default, Clone)]
 pub struct MockKvClient {
-    addr: String,
+    pub addr: String,
+    dispatch: Option<Arc<dyn Fn(&dyn Any) -> Result<Box<dyn Any>> + Send + Sync + 'static>>,
+}
+
+impl MockKvClient {
+    pub fn with_dispatch_hook<F>(dispatch: F) -> MockKvClient
+    where
+        F: Fn(&dyn Any) -> Result<Box<dyn Any>> + Send + Sync + 'static,
+    {
+        MockKvClient {
+            addr: String::new(),
+            dispatch: Some(Arc::new(dispatch)),
+        }
+    }
 }
 
 pub struct MockKvConnect;
 
 pub struct MockCluster;
 
-pub struct MockPdClient;
+#[derive(new)]
+pub struct MockPdClient {
+    client: MockKvClient,
+}
 
 #[async_trait]
 impl KvClient for MockKvClient {
-    async fn dispatch<Req, Resp>(&self, _fun: RpcFnType<Req, Resp>, _request: Req) -> Result<Resp>
-    where
-        Req: Send + Sync + 'static,
-        Resp: HasError + Sized + Clone + Send + 'static,
-    {
-        unimplemented!()
+    async fn dispatch(&self, req: &dyn Request) -> Result<Box<dyn Any>> {
+        match &self.dispatch {
+            Some(f) => f(req.as_any()),
+            None => panic!("no dispatch hook set"),
+        }
     }
 }
 
@@ -66,11 +79,18 @@ impl KvConnect for MockKvConnect {
     fn connect(&self, address: &str) -> Result<Self::KvClient> {
         Ok(MockKvClient {
             addr: address.to_owned(),
+            dispatch: None,
         })
     }
 }
 
 impl MockPdClient {
+    pub fn default() -> MockPdClient {
+        MockPdClient {
+            client: MockKvClient::default(),
+        }
+    }
+
     pub fn region1() -> Region {
         let mut region = Region::default();
         region.region.id = 1;
@@ -102,13 +122,8 @@ impl MockPdClient {
 impl PdClient for MockPdClient {
     type KvClient = MockKvClient;
 
-    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store<Self::KvClient>> {
-        Ok(Store::new(
-            region,
-            MockKvClient {
-                addr: String::new(),
-            },
-        ))
+    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store> {
+        Ok(Store::new(region, Box::new(self.client.clone())))
     }
 
     async fn region_for_key(&self, key: &Key) -> Result<Region> {
@@ -136,16 +151,5 @@ impl PdClient for MockPdClient {
 
     async fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> Result<bool> {
         unimplemented!()
-    }
-}
-
-impl DispatchHook for kvrpcpb::ResolveLockRequest {
-    fn dispatch_hook(&self) -> Option<BoxFuture<'static, Result<kvrpcpb::ResolveLockResponse>>> {
-        fail_point!("region-error", |_| {
-            let mut resp = kvrpcpb::ResolveLockResponse::default();
-            resp.region_error = Some(errorpb::Error::default());
-            Some(ready(Ok(resp)).boxed())
-        });
-        Some(ready(Ok(kvrpcpb::ResolveLockResponse::default())).boxed())
     }
 }
