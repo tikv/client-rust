@@ -1,8 +1,8 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{util::duration_to_sec, Result};
+use crate::Result;
 use prometheus::{Histogram, HistogramVec, IntCounterVec};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub struct RequestStats {
     start: Instant,
@@ -124,4 +124,12 @@ lazy_static! {
         "Bucketed histogram of TSO request batch size"
     )
     .unwrap();
+}
+
+/// Convert Duration to seconds.
+#[inline]
+fn duration_to_sec(d: Duration) -> f64 {
+    let nanos = f64::from(d.subsec_nanos());
+    // In most cases, we can't have so large Duration, so here just panic if overflow now.
+    d.as_secs() as f64 + (nanos / 1_000_000_000.0)
 }

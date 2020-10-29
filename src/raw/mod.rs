@@ -11,9 +11,8 @@
 //!
 
 pub use self::client::Client;
-use crate::Error;
+use crate::{Error, ErrorKind};
 use std::{convert::TryFrom, fmt};
-use tikv_client_common::errors::ErrorKind::ColumnFamilyError;
 
 mod client;
 mod requests;
@@ -60,7 +59,7 @@ impl TryFrom<&str> for ColumnFamily {
             "lock" => Ok(ColumnFamily::Lock),
             "write" => Ok(ColumnFamily::Write),
             "ver_default" => Ok(ColumnFamily::VersionDefault),
-            s => Err(ColumnFamilyError(s.to_owned()).into()),
+            s => Err(ErrorKind::ColumnFamilyError(s.to_owned()).into()),
         }
     }
 }

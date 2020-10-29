@@ -4,8 +4,7 @@ mod test {
     use log::debug;
     use mock_tikv::{start_mock_pd_server, start_mock_tikv_server, MOCK_PD_PORT};
     use simple_logger::SimpleLogger;
-    use tikv_client::RawClient;
-    use tikv_client_common::{Config, KvPair};
+    use tikv_client::{Config, KvPair, RawClient};
 
     #[tokio::test]
     async fn test_raw_put_get() {

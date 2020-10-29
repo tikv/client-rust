@@ -13,7 +13,7 @@ use std::{path::PathBuf, time::Duration};
 ///
 /// By default, this client will use an insecure connection over instead of one protected by
 /// Transport Layer Security (TLS). Your deployment may have chosen to rely on security measures
-/// such as a private network, or a VPN layer to provid secure transmission.
+/// such as a private network, or a VPN layer to provide secure transmission.
 ///
 /// To use a TLS secured connection, use the `with_security` function to set the required
 /// parameters.
@@ -39,7 +39,7 @@ impl Config {
     /// This helps avoid having a *single point of failure*.
     ///
     /// ```rust
-    /// # use tikv_client_common::Config;
+    /// # use tikv_client::Config;
     /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"]);
     /// ```
     pub fn new(pd_endpoints: impl IntoIterator<Item = impl Into<String>>) -> Self {
@@ -59,7 +59,7 @@ impl Config {
     /// these values.
     ///
     /// ```rust
-    /// # use tikv_client_common::Config;
+    /// # use tikv_client::Config;
     /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"])
     ///     .with_security("root.ca", "internal.cert", "internal.key");
     /// ```

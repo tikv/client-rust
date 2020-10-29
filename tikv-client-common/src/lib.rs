@@ -1,7 +1,4 @@
 #[macro_use]
-pub mod util;
-pub mod compat;
-pub mod config;
 pub mod errors;
 pub mod kv;
 pub mod security;
@@ -15,8 +12,6 @@ extern crate log;
 #[macro_use]
 extern crate prometheus;
 
-#[doc(inline)]
-pub use crate::config::Config;
 #[doc(inline)]
 pub use crate::errors::Error;
 #[doc(inline)]

@@ -1,83 +1,67 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{pd::RetryClient, tikv_client_common::kv::codec, Config, Key, Region, RegionId};
-use futures::{
-    future::{ready, BoxFuture, Either},
-    prelude::*,
-    stream::BoxStream,
-    FutureExt, TryFutureExt,
+use crate::{
+    compat::stream_fn, pd::RetryClient, BoundRange, Config, Key, Region, RegionId, Result,
+    SecurityManager,
 };
+use async_trait::async_trait;
+use futures::{prelude::*, stream::BoxStream};
 use grpcio::{EnvBuilder, Environment};
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
-    time::Duration,
+    thread,
 };
-use tikv_client_common::{
-    compat::{stream_fn, ClientFutureExt},
-    security::SecurityManager,
-    BoundRange, Result, Timestamp,
-};
+use tikv_client_common::{kv::codec, Timestamp};
 use tikv_client_pd::Cluster;
 use tikv_client_store::{KvClient, KvConnect, Store, TikvConnect};
 
 const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";
 
-// The PdClient handles all the encoding stuff.
-//
-// Raw APIs does not require encoding/decoding at all.
-// All keys in all places (client, PD, TiKV) are in the same encoding (here called "raw format").
-//
-// Transactional APIs are a bit complicated.
-// We need encode and decode keys when we communicate with PD, but not with TiKV.
-// We encode keys before sending requests to PD, and decode keys in the response from PD.
-// That's all we need to do with encoding.
-//
-//  client -encoded-> PD, PD -encoded-> client
-//  client -raw-> TiKV, TiKV -raw-> client
-//
-// The reason for the behavior is that in transaction mode, TiKV encode keys for MVCC.
-// In raw mode, TiKV doesn't encode them.
-// TiKV tells PD using its internal representation, whatever the encoding is.
-// So if we use transactional APIs, keys in PD are encoded and PD does not know about the encoding stuff.
-//
+/// The PdClient handles all the encoding stuff.
+///
+/// Raw APIs does not require encoding/decoding at all.
+/// All keys in all places (client, PD, TiKV) are in the same encoding (here called "raw format").
+///
+/// Transactional APIs are a bit complicated.
+/// We need encode and decode keys when we communicate with PD, but not with TiKV.
+/// We encode keys before sending requests to PD, and decode keys in the response from PD.
+/// That's all we need to do with encoding.
+///
+///  client -encoded-> PD, PD -encoded-> client
+///  client -raw-> TiKV, TiKV -raw-> client
+///
+/// The reason for the behavior is that in transaction mode, TiKV encode keys for MVCC.
+/// In raw mode, TiKV doesn't encode them.
+/// TiKV tells PD using its internal representation, whatever the encoding is.
+/// So if we use transactional APIs, keys in PD are encoded and PD does not know about the encoding stuff.
+#[async_trait]
 pub trait PdClient: Send + Sync + 'static {
     type KvClient: KvClient + Send + Sync + 'static;
 
-    // In transactional API, `region` is decoded (keys in raw format).
-    fn map_region_to_store(
-        self: Arc<Self>,
-        region: Region,
-    ) -> BoxFuture<'static, Result<Store<Self::KvClient>>>;
+    /// In transactional API, `region` is decoded (keys in raw format).
+    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store<Self::KvClient>>;
 
-    // In transactional API, the key and returned region are both decoded (keys in raw format).
-    fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>>;
+    /// In transactional API, the key and returned region are both decoded (keys in raw format).
+    async fn region_for_key(&self, key: &Key) -> Result<Region>;
 
-    // In transactional API, the returned region is decoded (keys in raw format)
-    fn region_for_id(&self, id: RegionId) -> BoxFuture<'static, Result<Region>>;
+    /// In transactional API, the returned region is decoded (keys in raw format)
+    async fn region_for_id(&self, id: RegionId) -> Result<Region>;
 
-    fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>>;
+    async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp>;
 
-    fn update_safepoint(self: Arc<Self>, safepoint: u64) -> BoxFuture<'static, Result<bool>>;
+    async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
 
-    // In transactional API, `key` is in raw format
-    fn store_for_key(
-        self: Arc<Self>,
-        key: &Key,
-    ) -> BoxFuture<'static, Result<Store<Self::KvClient>>> {
-        self.region_for_key(key)
-            .and_then(move |region| self.map_region_to_store(region))
-            .boxed()
+    /// In transactional API, `key` is in raw format
+    async fn store_for_key(self: Arc<Self>, key: Key) -> Result<Store<Self::KvClient>> {
+        let region = self.region_for_key(&key).await?;
+        self.map_region_to_store(region).await
     }
 
-    fn store_for_id(
-        self: Arc<Self>,
-        id: RegionId,
-    ) -> BoxFuture<'static, Result<Store<Self::KvClient>>> {
-        self.region_for_id(id)
-            .and_then(move |region| self.map_region_to_store(region).boxed())
-            .boxed()
+    async fn store_for_id(self: Arc<Self>, id: RegionId) -> Result<Store<Self::KvClient>> {
+        let region = self.region_for_id(id).await?;
+        self.map_region_to_store(region).await
     }
 
     fn group_keys_by_region<K: AsRef<Key> + Send + Sync + 'static>(
@@ -86,8 +70,10 @@ pub trait PdClient: Send + Sync + 'static {
     ) -> BoxStream<'static, Result<(RegionId, Vec<K>)>> {
         let keys = keys.peekable();
         stream_fn(keys, move |mut keys| {
-            if let Some(key) = keys.next() {
-                Either::Left(self.region_for_key(key.as_ref()).map_ok(move |region| {
+            let this = self.clone();
+            async move {
+                if let Some(key) = keys.next() {
+                    let region = this.region_for_key(key.as_ref()).await?;
                     let id = region.id();
                     let mut grouped = vec![key];
                     while let Some(key) = keys.peek() {
@@ -96,60 +82,63 @@ pub trait PdClient: Send + Sync + 'static {
                         }
                         grouped.push(keys.next().unwrap());
                     }
-                    Some((keys, (id, grouped)))
-                }))
-            } else {
-                Either::Right(ready(Ok(None)))
+                    Ok(Some((keys, (id, grouped))))
+                } else {
+                    Ok(None)
+                }
             }
         })
         .boxed()
     }
 
-    // Returns a Stream which iterates over the contexts for each region covered by range.
+    /// Returns a Stream which iterates over the contexts for each region covered by range.
     fn stores_for_range(
         self: Arc<Self>,
         range: BoundRange,
     ) -> BoxStream<'static, Result<Store<Self::KvClient>>> {
         let (start_key, end_key) = range.into_keys();
         stream_fn(Some(start_key), move |start_key| {
-            let start_key = match start_key {
-                None => return Either::Right(ready(Ok(None))),
-                Some(sk) => sk,
-            };
             let end_key = end_key.clone();
             let this = self.clone();
-            Either::Left(self.region_for_key(&start_key).and_then(move |region| {
+            async move {
+                let start_key = match start_key {
+                    None => return Ok(None),
+                    Some(sk) => sk,
+                };
+
+                let region = this.region_for_key(&start_key).await?;
                 let region_end = region.end_key();
-                this.map_region_to_store(region).map_ok(move |store| {
-                    if end_key
-                        .map(|x| x <= region_end && !x.is_empty())
-                        .unwrap_or(false)
-                        || region_end.is_empty()
-                    {
-                        return Some((None, store));
-                    }
-                    Some((Some(region_end), store))
-                })
-            }))
+                let store = this.map_region_to_store(region).await?;
+                if end_key
+                    .map(|x| x <= region_end && !x.is_empty())
+                    .unwrap_or(false)
+                    || region_end.is_empty()
+                {
+                    return Ok(Some((None, store)));
+                }
+                Ok(Some((Some(region_end), store)))
+            }
         })
         .boxed()
     }
 
-    // Returns a Stream which iterates over the contexts for ranges in the same region.
+    /// Returns a Stream which iterates over the contexts for ranges in the same region.
     fn group_ranges_by_region(
         self: Arc<Self>,
         mut ranges: Vec<BoundRange>,
     ) -> BoxStream<'static, Result<(RegionId, Vec<BoundRange>)>> {
         ranges.reverse();
         stream_fn(Some(ranges), move |ranges| {
-            let mut ranges = match ranges {
-                None => return Either::Right(ready(Ok(None))),
-                Some(r) => r,
-            };
+            let this = self.clone();
+            async move {
+                let mut ranges = match ranges {
+                    None => return Ok(None),
+                    Some(r) => r,
+                };
 
-            if let Some(range) = ranges.pop() {
-                let (start_key, end_key) = range.clone().into_keys();
-                Either::Left(self.region_for_key(&start_key).map_ok(move |region| {
+                if let Some(range) = ranges.pop() {
+                    let (start_key, end_key) = range.clone().into_keys();
+                    let region = this.region_for_key(&start_key).await?;
                     let id = region.id();
                     let region_start = region.start_key();
                     let region_end = region.end_key();
@@ -162,7 +151,7 @@ pub trait PdClient: Send + Sync + 'static {
                     {
                         grouped.push((start_key, region_end.clone()).into());
                         ranges.push((region_end, end_key).into());
-                        return Some((Some(ranges), (id, grouped)));
+                        return Ok(Some((Some(ranges), (id, grouped))));
                     }
                     grouped.push(range);
 
@@ -180,14 +169,14 @@ pub trait PdClient: Send + Sync + 'static {
                         {
                             grouped.push((start_key, region_end.clone()).into());
                             ranges.push((region_end, end_key).into());
-                            return Some((Some(ranges), (id, grouped)));
+                            return Ok(Some((Some(ranges), (id, grouped))));
                         }
                         grouped.push(range);
                     }
-                    Some((Some(ranges), (id, grouped)))
-                }))
-            } else {
-                Either::Right(ready(Ok(None)))
+                    Ok(Some((Some(ranges), (id, grouped))))
+                } else {
+                    Ok(None)
+                }
             }
         })
         .boxed()
@@ -208,58 +197,42 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     pd: Arc<RetryClient<Cl>>,
     kv_connect: KvC,
     kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
-    timeout: Duration,
     enable_codec: bool,
 }
 
+#[async_trait]
 impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     type KvClient = KvC::KvClient;
 
-    fn map_region_to_store(
-        self: Arc<Self>,
-        region: Region,
-    ) -> BoxFuture<'static, Result<Store<KvC::KvClient>>> {
-        let timeout = self.timeout;
-        let store_id_res = region.get_store_id();
-        match store_id_res {
-            Err(e) => future::err(e).boxed(),
-            Ok(store_id) => self
-                .pd
-                .clone()
-                .get_store(store_id)
-                .ok_and_then(move |store| self.kv_client(store.get_address()))
-                .map_ok(move |kv_client| Store::new(region, kv_client, timeout))
-                .boxed(),
-        }
+    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store<KvC::KvClient>> {
+        let store_id = region.get_store_id()?;
+        let store = self.pd.clone().get_store(store_id).await?;
+        let kv_client = self.kv_client(store.get_address())?;
+        Ok(Store::new(region, kv_client))
     }
 
-    fn region_for_key(&self, key: &Key) -> BoxFuture<'static, Result<Region>> {
+    async fn region_for_key(&self, key: &Key) -> Result<Region> {
         let enable_codec = self.enable_codec;
         let key = if enable_codec {
             key.to_encoded().into()
         } else {
             key.clone().into()
         };
-        let region = self.pd.clone().get_region(key).boxed();
-        region
-            .ok_and_then(move |region| Self::decode_region(region, enable_codec))
-            .boxed()
+        let region = self.pd.clone().get_region(key).await?;
+        Self::decode_region(region, enable_codec)
     }
 
-    fn region_for_id(&self, id: RegionId) -> BoxFuture<'static, Result<Region>> {
-        let region = self.pd.clone().get_region_by_id(id).boxed();
-        let enable_codec = self.enable_codec;
-        region
-            .ok_and_then(move |region| Self::decode_region(region, enable_codec))
-            .boxed()
+    async fn region_for_id(&self, id: RegionId) -> Result<Region> {
+        let region = self.pd.clone().get_region_by_id(id).await?;
+        Self::decode_region(region, self.enable_codec)
     }
 
-    fn get_timestamp(self: Arc<Self>) -> BoxFuture<'static, Result<Timestamp>> {
-        self.pd.clone().get_timestamp().boxed()
+    async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
+        self.pd.clone().get_timestamp().await
     }
 
-    fn update_safepoint(self: Arc<Self>, safepoint: u64) -> BoxFuture<'static, Result<bool>> {
-        self.pd.clone().update_safepoint(safepoint).boxed()
+    async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
+        self.pd.clone().update_safepoint(safepoint).await
     }
 }
 
@@ -267,7 +240,7 @@ impl PdRpcClient<TikvConnect, Cluster> {
     pub async fn connect(config: &Config, enable_codec: bool) -> Result<PdRpcClient> {
         PdRpcClient::new(
             config,
-            |env, security_mgr| TikvConnect::new(env, security_mgr),
+            |env, security_mgr| TikvConnect::new(env, security_mgr, config.timeout),
             |env, security_mgr| {
                 RetryClient::connect(env, &config.pd_endpoints, security_mgr, config.timeout)
             },
@@ -275,6 +248,15 @@ impl PdRpcClient<TikvConnect, Cluster> {
         )
         .await
     }
+}
+
+/// make a thread name with additional tag inheriting from current thread.
+fn thread_name(prefix: &str) -> String {
+    thread::current()
+        .name()
+        .and_then(|name| name.split("::").skip(1).last())
+        .map(|tag| format!("{}::{}", prefix, tag))
+        .unwrap_or_else(|| prefix.to_owned())
 }
 
 impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
@@ -292,7 +274,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         let env = Arc::new(
             EnvBuilder::new()
                 .cq_count(CQ_COUNT)
-                .name_prefix(thread_name!(CLIENT_PREFIX))
+                .name_prefix(thread_name(CLIENT_PREFIX))
                 .build(),
         );
         let security_mgr = Arc::new(
@@ -311,7 +293,6 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             pd,
             kv_client_cache,
             kv_connect: kv_connect(env, security_mgr),
-            timeout: config.timeout,
             enable_codec,
         })
     }

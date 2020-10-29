@@ -1,6 +1,6 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{timestamp::TimestampOracle, PdResponse};
+use crate::{timestamp::TimestampOracle, Error, Result, SecurityManager};
 use async_trait::async_trait;
 use grpcio::{CallOption, Environment};
 use kvproto::pdpb::{self, Timestamp};
@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tikv_client_common::{internal_err, security::SecurityManager, Error, Result};
+use tikv_client_common::internal_err;
 
 /// A PD cluster.
 pub struct Cluster {
@@ -330,5 +330,33 @@ impl PdMessage for pdpb::UpdateGcSafePointRequest {
             .update_gc_safe_point_async_opt(self, opt)
             .unwrap()
             .await
+    }
+}
+
+trait PdResponse {
+    fn header(&self) -> &pdpb::ResponseHeader;
+}
+
+impl PdResponse for pdpb::GetStoreResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.get_header()
+    }
+}
+
+impl PdResponse for pdpb::GetRegionResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.get_header()
+    }
+}
+
+impl PdResponse for pdpb::GetAllStoresResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.get_header()
+    }
+}
+
+impl PdResponse for pdpb::UpdateGcSafePointResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.get_header()
     }
 }

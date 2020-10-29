@@ -3,12 +3,11 @@ name = "tikv-client-store"
 version = "0.0.0"
 edition = "2018"
 
-
 [dependencies]
-futures = { version = "0.3.5", features = ["compat", "async-await", "thread-pool"] }
-kvproto = { git = "https://github.com/pingcap/kvproto.git", features = ["prost-codec"], default-features = false }
+async-trait = "0.1"
 derive-new = "0.5"
+futures = { version = "0.3.5", features = ["compat", "async-await", "thread-pool"] }
 grpcio = { version = "0.6", features = ["secure", "prost-codec"], default-features = false }
+kvproto = { git = "https://github.com/pingcap/kvproto.git", features = ["prost-codec"], default-features = false }
 log = "0.4"
-
 tikv-client-common = { path = "../tikv-client-common" }

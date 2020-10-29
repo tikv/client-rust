@@ -1,7 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use crate::Error;
 use kvproto::kvrpcpb;
-use tikv_client_common::Error;
 
 pub trait HasRegionError {
     fn region_error(&mut self) -> Option<Error>;

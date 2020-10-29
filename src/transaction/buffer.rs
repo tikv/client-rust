@@ -1,12 +1,12 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use crate::{BoundRange, Key, KvPair, Result, Value};
 use kvproto::kvrpcpb;
 use std::{
     collections::{BTreeMap, HashMap},
     future::Future,
     sync::Mutex,
 };
-use tikv_client_common::{BoundRange, Key, KvPair, Result, Value};
 
 /// A caching layer which buffers reads and writes in a transaction.
 #[derive(Default)]

@@ -77,6 +77,8 @@
 pub mod transaction;
 
 mod backoff;
+mod compat;
+mod config;
 mod pd;
 pub mod raw;
 mod request;
@@ -88,17 +90,16 @@ mod proptests;
 
 #[macro_use]
 extern crate log;
-#[macro_use]
-extern crate tikv_client_common;
 
 #[doc(inline)]
 pub use crate::raw::{Client as RawClient, ColumnFamily};
 #[doc(inline)]
 pub use crate::transaction::{Client as TransactionClient, Snapshot, Transaction};
-
+pub use config::Config;
 #[doc(inline)]
 pub use tikv_client_common::{
-    BoundRange, Config, Error, ErrorKind, Key, KvPair, Result, Timestamp, ToOwnedRange, Value,
+    security::SecurityManager, BoundRange, Error, ErrorKind, Key, KvPair, Result, Timestamp,
+    ToOwnedRange, Value,
 };
 #[doc(inline)]
 pub use tikv_client_store::region::{Region, RegionId, RegionVerId, StoreId};

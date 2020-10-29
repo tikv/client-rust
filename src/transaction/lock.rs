@@ -2,14 +2,14 @@ use crate::{
     pd::PdClient,
     request::{KvRequest, OPTIMISTIC_BACKOFF},
     transaction::requests,
-    RegionVerId,
+    ErrorKind, Key, RegionVerId, Result,
 };
 use kvproto::{kvrpcpb, pdpb::Timestamp};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-use tikv_client_common::{ErrorKind, Key, Result, TimestampExt};
+use tikv_client_common::TimestampExt;
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 
