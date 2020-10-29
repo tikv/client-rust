@@ -1,5 +1,4 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
-#![feature(type_alias_impl_trait)]
 
 #[macro_use]
 extern crate log;

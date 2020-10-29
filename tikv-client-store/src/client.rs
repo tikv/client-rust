@@ -28,9 +28,9 @@ pub struct TikvConnect {
 }
 
 impl KvConnect for TikvConnect {
-    type KvClient = impl KvClient + Clone + Send + Sync + 'static;
+    type KvClient = KvRpcClient;
 
-    fn connect(&self, address: &str) -> Result<Self::KvClient> {
+    fn connect(&self, address: &str) -> Result<KvRpcClient> {
         self.security_mgr
             .connect(self.env.clone(), address, TikvClient::new)
             .map(|c| KvRpcClient::new(Arc::new(c), self.timeout))
@@ -45,7 +45,7 @@ pub trait KvClient {
 /// This client handles requests for a single TiKV node. It converts the data
 /// types and abstractions of the client program into the grpc data types.
 #[derive(new, Clone)]
-struct KvRpcClient {
+pub struct KvRpcClient {
     rpc_client: Arc<TikvClient>,
     timeout: Duration,
 }
