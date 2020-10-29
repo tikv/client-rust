@@ -8,9 +8,10 @@ use std::any::Any;
 use tikv_client_common::stats::tikv_stats;
 
 #[async_trait]
-pub trait Request: Sync + Send + 'static {
+pub trait Request: Any + Sync + Send + 'static {
     async fn dispatch(&self, client: &TikvClient, options: CallOption) -> Result<Box<dyn Any>>;
     fn stats(&self) -> RequestStats;
+    fn as_any(&self) -> &dyn Any;
 }
 
 macro_rules! impl_request {
@@ -31,6 +32,10 @@ macro_rules! impl_request {
 
             fn stats(&self) -> RequestStats {
                 tikv_stats($label)
+            }
+
+            fn as_any(&self) -> &dyn Any {
+                self
             }
         }
     };

@@ -327,13 +327,13 @@ pub mod test {
         let kv1 = client.kv_client(&addr1).unwrap();
         let kv2 = client.kv_client(&addr2).unwrap();
         let kv3 = client.kv_client(&addr2).unwrap();
-        assert!(kv1 != kv2);
-        assert_eq!(kv2, kv3);
+        assert!(kv1.addr != kv2.addr);
+        assert_eq!(kv2.addr, kv3.addr);
     }
 
     #[test]
     fn test_group_keys_by_region() {
-        let client = MockPdClient;
+        let client = MockPdClient::default();
 
         // FIXME This only works if the keys are in order of regions. Not sure if
         // that is a reasonable constraint.
@@ -367,7 +367,7 @@ pub mod test {
 
     #[test]
     fn test_stores_for_range() {
-        let client = Arc::new(MockPdClient);
+        let client = Arc::new(MockPdClient::default());
         let k1: Key = vec![1].into();
         let k2: Key = vec![5, 2].into();
         let k3: Key = vec![11, 4].into();
@@ -385,7 +385,7 @@ pub mod test {
 
     #[test]
     fn test_group_ranges_by_region() {
-        let client = Arc::new(MockPdClient);
+        let client = Arc::new(MockPdClient::default());
         let k1: Key = vec![1].into();
         let k2: Key = vec![5, 2].into();
         let k3: Key = vec![11, 4].into();

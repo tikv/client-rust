@@ -473,36 +473,33 @@ impl HasLocks for kvrpcpb::RawDeleteRangeResponse {}
 #[cfg(test)]
 mod test {
     use super::*;
-
-    use crate::{mock::MockPdClient, request::DispatchHook};
-
-    use crate::request::OPTIMISTIC_BACKOFF;
-    use futures::{
-        executor,
-        future::{ready, BoxFuture},
+    use crate::{
+        mock::{MockKvClient, MockPdClient},
+        request::OPTIMISTIC_BACKOFF,
     };
+    use futures::executor;
     use kvproto::kvrpcpb;
-
-    impl DispatchHook for kvrpcpb::RawScanRequest {
-        fn dispatch_hook(&self) -> Option<BoxFuture<'static, Result<kvrpcpb::RawScanResponse>>> {
-            assert!(self.key_only);
-            assert_eq!(self.limit, 10);
-
-            let mut resp = kvrpcpb::RawScanResponse::default();
-            for i in self.start_key[0]..self.end_key[0] {
-                let mut kv = kvrpcpb::KvPair::default();
-                kv.key = vec![i];
-                resp.kvs.push(kv);
-            }
-
-            Some(Box::pin(ready(Ok(resp))))
-        }
-    }
+    use std::any::Any;
 
     #[test]
     #[ignore]
     fn test_raw_scan() {
-        let client = Arc::new(MockPdClient);
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |req: &dyn Any| {
+                let req: &kvrpcpb::RawScanRequest = req.downcast_ref().unwrap();
+                assert!(req.key_only);
+                assert_eq!(req.limit, 10);
+
+                let mut resp = kvrpcpb::RawScanResponse::default();
+                for i in req.start_key[0]..req.end_key[0] {
+                    let mut kv = kvrpcpb::KvPair::default();
+                    kv.key = vec![i];
+                    resp.kvs.push(kv);
+                }
+
+                Ok(Box::new(resp) as Box<dyn Any>)
+            },
+        )));
 
         let start: Key = vec![1].into();
         let end: Key = vec![50].into();

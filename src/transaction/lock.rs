@@ -123,15 +123,27 @@ pub trait HasLocks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mock::MockPdClient;
-
+    use crate::mock::{MockKvClient, MockPdClient};
     use futures::executor;
+    use kvproto::errorpb;
+    use std::any::Any;
 
     #[test]
     fn test_resolve_lock_with_retry() {
         // Test resolve lock within retry limit
         fail::cfg("region-error", "9*return").unwrap();
-        let client = Arc::new(MockPdClient);
+
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |_: &dyn Any| {
+                fail::fail_point!("region-error", |_| {
+                    let mut resp = kvrpcpb::ResolveLockResponse::default();
+                    resp.region_error = Some(errorpb::Error::default());
+                    Ok(Box::new(resp) as Box<dyn Any>)
+                });
+                Ok(Box::new(kvrpcpb::ResolveLockResponse::default()) as Box<dyn Any>)
+            },
+        )));
+
         let key: Key = vec![1].into();
         let region1 = MockPdClient::region1();
         let resolved_region =
@@ -140,7 +152,6 @@ mod tests {
 
         // Test resolve lock over retry limit
         fail::cfg("region-error", "10*return").unwrap();
-        let client = Arc::new(MockPdClient);
         let key: Key = vec![100].into();
         executor::block_on(resolve_lock_with_retry(key, 3, 4, client.clone()))
             .expect_err("should return error");
