@@ -66,8 +66,9 @@ pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
                 let request = self.make_rpc_request(key_data, &store);
                 async move {
                     let request = request?;
+                    let stats = tikv_stats(request.label());
                     let response = store.dispatch::<_, Self::RpcResponse>(&request).await;
-                    let response = tikv_stats(request.label()).done(response)?;
+                    let response = stats.done(response)?;
                     Ok((request, *response))
                 }
             })

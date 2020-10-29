@@ -51,11 +51,11 @@ impl<Cl> RetryClient<Cl> {
 
 macro_rules! retry {
     ($self: ident, $tag: literal, |$cluster: ident| $call: expr) => {{
-        let context = pd_stats($tag);
+        let stats = pd_stats($tag);
         let mut last_err = Ok(());
         for _ in 0..LEADER_CHANGE_RETRY {
             let $cluster = &$self.cluster.read().await.0;
-            match context.done($call.await) {
+            match stats.done($call.await) {
                 Ok(r) => return Ok(r),
                 Err(e) => last_err = Err(e),
             }
