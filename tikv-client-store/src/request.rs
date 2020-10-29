@@ -12,6 +12,7 @@ pub trait Request: Any + Sync + Send + 'static {
     async fn dispatch(&self, client: &TikvClient, options: CallOption) -> Result<Box<dyn Any>>;
     fn stats(&self) -> RequestStats;
     fn as_any(&self) -> &dyn Any;
+    fn set_context(&mut self, context: kvrpcpb::Context);
 }
 
 macro_rules! impl_request {
@@ -36,6 +37,10 @@ macro_rules! impl_request {
 
             fn as_any(&self) -> &dyn Any {
                 self
+            }
+
+            fn set_context(&mut self, context: kvrpcpb::Context) {
+                self.set_context(context);
             }
         }
     };

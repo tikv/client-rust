@@ -7,7 +7,6 @@ use crate::{
     BoundRange, Error, ErrorKind, Key, Result,
 };
 use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
-use kvproto::kvrpcpb;
 use std::{
     cmp::{max, min},
     sync::Arc,
@@ -164,7 +163,7 @@ pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
 
     fn request_from_store(&self, store: &Store) -> Result<Self>
     where
-        Self: Default + KvRpcRequest,
+        Self: Default,
     {
         let mut request = Self::default();
         request.set_context(store.region.context()?);
@@ -255,41 +254,6 @@ pub fn store_stream_for_ranges<PdC: PdClient>(
         .boxed()
 }
 
-pub trait KvRpcRequest: Default {
-    fn set_context(&mut self, context: kvrpcpb::Context);
-}
-
-macro_rules! impl_kv_rpc_request {
-    ($name: ident) => {
-        impl KvRpcRequest for kvrpcpb::$name {
-            fn set_context(&mut self, context: kvrpcpb::Context) {
-                self.set_context(context);
-            }
-        }
-    };
-}
-
-impl_kv_rpc_request!(RawGetRequest);
-impl_kv_rpc_request!(RawBatchGetRequest);
-impl_kv_rpc_request!(RawPutRequest);
-impl_kv_rpc_request!(RawBatchPutRequest);
-impl_kv_rpc_request!(RawDeleteRequest);
-impl_kv_rpc_request!(RawBatchDeleteRequest);
-impl_kv_rpc_request!(RawScanRequest);
-impl_kv_rpc_request!(RawBatchScanRequest);
-impl_kv_rpc_request!(RawDeleteRangeRequest);
-impl_kv_rpc_request!(GetRequest);
-impl_kv_rpc_request!(ScanRequest);
-impl_kv_rpc_request!(PrewriteRequest);
-impl_kv_rpc_request!(CommitRequest);
-impl_kv_rpc_request!(CleanupRequest);
-impl_kv_rpc_request!(BatchGetRequest);
-impl_kv_rpc_request!(BatchRollbackRequest);
-impl_kv_rpc_request!(PessimisticRollbackRequest);
-impl_kv_rpc_request!(ResolveLockRequest);
-impl_kv_rpc_request!(ScanLockRequest);
-impl_kv_rpc_request!(PessimisticLockRequest);
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -297,7 +261,7 @@ mod test {
     use async_trait::async_trait;
     use futures::executor;
     use grpcio::CallOption;
-    use kvproto::tikvpb::TikvClient;
+    use kvproto::{kvrpcpb, tikvpb::TikvClient};
     use std::{any::Any, sync::Mutex};
     use tikv_client_common::stats::{tikv_stats, RequestStats};
 
@@ -337,6 +301,10 @@ mod test {
 
             fn as_any(&self) -> &dyn Any {
                 self
+            }
+
+            fn set_context(&mut self, _: kvrpcpb::Context) {
+                unreachable!();
             }
         }
 
