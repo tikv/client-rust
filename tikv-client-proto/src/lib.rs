@@ -4,6 +4,7 @@ use protos::*;
 pub use protos::{coprocessor, errorpb, kvrpcpb, metapb, mpp, pdpb, raft_serverpb, tikvpb};
 
 #[allow(dead_code)]
+#[allow(clippy::all)]
 mod protos {
     include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
 }
