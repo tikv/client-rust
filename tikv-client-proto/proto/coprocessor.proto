@@ -1,0 +1,75 @@
+syntax = "proto3";
+package coprocessor;
+
+import "errorpb.proto";
+import "kvrpcpb.proto";
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+import "metapb.proto";
+import "span.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+option java_package = "org.tikv.kvproto";
+
+
+// [start, end)
+message KeyRange {
+    bytes start = 1;
+    bytes end = 2;
+}
+
+message Request {
+    kvrpcpb.Context context = 1;
+    int64 tp = 2;
+    bytes data = 3;
+    uint64 start_ts = 7;
+    repeated KeyRange ranges = 4;
+
+    // If cache is enabled, TiKV returns cache hit instead of data if
+    // its last version matches this `cache_if_match_version`.
+    bool is_cache_enabled = 5;
+    uint64 cache_if_match_version = 6;
+    // Any schema-ful storage to validate schema correctness if necessary.
+    int64 schema_ver = 8;
+    bool is_trace_enabled = 9;
+}
+
+message Response {
+    bytes data = 1 [(gogoproto.customtype) = "github.com/pingcap/kvproto/pkg/sharedbytes.SharedBytes", (gogoproto.nullable) = false];
+    errorpb.Error region_error = 2;
+    kvrpcpb.LockInfo locked = 3;
+    string other_error = 4;
+    KeyRange range = 5;
+    kvrpcpb.ExecDetails exec_details = 6;
+
+    bool is_cache_hit = 7;
+    uint64 cache_last_version = 8;
+    bool can_be_cached = 9;
+    repeated span.SpanSet spans = 10;
+}
+
+message RegionInfo {
+        uint64 region_id = 1;
+        metapb.RegionEpoch region_epoch = 2;
+        repeated KeyRange ranges = 3;
+}
+
+message BatchRequest {
+        kvrpcpb.Context context = 1;
+        int64 tp = 2;
+        bytes data = 3;
+        repeated RegionInfo regions = 4;
+        uint64 start_ts = 5;
+        // Any schema-ful storage to validate schema correctness if necessary.
+        int64 schema_ver = 6;
+}
+
+message BatchResponse {
+        bytes data = 1 [(gogoproto.customtype) = "github.com/pingcap/kvproto/pkg/sharedbytes.SharedBytes", (gogoproto.nullable) = false];
+        string other_error = 2;
+        kvrpcpb.ExecDetails exec_details = 3;
+}

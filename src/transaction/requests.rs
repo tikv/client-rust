@@ -9,9 +9,9 @@ use crate::{
 };
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
-use kvproto::{kvrpcpb, pdpb::Timestamp};
 use std::{iter, mem, sync::Arc};
 use tikv_client_common::TimestampExt;
+use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 use tikv_client_store::Store;
 
 #[async_trait]

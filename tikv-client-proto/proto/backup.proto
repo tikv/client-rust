@@ -1,0 +1,192 @@
+syntax = "proto3";
+package backup;
+
+import "kvrpcpb.proto";
+import "errorpb.proto";
+
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option (gogoproto.sizer_all) = true;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+option java_package = "org.tikv.kvproto";
+
+// The message save the metadata of a backup.
+message BackupMeta {
+    // ID and version of backuped cluster.
+    uint64 cluster_id = 1;
+    string cluster_version = 2;
+
+    // path field is no longer used.
+    reserved 3; reserved "path";
+    // A set of files that compose a backup.
+    repeated File files = 4;
+
+    // A pair of timestamp specifies a time range of a backup.
+    // For full backup, the start_version equals to the end_version,
+    // it means point in time.
+    // For incremental backup, the time range is specified as
+    // (start_version, end_version].
+    uint64 start_version = 5;
+    uint64 end_version = 6;
+
+    // Additional metadata describes database and table info.
+    repeated Schema schemas = 7;
+
+    // If in raw kv mode, `start_versions`, `end_versions` and `schemas` will be ignored, and the
+    // backup data's range is represented by raw_ranges.
+    bool is_raw_kv = 8;
+    repeated RawRange raw_ranges = 9;
+
+    // In incremental backup, DDLs which are completed in (lastBackupTS, backupTS] will be stored here.
+    bytes ddls = 10;
+}
+
+message File {
+    string name = 1;
+    bytes sha256 = 2;
+
+    bytes start_key = 3;
+    bytes end_key = 4;
+    uint64 start_version = 5;
+    uint64 end_version = 6;
+
+    uint64 crc64xor = 7;
+    uint64 total_kvs = 8;
+    uint64 total_bytes = 9;
+
+    string cf = 10;
+
+    uint64 size = 11;
+}
+
+message Schema {
+    bytes db = 1;
+    bytes table = 2;
+
+    uint64 crc64xor = 3;
+    uint64 total_kvs = 4;
+    uint64 total_bytes = 5;
+
+    uint32 tiflash_replicas = 6;
+}
+
+message RawRange {
+    bytes start_key = 1;
+    bytes end_key = 2;
+    string cf = 3;
+}
+
+message ClusterIDError {
+    uint64 current = 1;
+    uint64 request = 2;
+}
+
+message Error {
+    string msg = 1;
+    oneof detail {
+        ClusterIDError cluster_id_error = 3;
+        kvrpcpb.KeyError kv_error = 4;
+        errorpb.Error region_error = 5;
+    }
+}
+
+// sst files compression algorithm
+enum CompressionType {
+    UNKNOWN = 0;
+    LZ4 = 1;
+    SNAPPY = 2;
+    ZSTD = 3;
+}
+
+message BackupRequest {
+    uint64 cluster_id = 1;
+
+    bytes start_key = 2;
+    bytes end_key = 3;
+    uint64 start_version = 4;
+    uint64 end_version = 5;
+
+    // path field is deprecated, use storage_backend instead
+    reserved 6; reserved "path";
+
+    // The I/O rate limit for backup request.
+    uint64 rate_limit = 7;
+    // The concurrency for executing the backup request in every tikv node.
+    uint32 concurrency = 8;
+
+    StorageBackend storage_backend = 9;
+
+    // If raw kv mode is enabled, `start_version` and `end_version` will be ignored, and `cf`
+    // specifies which cf to backup.
+    bool is_raw_kv = 10;
+    string cf = 11;
+    // algorithm used for compress sst files
+    CompressionType compression_type = 12;
+    // sst compression level, some algorithms support negative compression levels
+    int32 compression_level = 13;
+}
+
+message StorageBackend {
+    oneof backend {
+        Noop noop = 1;
+        Local local = 2;
+        S3 s3 = 3;
+        GCS gcs = 4;
+    }
+}
+
+// Noop storage backend saves files into void.
+message Noop {}
+
+// Local storage backend saves files into local disk
+message Local {
+    string path = 1;
+}
+
+// S3 storage backend saves files into S3 compatible storages
+// For non-aws providers, endpoint must be provided
+message S3 {
+    string endpoint = 1;
+    string region = 2;
+    string bucket = 3;
+    string prefix = 4;
+    string storage_class = 5;
+    // server side encryption
+    string sse = 6;
+    string acl = 7;
+    string access_key = 8;
+    string secret_access_key = 9;
+    bool   force_path_style = 10;
+    string sse_kms_key_id = 11;
+}
+
+// GCS storage backend saves files into google cloud storage.
+message GCS {
+    string endpoint = 1;
+    string bucket = 2;
+    string prefix = 3;
+    string storage_class = 4;
+    // If not empty, applies a predefined set of access controls.
+    // See https://cloud.google.com/storage/docs/access-control/lists#predefined-acl
+    // for valid values.
+    string predefined_acl = 5;
+    // Service Account Credentials JSON blob
+    // You can get one from https://console.cloud.google.com/apis/credentials, and
+    // copy the content, set it as string here.
+    string credentials_blob = 6;
+}
+
+message BackupResponse {
+    Error error = 1;
+    bytes start_key = 2;
+    bytes end_key = 3;
+    repeated File files = 4;
+}
+
+service Backup {
+    rpc backup(BackupRequest) returns (stream BackupResponse) {}
+}

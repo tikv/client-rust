@@ -1,6 +1,6 @@
 use crate::{Error, Key, Result};
 use derive_new::new;
-use kvproto::{kvrpcpb, metapb};
+use tikv_client_proto::{kvrpcpb, metapb};
 
 pub type RegionId = u64;
 pub type StoreId = u64;

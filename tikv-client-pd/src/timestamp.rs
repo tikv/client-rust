@@ -20,8 +20,8 @@ use futures::{
     task::{AtomicWaker, Context, Poll},
 };
 use grpcio::WriteFlags;
-use kvproto::pdpb::*;
 use std::{cell::RefCell, collections::VecDeque, pin::Pin, rc::Rc, thread};
+use tikv_client_proto::pdpb::*;
 
 /// It is an empirical value.
 const MAX_BATCH_SIZE: usize = 64;
@@ -152,8 +152,12 @@ impl<'a> Stream for TsoRequestStream<'a> {
             let req = TsoRequest {
                 header: Some(RequestHeader {
                     cluster_id: self.cluster_id,
+                    // TODO
+                    sender_id: 0,
                 }),
                 count: requests.len() as u32,
+                // TODO
+                dc_location: String::new(),
             };
 
             let request_group = RequestGroup {

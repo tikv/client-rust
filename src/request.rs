@@ -264,8 +264,8 @@ mod test {
     use crate::mock::{MockKvClient, MockPdClient};
     use futures::executor;
     use grpcio::CallOption;
-    use kvproto::{kvrpcpb, tikvpb::TikvClient};
     use std::{any::Any, sync::Mutex};
+    use tikv_client_proto::{kvrpcpb, tikvpb::TikvClient};
 
     #[test]
     fn test_region_retry() {

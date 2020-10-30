@@ -1,0 +1,106 @@
+syntax = "proto3";
+package errorpb;
+
+import "metapb.proto";
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+option java_package = "org.tikv.kvproto";
+
+// NotLeader is the error variant that tells a request be handle by raft leader 
+// is sent to raft follower or learner.
+message NotLeader {
+    // The requested region ID
+    uint64 region_id = 1;
+    // Region leader of the requested region
+    metapb.Peer leader = 2;
+}
+
+// StoreNotMatch is the error variant that tells the request is sent to wrong store. 
+// (i.e. inconsistency of the store ID that request shows and the real store ID of this server.)
+message StoreNotMatch {
+    // Store id in request
+    uint64 request_store_id = 1;
+    // Actual store id
+    uint64 actual_store_id = 2;
+}
+
+// RegionNotFound is the error variant that tells there isn't any region in this TiKV
+// matches the requested region ID.
+message RegionNotFound {
+    // The requested region ID
+    uint64 region_id = 1;
+}
+
+// KeyNotInRegion is the error variant that tells the key the request requires isn't present in
+// this region. 
+message KeyNotInRegion {
+    // The requested key
+    bytes key = 1;
+    // The requested region ID
+    uint64 region_id = 2;
+    // Start key of the requested region
+    bytes start_key = 3;
+    // Snd key of the requested region
+    bytes end_key = 4;
+}
+
+// EpochNotMatch is the error variant that tells a region has been updated.
+// (e.g. by splitting / merging, or raft Confchange.)
+// Hence, a command is based on a stale version of a region.
+message EpochNotMatch {
+    // Available regions that may be siblings of the requested one.
+    repeated metapb.Region current_regions = 1;
+}
+
+// ServerIsBusy is the error variant that tells the server is too busy to response.
+message ServerIsBusy {
+    string reason = 1;
+    // The suggested backoff time
+    uint64 backoff_ms = 2;
+}
+
+// StaleCommand is the error variant that tells the command is stale, that is,
+// the current request term is lower than current raft term.
+// This can be retried at most time.
+message StaleCommand {
+}
+
+// RaftEntryTooLarge is the error variant that tells the request is too large to be serialized to a
+// reasonable small raft entry.
+// (i.e. greater than the configured value `raft_entry_max_size` in `raftstore`)
+message RaftEntryTooLarge {
+    // The requested region ID
+    uint64 region_id = 1;
+    // Size of the raft entry
+    uint64 entry_size = 2;
+}
+
+// MaxTimestampNotSynced is the error variant that tells the peer has just become a leader and
+// updating the max timestamp in the concurrency manager from PD TSO is ongoing. In this case,
+// the prewrite of an async commit transaction cannot succeed. The client can backoff and
+// resend the request.
+message MaxTimestampNotSynced {
+}
+
+// Error wraps all region errors, indicates an error encountered by a request.
+message Error {
+    reserved "stale_epoch";
+
+    // The error message
+    string message = 1;
+    NotLeader not_leader = 2;
+    RegionNotFound region_not_found = 3;
+    KeyNotInRegion key_not_in_region = 4;
+    EpochNotMatch epoch_not_match = 5;
+    ServerIsBusy server_is_busy = 6;
+    StaleCommand stale_command = 7;
+    StoreNotMatch store_not_match = 8;
+    RaftEntryTooLarge raft_entry_too_large = 9;
+    MaxTimestampNotSynced max_timestamp_not_synced = 10;
+}

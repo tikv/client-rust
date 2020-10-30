@@ -6,16 +6,16 @@ use crate::{stats::pd_stats, Error, Region, RegionId, Result, SecurityManager, S
 use async_trait::async_trait;
 use futures_timer::Delay;
 use grpcio::Environment;
-use kvproto::{
-    metapb,
-    pdpb::{self, Timestamp},
-};
 use std::{
     fmt,
     sync::Arc,
     time::{Duration, Instant},
 };
 use tikv_client_pd::{Cluster, Connection};
+use tikv_client_proto::{
+    metapb,
+    pdpb::{self, Timestamp},
+};
 use tokio::sync::RwLock;
 
 // FIXME: these numbers and how they are used are all just cargo-culted in, there

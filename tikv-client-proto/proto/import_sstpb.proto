@@ -1,0 +1,210 @@
+syntax = "proto3";
+
+package import_sstpb;
+
+import "metapb.proto";
+import "errorpb.proto";
+import "kvrpcpb.proto";
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+import "backup.proto";
+
+option (gogoproto.sizer_all) = true;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+option java_package = "org.tikv.kvproto";
+
+// ImportSST provides a service to import a generated SST file to a region in TiKV.
+//
+// In order to import an SST file to a region, the user should:
+// 1. Retrieve the meta of the region according to the SST file's range.
+// 2. Upload the SST file to the servers where the region's peers locate in.
+// 3. Issue an ingest request to the region's leader with the SST file's metadata.
+//
+// It's the user's responsibility to make sure that the SST file is uploaded to
+// the servers where the region's peers locate in, before issue the ingest
+// request to the region's leader. However, the region can be scheduled (so the
+// location of the region's peers will be changed) or split/merged (so the range
+// of the region will be changed), after the SST file is uploaded, but before
+// the SST file is ingested. So, the region's epoch is provided in the SST
+// file's metadata, to guarantee that the region's epoch must be the same
+// between the SST file is uploaded and ingested later.
+service ImportSST {
+    // Switch to normal/import mode.
+    rpc SwitchMode(SwitchModeRequest) returns (SwitchModeResponse) {}
+    // Upload an SST file to a server.
+    rpc Upload(stream UploadRequest) returns (UploadResponse) {}
+    // Ingest an uploaded SST file to a region.
+    rpc Ingest(IngestRequest) returns (IngestResponse) {}
+    // Compact the specific range for better performance.
+    rpc Compact(CompactRequest) returns (CompactResponse) {}
+
+    rpc SetDownloadSpeedLimit(SetDownloadSpeedLimitRequest) returns (SetDownloadSpeedLimitResponse) {}
+    // Download an SST file from an external storage, and performs key-rewrite
+    // after downloading.
+    rpc Download(DownloadRequest) returns (DownloadResponse) {}
+
+    // Open a write stream to generate sst files
+    rpc Write(stream WriteRequest) returns (WriteResponse) {}
+}
+
+enum SwitchMode {
+    Normal = 0;
+    Import = 1;
+}
+
+message SwitchModeRequest {
+    SwitchMode mode = 1;
+}
+
+message SwitchModeResponse {
+}
+
+message Range {
+    bytes start = 1;
+    bytes end = 2;
+}
+
+message SSTMeta {
+    bytes uuid = 1;
+    Range range = 2;
+    uint32 crc32 = 3;
+    uint64 length = 4;
+    string cf_name = 5;
+    uint64 region_id = 6;
+    metapb.RegionEpoch region_epoch = 7;
+    bool end_key_exclusive = 8;
+}
+
+// A rewrite rule is applied on the *encoded* keys (the internal storage
+// representation).
+message RewriteRule {
+    bytes old_key_prefix = 1;
+    bytes new_key_prefix = 2;
+    uint64 new_timestamp = 3;
+}
+
+message UploadRequest {
+    oneof chunk {
+        SSTMeta meta = 1;
+        bytes data = 2;
+    }
+}
+
+message UploadResponse {
+}
+
+message IngestRequest {
+    kvrpcpb.Context context = 1;
+    SSTMeta sst = 2;
+}
+
+message IngestResponse {
+    errorpb.Error error = 1;
+}
+
+message CompactRequest {
+    // Compact files in the range and above the output level.
+    // Compact all files if the range is not specified.
+    // Compact all files to the bottommost level if the output level is -1.
+    Range range = 1;
+    int32 output_level = 2;
+}
+
+message CompactResponse {
+}
+
+message DownloadRequest {
+    // The SST meta used to identify the downloaded file.
+    // Must be the same among all nodes in the same Raft group.
+    // Note: the "crc32" and "cf_name" fields are ignored in this request,
+    // and the "range" field represents the closed key range after rewrite
+    // (as origin keys in encoded representation).
+    SSTMeta sst = 2 [(gogoproto.nullable) = false];
+
+    // The url field is deprecated, use storage_backend instead
+    reserved 8; reserved "url";
+
+    // The file name of the SST file.
+    string name = 9;
+
+    // Performs a key prefix rewrite after downloading the SST file.
+    // All keys in the SST will be rewritten as:
+    //
+    //  new_key = new_key_prefix + old_key[len(old_key_prefix)..]
+    //
+    // When used for TiDB, rewriting the prefix changes the table ID. Please
+    // note that key-rewrite is applied on the origin keys in encoded
+    // representation (the SST itself should still use data keys in encoded
+    // representation).
+    //
+    // You need to ensure that the keys before and after rewriting are in the
+    // same order, otherwise the RPC request will fail.
+    RewriteRule rewrite_rule = 13 [(gogoproto.nullable) = false];
+
+    backup.StorageBackend storage_backend = 14;
+
+    bool is_raw_kv = 15;
+}
+
+// For now it is just used for distinguishing the error of the request with the error
+// of gRPC, add more concrete types if it is necessary later.
+message Error {
+    string message = 1;
+}
+
+message DownloadResponse {
+    // The actual key range (after rewrite) of the downloaded SST. The range is
+    // inclusive in both ends.
+    Range range = 1 [(gogoproto.nullable) = false];
+
+    // Whether the SST is empty. An empty SST is prohibited in TiKV, do not
+    // ingest if this field is true.
+    // (Deprecated, should be replaced by checking `length == 0` in the future)
+    bool is_empty = 2;
+
+    Error error = 3;
+
+    // The CRC32 checksum of the rewritten SST file (implementation can return
+    // zero, indicating the CRC32 was not calculated).
+    uint32 crc32 = 4;
+    // The actual length of the rewritten SST file.
+    uint64 length = 5;
+}
+
+message SetDownloadSpeedLimitRequest {
+    // The download speed limit (bytes/second). Set to 0 for unlimited speed.
+    uint64 speed_limit = 1;
+}
+
+message SetDownloadSpeedLimitResponse {
+}
+
+message Pair {
+    bytes key = 1;
+    bytes value = 2;
+    enum OP {
+        Put = 0;
+        Delete = 1;
+    }
+    OP op = 3;
+}
+
+message WriteBatch {
+    uint64 commit_ts = 1;
+    repeated Pair pairs = 2;
+}
+
+message WriteRequest {
+    oneof chunk {
+        SSTMeta meta = 1;
+        WriteBatch batch = 2;
+    }
+}
+
+message WriteResponse {
+    Error error = 1;
+    repeated SSTMeta metas = 2;
+}

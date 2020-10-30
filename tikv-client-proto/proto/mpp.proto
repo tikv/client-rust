@@ -1,0 +1,61 @@
+syntax = "proto3";
+package mpp;
+
+import "gogoproto/gogo.proto";
+import "coprocessor.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+
+option java_package = "org.tikv.kvproto";
+
+// TaskMeta contains meta of a mpp plan, including query's ts and task address.
+message TaskMeta {
+	uint64 start_ts = 1; // start ts of a query
+	int64 task_id = 2; // if task id is -1 , it indicates a tidb task.
+	int64 partition_id = 3; // Only used for hash partition
+	string address = 4; // target address of this task.
+}
+
+// Dipsatch the task request to different tiflash servers.
+message DispatchTaskRequest {
+	TaskMeta meta = 1;
+	bytes encoded_plan = 2;
+	int64 timeout = 3;
+        repeated coprocessor.RegionInfo regions = 4; 
+	// If this task contains table scan, we still need their region info.
+	int64 schema_ver = 5;
+}
+
+// Get response of DispatchTaskRequest.
+message DispatchTaskResponse {
+	Error error = 1;
+}
+
+// CancelTaskRequest closes the execution of a task.
+message CancelTaskRequest {
+	TaskMeta meta = 1;
+	Error error = 2;
+}
+
+message CancelTaskResponse {
+	Error error = 1;
+}
+
+// build connection between different tasks. Data is sent by the tasks that are closer to the data sources.
+message EstablishMPPConnectionRequest {
+        TaskMeta sender_meta = 1; // node closer to the source
+	TaskMeta receiver_meta = 2; // node closer to the tidb mpp gather.
+}
+
+// Data packets wrap tipb.SelectResponse.
+message MPPDataPacket {
+        bytes data = 1;
+	Error error = 2;
+}
+
+message Error {
+	int32 code = 1;
+	string msg = 2;
+}

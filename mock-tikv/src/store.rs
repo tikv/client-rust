@@ -1,10 +1,10 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
-use kvproto::kvrpcpb::KvPair;
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
 };
+use tikv_client_proto::kvrpcpb::KvPair;
 
 #[derive(Debug, Clone)]
 pub struct KvStore {

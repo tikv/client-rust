@@ -3,8 +3,8 @@
 use crate::{spawn_unary_success, MOCK_TIKV_PORT};
 use futures::{FutureExt, StreamExt, TryFutureExt};
 use grpcio::{Environment, Server, ServerBuilder, WriteFlags};
-use kvproto::pdpb::*;
 use std::sync::Arc;
+use tikv_client_proto::pdpb::*;
 
 pub const MOCK_PD_PORT: u16 = 50021;
 /// This is mock pd server, used with mock tikv server.
@@ -18,8 +18,8 @@ impl MockPd {
         MockPd { ts: 0 }
     }
 
-    fn region() -> kvproto::metapb::Region {
-        kvproto::metapb::Region {
+    fn region() -> tikv_client_proto::metapb::Region {
+        tikv_client_proto::metapb::Region {
             start_key: vec![],
             end_key: vec![],
             peers: vec![Self::leader()],
@@ -27,13 +27,13 @@ impl MockPd {
         }
     }
 
-    fn leader() -> kvproto::metapb::Peer {
-        kvproto::metapb::Peer::default()
+    fn leader() -> tikv_client_proto::metapb::Peer {
+        tikv_client_proto::metapb::Peer::default()
     }
 
-    fn store() -> kvproto::metapb::Store {
+    fn store() -> tikv_client_proto::metapb::Store {
         // TODO: start_timestamp?
-        kvproto::metapb::Store {
+        tikv_client_proto::metapb::Store {
             address: format!("localhost:{}", MOCK_TIKV_PORT),
             ..Default::default()
         }
@@ -314,6 +314,15 @@ impl Pd for MockPd {
         _ctx: ::grpcio::RpcContext,
         _req: GetOperatorRequest,
         _sink: ::grpcio::UnarySink<GetOperatorResponse>,
+    ) {
+        todo!()
+    }
+
+    fn sync_max_ts(
+        &mut self,
+        _ctx: ::grpcio::RpcContext,
+        _req: SyncMaxTsRequest,
+        _sink: ::grpcio::UnarySink<SyncMaxTsResponse>,
     ) {
         todo!()
     }

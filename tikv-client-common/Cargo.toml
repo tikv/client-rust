@@ -9,12 +9,12 @@ derive-new = "0.5"
 failure = "0.1"
 futures = { version = "0.3.5", features = ["compat", "async-await", "thread-pool"] }
 grpcio = { version = "0.6", features = [ "secure", "prost-codec" ], default-features = false }
-kvproto = { git = "https://github.com/pingcap/kvproto.git", features = [ "prost-codec" ], default-features = false }
 lazy_static = "1"
 log = "0.4"
 regex = "1"
 serde = "1.0"
 serde_derive = "1.0"
+tikv-client-proto = { path = "../tikv-client-proto" }
 
 [dev-dependencies]
 clap = "2.32"

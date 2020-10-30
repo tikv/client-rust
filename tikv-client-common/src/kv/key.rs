@@ -2,13 +2,13 @@
 
 use super::HexRepr;
 use crate::kv::codec::{self, BytesEncoder};
-use kvproto::kvrpcpb;
 #[allow(unused_imports)]
 #[cfg(test)]
 use proptest::{arbitrary::any_with, collection::size_range};
 #[cfg(test)]
 use proptest_derive::Arbitrary;
 use std::{fmt, ops::Bound, u8};
+use tikv_client_proto::kvrpcpb;
 
 const _PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
 
