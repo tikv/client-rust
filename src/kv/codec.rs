@@ -1,5 +1,7 @@
-use crate::{errors::Result, Error};
 use std::{io::Write, ptr};
+use tikv_client_common::Error;
+
+use crate::Result;
 
 const ENC_GROUP_SIZE: usize = 8;
 const ENC_MARKER: u8 = 0xff;

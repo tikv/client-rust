@@ -9,7 +9,7 @@ use tikv_client_proto::kvrpcpb;
 /// A key/value pair.
 ///
 /// ```rust
-/// # use tikv_client_common::{Key, Value, KvPair};
+/// # use tikv_client::{Key, Value, KvPair};
 /// let key = "key".to_owned();
 /// let value = "value".to_owned();
 /// let constructed = KvPair::new(key.clone(), value.clone());
