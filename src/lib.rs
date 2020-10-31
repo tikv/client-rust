@@ -86,6 +86,7 @@ mod region;
 mod request;
 mod stats;
 mod store;
+mod timestamp;
 
 #[cfg(test)]
 mod mock;
@@ -100,9 +101,11 @@ pub use crate::kv::{codec, BoundRange, Key, KvPair, ToOwnedRange, Value};
 #[doc(inline)]
 pub use crate::raw::{Client as RawClient, ColumnFamily};
 #[doc(inline)]
+pub use crate::timestamp::Timestamp;
+#[doc(inline)]
 pub use crate::transaction::{Client as TransactionClient, Snapshot, Transaction};
 pub use config::Config;
 #[doc(inline)]
 pub use region::{Region, RegionId, RegionVerId, StoreId};
 #[doc(inline)]
-pub use tikv_client_common::{security::SecurityManager, Error, ErrorKind, Result, Timestamp};
+pub use tikv_client_common::{security::SecurityManager, Error, ErrorKind, Result};

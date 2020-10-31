@@ -2,7 +2,7 @@
 
 use crate::{
     codec, compat::stream_fn, pd::RetryClient, store::Store, BoundRange, Config, Key, Region,
-    RegionId, Result, SecurityManager,
+    RegionId, Result, SecurityManager, Timestamp,
 };
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
@@ -12,7 +12,6 @@ use std::{
     sync::{Arc, RwLock},
     thread,
 };
-use tikv_client_common::Timestamp;
 use tikv_client_pd::Cluster;
 use tikv_client_store::{KvClient, KvConnect, TikvConnect};
 

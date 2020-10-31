@@ -3,13 +3,13 @@
 use crate::{
     pd::{PdClient, PdRpcClient},
     request::{KvRequest, OPTIMISTIC_BACKOFF, PESSIMISTIC_BACKOFF},
+    timestamp::TimestampExt,
     transaction::{buffer::Buffer, requests::*},
     BoundRange, Error, ErrorKind, Key, KvPair, Result, Value,
 };
 use derive_new::new;
 use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
 use std::{iter, mem, ops::RangeBounds, sync::Arc};
-use tikv_client_common::TimestampExt;
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
 /// A undo-able set of actions on the dataset.
