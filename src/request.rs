@@ -4,6 +4,7 @@ use crate::{
     backoff::{Backoff, NoBackoff, NoJitterBackoff},
     pd::PdClient,
     stats::tikv_stats,
+    store::Store,
     transaction::{resolve_locks, HasLocks},
     BoundRange, Error, ErrorKind, Key, Result,
 };
@@ -13,7 +14,7 @@ use std::{
     cmp::{max, min},
     sync::Arc,
 };
-use tikv_client_store::{HasError, HasRegionError, Request, Store};
+use tikv_client_store::{HasError, HasRegionError, Request};
 
 const DEFAULT_REGION_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);
 pub const OPTIMISTIC_BACKOFF: NoJitterBackoff = NoJitterBackoff::new(2, 500, 10);

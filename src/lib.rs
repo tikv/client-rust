@@ -81,8 +81,10 @@ mod compat;
 mod config;
 mod pd;
 mod raw;
+mod region;
 mod request;
 mod stats;
+mod store;
 
 #[cfg(test)]
 mod mock;
@@ -98,9 +100,9 @@ pub use crate::raw::{Client as RawClient, ColumnFamily};
 pub use crate::transaction::{Client as TransactionClient, Snapshot, Transaction};
 pub use config::Config;
 #[doc(inline)]
+pub use region::{Region, RegionId, RegionVerId, StoreId};
+#[doc(inline)]
 pub use tikv_client_common::{
     security::SecurityManager, BoundRange, Error, ErrorKind, Key, KvPair, Result, Timestamp,
     ToOwnedRange, Value,
 };
-#[doc(inline)]
-pub use tikv_client_store::region::{Region, RegionId, RegionVerId, StoreId};
