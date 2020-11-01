@@ -1,0 +1,16 @@
+[package]
+name = "tikv-client-proto"
+version = "0.0.0"
+edition = "2018"
+build = "build.rs"
+
+[build-dependencies]
+protobuf-build = { version = "0.11", default-features = false, features = ["grpcio-prost-codec"] }
+
+[dependencies]
+protobuf = "=2.8.0"
+prost = { version = "0.6" }
+prost-derive = { version = "0.6" }
+futures = "0.3.5"
+grpcio = { version = "0.6.0", default-features = false, features = ["secure", "prost-codec"] }
+lazy_static = { version = "1.3" }

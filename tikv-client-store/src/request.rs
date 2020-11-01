@@ -3,8 +3,8 @@
 use crate::{ErrorKind, Result};
 use async_trait::async_trait;
 use grpcio::CallOption;
-use kvproto::{kvrpcpb, tikvpb::TikvClient};
 use std::any::Any;
+use tikv_client_proto::{kvrpcpb, tikvpb::TikvClient};
 
 #[async_trait]
 pub trait Request: Any + Sync + Send + 'static {

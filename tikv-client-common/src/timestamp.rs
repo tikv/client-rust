@@ -4,8 +4,8 @@
 //! The lower 18 (PHYSICAL_SHIFT_BITS) bits are the logical part of the timestamp.
 //! The higher bits of the version are the physical part of the timestamp.
 
-pub use kvproto::pdpb::Timestamp;
 use std::convert::TryInto;
+pub use tikv_client_proto::pdpb::Timestamp;
 
 const PHYSICAL_SHIFT_BITS: i64 = 18;
 const LOGICAL_MASK: i64 = (1 << PHYSICAL_SHIFT_BITS) - 1;

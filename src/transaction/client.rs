@@ -9,9 +9,9 @@ use crate::{
     Result,
 };
 use futures::executor::ThreadPool;
-use kvproto::{kvrpcpb, pdpb::Timestamp};
 use std::{mem, sync::Arc};
 use tikv_client_common::TimestampExt;
+use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024; // TODO: cargo-culted value
 

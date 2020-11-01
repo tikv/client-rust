@@ -3,13 +3,13 @@
 use crate::{timestamp::TimestampOracle, Error, Result, SecurityManager};
 use async_trait::async_trait;
 use grpcio::{CallOption, Environment};
-use kvproto::pdpb::{self, Timestamp};
 use std::{
     collections::HashSet,
     sync::Arc,
     time::{Duration, Instant},
 };
 use tikv_client_common::internal_err;
+use tikv_client_proto::pdpb::{self, Timestamp};
 
 /// A PD cluster.
 pub struct Cluster {
@@ -22,7 +22,7 @@ pub struct Cluster {
 macro_rules! pd_request {
     ($cluster_id:expr, $type:ty) => {{
         let mut request = <$type>::default();
-        let mut header = ::kvproto::pdpb::RequestHeader::default();
+        let mut header = ::tikv_client_proto::pdpb::RequestHeader::default();
         header.set_cluster_id($cluster_id);
         request.set_header(header);
         request

@@ -2,7 +2,6 @@
 
 use super::Key;
 use crate::{Error, Result};
-use kvproto::kvrpcpb;
 #[cfg(test)]
 use proptest_derive::Arbitrary;
 use std::{
@@ -11,6 +10,7 @@ use std::{
     convert::TryFrom,
     ops::{Bound, Range, RangeBounds, RangeFrom, RangeInclusive},
 };
+use tikv_client_proto::kvrpcpb;
 
 /// A struct for expressing ranges. This type is semi-opaque and is not really meant for users to
 /// deal with directly. Most functions which operate on ranges will accept any types which

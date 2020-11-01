@@ -12,8 +12,8 @@ use crate::{
 };
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
-use kvproto::kvrpcpb;
 use std::{mem, sync::Arc};
+use tikv_client_proto::kvrpcpb;
 use tikv_client_store::Store;
 
 #[async_trait]
@@ -470,8 +470,8 @@ mod test {
         request::OPTIMISTIC_BACKOFF,
     };
     use futures::executor;
-    use kvproto::kvrpcpb;
     use std::any::Any;
+    use tikv_client_proto::kvrpcpb;
 
     #[test]
     #[ignore]

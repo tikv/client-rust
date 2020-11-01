@@ -739,21 +739,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kvproto"
-version = "0.0.2"
-source = "git+https://github.com/pingcap/kvproto.git#c0e3a4d8bbece2b8d796ed5a08649ea5223b7abf"
-dependencies = [
- "futures 0.3.5",
- "grpcio",
- "lazy_static",
- "prost",
- "prost-derive",
- "protobuf",
- "protobuf-build",
- "raft-proto",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -898,9 +883,9 @@ dependencies = [
  "derive-new",
  "futures 0.3.5",
  "grpcio",
- "kvproto",
  "log",
  "tikv-client-common",
+ "tikv-client-proto",
 ]
 
 [[package]]
@@ -1297,17 +1282,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa563d17ecb180e500da1cfd2b028310ac758de548efdd203e18f283af693f37"
 dependencies = [
  "proc-macro2 1.0.19",
-]
-
-[[package]]
-name = "raft-proto"
-version = "0.6.0-alpha"
-source = "git+https://github.com/tikv/raft-rs?rev=e624c1d48460940a40d8aa69b5329460d9af87dd#e624c1d48460940a40d8aa69b5329460d9af87dd"
-dependencies = [
- "lazy_static",
- "prost",
- "protobuf",
- "protobuf-build",
 ]
 
 [[package]]
@@ -1855,7 +1829,6 @@ dependencies = [
  "futures 0.3.5",
  "futures-timer",
  "grpcio",
- "kvproto",
  "lazy_static",
  "log",
  "mock-tikv",
@@ -1871,6 +1844,7 @@ dependencies = [
  "tempdir",
  "tikv-client-common",
  "tikv-client-pd",
+ "tikv-client-proto",
  "tikv-client-store",
  "tokio",
 ]
@@ -1885,7 +1859,6 @@ dependencies = [
  "failure",
  "futures 0.3.5",
  "grpcio",
- "kvproto",
  "lazy_static",
  "log",
  "proptest",
@@ -1894,6 +1867,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "tempdir",
+ "tikv-client-proto",
  "tokio",
 ]
 
@@ -1907,13 +1881,26 @@ dependencies = [
  "fail",
  "futures 0.3.5",
  "grpcio",
- "kvproto",
  "log",
  "proptest",
  "proptest-derive",
  "tempdir",
  "tikv-client-common",
+ "tikv-client-proto",
  "tokio",
+]
+
+[[package]]
+name = "tikv-client-proto"
+version = "0.0.0"
+dependencies = [
+ "futures 0.3.5",
+ "grpcio",
+ "lazy_static",
+ "prost",
+ "prost-derive",
+ "protobuf",
+ "protobuf-build",
 ]
 
 [[package]]
@@ -1924,9 +1911,9 @@ dependencies = [
  "derive-new",
  "futures 0.3.5",
  "grpcio",
- "kvproto",
  "log",
  "tikv-client-common",
+ "tikv-client-proto",
 ]
 
 [[package]]

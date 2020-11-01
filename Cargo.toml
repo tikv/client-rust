@@ -21,45 +21,40 @@ name = "tikv_client"
 derive-new = "0.5"
 failure = "0.1"
 futures = { version = "0.3.5", features = ["async-await", "thread-pool"] }
+futures-timer = "3.0"
 grpcio = { version = "0.6", features = [ "secure", "prost-codec" ], default-features = false }
-kvproto = { git = "https://github.com/pingcap/kvproto.git", features = [ "prost-codec" ], default-features = false }
 lazy_static = "1"
-log = "0.4" 
+log = "0.4"
+prometheus = { version = "0.8", features = [ "push", "process" ], default-features = false } 
 rand = "0.7"
 regex = "1"
 serde = "1.0"
 serde_derive = "1.0"
-futures-timer = "3.0"
 async-trait = "0.1"
 tokio = { version = "0.2", features = ["sync"] }
 
 tikv-client-common = { path = "tikv-client-common" }
 tikv-client-pd = { path = "tikv-client-pd" }
+tikv-client-proto = { path = "tikv-client-proto" }
 tikv-client-store = { path = "tikv-client-store" }
 mock-tikv = {path = "mock-tikv"}
 
-[dependencies.prometheus]
-version = "0.8"
-default-features = false
-features = ["push", "process"]
 
 [dev-dependencies]
 clap = "2.32"
-tempdir = "0.3"
-tokio = { version = "0.2", features = ["rt-threaded", "macros"] }
+fail = { version = "0.3", features = [ "failpoints" ] }
 proptest = "0.9"
 proptest-derive = "0.1.0"
-fail = { version = "0.3", features = [ "failpoints" ] }
-simple_logger = "1.9.0"
+tempdir = "0.3"
 serial_test = "0.5.0"
-
-[patch.crates-io]
-raft-proto = { git = "https://github.com/tikv/raft-rs", rev = "e624c1d48460940a40d8aa69b5329460d9af87dd" }
+simple_logger = "1.9.0"
+tokio = { version = "0.2", features = ["rt-threaded", "macros"] }
 
 [workspace]
 members = [
     "tikv-client-common",
     "tikv-client-pd",
+    "tikv-client-proto",
     "tikv-client-store",
     "mock-tikv"
 ]

@@ -4,8 +4,8 @@ use crate::{spawn_unary_success, KvStore};
 use derive_new::new;
 use futures::{FutureExt, TryFutureExt};
 use grpcio::{Environment, Server, ServerBuilder};
-use kvproto::{kvrpcpb::*, tikvpb::*};
 use std::sync::Arc;
+use tikv_client_proto::{kvrpcpb::*, tikvpb::*};
 
 pub const MOCK_TIKV_PORT: u16 = 50019;
 
@@ -29,8 +29,8 @@ impl Tikv for MockTikv {
     fn kv_get(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::GetRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::GetResponse>,
+        _req: tikv_client_proto::kvrpcpb::GetRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::GetResponse>,
     ) {
         todo!()
     }
@@ -38,8 +38,8 @@ impl Tikv for MockTikv {
     fn kv_scan(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::ScanRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::ScanResponse>,
+        _req: tikv_client_proto::kvrpcpb::ScanRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::ScanResponse>,
     ) {
         todo!()
     }
@@ -47,8 +47,8 @@ impl Tikv for MockTikv {
     fn kv_prewrite(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::PrewriteRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::PrewriteResponse>,
+        _req: tikv_client_proto::kvrpcpb::PrewriteRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::PrewriteResponse>,
     ) {
         todo!()
     }
@@ -56,8 +56,8 @@ impl Tikv for MockTikv {
     fn kv_pessimistic_lock(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::PessimisticLockRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::PessimisticLockResponse>,
+        _req: tikv_client_proto::kvrpcpb::PessimisticLockRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::PessimisticLockResponse>,
     ) {
         todo!()
     }
@@ -65,8 +65,8 @@ impl Tikv for MockTikv {
     fn kv_pessimistic_rollback(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::PessimisticRollbackRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::PessimisticRollbackResponse>,
+        _req: tikv_client_proto::kvrpcpb::PessimisticRollbackRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::PessimisticRollbackResponse>,
     ) {
         todo!()
     }
@@ -74,8 +74,8 @@ impl Tikv for MockTikv {
     fn kv_txn_heart_beat(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::TxnHeartBeatRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::TxnHeartBeatResponse>,
+        _req: tikv_client_proto::kvrpcpb::TxnHeartBeatRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::TxnHeartBeatResponse>,
     ) {
         todo!()
     }
@@ -83,8 +83,8 @@ impl Tikv for MockTikv {
     fn kv_check_txn_status(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::CheckTxnStatusRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::CheckTxnStatusResponse>,
+        _req: tikv_client_proto::kvrpcpb::CheckTxnStatusRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::CheckTxnStatusResponse>,
     ) {
         todo!()
     }
@@ -92,8 +92,8 @@ impl Tikv for MockTikv {
     fn kv_commit(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::CommitRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::CommitResponse>,
+        _req: tikv_client_proto::kvrpcpb::CommitRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::CommitResponse>,
     ) {
         todo!()
     }
@@ -101,8 +101,8 @@ impl Tikv for MockTikv {
     fn kv_import(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::ImportRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::ImportResponse>,
+        _req: tikv_client_proto::kvrpcpb::ImportRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::ImportResponse>,
     ) {
         todo!()
     }
@@ -110,8 +110,8 @@ impl Tikv for MockTikv {
     fn kv_cleanup(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::CleanupRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::CleanupResponse>,
+        _req: tikv_client_proto::kvrpcpb::CleanupRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::CleanupResponse>,
     ) {
         todo!()
     }
@@ -119,8 +119,8 @@ impl Tikv for MockTikv {
     fn kv_batch_get(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::BatchGetRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::BatchGetResponse>,
+        _req: tikv_client_proto::kvrpcpb::BatchGetRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::BatchGetResponse>,
     ) {
         todo!()
     }
@@ -128,8 +128,8 @@ impl Tikv for MockTikv {
     fn kv_batch_rollback(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::BatchRollbackRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::BatchRollbackResponse>,
+        _req: tikv_client_proto::kvrpcpb::BatchRollbackRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::BatchRollbackResponse>,
     ) {
         todo!()
     }
@@ -137,8 +137,8 @@ impl Tikv for MockTikv {
     fn kv_scan_lock(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::ScanLockRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::ScanLockResponse>,
+        _req: tikv_client_proto::kvrpcpb::ScanLockRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::ScanLockResponse>,
     ) {
         todo!()
     }
@@ -146,8 +146,8 @@ impl Tikv for MockTikv {
     fn kv_resolve_lock(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::ResolveLockRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::ResolveLockResponse>,
+        _req: tikv_client_proto::kvrpcpb::ResolveLockRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::ResolveLockResponse>,
     ) {
         todo!()
     }
@@ -155,8 +155,8 @@ impl Tikv for MockTikv {
     fn kv_gc(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::GcRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::GcResponse>,
+        _req: tikv_client_proto::kvrpcpb::GcRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::GcResponse>,
     ) {
         todo!()
     }
@@ -164,8 +164,8 @@ impl Tikv for MockTikv {
     fn kv_delete_range(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::DeleteRangeRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::DeleteRangeResponse>,
+        _req: tikv_client_proto::kvrpcpb::DeleteRangeRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::DeleteRangeResponse>,
     ) {
         todo!()
     }
@@ -173,8 +173,8 @@ impl Tikv for MockTikv {
     fn raw_get(
         &mut self,
         ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::RawGetRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::RawGetResponse>,
+        req: tikv_client_proto::kvrpcpb::RawGetRequest,
+        sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::RawGetResponse>,
     ) {
         let mut resp = RawGetResponse::default();
         if let Some(v) = self.inner.raw_get(req.get_key()) {
@@ -188,10 +188,10 @@ impl Tikv for MockTikv {
     fn raw_batch_get(
         &mut self,
         ctx: grpcio::RpcContext,
-        mut req: kvproto::kvrpcpb::RawBatchGetRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::RawBatchGetResponse>,
+        mut req: tikv_client_proto::kvrpcpb::RawBatchGetRequest,
+        sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::RawBatchGetResponse>,
     ) {
-        let mut resp = kvproto::kvrpcpb::RawBatchGetResponse::default();
+        let mut resp = tikv_client_proto::kvrpcpb::RawBatchGetResponse::default();
         resp.set_pairs(self.inner.raw_batch_get(req.take_keys()));
         spawn_unary_success!(ctx, req, resp, sink);
     }
@@ -199,8 +199,8 @@ impl Tikv for MockTikv {
     fn raw_put(
         &mut self,
         ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::RawPutRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::RawPutResponse>,
+        req: tikv_client_proto::kvrpcpb::RawPutRequest,
+        sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::RawPutResponse>,
     ) {
         self.inner
             .raw_put(req.get_key().to_vec(), req.get_value().to_vec());
@@ -211,8 +211,8 @@ impl Tikv for MockTikv {
     fn raw_batch_put(
         &mut self,
         ctx: grpcio::RpcContext,
-        mut req: kvproto::kvrpcpb::RawBatchPutRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::RawBatchPutResponse>,
+        mut req: tikv_client_proto::kvrpcpb::RawBatchPutRequest,
+        sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::RawBatchPutResponse>,
     ) {
         let pairs = req.take_pairs();
         self.inner.raw_batch_put(pairs);
@@ -223,8 +223,8 @@ impl Tikv for MockTikv {
     fn raw_delete(
         &mut self,
         ctx: grpcio::RpcContext,
-        req: kvproto::kvrpcpb::RawDeleteRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::RawDeleteResponse>,
+        req: tikv_client_proto::kvrpcpb::RawDeleteRequest,
+        sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::RawDeleteResponse>,
     ) {
         let key = req.get_key();
         self.inner.raw_delete(key);
@@ -235,8 +235,8 @@ impl Tikv for MockTikv {
     fn raw_batch_delete(
         &mut self,
         ctx: grpcio::RpcContext,
-        mut req: kvproto::kvrpcpb::RawBatchDeleteRequest,
-        sink: grpcio::UnarySink<kvproto::kvrpcpb::RawBatchDeleteResponse>,
+        mut req: tikv_client_proto::kvrpcpb::RawBatchDeleteRequest,
+        sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::RawBatchDeleteResponse>,
     ) {
         let keys = req.take_keys();
         self.inner.raw_batch_delete(keys);
@@ -247,8 +247,8 @@ impl Tikv for MockTikv {
     fn raw_scan(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::RawScanRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::RawScanResponse>,
+        _req: tikv_client_proto::kvrpcpb::RawScanRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::RawScanResponse>,
     ) {
         todo!()
     }
@@ -256,8 +256,8 @@ impl Tikv for MockTikv {
     fn raw_delete_range(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::RawDeleteRangeRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::RawDeleteRangeResponse>,
+        _req: tikv_client_proto::kvrpcpb::RawDeleteRangeRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::RawDeleteRangeResponse>,
     ) {
         todo!()
     }
@@ -265,8 +265,8 @@ impl Tikv for MockTikv {
     fn raw_batch_scan(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::RawBatchScanRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::RawBatchScanResponse>,
+        _req: tikv_client_proto::kvrpcpb::RawBatchScanRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::RawBatchScanResponse>,
     ) {
         todo!()
     }
@@ -274,8 +274,8 @@ impl Tikv for MockTikv {
     fn ver_get(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::VerGetRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::VerGetResponse>,
+        _req: tikv_client_proto::kvrpcpb::VerGetRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::VerGetResponse>,
     ) {
         todo!()
     }
@@ -283,8 +283,8 @@ impl Tikv for MockTikv {
     fn ver_batch_get(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::VerBatchGetRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::VerBatchGetResponse>,
+        _req: tikv_client_proto::kvrpcpb::VerBatchGetRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::VerBatchGetResponse>,
     ) {
         todo!()
     }
@@ -292,8 +292,8 @@ impl Tikv for MockTikv {
     fn ver_mut(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::VerMutRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::VerMutResponse>,
+        _req: tikv_client_proto::kvrpcpb::VerMutRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::VerMutResponse>,
     ) {
         todo!()
     }
@@ -301,8 +301,8 @@ impl Tikv for MockTikv {
     fn ver_batch_mut(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::VerBatchMutRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::VerBatchMutResponse>,
+        _req: tikv_client_proto::kvrpcpb::VerBatchMutRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::VerBatchMutResponse>,
     ) {
         todo!()
     }
@@ -310,8 +310,8 @@ impl Tikv for MockTikv {
     fn ver_scan(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::VerScanRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::VerScanResponse>,
+        _req: tikv_client_proto::kvrpcpb::VerScanRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::VerScanResponse>,
     ) {
         todo!()
     }
@@ -319,8 +319,8 @@ impl Tikv for MockTikv {
     fn ver_delete_range(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::VerDeleteRangeRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::VerDeleteRangeResponse>,
+        _req: tikv_client_proto::kvrpcpb::VerDeleteRangeRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::VerDeleteRangeResponse>,
     ) {
         todo!()
     }
@@ -328,8 +328,8 @@ impl Tikv for MockTikv {
     fn unsafe_destroy_range(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::UnsafeDestroyRangeRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::UnsafeDestroyRangeResponse>,
+        _req: tikv_client_proto::kvrpcpb::UnsafeDestroyRangeRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::UnsafeDestroyRangeResponse>,
     ) {
         todo!()
     }
@@ -337,8 +337,8 @@ impl Tikv for MockTikv {
     fn register_lock_observer(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::RegisterLockObserverRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::RegisterLockObserverResponse>,
+        _req: tikv_client_proto::kvrpcpb::RegisterLockObserverRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::RegisterLockObserverResponse>,
     ) {
         todo!()
     }
@@ -346,8 +346,8 @@ impl Tikv for MockTikv {
     fn check_lock_observer(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::CheckLockObserverRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::CheckLockObserverResponse>,
+        _req: tikv_client_proto::kvrpcpb::CheckLockObserverRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::CheckLockObserverResponse>,
     ) {
         todo!()
     }
@@ -355,8 +355,8 @@ impl Tikv for MockTikv {
     fn remove_lock_observer(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::RemoveLockObserverRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::RemoveLockObserverResponse>,
+        _req: tikv_client_proto::kvrpcpb::RemoveLockObserverRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::RemoveLockObserverResponse>,
     ) {
         todo!()
     }
@@ -364,8 +364,8 @@ impl Tikv for MockTikv {
     fn physical_scan_lock(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::PhysicalScanLockRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::PhysicalScanLockResponse>,
+        _req: tikv_client_proto::kvrpcpb::PhysicalScanLockRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::PhysicalScanLockResponse>,
     ) {
         todo!()
     }
@@ -373,8 +373,8 @@ impl Tikv for MockTikv {
     fn coprocessor(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::coprocessor::Request,
-        _sink: grpcio::UnarySink<kvproto::coprocessor::Response>,
+        _req: tikv_client_proto::coprocessor::Request,
+        _sink: grpcio::UnarySink<tikv_client_proto::coprocessor::Response>,
     ) {
         todo!()
     }
@@ -382,8 +382,8 @@ impl Tikv for MockTikv {
     fn coprocessor_stream(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::coprocessor::Request,
-        _sink: grpcio::ServerStreamingSink<kvproto::coprocessor::Response>,
+        _req: tikv_client_proto::coprocessor::Request,
+        _sink: grpcio::ServerStreamingSink<tikv_client_proto::coprocessor::Response>,
     ) {
         todo!()
     }
@@ -391,8 +391,8 @@ impl Tikv for MockTikv {
     fn batch_coprocessor(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::coprocessor::BatchRequest,
-        _sink: grpcio::ServerStreamingSink<kvproto::coprocessor::BatchResponse>,
+        _req: tikv_client_proto::coprocessor::BatchRequest,
+        _sink: grpcio::ServerStreamingSink<tikv_client_proto::coprocessor::BatchResponse>,
     ) {
         todo!()
     }
@@ -400,8 +400,8 @@ impl Tikv for MockTikv {
     fn raft(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _stream: grpcio::RequestStream<kvproto::raft_serverpb::RaftMessage>,
-        _sink: grpcio::ClientStreamingSink<kvproto::raft_serverpb::Done>,
+        _stream: grpcio::RequestStream<tikv_client_proto::raft_serverpb::RaftMessage>,
+        _sink: grpcio::ClientStreamingSink<tikv_client_proto::raft_serverpb::Done>,
     ) {
         todo!()
     }
@@ -409,8 +409,8 @@ impl Tikv for MockTikv {
     fn batch_raft(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _stream: grpcio::RequestStream<kvproto::tikvpb::BatchRaftMessage>,
-        _sink: grpcio::ClientStreamingSink<kvproto::raft_serverpb::Done>,
+        _stream: grpcio::RequestStream<tikv_client_proto::tikvpb::BatchRaftMessage>,
+        _sink: grpcio::ClientStreamingSink<tikv_client_proto::raft_serverpb::Done>,
     ) {
         todo!()
     }
@@ -418,8 +418,8 @@ impl Tikv for MockTikv {
     fn snapshot(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _stream: grpcio::RequestStream<kvproto::raft_serverpb::SnapshotChunk>,
-        _sink: grpcio::ClientStreamingSink<kvproto::raft_serverpb::Done>,
+        _stream: grpcio::RequestStream<tikv_client_proto::raft_serverpb::SnapshotChunk>,
+        _sink: grpcio::ClientStreamingSink<tikv_client_proto::raft_serverpb::Done>,
     ) {
         todo!()
     }
@@ -427,8 +427,8 @@ impl Tikv for MockTikv {
     fn split_region(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::SplitRegionRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::SplitRegionResponse>,
+        _req: tikv_client_proto::kvrpcpb::SplitRegionRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::SplitRegionResponse>,
     ) {
         todo!()
     }
@@ -436,8 +436,8 @@ impl Tikv for MockTikv {
     fn read_index(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::ReadIndexRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::ReadIndexResponse>,
+        _req: tikv_client_proto::kvrpcpb::ReadIndexRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::ReadIndexResponse>,
     ) {
         todo!()
     }
@@ -445,8 +445,8 @@ impl Tikv for MockTikv {
     fn mvcc_get_by_key(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::MvccGetByKeyRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::MvccGetByKeyResponse>,
+        _req: tikv_client_proto::kvrpcpb::MvccGetByKeyRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::MvccGetByKeyResponse>,
     ) {
         todo!()
     }
@@ -454,8 +454,8 @@ impl Tikv for MockTikv {
     fn mvcc_get_by_start_ts(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _req: kvproto::kvrpcpb::MvccGetByStartTsRequest,
-        _sink: grpcio::UnarySink<kvproto::kvrpcpb::MvccGetByStartTsResponse>,
+        _req: tikv_client_proto::kvrpcpb::MvccGetByStartTsRequest,
+        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::MvccGetByStartTsResponse>,
     ) {
         todo!()
     }
@@ -463,8 +463,8 @@ impl Tikv for MockTikv {
     fn batch_commands(
         &mut self,
         _ctx: grpcio::RpcContext,
-        _stream: grpcio::RequestStream<kvproto::tikvpb::BatchCommandsRequest>,
-        _sink: grpcio::DuplexSink<kvproto::tikvpb::BatchCommandsResponse>,
+        _stream: grpcio::RequestStream<tikv_client_proto::tikvpb::BatchCommandsRequest>,
+        _sink: grpcio::DuplexSink<tikv_client_proto::tikvpb::BatchCommandsResponse>,
     ) {
         todo!()
     }
@@ -472,8 +472,35 @@ impl Tikv for MockTikv {
     fn kv_check_secondary_locks(
         &mut self,
         _: grpcio::RpcContext<'_>,
-        _: kvproto::kvrpcpb::CheckSecondaryLocksRequest,
-        _: grpcio::UnarySink<kvproto::kvrpcpb::CheckSecondaryLocksResponse>,
+        _: tikv_client_proto::kvrpcpb::CheckSecondaryLocksRequest,
+        _: grpcio::UnarySink<tikv_client_proto::kvrpcpb::CheckSecondaryLocksResponse>,
+    ) {
+        todo!()
+    }
+
+    fn dispatch_mpp_task(
+        &mut self,
+        _: grpcio::RpcContext<'_>,
+        _: tikv_client_proto::mpp::DispatchTaskRequest,
+        _: grpcio::UnarySink<tikv_client_proto::mpp::DispatchTaskResponse>,
+    ) {
+        todo!()
+    }
+
+    fn cancel_mpp_task(
+        &mut self,
+        _: grpcio::RpcContext<'_>,
+        _: tikv_client_proto::mpp::CancelTaskRequest,
+        _: grpcio::UnarySink<tikv_client_proto::mpp::CancelTaskResponse>,
+    ) {
+        todo!()
+    }
+
+    fn establish_mpp_connection(
+        &mut self,
+        _: grpcio::RpcContext<'_>,
+        _: tikv_client_proto::mpp::EstablishMppConnectionRequest,
+        _: grpcio::ServerStreamingSink<tikv_client_proto::mpp::MppDataPacket>,
     ) {
         todo!()
     }

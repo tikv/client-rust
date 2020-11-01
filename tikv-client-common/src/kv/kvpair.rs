@@ -1,10 +1,10 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::{HexRepr, Key, Value};
-use kvproto::kvrpcpb;
 #[cfg(test)]
 use proptest_derive::Arbitrary;
 use std::{fmt, str};
+use tikv_client_proto::kvrpcpb;
 
 /// A key/value pair.
 ///

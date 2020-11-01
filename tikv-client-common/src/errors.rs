@@ -1,11 +1,11 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use failure::{Backtrace, Context, Fail};
-use kvproto::errorpb;
 use std::{
     fmt::{self, Display},
     result,
 };
+use tikv_client_proto::errorpb;
 
 #[derive(Debug)]
 pub struct Error {
@@ -33,7 +33,7 @@ pub enum ErrorKind {
     RegionForKeyNotFound { key: Vec<u8> },
     /// Errors caused by changed region information
     #[fail(display = "Region error: {:?}", _0)]
-    RegionError(kvproto::errorpb::Error),
+    RegionError(tikv_client_proto::errorpb::Error),
     /// No region is found for the given id.
     #[fail(display = "Region {} is not found", region_id)]
     RegionNotFound { region_id: u64 },
@@ -52,9 +52,9 @@ pub enum ErrorKind {
     /// Scan limit exceeds the maximum
     #[fail(display = "Limit {} exceeds max scan limit {}", limit, max_limit)]
     MaxScanLimitExceeded { limit: u32, max_limit: u32 },
-    /// Wraps `kvproto::kvrpcpb::KeyError`
+    /// Wraps `tikv_client_proto::kvrpcpb::KeyError`
     #[fail(display = "{:?}", _0)]
-    KeyError(kvproto::kvrpcpb::KeyError),
+    KeyError(tikv_client_proto::kvrpcpb::KeyError),
     /// A string error returned by TiKV server
     #[fail(display = "Kv error. {}", message)]
     KvError { message: String },
@@ -104,7 +104,7 @@ impl Error {
         Error::from(ErrorKind::RegionForKeyNotFound { key })
     }
 
-    pub fn region_error(error: kvproto::errorpb::Error) -> Self {
+    pub fn region_error(error: tikv_client_proto::errorpb::Error) -> Self {
         Error::from(ErrorKind::RegionError(error))
     }
 
@@ -183,8 +183,8 @@ impl From<futures::channel::oneshot::Canceled> for Error {
     }
 }
 
-impl From<kvproto::kvrpcpb::KeyError> for Error {
-    fn from(err: kvproto::kvrpcpb::KeyError) -> Self {
+impl From<tikv_client_proto::kvrpcpb::KeyError> for Error {
+    fn from(err: tikv_client_proto::kvrpcpb::KeyError) -> Self {
         Error::from(ErrorKind::KeyError(err))
     }
 }
