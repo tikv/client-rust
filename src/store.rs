@@ -1,7 +1,7 @@
 use crate::{Region, Result};
 use derive_new::new;
 use std::any::Any;
-use tikv_client_store::{KvClient, KvConnect, Request};
+use tikv_client_store::{KvClient, KvConnect, Request, TikvConnect};
 
 #[derive(new)]
 pub struct Store {
@@ -27,3 +27,5 @@ pub trait KvConnectStore: KvConnect {
         Ok(Store::new(region, Box::new(client)))
     }
 }
+
+impl KvConnectStore for TikvConnect {}
