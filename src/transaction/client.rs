@@ -5,12 +5,12 @@ use crate::{
     config::Config,
     pd::{PdClient, PdRpcClient},
     request::{KvRequest, OPTIMISTIC_BACKOFF},
+    timestamp::TimestampExt,
     transaction::{Snapshot, Transaction},
     Result,
 };
 use futures::executor::ThreadPool;
 use std::{mem, sync::Arc};
-use tikv_client_common::TimestampExt;
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024; // TODO: cargo-culted value

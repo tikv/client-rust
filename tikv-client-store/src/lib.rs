@@ -1,18 +1,13 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-#[macro_use]
-extern crate log;
-
 mod client;
 mod errors;
-pub mod region;
 mod request;
 
 #[doc(inline)]
 pub use crate::{
-    client::{KvClient, KvConnect, Store, TikvConnect},
+    client::{KvClient, KvConnect, TikvConnect},
     errors::{HasError, HasRegionError},
-    region::{Region, RegionId, RegionVerId, StoreId},
     request::Request,
 };
-pub use tikv_client_common::{security::SecurityManager, Error, ErrorKind, Key, Result};
+pub use tikv_client_common::{security::SecurityManager, Error, ErrorKind, Result};

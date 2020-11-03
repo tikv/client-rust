@@ -8,5 +8,4 @@ derive-new = "0.5.8"
 futures = "0.3"
 grpcio = { version = "0.6", features = [ "secure", "prost-codec" ], default-features = false }
 log = "0.4"
-tikv-client-common = { path = "../tikv-client-common"}
 tikv-client-proto = { path = "../tikv-client-proto"}

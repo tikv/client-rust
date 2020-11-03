@@ -1,6 +1,7 @@
 use crate::{
     pd::PdClient,
     request::{KvRequest, OPTIMISTIC_BACKOFF},
+    timestamp::TimestampExt,
     transaction::requests,
     ErrorKind, Key, RegionVerId, Result,
 };
@@ -8,7 +9,6 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-use tikv_client_common::TimestampExt;
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;

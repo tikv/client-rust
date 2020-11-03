@@ -1,6 +1,6 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{request::Request, Region, Result, SecurityManager};
+use crate::{request::Request, Result, SecurityManager};
 use async_trait::async_trait;
 use derive_new::new;
 use grpcio::{CallOption, Environment};
@@ -12,12 +12,6 @@ pub trait KvConnect: Sized + Send + Sync + 'static {
     type KvClient: KvClient + Clone + Send + Sync + 'static;
 
     fn connect(&self, address: &str) -> Result<Self::KvClient>;
-
-    fn connect_to_store(&self, region: Region, address: String) -> Result<Store> {
-        info!("connect to tikv endpoint: {:?}", &address);
-        let client = self.connect(address.as_str())?;
-        Ok(Store::new(region, Box::new(client)))
-    }
 }
 
 #[derive(new, Clone)]
@@ -59,22 +53,5 @@ impl KvClient for KvRpcClient {
                 CallOption::default().timeout(self.timeout),
             )
             .await
-    }
-}
-
-#[derive(new)]
-pub struct Store {
-    pub region: Region,
-    pub client: Box<dyn KvClient + Send + Sync>,
-}
-
-impl Store {
-    pub async fn dispatch<Req: Request, Resp: Any>(&self, request: &Req) -> Result<Box<Resp>> {
-        Ok(self
-            .client
-            .dispatch(request)
-            .await?
-            .downcast()
-            .expect("Downcast failed"))
     }
 }

@@ -7,6 +7,7 @@ use crate::{
         store_stream_for_key, store_stream_for_keys, store_stream_for_range,
         store_stream_for_ranges, KvRequest,
     },
+    store::Store,
     transaction::HasLocks,
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
@@ -14,7 +15,6 @@ use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
 use std::{mem, sync::Arc};
 use tikv_client_proto::kvrpcpb;
-use tikv_client_store::Store;
 
 #[async_trait]
 impl KvRequest for kvrpcpb::RawGetRequest {

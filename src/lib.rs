@@ -79,10 +79,14 @@ mod transaction;
 mod backoff;
 mod compat;
 mod config;
+mod kv;
 mod pd;
 mod raw;
+mod region;
 mod request;
 mod stats;
+mod store;
+mod timestamp;
 
 #[cfg(test)]
 mod mock;
@@ -93,14 +97,15 @@ mod proptests;
 extern crate log;
 
 #[doc(inline)]
+pub use crate::kv::{BoundRange, Key, KvPair, ToOwnedRange, Value};
+#[doc(inline)]
 pub use crate::raw::{Client as RawClient, ColumnFamily};
+#[doc(inline)]
+pub use crate::timestamp::Timestamp;
 #[doc(inline)]
 pub use crate::transaction::{Client as TransactionClient, Snapshot, Transaction};
 pub use config::Config;
 #[doc(inline)]
-pub use tikv_client_common::{
-    security::SecurityManager, BoundRange, Error, ErrorKind, Key, KvPair, Result, Timestamp,
-    ToOwnedRange, Value,
-};
+pub use region::{Region, RegionId, RegionVerId, StoreId};
 #[doc(inline)]
-pub use tikv_client_store::region::{Region, RegionId, RegionVerId, StoreId};
+pub use tikv_client_common::{security::SecurityManager, Error, ErrorKind, Result};

@@ -1,8 +1,8 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    compat::stream_fn, pd::RetryClient, BoundRange, Config, Key, Region, RegionId, Result,
-    SecurityManager,
+    compat::stream_fn, kv::codec, pd::RetryClient, store::Store, BoundRange, Config, Key, Region,
+    RegionId, Result, SecurityManager, Timestamp,
 };
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
@@ -12,9 +12,8 @@ use std::{
     sync::{Arc, RwLock},
     thread,
 };
-use tikv_client_common::{codec, Timestamp};
 use tikv_client_pd::Cluster;
-use tikv_client_store::{KvClient, KvConnect, Store, TikvConnect};
+use tikv_client_store::{KvClient, KvConnect, TikvConnect};
 
 const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";
@@ -315,7 +314,6 @@ pub mod test {
     use crate::mock::*;
 
     use futures::{executor, executor::block_on};
-    use tikv_client_common::BoundRange;
 
     #[test]
     fn test_kv_client_caching() {

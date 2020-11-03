@@ -7,13 +7,14 @@
 
 use crate::{
     pd::{PdClient, PdRpcClient, RetryClient},
-    Config, Error, Key, Result, Timestamp,
+    store::Store,
+    Config, Error, Key, Region, RegionId, Result, Timestamp,
 };
 use async_trait::async_trait;
 use derive_new::new;
 use std::{any::Any, sync::Arc};
 use tikv_client_proto::metapb;
-use tikv_client_store::{KvClient, KvConnect, Region, RegionId, Request, Store};
+use tikv_client_store::{KvClient, KvConnect, Request};
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.

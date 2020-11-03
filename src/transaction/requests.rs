@@ -4,15 +4,15 @@ use crate::{
     backoff::Backoff,
     pd::PdClient,
     request::{store_stream_for_key, store_stream_for_keys, store_stream_for_range, KvRequest},
+    store::Store,
+    timestamp::TimestampExt,
     transaction::HasLocks,
     BoundRange, Error, Key, KvPair, Result, Value,
 };
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
 use std::{iter, mem, sync::Arc};
-use tikv_client_common::TimestampExt;
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
-use tikv_client_store::Store;
 
 #[async_trait]
 impl KvRequest for kvrpcpb::GetRequest {
