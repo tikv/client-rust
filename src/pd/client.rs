@@ -1,7 +1,7 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    codec, compat::stream_fn, pd::RetryClient, store::Store, BoundRange, Config, Key, Region,
+    compat::stream_fn, kv::codec, pd::RetryClient, store::Store, BoundRange, Config, Key, Region,
     RegionId, Result, SecurityManager, Timestamp,
 };
 use async_trait::async_trait;
