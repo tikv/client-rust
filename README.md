@@ -20,15 +20,12 @@ The TiKV client is a Rust library (crate). To use this crate in your project, ad
 ```toml
 [dependencies]
 tikv-client = { git = "https://github.com/tikv/client-rust.git" }
-
-[patch.crates-io]
-raft-proto = { git = "https://github.com/tikv/raft-rs", rev = "e624c1d48460940a40d8aa69b5329460d9af87dd" }
 ```
 
 The client requires a Git dependency until we can [publish it](https://github.com/tikv/client-rust/issues/32).
 
 The client provides two modes to interact with TiKV: raw and transactional. 
-In the current version (0.0.0), the transactional API only supports optimistic transactions.
+In the current version (0.0.0), the transactional API supports optimistic transactions. Pessimistic transactions are implemented but not well tested.
 
 Important note: It is **not recommended or supported** to use both the raw and transactional APIs on the same database.
 
@@ -111,10 +108,11 @@ To use the client, there are 4 types you will need.
 
 ## Access the documentation
 
-We recommend using the cargo-generated documentation to browse and understand the API. We've done
-our best to include ample, tested, and understandable examples.
+We've done our best to include ample, tested, and understandable examples.
 
-You can access the documentation on your machine by running the following in any project that depends on `tikv-client`.
+We recommend using the officially maintained documentation [here](https://www.tikv.dev/doc/rust-client/tikv_client/).
+
+You can also access the documentation on your machine by running the following in any project that depends on `tikv-client`.
 
 ```bash
 cargo doc --package tikv-client --open
