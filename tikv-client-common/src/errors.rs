@@ -72,6 +72,9 @@ pub enum ErrorKind {
     /// Will raise this error when using a pessimistic txn only operation on an optimistic txn
     #[fail(display = "Invalid operation for this type of transaction")]
     InvalidTransactionType,
+    /// It's not allowed to perform operations in a transaction after it has been committed or rolled back.
+    #[fail(display = "Cannot operate after transaction successfully committed or rolled back")]
+    OperationAfterCommitError,
 }
 
 impl Fail for Error {
