@@ -19,10 +19,16 @@ use tikv_client_proto::kvrpcpb;
 /// In TiKV, keys are an ordered sequence of bytes. This means we can have ranges over those
 /// bytes. Eg `001` is before `010`.
 ///
+/// **Minimum key**: there is the minimum key: empty key. So a range may not be unbounded below. 
+/// The unbounded lower bound in a [`Range`](Range) will be converted to an empty key.
+///
+/// **Maximum key**: There is no limit of the maximum key. When an empty key is used as the upper bound, it means upper unbounded.
+/// The unbounded upper_bound in a [`Range`](Range). The range covering all keys is just `vec![]..`.
+///
+/// You don't have to know the real representation keys. The conversion from range types to `BoundRange` is intuitive.
 /// `Into<BoundRange>` has implementations for common range types like `a..b`, `a..=b` where `a` and `b`
 /// `impl Into<Key>`. You can implement `Into<BoundRange>` for your own types by using `try_from`.
 ///
-/// Invariant: a range may not be unbounded below.
 ///
 /// ```rust
 /// # use std::ops::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull, Bound};
@@ -52,8 +58,8 @@ use tikv_client_proto::kvrpcpb;
 /// ```
 ///
 /// **But, you should not need to worry about all this:** Most functions which operate
-/// on ranges will accept any types  which implement `Into<BoundRange>`.
-/// which means all of the above types can be passed directly to those functions.
+/// on ranges will accept any types which implement `Into<BoundRange>`.
+/// It means all of the above types can be passed directly to those functions.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(test, derive(Arbitrary))]
 pub struct BoundRange {

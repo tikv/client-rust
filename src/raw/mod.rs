@@ -2,7 +2,7 @@
 
 //! Raw related functionality.
 //!
-//! Using the [`raw::Client`](raw::Client) you can utilize TiKV's raw interface.
+//! Using the [`raw::Client`](client::Client) you can utilize TiKV's raw interface.
 //!
 //! This interface offers optimal performance as it does not require coordination with a timestamp
 //! oracle, while the transactional interface does.
