@@ -365,7 +365,6 @@ impl Transaction {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<()> {
-        self.check_status()?;
         let mut keys: Vec<Vec<u8>> = keys
             .into_iter()
             .map(|it| it.into())
