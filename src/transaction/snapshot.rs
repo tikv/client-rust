@@ -7,7 +7,7 @@ use std::ops::RangeBounds;
 
 /// A readonly transaction which can have a custom timestamp.
 ///
-/// See the [Transaction](transaction) docs for more information on the methods.
+/// See the [Transaction](struct@crate::Transaction) docs for more information on the methods.
 #[derive(new)]
 pub struct Snapshot {
     transaction: Transaction,

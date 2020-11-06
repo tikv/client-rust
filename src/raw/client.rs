@@ -26,7 +26,7 @@ pub struct Client {
 }
 
 impl Client {
-    /// Create a new [`Client`](Client).
+    /// Create a new raw [`Client`](Client).
     ///
     /// ```rust,no_run
     /// # use tikv_client::{Config, RawClient};
