@@ -244,7 +244,7 @@ impl Transaction {
         if self.is_pessimistic {
             self.pessimistic_lock(iter::once(key.clone())).await?;
         }
-        self.buffer.put(key, value.into());
+        self.buffer.put(key, value.into()).await;
         Ok(())
     }
 
@@ -267,7 +267,7 @@ impl Transaction {
         if self.is_pessimistic {
             self.pessimistic_lock(iter::once(key.clone())).await?;
         }
-        self.buffer.delete(key);
+        self.buffer.delete(key).await;
         Ok(())
     }
 
@@ -286,7 +286,7 @@ impl Transaction {
     /// ```
     pub async fn lock_keys(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
         for key in keys {
-            self.buffer.lock(key.into());
+            self.buffer.lock(key.into()).await;
         }
         Ok(())
     }
@@ -306,7 +306,7 @@ impl Transaction {
     /// ```
     pub async fn commit(&mut self) -> Result<()> {
         TwoPhaseCommitter::new(
-            self.buffer.to_proto_mutations(),
+            self.buffer.to_proto_mutations().await,
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
