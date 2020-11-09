@@ -41,6 +41,7 @@ impl Snapshot {
     }
 
     /// Unimplemented. Similar to scan, but in the reverse direction.
+    #[allow(dead_code)]
     fn scan_reverse(&self, range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
         self.transaction.scan_reverse(range)
     }
