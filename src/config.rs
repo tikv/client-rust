@@ -38,6 +38,7 @@ impl Config {
     /// It's important to **include more than one PD endpoint** (include all, if possible!)
     /// This helps avoid having a *single point of failure*.
     ///
+    /// # Examples
     /// ```rust
     /// # use tikv_client::Config;
     /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"]);
@@ -58,6 +59,7 @@ impl Config {
     /// By default, TiKV connections do not utilize transport layer security. Enable it by setting
     /// these values.
     ///
+    /// # Examples
     /// ```rust
     /// # use tikv_client::Config;
     /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"]).with_security(

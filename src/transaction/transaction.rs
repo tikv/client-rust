@@ -32,6 +32,7 @@ use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 /// provides materials explaining designs and implementations of multiple features in TiKV transactions.
 ///
 ///
+/// # Examples
 /// ```rust,no_run
 /// use tikv_client::{Config, TransactionClient};
 /// use futures::prelude::*;
@@ -104,6 +105,7 @@ impl Transaction {
     ///
     /// It can only be used in pessimistic mode.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -139,6 +141,7 @@ impl Transaction {
     ///
     /// Non-existent entries will not appear in the result. The order of the keys is not retained in the result.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -177,6 +180,7 @@ impl Transaction {
     ///
     /// Non-existent entries will not appear in the result. The order of the keys is not retained in the result.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -216,6 +220,7 @@ impl Transaction {
     /// If the number of eligible key-value pairs are greater than `limit`,
     /// only the first `limit` pairs are returned, ordered by the key.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, KvPair, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -254,12 +259,13 @@ impl Transaction {
     /// Create a 'scan_reverse' request.
     ///
     /// Similar to [`scan`](Transaction::scan), but in the reverse direction.
-    fn scan_reverse(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
+    pub(crate) fn scan_reverse(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
         unimplemented!()
     }
 
     /// Sets the value associated with the given key.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -286,6 +292,7 @@ impl Transaction {
     ///
     /// Deleting a non-existent key will not result in an error.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -316,6 +323,7 @@ impl Transaction {
     ///
     /// In pessimistic mode, please use [`get_for_update`](Transaction::get_for_update) instead.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -336,6 +344,7 @@ impl Transaction {
 
     /// Commits the actions of the transaction.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;

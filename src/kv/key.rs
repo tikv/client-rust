@@ -20,6 +20,7 @@ const _PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
 ///
 /// This type wraps around an owned value, so it should be treated it like `String` or `Vec<u8>`.
 ///
+/// # Examples
 /// ```rust
 /// use tikv_client::Key;
 ///
@@ -43,6 +44,7 @@ const _PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
 /// isn't able to determine the correct type. Notably in the `assert_eq!()` and `==` cases. In
 /// these cases using the fully-qualified-syntax is useful:
 ///
+/// # Examples
 /// ```rust
 /// use tikv_client::Key;
 ///

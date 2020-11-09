@@ -27,6 +27,7 @@ pub struct Client {
 impl Client {
     /// Create a raw [`Client`](Client).
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
@@ -52,6 +53,7 @@ impl Client {
     ///
     /// For normal users of the raw API, you don't need to use other column families.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Config, RawClient, ColumnFamily};
     /// # use futures::prelude::*;
@@ -79,6 +81,7 @@ impl Client {
     ///
     /// By default, `key_only` is set to false.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
@@ -102,6 +105,7 @@ impl Client {
     ///
     /// Retuning `Ok(None)` indicates the key does not exist in TiKV.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Value, Config, RawClient};
     /// # use futures::prelude::*;
@@ -125,6 +129,7 @@ impl Client {
     ///
     /// Non-existent entries will not appear in the result. The order of the keys is not retained in the result.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{KvPair, Config, RawClient};
     /// # use futures::prelude::*;
@@ -148,6 +153,7 @@ impl Client {
     ///
     /// Once resolved this request will result in the setting of the value associated with the given key.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, RawClient};
     /// # use futures::prelude::*;
@@ -169,6 +175,7 @@ impl Client {
     ///
     /// Once resolved this request will result in the setting of the values associated with the given keys.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Error, Result, KvPair, Key, Value, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
@@ -196,6 +203,7 @@ impl Client {
     ///
     /// It does not return an error if the key does not exist in TiKV.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, RawClient};
     /// # use futures::prelude::*;
@@ -218,6 +226,7 @@ impl Client {
     ///
     /// It does not return an error if some of the keys do not exist and will delete the others.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
@@ -238,6 +247,7 @@ impl Client {
     ///
     /// Once resolved this request will result in the deletion of all keys lying in the given range.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
@@ -262,6 +272,7 @@ impl Client {
     /// only the first `limit` pairs are returned, ordered by the key.
     ///
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{KvPair, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
@@ -296,6 +307,7 @@ impl Client {
     /// As a result, you may get **more than** `each_limit` key-value pairs for each range.
     /// But you should not miss any entries.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;

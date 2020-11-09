@@ -8,6 +8,7 @@ use tikv_client_proto::kvrpcpb;
 
 /// A key/value pair.
 ///
+/// # Examples
 /// ```rust
 /// # use tikv_client::{Key, Value, KvPair};
 /// let key = "key".to_owned();

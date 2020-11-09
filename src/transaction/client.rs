@@ -43,6 +43,7 @@ pub struct Client {
 impl Client {
     /// Creates a transactional [`Client`](Client).
     ///
+    /// # Examples
     /// ```rust,no_run
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
@@ -76,6 +77,7 @@ impl Client {
     ///
     /// For details, check our [SIG-transaction](https://github.com/tikv/sig-transaction/tree/master/doc/tikv#optimistic-and-pessimistic-transactions).
     ///
+    /// # Examples
     /// ```rust,no_run
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
@@ -97,6 +99,7 @@ impl Client {
     /// Write operations will lock the data until commit, thus commit requests should not suffer from write conflict.
     /// For details, check our [SIG-transaction](https://github.com/tikv/sig-transaction/tree/master/doc/tikv#optimistic-and-pessimistic-transactions).
     ///
+    /// # Examples
     /// ```rust,no_run
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
@@ -120,6 +123,7 @@ impl Client {
 
     /// Retrieves the current [`Timestamp`](Timestamp).
     ///
+    /// # Examples
     /// ```rust,no_run
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;

@@ -30,6 +30,7 @@ use tikv_client_proto::kvrpcpb;
 /// `impl Into<Key>`. You can implement `Into<BoundRange>` for your own types by using `try_from`.
 ///
 ///
+/// # Examples
 /// ```rust
 /// # use std::ops::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull, Bound};
 /// # use std::convert::TryInto;
@@ -83,6 +84,7 @@ impl BoundRange {
     ///
     /// The **end** of a scan is exclusive, unless appended with an '\0', then it is inclusive.
     ///
+    /// # Examples
     /// ```rust
     /// use tikv_client::{BoundRange, Key, ToOwnedRange};
     /// // Exclusive

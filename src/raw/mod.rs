@@ -30,6 +30,7 @@ mod requests;
 ///
 /// The best (and only) way to create a [`ColumnFamily`](ColumnFamily) is via the `From` implementation:
 ///
+/// # Examples
 /// ```rust
 /// # use tikv_client::ColumnFamily;
 /// # use std::convert::TryFrom;
