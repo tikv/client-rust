@@ -8,7 +8,6 @@
 //! oracle, while the transactional interface does.
 //!
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
-//!
 
 pub use self::client::Client;
 use crate::{Error, ErrorKind};

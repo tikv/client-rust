@@ -17,7 +17,6 @@ const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 /// Each request is immediately processed once executed.
 ///
 /// The returned results of raw requests are [`Future`](std::future::Future)s that must be awaited to execute.
-///
 #[derive(Clone)]
 pub struct Client {
     rpc: Arc<PdRpcClient>,

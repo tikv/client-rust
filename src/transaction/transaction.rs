@@ -17,18 +17,18 @@ use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 /// Using a transaction you can prepare a set of actions (such as `get`, or `put`) on data at a
 /// particular timestamp called `start_ts` obtained from the placement driver.
 /// Once a transaction is commited, a new timestamp called `commit_ts` is obtained from the placement driver.
-/// 
+///
 /// The snapshot isolation in TiKV ensures that a transaction behaves as if it operates on the snapshot taken at
 /// `start_ts` and its mutations take effect at `commit_ts`.
-/// In other words, the transaction can read mutations with `commit_ts` <= its `start_ts`, 
+/// In other words, the transaction can read mutations with `commit_ts` <= its `start_ts`,
 /// and its mutations are readable for transactions with `start_ts` >= its `commit_ts`.
 ///
 /// Mutations, or write operations made in a transaction are buffered locally and sent at the time of commit,
-/// except for pessimisitc locking. 
+/// except for pessimisitc locking.
 /// In pessimistic mode, all write operations or `xxx_for_update` operations will first acquire pessimistic locks in TiKV.
 /// A lock exists until the transaction is committed (in the first phase of 2PC) or rolled back, or it exceeds its Time To Live (TTL).
 ///
-/// For details, the [SIG-Transaction](https://github.com/tikv/sig-transaction) 
+/// For details, the [SIG-Transaction](https://github.com/tikv/sig-transaction)
 /// provides materials explaining designs and implementations of multiple features in TiKV transactions.
 ///
 ///
@@ -70,7 +70,7 @@ impl Transaction {
     }
 
     /// Create a new 'get' request
-    /// 
+    ///
     /// Once resolved this request will result in the fetching of the value associated with the
     /// given key.
     ///
@@ -252,7 +252,7 @@ impl Transaction {
     }
 
     /// Create a 'scan_reverse' request.
-    /// 
+    ///
     /// Similar to [`scan`](Transaction::scan), but in the reverse direction.
     fn scan_reverse(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
         unimplemented!()
@@ -309,8 +309,8 @@ impl Transaction {
 
     /// Lock the given keys without mutating value (at the time of commit).
     ///
-    /// In optimistic mode, write conflicts are not checked until commit. 
-    /// So use this command to indicate that 
+    /// In optimistic mode, write conflicts are not checked until commit.
+    /// So use this command to indicate that
     /// "I do not want to commit if the value associated with this key has been modified".
     /// It's useful to avoid *Write Skew* anomaly.
     ///

@@ -60,8 +60,11 @@ impl Config {
     ///
     /// ```rust
     /// # use tikv_client::Config;
-    /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"])
-    ///     .with_security("root.ca", "internal.cert", "internal.key");
+    /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"]).with_security(
+    ///     "root.ca",
+    ///     "internal.cert",
+    ///     "internal.key",
+    /// );
     /// ```
     pub fn with_security(
         mut self,
