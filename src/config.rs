@@ -30,7 +30,7 @@ pub struct Config {
     pub timeout: Duration,
 }
 
-const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl Config {
     /// Create a new [`Config`](Config) which coordinates with the given PD endpoints.
@@ -80,6 +80,16 @@ impl Config {
         self
     }
 
+    /// Set the timeout for the [`Config`](Config).
+    ///
+    ///
+    /// # Examples
+    /// ```rust
+    /// # use tikv_client::Config;
+    /// # use std::time::Duration;
+    /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"])
+    ///     .timeout(Duration::from_secs(10));
+    /// ```
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
