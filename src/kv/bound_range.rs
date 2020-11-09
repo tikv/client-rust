@@ -19,7 +19,7 @@ use tikv_client_proto::kvrpcpb;
 /// In TiKV, keys are an ordered sequence of bytes. This means we can have ranges over those
 /// bytes. Eg `001` is before `010`.
 ///
-/// **Minimum key**: there is the minimum key: empty key. So a range may not be unbounded below. 
+/// **Minimum key**: there is the minimum key: empty key. So a range may not be unbounded below.
 /// The unbounded lower bound in a [`Range`](Range) will be converted to an empty key.
 ///
 /// **Maximum key**: There is no limit of the maximum key. When an empty key is used as the upper bound, it means upper unbounded.

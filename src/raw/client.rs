@@ -13,9 +13,9 @@ const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
 /// The TiKV raw `Client` is used to interact with TiKV using raw requests.
 ///
-/// Raw requests don't need a wrapping transaction. 
+/// Raw requests don't need a wrapping transaction.
 /// Each request is immediately processed once executed.
-/// 
+///
 /// The returned results of raw requests are [`Future`](std::future::Future)s that must be awaited to execute.
 ///
 #[derive(Clone)]
@@ -50,7 +50,7 @@ impl Client {
     /// supplied column family constraint. The original `Client` can still be used.
     ///
     /// By default, raw client uses the `Default` column family.
-    /// 
+    ///
     /// For normal users of the raw API, you don't need to use other column families.
     ///
     /// ```rust,no_run
@@ -75,7 +75,7 @@ impl Client {
     /// This function returns a new `Client`, requests created with it will have the
     /// supplied `key_only` option. The original `Client` can still be used. `key_only`
     /// is only relevant for `scan`-like requests, for other kinds of request, it
-    /// will be ignored. 
+    /// will be ignored.
     /// With `key_only` being true, `scan`-like requests will ignore values.
     ///
     /// By default, `key_only` is set to false.
@@ -258,10 +258,10 @@ impl Client {
     /// Create a new 'scan' request.
     ///
     /// Once resolved this request will result in a `Vec` of key-value pairs that lies in the specified range.
-    /// 
+    ///
     /// If the number of eligible key-value pairs are greater than `limit`,
     /// only the first `limit` pairs are returned, ordered by the key.
-    /// 
+    ///
     ///
     /// ```rust,no_run
     /// # use tikv_client::{KvPair, Config, RawClient, ToOwnedRange};
@@ -290,12 +290,12 @@ impl Client {
     /// Create a new 'batch scan' request.
     ///
     /// Once resolved this request will result in a set of scanners over the given keys.
-    /// 
-    /// **Warning**: This method is experimental. The `each_limit` parameter does not work as expected. 
-    /// It does not limit the number of results returned of each range, 
-    /// instead it limits the number of results in each region of each range. 
-    /// As a result, you may get **more than** `each_limit` key-value pairs for each range. 
-    /// But you should not miss any entries. 
+    ///
+    /// **Warning**: This method is experimental. The `each_limit` parameter does not work as expected.
+    /// It does not limit the number of results returned of each range,
+    /// instead it limits the number of results in each region of each range.
+    /// As a result, you may get **more than** `each_limit` key-value pairs for each range.
+    /// But you should not miss any entries.
     ///
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
