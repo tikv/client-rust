@@ -35,14 +35,19 @@ fn load_pem_file(tag: &str, path: &Path) -> Result<Vec<u8>> {
         .map(|_| key)
 }
 
+/// Manages the TLS protocal 
 #[derive(Default)]
 pub struct SecurityManager {
+    /// The PEM encoding of the server’s CA certificates.
     ca: Vec<u8>,
+    /// The PEM encoding of the server’s certificate chain.
     cert: Vec<u8>,
+    /// The path to the file that contains the PEM encoding of the server’s private key.
     key: PathBuf,
 }
 
 impl SecurityManager {
+    /// Load TLS configuration from files.
     pub fn load(
         ca_path: impl AsRef<Path>,
         cert_path: impl AsRef<Path>,
@@ -57,6 +62,7 @@ impl SecurityManager {
         })
     }
 
+    /// Connect to gRPC server using TLS connection. If TLS is not configured, use normal connection.
     pub fn connect<Factory, Client>(
         &self,
         env: Arc<Environment>,
