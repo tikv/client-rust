@@ -35,7 +35,7 @@ fn load_pem_file(tag: &str, path: &Path) -> Result<Vec<u8>> {
         .map(|_| key)
 }
 
-/// Manages the TLS protocal 
+/// Manages the TLS protocal
 #[derive(Default)]
 pub struct SecurityManager {
     /// The PEM encoding of the server’s CA certificates.

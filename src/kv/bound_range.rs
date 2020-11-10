@@ -58,7 +58,6 @@ use tikv_client_proto::kvrpcpb;
 ///     (Bound::Included(Key::from("Rust".to_owned())), Bound::Unbounded),
 /// );
 /// ```
-///
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(test, derive(Arbitrary))]
 pub struct BoundRange {
