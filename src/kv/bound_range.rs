@@ -23,12 +23,13 @@ use tikv_client_proto::kvrpcpb;
 /// The unbounded lower bound in a [`Range`](Range) will be converted to an empty key.
 ///
 /// **Maximum key**: There is no limit of the maximum key. When an empty key is used as the upper bound, it means upper unbounded.
-/// The unbounded upper_bound in a [`Range`](Range). The range covering all keys is just `vec![]..`.
+/// The unbounded upper bound in a [`Range`](Range). The range covering all keys is just `vec![]..`.
 ///
-/// You don't have to know the real representation keys. The conversion from range types to `BoundRange` is intuitive.
-/// `Into<BoundRange>` has implementations for common range types like `a..b`, `a..=b` where `a` and `b`
+/// **But, you should not need to worry about all this:** Most functions which operate
+/// on ranges will accept any types which implement `Into<BoundRange>`.
+/// Common range types like `a..b`, `a..=b` has implemented `Into<BoundRange>`where `a` and `b`
 /// `impl Into<Key>`. You can implement `Into<BoundRange>` for your own types by using `try_from`.
-///
+/// It means all of the following types in the example can be passed directly to those functions.
 ///
 /// # Examples
 /// ```rust
@@ -58,9 +59,6 @@ use tikv_client_proto::kvrpcpb;
 /// );
 /// ```
 ///
-/// **But, you should not need to worry about all this:** Most functions which operate
-/// on ranges will accept any types which implement `Into<BoundRange>`.
-/// It means all of the above types can be passed directly to those functions.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(test, derive(Arbitrary))]
 pub struct BoundRange {
