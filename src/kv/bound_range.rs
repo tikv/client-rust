@@ -238,10 +238,33 @@ impl From<kvrpcpb::KeyRange> for BoundRange {
 }
 
 /// A convenience trait for converting ranges of borrowed types into a `BoundRange`.
+///
+/// # Examples
+/// ```rust
+/// # use tikv_client::{ToOwnedRange, BoundRange};
+/// # use std::ops::{Range, RangeFrom, RangeInclusive};
+/// let r1: Range<&str> = "s".."e";
+/// let r1: BoundRange = r1.to_owned();
+///
+/// let r2: RangeFrom<&str> = "start"..;
+/// let r2: BoundRange = r2.to_owned();
+///
+/// let r3: RangeInclusive<&str> = "s"..="e";
+/// let r3: BoundRange = r3.to_owned();
+///
+/// let k1: Vec<u8> = "start".to_owned().into_bytes();
+/// let k2: Vec<u8> = "end".to_owned().into_bytes();
+/// let r4: BoundRange = (&k1, &k2).to_owned();
+/// let r5: BoundRange = (&k1, None).to_owned();
+/// let r6: BoundRange = (&k1, Some(&k2)).to_owned();
+/// ```
 pub trait ToOwnedRange {
     /// Transform a borrowed range of some form into an owned `BoundRange`.
     fn to_owned(self) -> BoundRange;
 }
+
+#[test]
+fn test_to_owned() {}
 
 impl<T: Into<Key> + Borrow<U>, U: ToOwned<Owned = T> + ?Sized> ToOwnedRange for Range<&U> {
     fn to_owned(self) -> BoundRange {
