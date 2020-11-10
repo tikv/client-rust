@@ -2,16 +2,25 @@ use crate::{Error, Key, Result};
 use derive_new::new;
 use tikv_client_proto::{kvrpcpb, metapb};
 
+/// The ID of a region
 pub type RegionId = u64;
+/// The ID of a store
 pub type StoreId = u64;
 
+/// The ID and version information of a region.
 #[derive(Eq, PartialEq, Hash, Clone, Default, Debug)]
 pub struct RegionVerId {
+    /// The ID of the region
     pub id: RegionId,
+    /// Conf change version, auto increment when add or remove peer
     pub conf_ver: u64,
+    /// Region version, auto increment when split or merge
     pub ver: u64,
 }
 
+/// Information about a TiKV region and its leader.
+///
+/// In TiKV all data is partitioned by range. Each partition is called a region.
 #[derive(new, Clone, Default, Debug, PartialEq)]
 pub struct Region {
     pub region: metapb::Region,
@@ -56,7 +65,6 @@ impl Region {
         (self.start_key(), self.end_key())
     }
 
-    #[allow(dead_code)]
     pub fn ver_id(&self) -> RegionVerId {
         let region = &self.region;
         let epoch = region.get_region_epoch();
