@@ -187,7 +187,7 @@ impl From<tikv_client_proto::kvrpcpb::KeyError> for Error {
     }
 }
 
-/// The result type used in tikv-client. 
+/// The result type used in tikv-client.
 /// It holds an error type that contains varisous kinds of error that can happen in the crate.
 pub type Result<T> = result::Result<T, Error>;
 
