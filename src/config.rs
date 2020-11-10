@@ -30,7 +30,7 @@ pub struct Config {
     pub timeout: Duration,
 }
 
-pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl Config {
     /// Create a new [`Config`](Config) which coordinates with the given PD endpoints.
