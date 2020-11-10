@@ -93,7 +93,7 @@ impl Key {
         self.0.push(0)
     }
 
-    /// Convert the key to a lower bound.
+    /// Convert the key to a lower bound. The key is treated as inclusive.
     #[inline]
     pub(super) fn into_lower_bound(mut self) -> Bound<Key> {
         if self.zero_terminated() {
@@ -104,7 +104,7 @@ impl Key {
         }
     }
 
-    /// Convert the key to an upper bound.
+    /// Convert the key to an upper bound. The key is treated as exclusive.
     #[inline]
     pub(super) fn into_upper_bound(mut self) -> Bound<Key> {
         if self.zero_terminated() {
