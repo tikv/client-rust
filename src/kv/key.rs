@@ -73,21 +73,27 @@ impl AsRef<Key> for kvrpcpb::Mutation {
 }
 
 impl Key {
+    /// Return whether the key is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
+    /// Return whether the last byte of key is 0.
     #[inline]
     pub(super) fn zero_terminated(&self) -> bool {
         self.0.last().map(|i| *i == 0).unwrap_or(false)
     }
 
+    /// Push a zero to the end of the key.
+    ///
+    /// Extending a zero makes the new key the smallest key that is greater than than the original one, i.e. the succeeder.
     #[inline]
     pub(super) fn push_zero(&mut self) {
         self.0.push(0)
     }
 
+    /// Convert the key to a lower bound.
     #[inline]
     pub(super) fn into_lower_bound(mut self) -> Bound<Key> {
         if self.zero_terminated() {
@@ -98,6 +104,7 @@ impl Key {
         }
     }
 
+    /// Convert the key to an upper bound.
     #[inline]
     pub(super) fn into_upper_bound(mut self) -> Bound<Key> {
         if self.zero_terminated() {
@@ -108,6 +115,7 @@ impl Key {
         }
     }
 
+    /// Return the MVCC-encoded representation of the key.
     #[inline]
     pub fn to_encoded(&self) -> Key {
         let len = codec::max_encoded_bytes_size(self.0.len());
