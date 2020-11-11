@@ -37,7 +37,6 @@ pub struct Client {
     /// The thread pool for background tasks including committing secondary keys and failed
     /// transaction cleanups.
     bg_worker: ThreadPool,
-    key_only: bool,
 }
 
 impl Client {
@@ -54,19 +53,7 @@ impl Client {
     pub async fn new(config: Config) -> Result<Client> {
         let bg_worker = ThreadPool::new()?;
         let pd = Arc::new(PdRpcClient::connect(&config, true).await?);
-        Ok(Client {
-            pd,
-            bg_worker,
-            key_only: false,
-        })
-    }
-
-    pub fn with_key_only(&self, key_only: bool) -> Client {
-        Client {
-            pd: self.pd.clone(),
-            bg_worker: self.bg_worker.clone(),
-            key_only,
-        }
+        Ok(Client { pd, bg_worker })
     }
 
     /// Creates a new [`Transaction`](Transaction) in optimistic mode.
@@ -186,7 +173,6 @@ impl Client {
             timestamp,
             self.bg_worker.clone(),
             self.pd.clone(),
-            self.key_only,
             is_pessimistic,
         )
     }

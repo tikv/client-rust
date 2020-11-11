@@ -36,8 +36,9 @@ impl Snapshot {
         &self,
         range: impl Into<BoundRange>,
         limit: u32,
+        key_only: bool,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.transaction.scan(range, limit).await
+        self.transaction.scan(range, limit, key_only).await
     }
 
     /// Unimplemented. Similar to scan, but in the reverse direction.

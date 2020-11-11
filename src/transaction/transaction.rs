@@ -46,7 +46,6 @@ pub struct Transaction {
     buffer: Buffer,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
-    key_only: bool,
     for_update_ts: u64,
     is_pessimistic: bool,
 }
@@ -56,7 +55,6 @@ impl Transaction {
         timestamp: Timestamp,
         bg_worker: ThreadPool,
         rpc: Arc<PdRpcClient>,
-        key_only: bool,
         is_pessimistic: bool,
     ) -> Transaction {
         Transaction {
@@ -64,7 +62,6 @@ impl Transaction {
             buffer: Default::default(),
             bg_worker,
             rpc,
-            key_only,
             for_update_ts: 0,
             is_pessimistic,
         }
@@ -243,11 +240,11 @@ impl Transaction {
         &self,
         range: impl Into<BoundRange>,
         limit: u32,
+        key_only: bool,
     ) -> Result<impl Iterator<Item = KvPair>> {
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
 
-        let key_only = self.key_only;
         self.buffer
             .scan_and_fetch(range.into(), limit, move |new_range, new_limit| {
                 new_mvcc_scan_request(new_range, timestamp, new_limit, key_only)
