@@ -6,7 +6,7 @@
 //!
 //! This interface offers SQL-like transactions on top of the raw interface.
 //!
-//! **Warning:** It is not advisable to use both raw and transactional functionalities in the same keyspace.
+//! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 
 pub use client::Client;
 pub(crate) use lock::{resolve_locks, HasLocks};

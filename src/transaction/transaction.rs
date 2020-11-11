@@ -319,7 +319,7 @@ impl Transaction {
     /// In optimistic mode, write conflicts are not checked until commit.
     /// So use this command to indicate that
     /// "I do not want to commit if the value associated with this key has been modified".
-    /// It's useful to avoid *Write Skew* anomaly.
+    /// It's useful to avoid *write skew* anomaly.
     ///
     /// In pessimistic mode, please use [`get_for_update`](Transaction::get_for_update) instead.
     ///
@@ -370,7 +370,8 @@ impl Transaction {
 
     /// Pessimistically lock the keys.
     ///
-    /// Once resovled it acquires a mutex on the key in TiKV.
+    /// Once resovled it acquires a lock on the key in TiKV.
+    /// The lock prevents other transactions from mutating the entry until it is released.
     async fn pessimistic_lock(
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
@@ -400,7 +401,13 @@ impl Transaction {
 /// The default TTL of a lock in milliseconds
 const DEFAULT_LOCK_TTL: u64 = 3000;
 
-/// A struct wrapping the details of 2PC.
+/// A struct wrapping the details of two-phase commit protocol (2PC).
+///
+/// The two phases are `prewrite` and `commit`.
+/// Generally, the `prewrite` phase is to send data to all regions and write them.
+/// The `commit` phase is to mark all written data as successfully committed.
+///
+/// The committer implements `prewrite`, `commit` and `rollback` functions.
 #[derive(new)]
 struct TwoPhaseCommitter {
     mutations: Vec<kvrpcpb::Mutation>,
