@@ -228,7 +228,7 @@ impl Transaction {
     /// let key1: Key = b"TiKV".to_vec().into();
     /// let key2: Key = b"TiDB".to_vec().into();
     /// let result: Vec<KvPair> = txn
-    ///     .scan(key1..key2, 10)
+    ///     .scan(key1..key2, 10, true)
     ///     .await
     ///     .unwrap()
     ///     .collect();
