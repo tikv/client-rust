@@ -9,7 +9,7 @@ use crate::{
 };
 use derive_new::new;
 use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
-use std::{iter, mem, ops::RangeBounds, sync::Arc};
+use std::{iter, ops::RangeBounds, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
 #[derive(PartialEq)]
@@ -519,27 +519,7 @@ impl TwoPhaseCommitter {
 impl Drop for Transaction {
     fn drop(&mut self) {
         if self.status == TransactionStatus::Active {
-            let buffer = mem::take(&mut self.buffer);
-            let bg_worker = self.bg_worker.clone();
-            let rpc = self.rpc.clone();
-            let version = self.timestamp.version();
-            let for_update_ts = self.for_update_ts;
-            self.bg_worker.spawn_ok(async move {
-                TwoPhaseCommitter::new(
-                    buffer.to_proto_mutations().await,
-                    version,
-                    bg_worker.clone(),
-                    rpc.clone(),
-                    for_update_ts,
-                )
-                .rollback()
-                .map(|res| {
-                    if let Err(e) = res {
-                        warn!("Failed to rollback at Drop: {}", e);
-                    }
-                })
-                .await
-            })
+            panic!("Dropping an active transaction. Consider commit or rollback it.")
         }
     }
 }
