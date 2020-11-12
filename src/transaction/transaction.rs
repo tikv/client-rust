@@ -507,6 +507,8 @@ impl TwoPhaseCommitter {
         if self.for_update_ts > 0 {
             new_pessimistic_rollback_request(keys, self.start_version, self.for_update_ts)
                 .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+        } else if self.mutations.is_empty() {
+            Box::pin(future::ready(Ok(())))
         } else {
             new_batch_rollback_request(keys, self.start_version)
                 .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
