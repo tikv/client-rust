@@ -14,7 +14,7 @@ use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
 #[derive(PartialEq)]
 enum TransactionStatus {
-    Normal,
+    Active,
     Committed,
     Rolledback,
 }
@@ -56,7 +56,7 @@ impl Transaction {
         is_pessimistic: bool,
     ) -> Transaction {
         Transaction {
-            status: TransactionStatus::Normal,
+            status: TransactionStatus::Active,
             timestamp,
             buffer: Default::default(),
             bg_worker,
@@ -388,7 +388,7 @@ impl Transaction {
 
     fn check_status(&self) -> Result<()> {
         match self.status {
-            TransactionStatus::Normal => Ok(()),
+            TransactionStatus::Active => Ok(()),
             TransactionStatus::Committed => Err(ErrorKind::OperationAfterCommitError.into()),
             TransactionStatus::Rolledback => Err(ErrorKind::OperationAfterCommitError.into()),
         }
@@ -518,7 +518,7 @@ impl TwoPhaseCommitter {
 
 impl Drop for Transaction {
     fn drop(&mut self) {
-        if self.status == TransactionStatus::Normal {
+        if self.status == TransactionStatus::Active {
             let buffer = mem::take(&mut self.buffer);
             let bg_worker = self.bg_worker.clone();
             let rpc = self.rpc.clone();
