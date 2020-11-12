@@ -498,20 +498,20 @@ impl TwoPhaseCommitter {
             .await
     }
 
-    fn rollback(&self) -> impl Future<Output = Result<()>> + 'static {
-        let mutations = self.mutations.clone();
-        let keys = mutations
+    fn rollback(self) -> impl Future<Output = Result<()>> + 'static {
+        let keys = self
+            .mutations
             .into_iter()
             .map(|mutation| mutation.key.into())
             .collect();
         if self.for_update_ts > 0 {
             new_pessimistic_rollback_request(keys, self.start_version, self.for_update_ts)
-                .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
-        } else if self.mutations.is_empty() {
+                .execute(self.rpc, OPTIMISTIC_BACKOFF)
+        } else if keys.is_empty() {
             Box::pin(future::ready(Ok(())))
         } else {
             new_batch_rollback_request(keys, self.start_version)
-                .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+                .execute(self.rpc, OPTIMISTIC_BACKOFF)
         }
     }
 }
