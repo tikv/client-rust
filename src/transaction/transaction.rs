@@ -14,8 +14,13 @@ use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
 #[derive(PartialEq)]
 enum TransactionStatus {
+    /// The transaction is read-only [`Snapshot`](super::Snapshot::Snapshot), no need to commit or rollback or panic on drop.
+    ReadOnly,
+    /// The transaction have not been committed or rolled back.
     Active,
+    /// The transaction has committed.
     Committed,
+    /// The transaction has rolled back.
     Rolledback,
 }
 
@@ -54,9 +59,15 @@ impl Transaction {
         rpc: Arc<PdRpcClient>,
         key_only: bool,
         is_pessimistic: bool,
+        read_only: bool,
     ) -> Transaction {
+        let status = if read_only {
+            TransactionStatus::ReadOnly
+        } else {
+            TransactionStatus::Active
+        };
         Transaction {
-            status: TransactionStatus::Active,
+            status,
             timestamp,
             buffer: Default::default(),
             bg_worker,
@@ -388,7 +399,7 @@ impl Transaction {
 
     fn check_status(&self) -> Result<()> {
         match self.status {
-            TransactionStatus::Active => Ok(()),
+            TransactionStatus::ReadOnly | TransactionStatus::Active => Ok(()),
             TransactionStatus::Committed => Err(ErrorKind::OperationAfterCommitError.into()),
             TransactionStatus::Rolledback => Err(ErrorKind::OperationAfterCommitError.into()),
         }
