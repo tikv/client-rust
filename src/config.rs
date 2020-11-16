@@ -38,6 +38,7 @@ impl Config {
     /// It's important to **include more than one PD endpoint** (include all, if possible!)
     /// This helps avoid having a *single point of failure*.
     ///
+    /// # Examples
     /// ```rust
     /// # use tikv_client::Config;
     /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"]);
@@ -58,10 +59,14 @@ impl Config {
     /// By default, TiKV connections do not utilize transport layer security. Enable it by setting
     /// these values.
     ///
+    /// # Examples
     /// ```rust
     /// # use tikv_client::Config;
-    /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"])
-    ///     .with_security("root.ca", "internal.cert", "internal.key");
+    /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"]).with_security(
+    ///     "root.ca",
+    ///     "internal.cert",
+    ///     "internal.key",
+    /// );
     /// ```
     pub fn with_security(
         mut self,
@@ -75,6 +80,16 @@ impl Config {
         self
     }
 
+    /// Set the timeout for the [`Config`](Config).
+    ///
+    ///
+    /// # Examples
+    /// ```rust
+    /// # use tikv_client::Config;
+    /// # use std::time::Duration;
+    /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"])
+    ///     .timeout(Duration::from_secs(10));
+    /// ```
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self

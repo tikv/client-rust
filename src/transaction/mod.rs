@@ -2,12 +2,11 @@
 
 //! Transactional related functionality.
 //!
-//! Using the [`TransactionClient`](TransactionClient) you can utilize TiKV's transactional interface.
+//! Using the [`TransactionClient`](client::Client) you can utilize TiKV's transactional interface.
 //!
 //! This interface offers SQL-like transactions on top of the raw interface.
 //!
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
-//!
 
 pub use client::Client;
 pub(crate) use lock::{resolve_locks, HasLocks};

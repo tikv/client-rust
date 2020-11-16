@@ -14,13 +14,25 @@ use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
 /// A undo-able set of actions on the dataset.
 ///
-/// Using a transaction you can prepare a set of actions (such as `get`, or `set`) on data at a
-/// particular timestamp obtained from the placement driver.
+/// Using a transaction you can prepare a set of actions (such as `get`, or `put`) on data at a
+/// particular timestamp called `start_ts` obtained from the placement driver.
+/// Once a transaction is commited, a new timestamp called `commit_ts` is obtained from the placement driver.
 ///
-/// Once a transaction is commited, a new commit timestamp is obtained from the placement driver.
+/// The snapshot isolation in TiKV ensures that a transaction behaves as if it operates on the snapshot taken at
+/// `start_ts` and its mutations take effect at `commit_ts`.
+/// In other words, the transaction can read mutations with `commit_ts` <= its `start_ts`,
+/// and its mutations are readable for transactions with `start_ts` >= its `commit_ts`.
 ///
-/// Create a new transaction from a timestamp using `new`.
+/// Mutations, or write operations made in a transaction are buffered locally and sent at the time of commit,
+/// except for pessimisitc locking.
+/// In pessimistic mode, all write operations or `xxx_for_update` operations will first acquire pessimistic locks in TiKV.
+/// A lock exists until the transaction is committed (in the first phase of 2PC) or rolled back, or it exceeds its Time To Live (TTL).
 ///
+/// For details, the [SIG-Transaction](https://github.com/tikv/sig-transaction)
+/// provides materials explaining designs and implementations of multiple features in TiKV transactions.
+///
+///
+/// # Examples
 /// ```rust,no_run
 /// use tikv_client::{Config, TransactionClient};
 /// use futures::prelude::*;
@@ -58,8 +70,14 @@ impl Transaction {
         }
     }
 
-    /// Gets the value associated with the given key.
+    /// Create a new 'get' request
     ///
+    /// Once resolved this request will result in the fetching of the value associated with the
+    /// given key.
+    ///
+    /// Retuning `Ok(None)` indicates the key does not exist in TiKV.
+    ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -82,8 +100,12 @@ impl Transaction {
             .await
     }
 
-    /// Pessimistically lock and get the value associated with the given key.
+    /// Create a `get_for_udpate` request.
+    /// Once resolved this request will pessimistically lock and fetch the value associated with the given key.
     ///
+    /// It can only be used in pessimistic mode.
+    ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -112,10 +134,14 @@ impl Transaction {
         }
     }
 
-    /// Gets the values associated with the given keys, skipping non-existent entries.
+    /// Create a new 'batch get' request.
     ///
-    /// Non-existent entries will be skipped. The order of the keys is not retained.
+    /// Once resolved this request will result in the fetching of the values associated with the
+    /// given keys.
     ///
+    /// Non-existent entries will not appear in the result. The order of the keys is not retained in the result.
+    ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -147,10 +173,14 @@ impl Transaction {
             .await
     }
 
-    /// Gets the values associated with the given keys, skipping non-existent entries.
+    /// Create a new 'batch get' request.
     ///
-    /// Non-existent entries will be skipped. The order of the keys is not retained.
+    /// Once resolved this request will pessimistically lock the keys and
+    /// fetch the values associated with the given keys.
     ///
+    /// Non-existent entries will not appear in the result. The order of the keys is not retained in the result.
+    ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -183,8 +213,14 @@ impl Transaction {
         }
     }
 
-    /// Scan queries continuous key-value pairs in range.
+    /// Create a new 'scan' request.
     ///
+    /// Once resolved this request will result in a `Vec` of key-value pairs that lies in the specified range.
+    ///
+    /// If the number of eligible key-value pairs are greater than `limit`,
+    /// only the first `limit` pairs are returned, ordered by the key.
+    ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, KvPair, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -220,12 +256,16 @@ impl Transaction {
             .await
     }
 
-    pub fn scan_reverse(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
+    /// Create a 'scan_reverse' request.
+    ///
+    /// Similar to [`scan`](Transaction::scan), but in the reverse direction.
+    pub(crate) fn scan_reverse(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
         unimplemented!()
     }
 
     /// Sets the value associated with the given key.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -250,6 +290,9 @@ impl Transaction {
 
     /// Deletes the given key.
     ///
+    /// Deleting a non-existent key will not result in an error.
+    ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -271,8 +314,16 @@ impl Transaction {
         Ok(())
     }
 
-    /// Locks the given keys.
+    /// Lock the given keys without mutating value (at the time of commit).
     ///
+    /// In optimistic mode, write conflicts are not checked until commit.
+    /// So use this command to indicate that
+    /// "I do not want to commit if the value associated with this key has been modified".
+    /// It's useful to avoid *write skew* anomaly.
+    ///
+    /// In pessimistic mode, please use [`get_for_update`](Transaction::get_for_update) instead.
+    ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -293,6 +344,7 @@ impl Transaction {
 
     /// Commits the actions of the transaction.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -316,7 +368,10 @@ impl Transaction {
         .await
     }
 
-    /// Pessimistically lock the keys
+    /// Pessimistically lock the keys.
+    ///
+    /// Once resovled it acquires a lock on the key in TiKV.
+    /// The lock prevents other transactions from mutating the entry until it is released.
     async fn pessimistic_lock(
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
@@ -346,6 +401,13 @@ impl Transaction {
 /// The default TTL of a lock in milliseconds
 const DEFAULT_LOCK_TTL: u64 = 3000;
 
+/// A struct wrapping the details of two-phase commit protocol (2PC).
+///
+/// The two phases are `prewrite` and `commit`.
+/// Generally, the `prewrite` phase is to send data to all regions and write them.
+/// The `commit` phase is to mark all written data as successfully committed.
+///
+/// The committer implements `prewrite`, `commit` and `rollback` functions.
 #[derive(new)]
 struct TwoPhaseCommitter {
     mutations: Vec<kvrpcpb::Mutation>,

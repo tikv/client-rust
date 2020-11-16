@@ -2,13 +2,12 @@
 
 //! Raw related functionality.
 //!
-//! Using the [`raw::Client`](raw::Client) you can utilize TiKV's raw interface.
+//! Using the [`raw::Client`](client::Client) you can utilize TiKV's raw interface.
 //!
 //! This interface offers optimal performance as it does not require coordination with a timestamp
 //! oracle, while the transactional interface does.
 //!
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
-//!
 
 pub use self::client::Client;
 use crate::{Error, ErrorKind};
@@ -31,6 +30,7 @@ mod requests;
 ///
 /// The best (and only) way to create a [`ColumnFamily`](ColumnFamily) is via the `From` implementation:
 ///
+/// # Examples
 /// ```rust
 /// # use tikv_client::ColumnFamily;
 /// # use std::convert::TryFrom;

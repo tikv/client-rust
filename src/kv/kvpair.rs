@@ -8,6 +8,7 @@ use tikv_client_proto::kvrpcpb;
 
 /// A key/value pair.
 ///
+/// # Examples
 /// ```rust
 /// # use tikv_client::{Key, Value, KvPair};
 /// let key = "key".to_owned();
@@ -42,11 +43,13 @@ impl KvPair {
         &self.1
     }
 
+    /// Consume `self` and return the `Key` part.
     #[inline]
     pub fn into_key(self) -> Key {
         self.0
     }
 
+    /// Consume `self` and return the `Value` part.
     #[inline]
     pub fn into_value(self) -> Value {
         self.1
