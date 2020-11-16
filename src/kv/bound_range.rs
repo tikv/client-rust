@@ -19,11 +19,19 @@ use tikv_client_proto::kvrpcpb;
 /// In TiKV, keys are an ordered sequence of bytes. This means we can have ranges over those
 /// bytes. Eg `001` is before `010`.
 ///
-/// `Into<BoundRange>` has implementations for common range types like `a..b`, `a..=b` where `a` and `b`
+/// **Minimum key**: there is the minimum key: empty key. So a range may not be unbounded below.
+/// The unbounded lower bound in a [`Range`](Range) will be converted to an empty key.
+///
+/// **Maximum key**: There is no limit of the maximum key. When an empty key is used as the upper bound, it means upper unbounded.
+/// The unbounded upper bound in a [`Range`](Range). The range covering all keys is just `vec![]..`.
+///
+/// **But, you should not need to worry about all this:** Most functions which operate
+/// on ranges will accept any types which implement `Into<BoundRange>`.
+/// Common range types like `a..b`, `a..=b` has implemented `Into<BoundRange>`where `a` and `b`
 /// `impl Into<Key>`. You can implement `Into<BoundRange>` for your own types by using `try_from`.
+/// It means all of the following types in the example can be passed directly to those functions.
 ///
-/// Invariant: a range may not be unbounded below.
-///
+/// # Examples
 /// ```rust
 /// # use std::ops::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull, Bound};
 /// # use std::convert::TryInto;
@@ -50,10 +58,6 @@ use tikv_client_proto::kvrpcpb;
 ///     (Bound::Included(Key::from("Rust".to_owned())), Bound::Unbounded),
 /// );
 /// ```
-///
-/// **But, you should not need to worry about all this:** Most functions which operate
-/// on ranges will accept any types  which implement `Into<BoundRange>`.
-/// which means all of the above types can be passed directly to those functions.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(test, derive(Arbitrary))]
 pub struct BoundRange {
@@ -77,6 +81,7 @@ impl BoundRange {
     ///
     /// The **end** of a scan is exclusive, unless appended with an '\0', then it is inclusive.
     ///
+    /// # Examples
     /// ```rust
     /// use tikv_client::{BoundRange, Key, ToOwnedRange};
     /// // Exclusive
@@ -233,10 +238,33 @@ impl From<kvrpcpb::KeyRange> for BoundRange {
 }
 
 /// A convenience trait for converting ranges of borrowed types into a `BoundRange`.
+///
+/// # Examples
+/// ```rust
+/// # use tikv_client::{ToOwnedRange, BoundRange};
+/// # use std::ops::{Range, RangeFrom, RangeInclusive};
+/// let r1: Range<&str> = "s".."e";
+/// let r1: BoundRange = r1.to_owned();
+///
+/// let r2: RangeFrom<&str> = "start"..;
+/// let r2: BoundRange = r2.to_owned();
+///
+/// let r3: RangeInclusive<&str> = "s"..="e";
+/// let r3: BoundRange = r3.to_owned();
+///
+/// let k1: Vec<u8> = "start".to_owned().into_bytes();
+/// let k2: Vec<u8> = "end".to_owned().into_bytes();
+/// let r4: BoundRange = (&k1, &k2).to_owned();
+/// let r5: BoundRange = (&k1, None).to_owned();
+/// let r6: BoundRange = (&k1, Some(&k2)).to_owned();
+/// ```
 pub trait ToOwnedRange {
     /// Transform a borrowed range of some form into an owned `BoundRange`.
     fn to_owned(self) -> BoundRange;
 }
+
+#[test]
+fn test_to_owned() {}
 
 impl<T: Into<Key> + Borrow<U>, U: ToOwned<Owned = T> + ?Sized> ToOwnedRange for Range<&U> {
     fn to_owned(self) -> BoundRange {

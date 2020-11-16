@@ -10,8 +10,14 @@ pub use tikv_client_proto::pdpb::Timestamp;
 const PHYSICAL_SHIFT_BITS: i64 = 18;
 const LOGICAL_MASK: i64 = (1 << PHYSICAL_SHIFT_BITS) - 1;
 
+/// A helper trait to convert a Timestamp to and from an u64.
+///
+/// Currently the only implmentation of this trait is [`Timestamp`](Timestamp) in TiKV.
+/// It contains a physical part (first 46 bits) and a logical part (last 18 bits).
 pub trait TimestampExt {
+    /// Convert the timestamp to u64.
     fn version(&self) -> u64;
+    /// Convert u64 to a timestamp.
     fn from_version(version: u64) -> Self;
 }
 

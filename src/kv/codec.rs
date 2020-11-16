@@ -16,7 +16,7 @@ pub fn max_encoded_bytes_size(n: usize) -> usize {
 }
 
 pub trait BytesEncoder: Write {
-    /// Refer: https://github.com/facebook/mysql-5.6/wiki/MyRocks-record-format#memcomparable-format
+    /// Refer: <https://github.com/facebook/mysql-5.6/wiki/MyRocks-record-format#memcomparable-format>
     ///
     /// Duplicate from components/tikv_util/src/codec/bytes.rs.
     fn encode_bytes(&mut self, key: &[u8], desc: bool) -> Result<()> {

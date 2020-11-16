@@ -11,7 +11,12 @@ use std::{sync::Arc, u32};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
-/// The TiKV raw [`Client`](Client) is used to issue requests to the TiKV server and PD cluster.
+/// The TiKV raw `Client` is used to interact with TiKV using raw requests.
+///
+/// Raw requests don't need a wrapping transaction.
+/// Each request is immediately processed once executed.
+///
+/// The returned results of raw requests are [`Future`](std::future::Future)s that must be awaited to execute.
 #[derive(Clone)]
 pub struct Client {
     rpc: Arc<PdRpcClient>,
@@ -20,8 +25,9 @@ pub struct Client {
 }
 
 impl Client {
-    /// Create a new [`Client`](Client).
+    /// Create a raw [`Client`](Client).
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
@@ -43,6 +49,11 @@ impl Client {
     /// This function returns a new `Client`, requests created with it will have the
     /// supplied column family constraint. The original `Client` can still be used.
     ///
+    /// By default, raw client uses the `Default` column family.
+    ///
+    /// For normal users of the raw API, you don't need to use other column families.
+    ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Config, RawClient, ColumnFamily};
     /// # use futures::prelude::*;
@@ -66,7 +77,11 @@ impl Client {
     /// supplied `key_only` option. The original `Client` can still be used. `key_only`
     /// is only relevant for `scan`-like requests, for other kinds of request, it
     /// will be ignored.
+    /// With `key_only` being true, `scan`-like requests will ignore values.
     ///
+    /// By default, `key_only` is set to false.
+    ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
@@ -88,6 +103,9 @@ impl Client {
     /// Once resolved this request will result in the fetching of the value associated with the
     /// given key.
     ///
+    /// Retuning `Ok(None)` indicates the key does not exist in TiKV.
+    ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Value, Config, RawClient};
     /// # use futures::prelude::*;
@@ -107,9 +125,11 @@ impl Client {
     /// Create a new 'batch get' request.
     ///
     /// Once resolved this request will result in the fetching of the values associated with the
-    /// given keys
-    /// Non-existent entries will be skipped. The order of the keys is not retained.
+    /// given keys.
     ///
+    /// Non-existent entries will not appear in the result. The order of the keys is not retained in the result.
+    ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{KvPair, Config, RawClient};
     /// # use futures::prelude::*;
@@ -133,6 +153,7 @@ impl Client {
     ///
     /// Once resolved this request will result in the setting of the value associated with the given key.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, RawClient};
     /// # use futures::prelude::*;
@@ -152,8 +173,9 @@ impl Client {
 
     /// Create a new 'batch put' request.
     ///
-    /// Once resolved this request will result in the setting of the value associated with the given key.
+    /// Once resolved this request will result in the setting of the values associated with the given keys.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Error, Result, KvPair, Key, Value, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
@@ -178,8 +200,10 @@ impl Client {
     /// Create a new 'delete' request.
     ///
     /// Once resolved this request will result in the deletion of the given key.
-    /// It does not return an error if the key does not exist.
     ///
+    /// It does not return an error if the key does not exist in TiKV.
+    ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, RawClient};
     /// # use futures::prelude::*;
@@ -199,8 +223,10 @@ impl Client {
     /// Create a new 'batch delete' request.
     ///
     /// Once resolved this request will result in the deletion of the given keys.
+    ///
     /// It does not return an error if some of the keys do not exist and will delete the others.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
@@ -219,8 +245,9 @@ impl Client {
 
     /// Create a new 'delete range' request.
     ///
-    /// Once resolved this request will result in the deletion of all keys over the given range `[start_key, end_key)`.
+    /// Once resolved this request will result in the deletion of all keys lying in the given range.
     ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
@@ -239,8 +266,13 @@ impl Client {
 
     /// Create a new 'scan' request.
     ///
-    /// Once resolved this request will result in a scanner over the given keys.
+    /// Once resolved this request will result in a `Vec` of key-value pairs that lies in the specified range.
     ///
+    /// If the number of eligible key-value pairs are greater than `limit`,
+    /// only the first `limit` pairs are returned, ordered by the key.
+    ///
+    ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{KvPair, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
@@ -269,6 +301,13 @@ impl Client {
     ///
     /// Once resolved this request will result in a set of scanners over the given keys.
     ///
+    /// **Warning**: This method is experimental. The `each_limit` parameter does not work as expected.
+    /// It does not limit the number of results returned of each range,
+    /// instead it limits the number of results in each region of each range.
+    /// As a result, you may get **more than** `each_limit` key-value pairs for each range.
+    /// But you should not miss any entries.
+    ///
+    /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;

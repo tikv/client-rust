@@ -15,7 +15,23 @@ use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024; // TODO: cargo-culted value
 
-/// The TiKV transactional `Client` is used to issue requests to the TiKV server and PD cluster.
+/// The TiKV transactional `Client` is used to interact with TiKV using transactional (MVCC) requests.
+///
+/// A [`Transaction`](crate::transaction::Transaction) provides a SQL-like interface.
+/// It begins with a [`begin`](Client::begin) or [`begin_pessimistic`](Client::begin_pessimistic) request
+/// and ends with a `rollback` or `commit` request.
+/// If a `Transaction` is dropped before it's rolled back or committed, it is automatically rolled back.
+///
+/// Transaction supports optimistic and pessimistic modes, for mroe deatils, check our
+/// [SIG-transaction](https://github.com/tikv/sig-transaction/tree/master/doc/tikv#optimistic-and-pessimistic-transactions).
+///
+/// Besides transaction, the client provides some utility methods:
+/// - `gc`: execute a GC process which clear stale data. It is not stablized yet.
+/// - `current_timestamp`: get the current `Timestamp`.
+/// - `snapshot`: get the [`Snapshot`](crate::transaction::Snapshot) of the database at a certain timestamp.
+/// A `Snapshot` is a read-only transaction.
+///
+/// The returned results of transactional requests are [`Future`](std::future::Future)s that must be awaited to execute.
 pub struct Client {
     pd: Arc<PdRpcClient>,
     /// The thread pool for background tasks including committing secondary keys and failed
@@ -25,8 +41,9 @@ pub struct Client {
 }
 
 impl Client {
-    /// Creates a new [`Client`](Client) once the [`Connect`](Connect) resolves.
+    /// Creates a transactional [`Client`](Client).
     ///
+    /// # Examples
     /// ```rust,no_run
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
@@ -36,8 +53,6 @@ impl Client {
     /// ```
     pub async fn new(config: Config) -> Result<Client> {
         let bg_worker = ThreadPool::new()?;
-        // TODO: PdRpcClient::connect currently uses a blocking implementation.
-        //       Make it asynchronous later.
         let pd = Arc::new(PdRpcClient::connect(&config, true).await?);
         Ok(Client {
             pd,
@@ -54,10 +69,15 @@ impl Client {
         }
     }
 
-    /// Creates a new [`Transaction`](Transaction).
+    /// Creates a new [`Transaction`](Transaction) in optimistic mode.
     ///
-    /// Using the transaction you can issue commands like [`get`](Transaction::get) or [`set`](Transaction::set).
+    /// Using the transaction you can issue commands like [`get`](Transaction::get) or [`put`](Transaction::put).
     ///
+    /// Write operations do not lock data in TiKV, thus commit request may fail due to write conflict.
+    ///
+    /// For details, check our [SIG-transaction](https://github.com/tikv/sig-transaction/tree/master/doc/tikv#optimistic-and-pessimistic-transactions).
+    ///
+    /// # Examples
     /// ```rust,no_run
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
@@ -74,18 +94,36 @@ impl Client {
         Ok(self.new_transaction(timestamp, false, false))
     }
 
+    /// Creates a new [`Transaction`](Transaction) in pessimistic mode.
+    ///
+    /// Write operations will lock the data until commit, thus commit requests should not suffer from write conflict.
+    /// For details, check our [SIG-transaction](https://github.com/tikv/sig-transaction/tree/master/doc/tikv#optimistic-and-pessimistic-transactions).
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// use tikv_client::{Config, TransactionClient};
+    /// use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// let client = TransactionClient::new(Config::default()).await.unwrap();
+    /// let mut transaction = client.begin_pessimistic().await.unwrap();
+    /// // ... Issue some commands.
+    /// let commit = transaction.commit();
+    /// let result: () = commit.await.unwrap();
+    /// # });
+    /// ```
     pub async fn begin_pessimistic(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, true, false))
     }
 
-    /// Creates a new [`Snapshot`](Snapshot) at the given time.
+    /// Creates a new [`Snapshot`](Snapshot) at the given [`Timestamp`](Timestamp).
     pub fn snapshot(&self, timestamp: Timestamp) -> Snapshot {
         Snapshot::new(self.new_transaction(timestamp, false, true))
     }
 
     /// Retrieves the current [`Timestamp`](Timestamp).
     ///
+    /// # Examples
     /// ```rust,no_run
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
@@ -98,10 +136,12 @@ impl Client {
         self.pd.clone().get_timestamp().await
     }
 
-    /// Cleans stale MVCC records in TiKV.
+    /// Cleans MVCC records whose timestamp is lower than the given `timestamp` in TiKV.
+    ///
+    /// For each key, the last mutation record (unless it's a deletion) before `safepoint` is retained.
     ///
     /// It is done by:
-    /// 1. resolve all locks with ts <= safepoint
+    /// 1. resolve all locks with ts <= `safepoint`
     /// 2. update safepoint to PD
     ///
     /// This is a simplified version of [GC in TiDB](https://docs.pingcap.com/tidb/stable/garbage-collection-overview).

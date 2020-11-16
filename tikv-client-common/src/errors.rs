@@ -7,6 +7,7 @@ use std::{
 };
 use tikv_client_proto::errorpb;
 
+/// The error type used in tikv-client.
 #[derive(Debug)]
 pub struct Error {
     inner: Box<Context<ErrorKind>>,
@@ -16,6 +17,23 @@ pub struct Error {
 #[derive(Debug, Fail)]
 #[allow(clippy::large_enum_variant)]
 pub enum ErrorKind {
+    /// Feature is not implemented.
+    #[fail(display = "Unimplemented feature")]
+    Unimplemented,
+    /// Failed to resolve a lock
+    #[fail(display = "Failed to resolve lock")]
+    ResolveLockError,
+    /// Will raise this error when using a pessimistic txn only operation on an optimistic txn
+    #[fail(display = "Invalid operation for this type of transaction")]
+    InvalidTransactionType,
+    /// Invalid key range to scan. Only left bounded intervals are supported.
+    #[fail(display = "Only left bounded intervals are supported")]
+    InvalidKeyRange,
+    /// It's not allowed to perform operations in a transaction after it has been committed or rolled back.
+    #[fail(
+        display = "Cannot read or write data after any attempt to commit or roll back the transaction"
+    )]
+    OperationAfterCommitError,
     /// Wraps a `std::io::Error`.
     #[fail(display = "IO error: {}", _0)]
     Io(#[fail(cause)] std::io::Error),
@@ -25,58 +43,38 @@ pub enum ErrorKind {
     /// Represents that a futures oneshot channel was cancelled.
     #[fail(display = "A futures oneshot channel was canceled. {}", _0)]
     Canceled(#[fail(cause)] futures::channel::oneshot::Canceled),
-    /// Feature is not implemented.
-    #[fail(display = "Unimplemented feature")]
-    Unimplemented,
-    /// No region is found for the given key.
-    #[fail(display = "Region is not found for key: {:?}", key)]
-    RegionForKeyNotFound { key: Vec<u8> },
-    /// Errors caused by changed region information
+    /// Errors caused by changes of region information
     #[fail(display = "Region error: {:?}", _0)]
     RegionError(tikv_client_proto::errorpb::Error),
-    /// No region is found for the given id.
-    #[fail(display = "Region {} is not found", region_id)]
-    RegionNotFound { region_id: u64 },
-    /// No region is found for the given id.
-    #[fail(display = "Leader of region {} is not found", region_id)]
-    LeaderNotFound { region_id: u64 },
     /// Whether the transaction is committed or not is undetermined
     #[fail(display = "Whether the transaction is committed or not is undetermined")]
     UndeterminedError(#[fail(cause)] Error),
-    /// Invalid key range to scan. Only left bounded intervals are supported.
-    #[fail(display = "Only left bounded intervals are supported")]
-    InvalidKeyRange,
-    /// Cannot set an empty value
-    #[fail(display = "Cannot set an empty value")]
-    EmptyValue,
-    /// Scan limit exceeds the maximum
-    #[fail(display = "Limit {} exceeds max scan limit {}", limit, max_limit)]
-    MaxScanLimitExceeded { limit: u32, max_limit: u32 },
     /// Wraps `tikv_client_proto::kvrpcpb::KeyError`
     #[fail(display = "{:?}", _0)]
     KeyError(tikv_client_proto::kvrpcpb::KeyError),
-    /// A string error returned by TiKV server
-    #[fail(display = "Kv error. {}", message)]
-    KvError { message: String },
-    #[fail(display = "{}", message)]
-    InternalError { message: String },
     /// Multiple errors
     #[fail(display = "Multiple errors: {:?}", _0)]
     MultipleErrors(Vec<Error>),
     /// Invalid ColumnFamily
     #[fail(display = "Unsupported column family {}", _0)]
     ColumnFamilyError(String),
-    /// Failed to resolve a lock
-    #[fail(display = "Failed to resolve lock")]
-    ResolveLockError,
-    /// Will raise this error when using a pessimistic txn only operation on an optimistic txn
-    #[fail(display = "Invalid operation for this type of transaction")]
-    InvalidTransactionType,
-    /// It's not allowed to perform operations in a transaction after it has been committed or rolled back.
-    #[fail(
-        display = "Cannot read or write data after any attempt to commit or roll back the transaction"
-    )]
-    OperationAfterCommitError,
+    /// No region is found for the given key.
+    #[fail(display = "Region is not found for key: {:?}", key)]
+    RegionForKeyNotFound { key: Vec<u8> },
+    /// No region is found for the given id.
+    #[fail(display = "Region {} is not found", region_id)]
+    RegionNotFound { region_id: u64 },
+    /// No leader is found for the given id.
+    #[fail(display = "Leader of region {} is not found", region_id)]
+    LeaderNotFound { region_id: u64 },
+    /// Scan limit exceeds the maximum
+    #[fail(display = "Limit {} exceeds max scan limit {}", limit, max_limit)]
+    MaxScanLimitExceeded { limit: u32, max_limit: u32 },
+    /// A string error returned by TiKV server
+    #[fail(display = "Kv error. {}", message)]
+    KvError { message: String },
+    #[fail(display = "{}", message)]
+    InternalError { message: String },
 }
 
 impl Fail for Error {
