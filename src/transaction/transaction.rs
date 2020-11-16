@@ -20,8 +20,12 @@ enum TransactionStatus {
     Active,
     /// The transaction has committed.
     Committed,
+    /// The transaction has tried to commit. Only `commit` is allowed.
+    StartedCommit,
     /// The transaction has rolled back.
     Rolledback,
+    /// The transaction has tried to rollback. Only `rollback` is allowed.
+    StartedRollback,
 }
 
 /// A undo-able set of actions on the dataset.
@@ -93,7 +97,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
-        self.check_status()?;
+        self.check_allow_operation()?;
         let key = key.into();
         self.buffer
             .get_or_else(key, |key| {
@@ -119,7 +123,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
-        self.check_status()?;
+        self.check_allow_operation()?;
         if !self.is_pessimistic {
             Err(ErrorKind::InvalidTransactionType.into())
         } else {
@@ -160,7 +164,7 @@ impl Transaction {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.check_status()?;
+        self.check_allow_operation()?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         self.buffer
@@ -197,7 +201,7 @@ impl Transaction {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.check_status()?;
+        self.check_allow_operation()?;
         if !self.is_pessimistic {
             Err(ErrorKind::InvalidTransactionType.into())
         } else {
@@ -232,7 +236,7 @@ impl Transaction {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.check_status()?;
+        self.check_allow_operation()?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
 
@@ -265,7 +269,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn put(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        self.check_status()?;
+        self.check_allow_operation()?;
         let key = key.into();
         if self.is_pessimistic {
             self.pessimistic_lock(iter::once(key.clone())).await?;
@@ -289,7 +293,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn delete(&mut self, key: impl Into<Key>) -> Result<()> {
-        self.check_status()?;
+        self.check_allow_operation()?;
         let key = key.into();
         if self.is_pessimistic {
             self.pessimistic_lock(iter::once(key.clone())).await?;
@@ -312,7 +316,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn lock_keys(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
-        self.check_status()?;
+        self.check_allow_operation()?;
         for key in keys {
             self.buffer.lock(key.into()).await;
         }
@@ -333,7 +337,14 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn commit(&mut self) -> Result<()> {
-        self.check_status()?;
+        if !matches!(
+            self.status,
+            TransactionStatus::StartedCommit | TransactionStatus::Active
+        ) {
+            return Err(ErrorKind::OperationAfterCommitError.into());
+        }
+        self.status = TransactionStatus::StartedCommit;
+
         let res = TwoPhaseCommitter::new(
             self.buffer.to_proto_mutations().await,
             self.timestamp.version(),
@@ -354,7 +365,14 @@ impl Transaction {
     ///
     /// If it succeeds, all mutations made by this transaciton will not take effect.
     pub async fn rollback(&mut self) -> Result<()> {
-        self.check_status()?;
+        if !matches!(
+            self.status,
+            TransactionStatus::StartedRollback | TransactionStatus::Active
+        ) {
+            return Err(ErrorKind::OperationAfterCommitError.into());
+        }
+        self.status = TransactionStatus::StartedRollback;
+
         let res = TwoPhaseCommitter::new(
             self.buffer.to_proto_mutations().await,
             self.timestamp.version(),
@@ -397,11 +415,16 @@ impl Transaction {
         .await
     }
 
-    fn check_status(&self) -> Result<()> {
+    /// Checks if the transaction can perform arbitrary operations.
+    fn check_allow_operation(&self) -> Result<()> {
         match self.status {
             TransactionStatus::ReadOnly | TransactionStatus::Active => Ok(()),
-            TransactionStatus::Committed => Err(ErrorKind::OperationAfterCommitError.into()),
-            TransactionStatus::Rolledback => Err(ErrorKind::OperationAfterCommitError.into()),
+            TransactionStatus::Committed
+            | TransactionStatus::Rolledback
+            | TransactionStatus::StartedCommit
+            | TransactionStatus::StartedRollback => {
+                Err(ErrorKind::OperationAfterCommitError.into())
+            }
         }
     }
 }

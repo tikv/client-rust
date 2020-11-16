@@ -73,7 +73,9 @@ pub enum ErrorKind {
     #[fail(display = "Invalid operation for this type of transaction")]
     InvalidTransactionType,
     /// It's not allowed to perform operations in a transaction after it has been committed or rolled back.
-    #[fail(display = "Cannot operate after transaction successfully committed or rolled back")]
+    #[fail(
+        display = "Cannot read or write data after any attempt to commit or roll back the transaction"
+    )]
     OperationAfterCommitError,
 }
 
