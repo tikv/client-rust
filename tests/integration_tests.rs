@@ -121,8 +121,8 @@ async fn crud() -> Fallible<()> {
     txn.commit().await?;
 
     // Read again from TiKV
-    let txn = client.begin().await?;
-    let batch_get_res: HashMap<Key, Value> = txn
+    let snapshot = client.snapshot(client.current_timestamp().await?);
+    let batch_get_res: HashMap<Key, Value> = snapshot
         .batch_get(vec!["foo".to_owned(), "bar".to_owned()])
         .await?
         .map(|pair| (pair.0, pair.1))
@@ -222,8 +222,8 @@ async fn txn_write_million() -> Fallible<()> {
 
     // test scan
     let limit = 2u32.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN + 2); // large enough
-    let txn = client.begin().await?;
-    let res = txn.scan(vec![].., limit).await?;
+    let snapshot = client.snapshot(client.current_timestamp().await?);
+    let res = snapshot.scan(vec![].., limit).await?;
     assert_eq!(res.count(), 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));
 
     // scan by small range and combine them
@@ -237,20 +237,20 @@ async fn txn_write_million() -> Fallible<()> {
     let mut sum = 0;
 
     // empty key to key[0]
-    let txn = client.begin().await?;
-    let res = txn.scan(vec![]..keys[0].clone(), limit).await?;
+    let snapshot = client.snapshot(client.current_timestamp().await?);
+    let res = snapshot.scan(vec![]..keys[0].clone(), limit).await?;
     sum += res.count();
 
     // key[i] .. key[i+1]
     for i in 0..keys.len() - 1 {
-        let res = txn
+        let res = snapshot
             .scan(keys[i].clone()..keys[i + 1].clone(), limit)
             .await?;
         sum += res.count();
     }
 
     // keys[last] to unbounded
-    let res = txn.scan(keys[keys.len() - 1].clone().., limit).await?;
+    let res = snapshot.scan(keys[keys.len() - 1].clone().., limit).await?;
     sum += res.count();
 
     assert_eq!(sum, 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));

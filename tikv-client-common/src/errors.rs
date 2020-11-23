@@ -29,6 +29,11 @@ pub enum ErrorKind {
     /// Invalid key range to scan. Only left bounded intervals are supported.
     #[fail(display = "Only left bounded intervals are supported")]
     InvalidKeyRange,
+    /// It's not allowed to perform operations in a transaction after it has been committed or rolled back.
+    #[fail(
+        display = "Cannot read or write data after any attempt to commit or roll back the transaction"
+    )]
+    OperationAfterCommitError,
     /// Wraps a `std::io::Error`.
     #[fail(display = "IO error: {}", _0)]
     Io(#[fail(cause)] std::io::Error),
