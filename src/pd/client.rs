@@ -233,12 +233,16 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 }
 
 impl PdRpcClient<TikvConnect, Cluster> {
-    pub async fn connect(config: &Config, enable_codec: bool) -> Result<PdRpcClient> {
+    pub async fn connect(
+        pd_endpoints: &[String],
+        config: &Config,
+        enable_codec: bool,
+    ) -> Result<PdRpcClient> {
         PdRpcClient::new(
             config,
             |env, security_mgr| TikvConnect::new(env, security_mgr, config.timeout),
             |env, security_mgr| {
-                RetryClient::connect(env, &config.pd_endpoints, security_mgr, config.timeout)
+                RetryClient::connect(env, pd_endpoints, security_mgr, config.timeout)
             },
             enable_codec,
         )

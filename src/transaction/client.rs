@@ -42,17 +42,41 @@ pub struct Client {
 impl Client {
     /// Creates a transactional [`Client`](Client).
     ///
+    /// It's important to **include more than one PD endpoint** (include all, if possible!)
+    /// This helps avoid having a *single point of failure*.
+    ///
     /// # Examples
     /// ```rust,no_run
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(Config::default()).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// # });
     /// ```
-    pub async fn new(config: Config) -> Result<Client> {
+    pub async fn new<S: Into<String>>(pd_endpoints: Vec<S>) -> Result<Client> {
+        Self::new_with_config(pd_endpoints, Config::default()).await
+    }
+
+    /// Creates a transactional [`Client`](Client).
+    ///
+    /// It's important to **include more than one PD endpoint** (include all, if possible!)
+    /// This helps avoid having a *single point of failure*.
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// use tikv_client::{Config, TransactionClient};
+    /// use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # });
+    /// ```
+    pub async fn new_with_config<S: Into<String>>(
+        pd_endpoints: Vec<S>,
+        config: Config,
+    ) -> Result<Client> {
+        let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let bg_worker = ThreadPool::new()?;
-        let pd = Arc::new(PdRpcClient::connect(&config, true).await?);
+        let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, true).await?);
         Ok(Client { pd, bg_worker })
     }
 
@@ -69,7 +93,7 @@ impl Client {
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(Config::default()).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let mut transaction = client.begin().await.unwrap();
     /// // ... Issue some commands.
     /// let commit = transaction.commit();
@@ -91,7 +115,7 @@ impl Client {
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(Config::default()).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let mut transaction = client.begin_pessimistic().await.unwrap();
     /// // ... Issue some commands.
     /// let commit = transaction.commit();
@@ -115,7 +139,7 @@ impl Client {
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(Config::default()).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let timestamp = client.current_timestamp().await.unwrap();
     /// # });
     /// ```

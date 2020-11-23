@@ -53,7 +53,7 @@ enum TransactionStatus {
 /// use tikv_client::{Config, TransactionClient};
 /// use futures::prelude::*;
 /// # futures::executor::block_on(async {
-/// let client = TransactionClient::new(Config::default()).await.unwrap();
+/// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
 /// let txn = client.begin().await.unwrap();
 /// # });
 /// ```
@@ -103,7 +103,7 @@ impl Transaction {
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let result: Option<Value> = txn.get(key).await.unwrap();
@@ -132,7 +132,7 @@ impl Transaction {
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let result: Option<Value> = txn.get_for_update(key).await.unwrap();
@@ -170,7 +170,7 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let result: HashMap<Key, Value> = txn
@@ -210,7 +210,7 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let result: HashMap<Key, Value> = txn
@@ -251,7 +251,7 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin().await.unwrap();
     /// let key1: Key = b"TiKV".to_vec().into();
     /// let key2: Key = b"TiDB".to_vec().into();
@@ -296,7 +296,7 @@ impl Transaction {
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let val = "TiKV".to_owned();
@@ -324,7 +324,7 @@ impl Transaction {
     /// # use tikv_client::{Key, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// txn.delete(key);
@@ -356,7 +356,7 @@ impl Transaction {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::default()).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let mut txn = client.begin().await.unwrap();
     /// txn.lock_keys(vec!["TiKV".to_owned(), "Rust".to_owned()]);
     /// // ... Do some actions.
@@ -378,7 +378,7 @@ impl Transaction {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::default()).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let mut txn = client.begin().await.unwrap();
     /// // ... Do some actions.
     /// let req = txn.commit();

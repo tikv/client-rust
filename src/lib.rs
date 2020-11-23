@@ -61,13 +61,15 @@
 //!
 //! # futures::executor::block_on(async {
 //! // Configure endpoints and optional TLS.
-//! let config = Config::new(vec![ // A list of PD endpoints.
-//!     "192.168.0.100:2379",
-//!     "192.168.0.101:2379",
-//! ]).with_security("root.ca", "internal.cert", "internal.key");
+//! let config = Config::default().with_security("root.ca", "internal.cert", "internal.key");
 //!
 //! // Get a transactional client.
-//! let client = TransactionClient::new(config).await.unwrap();
+//! let client = TransactionClient::new_with_config(
+//!     vec![
+//!         // A list of PD endpoints.
+//!         "192.168.0.100:2379",
+//!         "192.168.0.101:2379",
+//!     ], config).await.unwrap();
 //! # });
 //! ```
 //!

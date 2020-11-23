@@ -19,14 +19,14 @@ async fn main() -> Result<()> {
     // Create a configuration to use for the example.
     // Optionally encrypt the traffic.
     let config = if let (Some(ca), Some(cert), Some(key)) = (args.ca, args.cert, args.key) {
-        Config::new(args.pd).with_security(ca, cert, key)
+        Config::default().with_security(ca, cert, key)
     } else {
-        Config::new(args.pd)
+        Config::default()
     };
 
     // When we first create a client we receive a `Connect` structure which must be resolved before
     // the client is actually connected and usable.
-    let client = Client::new(config).await?;
+    let client = Client::new_with_config(args.pd, config).await?;
 
     // Requests are created from the connected client. These calls return structures which
     // implement `Future`. This means the `Future` must be resolved before the action ever takes
