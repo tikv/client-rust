@@ -9,8 +9,24 @@ use crate::{
 };
 use derive_new::new;
 use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
-use std::{iter, mem, ops::RangeBounds, sync::Arc};
+use std::{iter, ops::RangeBounds, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+
+#[derive(PartialEq)]
+enum TransactionStatus {
+    /// The transaction is read-only [`Snapshot`](super::Snapshot::Snapshot), no need to commit or rollback or panic on drop.
+    ReadOnly,
+    /// The transaction have not been committed or rolled back.
+    Active,
+    /// The transaction has committed.
+    Committed,
+    /// The transaction has tried to commit. Only `commit` is allowed.
+    StartedCommit,
+    /// The transaction has rolled back.
+    Rolledback,
+    /// The transaction has tried to rollback. Only `rollback` is allowed.
+    StartedRollback,
+}
 
 /// A undo-able set of actions on the dataset.
 ///
@@ -42,6 +58,7 @@ use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 /// # });
 /// ```
 pub struct Transaction {
+    status: TransactionStatus,
     timestamp: Timestamp,
     buffer: Buffer,
     bg_worker: ThreadPool,
@@ -58,8 +75,15 @@ impl Transaction {
         rpc: Arc<PdRpcClient>,
         key_only: bool,
         is_pessimistic: bool,
+        read_only: bool,
     ) -> Transaction {
+        let status = if read_only {
+            TransactionStatus::ReadOnly
+        } else {
+            TransactionStatus::Active
+        };
         Transaction {
+            status,
             timestamp,
             buffer: Default::default(),
             bg_worker,
@@ -91,6 +115,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
+        self.check_allow_operation()?;
         let key = key.into();
         self.buffer
             .get_or_else(key, |key| {
@@ -120,6 +145,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
+        self.check_allow_operation()?;
         if !self.is_pessimistic {
             Err(ErrorKind::InvalidTransactionType.into())
         } else {
@@ -164,6 +190,7 @@ impl Transaction {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
+        self.check_allow_operation()?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         self.buffer
@@ -204,6 +231,7 @@ impl Transaction {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
+        self.check_allow_operation()?;
         if !self.is_pessimistic {
             Err(ErrorKind::InvalidTransactionType.into())
         } else {
@@ -244,6 +272,7 @@ impl Transaction {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
+        self.check_allow_operation()?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
 
@@ -280,6 +309,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn put(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
+        self.check_allow_operation()?;
         let key = key.into();
         if self.is_pessimistic {
             self.pessimistic_lock(iter::once(key.clone())).await?;
@@ -306,6 +336,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn delete(&mut self, key: impl Into<Key>) -> Result<()> {
+        self.check_allow_operation()?;
         let key = key.into();
         if self.is_pessimistic {
             self.pessimistic_lock(iter::once(key.clone())).await?;
@@ -336,6 +367,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn lock_keys(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
+        self.check_allow_operation()?;
         for key in keys {
             self.buffer.lock(key.into()).await;
         }
@@ -357,7 +389,15 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn commit(&mut self) -> Result<()> {
-        TwoPhaseCommitter::new(
+        if !matches!(
+            self.status,
+            TransactionStatus::StartedCommit | TransactionStatus::Active
+        ) {
+            return Err(ErrorKind::OperationAfterCommitError.into());
+        }
+        self.status = TransactionStatus::StartedCommit;
+
+        let res = TwoPhaseCommitter::new(
             self.buffer.to_proto_mutations().await,
             self.timestamp.version(),
             self.bg_worker.clone(),
@@ -365,7 +405,40 @@ impl Transaction {
             self.for_update_ts,
         )
         .commit()
-        .await
+        .await;
+
+        if res.is_ok() {
+            self.status = TransactionStatus::Committed;
+        }
+        res
+    }
+
+    /// Rollback the transaction.
+    ///
+    /// If it succeeds, all mutations made by this transaciton will not take effect.
+    pub async fn rollback(&mut self) -> Result<()> {
+        if !matches!(
+            self.status,
+            TransactionStatus::StartedRollback | TransactionStatus::Active
+        ) {
+            return Err(ErrorKind::OperationAfterCommitError.into());
+        }
+        self.status = TransactionStatus::StartedRollback;
+
+        let res = TwoPhaseCommitter::new(
+            self.buffer.to_proto_mutations().await,
+            self.timestamp.version(),
+            self.bg_worker.clone(),
+            self.rpc.clone(),
+            self.for_update_ts,
+        )
+        .rollback()
+        .await;
+
+        if res.is_ok() {
+            self.status = TransactionStatus::Rolledback;
+        }
+        res
     }
 
     /// Pessimistically lock the keys.
@@ -396,6 +469,19 @@ impl Transaction {
         .execute(self.rpc.clone(), PESSIMISTIC_BACKOFF)
         .await
     }
+
+    /// Checks if the transaction can perform arbitrary operations.
+    fn check_allow_operation(&self) -> Result<()> {
+        match self.status {
+            TransactionStatus::ReadOnly | TransactionStatus::Active => Ok(()),
+            TransactionStatus::Committed
+            | TransactionStatus::Rolledback
+            | TransactionStatus::StartedCommit
+            | TransactionStatus::StartedRollback => {
+                Err(ErrorKind::OperationAfterCommitError.into())
+            }
+        }
+    }
 }
 
 /// The default TTL of a lock in milliseconds
@@ -416,21 +502,17 @@ struct TwoPhaseCommitter {
     rpc: Arc<PdRpcClient>,
     for_update_ts: u64,
     #[new(default)]
-    committed: bool,
-    #[new(default)]
     undetermined: bool,
 }
 
 impl TwoPhaseCommitter {
     async fn commit(mut self) -> Result<()> {
         if self.mutations.is_empty() {
-            self.committed = true;
             return Ok(());
         }
         self.prewrite().await?;
         match self.commit_primary().await {
             Ok(commit_version) => {
-                self.committed = true;
                 self.bg_worker
                     .clone()
                     .spawn_ok(self.commit_secondary(commit_version).map(|res| {
@@ -495,14 +577,14 @@ impl TwoPhaseCommitter {
         Ok(commit_version)
     }
 
-    async fn commit_secondary(mut self, commit_version: u64) -> Result<()> {
-        let mutations = mem::take(&mut self.mutations);
+    async fn commit_secondary(self, commit_version: u64) -> Result<()> {
         // No need to commit secondary keys when there is only one key
-        if mutations.len() == 1 {
+        if self.mutations.len() == 1 {
             return Ok(());
         }
 
-        let keys = mutations
+        let keys = self
+            .mutations
             .into_iter()
             .skip(1) // skip primary key
             .map(|mutation| mutation.key.into())
@@ -512,30 +594,28 @@ impl TwoPhaseCommitter {
             .await
     }
 
-    fn rollback(&mut self) -> impl Future<Output = Result<()>> + 'static {
-        let mutations = mem::take(&mut self.mutations);
-        let keys = mutations
+    fn rollback(self) -> impl Future<Output = Result<()>> + 'static {
+        let keys = self
+            .mutations
             .into_iter()
             .map(|mutation| mutation.key.into())
             .collect();
         if self.for_update_ts > 0 {
             new_pessimistic_rollback_request(keys, self.start_version, self.for_update_ts)
-                .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+                .execute(self.rpc, OPTIMISTIC_BACKOFF)
+        } else if keys.is_empty() {
+            Box::pin(future::ready(Ok(())))
         } else {
             new_batch_rollback_request(keys, self.start_version)
-                .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+                .execute(self.rpc, OPTIMISTIC_BACKOFF)
         }
     }
 }
 
-impl Drop for TwoPhaseCommitter {
+impl Drop for Transaction {
     fn drop(&mut self) {
-        if !self.committed {
-            self.bg_worker.clone().spawn_ok(self.rollback().map(|res| {
-                if let Err(e) = res {
-                    warn!("Failed to rollback: {}", e);
-                }
-            }))
+        if self.status == TransactionStatus::Active {
+            panic!("Dropping an active transaction. Consider commit or rollback it.")
         }
     }
 }
