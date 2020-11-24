@@ -53,7 +53,7 @@ enum TransactionStatus {
 /// use tikv_client::{Config, TransactionClient};
 /// use futures::prelude::*;
 /// # futures::executor::block_on(async {
-/// let client = TransactionClient::new(Config::default()).await.unwrap();
+/// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
 /// let txn = client.begin().await.unwrap();
 /// # });
 /// ```
@@ -63,7 +63,6 @@ pub struct Transaction {
     buffer: Buffer,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
-    key_only: bool,
     for_update_ts: u64,
     is_pessimistic: bool,
 }
@@ -73,7 +72,6 @@ impl Transaction {
         timestamp: Timestamp,
         bg_worker: ThreadPool,
         rpc: Arc<PdRpcClient>,
-        key_only: bool,
         is_pessimistic: bool,
         read_only: bool,
     ) -> Transaction {
@@ -88,7 +86,6 @@ impl Transaction {
             buffer: Default::default(),
             bg_worker,
             rpc,
-            key_only,
             for_update_ts: 0,
             is_pessimistic,
         }
@@ -106,7 +103,7 @@ impl Transaction {
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let result: Option<Value> = txn.get(key).await.unwrap();
@@ -135,7 +132,7 @@ impl Transaction {
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let result: Option<Value> = txn.get_for_update(key).await.unwrap();
@@ -173,7 +170,7 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let result: HashMap<Key, Value> = txn
@@ -213,7 +210,7 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let result: HashMap<Key, Value> = txn
@@ -254,7 +251,7 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin().await.unwrap();
     /// let key1: Key = b"TiKV".to_vec().into();
     /// let key2: Key = b"TiDB".to_vec().into();
@@ -272,17 +269,44 @@ impl Transaction {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.check_allow_operation()?;
-        let timestamp = self.timestamp.clone();
-        let rpc = self.rpc.clone();
+        self.scan_inner(range, limit, false).await
+    }
 
-        let key_only = self.key_only;
-        self.buffer
-            .scan_and_fetch(range.into(), limit, move |new_range, new_limit| {
-                new_mvcc_scan_request(new_range, timestamp, new_limit, key_only)
-                    .execute(rpc, OPTIMISTIC_BACKOFF)
-            })
-            .await
+    /// Create a new 'scan' request that only returns the keys.
+    ///
+    /// Once resolved this request will result in a `Vec` of keys that lies in the specified range.
+    ///
+    /// If the number of eligible keys are greater than `limit`,
+    /// only the first `limit` keys are returned, ordered by the key.
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, KvPair, Value, Config, TransactionClient};
+    /// # use futures::prelude::*;
+    /// # use std::collections::HashMap;
+    /// # futures::executor::block_on(async {
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// let mut txn = client.begin().await.unwrap();
+    /// let key1: Key = b"TiKV".to_vec().into();
+    /// let key2: Key = b"TiDB".to_vec().into();
+    /// let result: Vec<Key> = txn
+    ///     .scan_keys(key1..key2, 10)
+    ///     .await
+    ///     .unwrap()
+    ///     .collect();
+    /// // Finish the transaction...
+    /// txn.commit().await.unwrap();
+    /// # });
+    /// ```
+    pub async fn scan_keys(
+        &self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Iterator<Item = Key>> {
+        Ok(self
+            .scan_inner(range, limit, true)
+            .await?
+            .map(KvPair::into_key))
     }
 
     /// Create a 'scan_reverse' request.
@@ -299,7 +323,7 @@ impl Transaction {
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let val = "TiKV".to_owned();
@@ -327,7 +351,7 @@ impl Transaction {
     /// # use tikv_client::{Key, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::new(vec!["192.168.0.100", "192.168.0.101"])).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// txn.delete(key);
@@ -359,7 +383,7 @@ impl Transaction {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::default()).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let mut txn = client.begin().await.unwrap();
     /// txn.lock_keys(vec!["TiKV".to_owned(), "Rust".to_owned()]);
     /// // ... Do some actions.
@@ -381,7 +405,7 @@ impl Transaction {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(Config::default()).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let mut txn = client.begin().await.unwrap();
     /// // ... Do some actions.
     /// let req = txn.commit();
@@ -439,6 +463,24 @@ impl Transaction {
             self.status = TransactionStatus::Rolledback;
         }
         res
+    }
+
+    async fn scan_inner(
+        &self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+        key_only: bool,
+    ) -> Result<impl Iterator<Item = KvPair>> {
+        self.check_allow_operation()?;
+        let timestamp = self.timestamp.clone();
+        let rpc = self.rpc.clone();
+
+        self.buffer
+            .scan_and_fetch(range.into(), limit, move |new_range, new_limit| {
+                new_mvcc_scan_request(new_range, timestamp, new_limit, key_only)
+                    .execute(rpc, OPTIMISTIC_BACKOFF)
+            })
+            .await
     }
 
     /// Pessimistically lock the keys.

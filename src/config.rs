@@ -19,11 +19,10 @@ use std::{path::PathBuf, time::Duration};
 /// parameters.
 ///
 /// TiKV does not currently offer encrypted storage (or encryption-at-rest).
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
-    pub pd_endpoints: Vec<String>,
     pub ca_path: Option<PathBuf>,
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
@@ -32,27 +31,18 @@ pub struct Config {
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
-impl Config {
-    /// Create a new [`Config`](Config) which coordinates with the given PD endpoints.
-    ///
-    /// It's important to **include more than one PD endpoint** (include all, if possible!)
-    /// This helps avoid having a *single point of failure*.
-    ///
-    /// # Examples
-    /// ```rust
-    /// # use tikv_client::Config;
-    /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"]);
-    /// ```
-    pub fn new(pd_endpoints: impl IntoIterator<Item = impl Into<String>>) -> Self {
+impl Default for Config {
+    fn default() -> Self {
         Config {
-            pd_endpoints: pd_endpoints.into_iter().map(Into::into).collect(),
             ca_path: None,
             cert_path: None,
             key_path: None,
             timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
+}
 
+impl Config {
     /// Set the certificate authority, certificate, and key locations for the
     /// [`Config`](Config).
     ///
@@ -62,11 +52,7 @@ impl Config {
     /// # Examples
     /// ```rust
     /// # use tikv_client::Config;
-    /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"]).with_security(
-    ///     "root.ca",
-    ///     "internal.cert",
-    ///     "internal.key",
-    /// );
+    /// let config = Config::default().with_security("root.ca", "internal.cert", "internal.key");
     /// ```
     pub fn with_security(
         mut self,
@@ -87,8 +73,7 @@ impl Config {
     /// ```rust
     /// # use tikv_client::Config;
     /// # use std::time::Duration;
-    /// let config = Config::new(vec!["192.168.0.100:2379", "192.168.0.101:2379"])
-    ///     .timeout(Duration::from_secs(10));
+    /// let config = Config::default().timeout(Duration::from_secs(10));
     /// ```
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;

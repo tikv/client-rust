@@ -37,36 +37,47 @@ pub struct Client {
     /// The thread pool for background tasks including committing secondary keys and failed
     /// transaction cleanups.
     bg_worker: ThreadPool,
-    key_only: bool,
 }
 
 impl Client {
     /// Creates a transactional [`Client`](Client).
+    ///
+    /// It's important to **include more than one PD endpoint** (include all, if possible!)
+    /// This helps avoid having a *single point of failure*.
     ///
     /// # Examples
     /// ```rust,no_run
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(Config::default()).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// # });
     /// ```
-    pub async fn new(config: Config) -> Result<Client> {
-        let bg_worker = ThreadPool::new()?;
-        let pd = Arc::new(PdRpcClient::connect(&config, true).await?);
-        Ok(Client {
-            pd,
-            bg_worker,
-            key_only: false,
-        })
+    pub async fn new<S: Into<String>>(pd_endpoints: Vec<S>) -> Result<Client> {
+        Self::new_with_config(pd_endpoints, Config::default()).await
     }
 
-    pub fn with_key_only(&self, key_only: bool) -> Client {
-        Client {
-            pd: self.pd.clone(),
-            bg_worker: self.bg_worker.clone(),
-            key_only,
-        }
+    /// Creates a transactional [`Client`](Client).
+    ///
+    /// It's important to **include more than one PD endpoint** (include all, if possible!)
+    /// This helps avoid having a *single point of failure*.
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// use tikv_client::{Config, TransactionClient};
+    /// use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # });
+    /// ```
+    pub async fn new_with_config<S: Into<String>>(
+        pd_endpoints: Vec<S>,
+        config: Config,
+    ) -> Result<Client> {
+        let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
+        let bg_worker = ThreadPool::new()?;
+        let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, true).await?);
+        Ok(Client { pd, bg_worker })
     }
 
     /// Creates a new [`Transaction`](Transaction) in optimistic mode.
@@ -82,7 +93,7 @@ impl Client {
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(Config::default()).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let mut transaction = client.begin().await.unwrap();
     /// // ... Issue some commands.
     /// let commit = transaction.commit();
@@ -104,7 +115,7 @@ impl Client {
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(Config::default()).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let mut transaction = client.begin_pessimistic().await.unwrap();
     /// // ... Issue some commands.
     /// let commit = transaction.commit();
@@ -128,7 +139,7 @@ impl Client {
     /// use tikv_client::{Config, TransactionClient};
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(Config::default()).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let timestamp = client.current_timestamp().await.unwrap();
     /// # });
     /// ```
@@ -191,7 +202,6 @@ impl Client {
             timestamp,
             self.bg_worker.clone(),
             self.pd.clone(),
-            self.key_only,
             is_pessimistic,
             read_only,
         )

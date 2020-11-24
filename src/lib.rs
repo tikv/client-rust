@@ -61,13 +61,15 @@
 //!
 //! # futures::executor::block_on(async {
 //! // Configure endpoints and optional TLS.
-//! let config = Config::new(vec![ // A list of PD endpoints.
-//!     "192.168.0.100:2379",
-//!     "192.168.0.101:2379",
-//! ]).with_security("root.ca", "internal.cert", "internal.key");
+//! let config = Config::default().with_security("root.ca", "internal.cert", "internal.key");
 //!
 //! // Get a transactional client.
-//! let client = TransactionClient::new(config).await.unwrap();
+//! let client = TransactionClient::new_with_config(
+//!     vec![
+//!         // A list of PD endpoints.
+//!         "192.168.0.100:2379",
+//!         "192.168.0.101:2379",
+//!     ], config).await.unwrap();
 //! # });
 //! ```
 //!
@@ -101,7 +103,7 @@ pub use crate::kv::{BoundRange, Key, KvPair, ToOwnedRange, Value};
 #[doc(inline)]
 pub use crate::raw::{Client as RawClient, ColumnFamily};
 #[doc(inline)]
-pub use crate::timestamp::Timestamp;
+pub use crate::timestamp::{Timestamp, TimestampExt};
 #[doc(inline)]
 pub use crate::transaction::{Client as TransactionClient, Snapshot, Transaction};
 pub use config::Config;

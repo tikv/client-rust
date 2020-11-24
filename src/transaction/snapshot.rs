@@ -40,6 +40,15 @@ impl Snapshot {
         self.transaction.scan(range, limit).await
     }
 
+    /// Scan a range, return at most `limit` keys that lying in the range.
+    pub async fn scan_keys(
+        &self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Iterator<Item = Key>> {
+        self.transaction.scan_keys(range, limit).await
+    }
+
     /// Unimplemented. Similar to scan, but in the reverse direction.
     #[allow(dead_code)]
     fn scan_reverse(&self, range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {

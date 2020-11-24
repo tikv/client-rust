@@ -45,12 +45,12 @@ async fn main() {
     // Create a configuration to use for the example.
     // Optionally encrypt the traffic.
     let config = if let (Some(ca), Some(cert), Some(key)) = (args.ca, args.cert, args.key) {
-        Config::new(args.pd).with_security(ca, cert, key)
+        Config::default().with_security(ca, cert, key)
     } else {
-        Config::new(args.pd)
+        Config::default()
     };
 
-    let txn = Client::new(config)
+    let txn = Client::new_with_config(args.pd, config)
         .await
         .expect("Could not connect to tikv");
 

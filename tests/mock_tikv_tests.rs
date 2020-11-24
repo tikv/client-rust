@@ -4,7 +4,7 @@ mod test {
     use log::debug;
     use mock_tikv::{start_mock_pd_server, start_mock_tikv_server, MOCK_PD_PORT};
     use simple_logger::SimpleLogger;
-    use tikv_client::{Config, KvPair, RawClient};
+    use tikv_client::{KvPair, RawClient};
 
     #[tokio::test]
     async fn test_raw_put_get() {
@@ -14,8 +14,9 @@ mod test {
         let mut tikv_server = start_mock_tikv_server();
         let _pd_server = start_mock_pd_server();
 
-        let config = Config::new(vec![format!("localhost:{}", MOCK_PD_PORT)]);
-        let client = RawClient::new(config).await.unwrap();
+        let client = RawClient::new(vec![format!("localhost:{}", MOCK_PD_PORT)])
+            .await
+            .unwrap();
 
         // empty; get non-existent key
         let res = client.get("k1".to_owned()).await;
