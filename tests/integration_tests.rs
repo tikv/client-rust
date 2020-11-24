@@ -10,7 +10,7 @@ use std::{
     env, iter,
 };
 use tikv_client::{
-    ColumnFamily, Config, Key, KvPair, RawClient, Result, Transaction, TransactionClient, Value,
+    ColumnFamily, Key, KvPair, RawClient, Result, Transaction, TransactionClient, Value,
 };
 
 // Parameters used in test
@@ -25,11 +25,7 @@ async fn clear_tikv() -> Fallible<()> {
         ColumnFamily::Write,
     ];
     for cf in cfs {
-        let config = Config::new(pd_addrs());
-        let raw_client = RawClient::new(config)
-            .await?
-            .with_key_only(true)
-            .with_cf(cf);
+        let raw_client = RawClient::new(pd_addrs()).await?.with_cf(cf);
         raw_client.delete_range(vec![]..).await?;
     }
     Fallible::Ok(())
@@ -38,8 +34,7 @@ async fn clear_tikv() -> Fallible<()> {
 #[tokio::test]
 async fn get_timestamp() -> Fallible<()> {
     const COUNT: usize = 1 << 8; // use a small number to make test fast
-    let config = Config::new(pd_addrs());
-    let client = TransactionClient::new(config).await?;
+    let client = TransactionClient::new(pd_addrs()).await?;
 
     let mut versions = future::join_all((0..COUNT).map(|_| client.current_timestamp()))
         .await
@@ -59,9 +54,8 @@ async fn get_timestamp() -> Fallible<()> {
 #[serial]
 async fn crud() -> Fallible<()> {
     clear_tikv().await?;
-    let config = Config::new(pd_addrs());
 
-    let client = TransactionClient::new(config).await?;
+    let client = TransactionClient::new(pd_addrs()).await?;
     let mut txn = client.begin().await?;
 
     // Get non-existent keys
@@ -140,8 +134,7 @@ async fn crud() -> Fallible<()> {
 #[serial]
 async fn raw_bank_transfer() -> Fallible<()> {
     clear_tikv().await?;
-    let config = Config::new(pd_addrs());
-    let client = RawClient::new(config).await?;
+    let client = RawClient::new(pd_addrs()).await?;
     let mut rng = thread_rng();
 
     let people = gen_u32_keys(NUM_PEOPLE, &mut rng);
@@ -195,8 +188,7 @@ async fn txn_write_million() -> Fallible<()> {
     let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
 
     clear_tikv().await?;
-    let config = Config::new(pd_addrs());
-    let client = TransactionClient::new(config).await?;
+    let client = TransactionClient::new(pd_addrs()).await?;
 
     for i in 0..2u32.pow(NUM_BITS_TXN) {
         let mut cur = i * 2u32.pow(32 - NUM_BITS_TXN);
@@ -262,8 +254,7 @@ async fn txn_write_million() -> Fallible<()> {
 #[serial]
 async fn txn_bank_transfer() -> Fallible<()> {
     clear_tikv().await?;
-    let config = Config::new(pd_addrs());
-    let client = TransactionClient::new(config).await?;
+    let client = TransactionClient::new(pd_addrs()).await?;
     let mut rng = thread_rng();
 
     let people = gen_u32_keys(NUM_PEOPLE, &mut rng);
@@ -312,8 +303,7 @@ async fn txn_bank_transfer() -> Fallible<()> {
 #[serial]
 async fn raw_req() -> Fallible<()> {
     clear_tikv().await?;
-    let config = Config::new(pd_addrs());
-    let client = RawClient::new(config).await?;
+    let client = RawClient::new(pd_addrs()).await?;
 
     // empty; get non-existent key
     let res = client.get("k1".to_owned()).await;
@@ -443,8 +433,7 @@ async fn raw_req() -> Fallible<()> {
 #[serial]
 async fn test_update_safepoint() -> Fallible<()> {
     clear_tikv().await?;
-    let config = Config::new(pd_addrs());
-    let client = TransactionClient::new(config).await?;
+    let client = TransactionClient::new(pd_addrs()).await?;
     let res = client.gc(client.current_timestamp().await?).await?;
     assert!(res);
     Fallible::Ok(())
@@ -463,8 +452,7 @@ async fn raw_write_million() -> Fallible<()> {
     let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
 
     clear_tikv().await?;
-    let config = Config::new(pd_addrs());
-    let client = RawClient::new(config).await?;
+    let client = RawClient::new(pd_addrs()).await?;
 
     for i in 0..2u32.pow(NUM_BITS_TXN) {
         let mut cur = i * 2u32.pow(32 - NUM_BITS_TXN);

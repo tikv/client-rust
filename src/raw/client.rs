@@ -270,27 +270,40 @@ impl Client {
     /// # futures::executor::block_on(async {
     /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
-    /// let req = client.scan(inclusive_range.to_owned(), 2, true);
+    /// let req = client.scan(inclusive_range.to_owned(), 2);
     /// let result: Vec<KvPair> = req.await.unwrap();
     /// # });
     /// ```
-    pub async fn scan(
-        &self,
-        range: impl Into<BoundRange>,
-        limit: u32,
-        key_only: bool,
-    ) -> Result<Vec<KvPair>> {
-        if limit > MAX_RAW_KV_SCAN_LIMIT {
-            return Err(Error::max_scan_limit_exceeded(limit, MAX_RAW_KV_SCAN_LIMIT));
-        }
+    pub async fn scan(&self, range: impl Into<BoundRange>, limit: u32) -> Result<Vec<KvPair>> {
+        self.scan_inner(range, limit, false).await
+    }
 
-        let res = requests::new_raw_scan_request(range, limit, key_only, self.cf.clone())
-            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
-            .await;
-        res.map(|mut s| {
-            s.truncate(limit as usize);
-            s
-        })
+    /// Create a new 'scan' request that only returns the keys.
+    ///
+    /// Once resolved this request will result in a `Vec` of keys that lies in the specified range.
+    ///
+    /// If the number of eligible keys are greater than `limit`,
+    /// only the first `limit` pairs are returned, ordered by the key.
+    ///
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let inclusive_range = "TiKV"..="TiDB";
+    /// let req = client.scan_keys(inclusive_range.to_owned(), 2);
+    /// let result: Vec<Key> = req.await.unwrap();
+    /// # });
+    /// ```
+    pub async fn scan_keys(&self, range: impl Into<BoundRange>, limit: u32) -> Result<Vec<Key>> {
+        Ok(self
+            .scan_inner(range, limit, true)
+            .await?
+            .into_iter()
+            .map(KvPair::into_key)
+            .collect())
     }
 
     /// Create a new 'batch scan' request.
@@ -312,11 +325,74 @@ impl Client {
     /// let inclusive_range1 = "TiDB"..="TiKV";
     /// let inclusive_range2 = "TiKV"..="TiSpark";
     /// let iterable = vec![inclusive_range1.to_owned(), inclusive_range2.to_owned()];
-    /// let req = client.batch_scan(iterable, 2, false);
+    /// let req = client.batch_scan(iterable, 2);
     /// let result = req.await;
     /// # });
     /// ```
     pub async fn batch_scan(
+        &self,
+        ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
+        each_limit: u32,
+    ) -> Result<Vec<KvPair>> {
+        self.batch_scan_inner(ranges, each_limit, false).await
+    }
+
+    /// Create a new 'batch scan' request that only returns the keys.
+    ///
+    /// Once resolved this request will result in a set of scanners over the given keys.
+    ///
+    /// **Warning**: This method is experimental. The `each_limit` parameter does not work as expected.
+    /// It does not limit the number of results returned of each range,
+    /// instead it limits the number of results in each region of each range.
+    /// As a result, you may get **more than** `each_limit` key-value pairs for each range.
+    /// But you should not miss any entries.
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let inclusive_range1 = "TiDB"..="TiKV";
+    /// let inclusive_range2 = "TiKV"..="TiSpark";
+    /// let iterable = vec![inclusive_range1.to_owned(), inclusive_range2.to_owned()];
+    /// let req = client.batch_scan(iterable, 2);
+    /// let result = req.await;
+    /// # });
+    /// ```
+    pub async fn batch_scan_keys(
+        &self,
+        ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
+        each_limit: u32,
+    ) -> Result<Vec<Key>> {
+        Ok(self
+            .batch_scan_inner(ranges, each_limit, true)
+            .await?
+            .into_iter()
+            .map(KvPair::into_key)
+            .collect())
+    }
+
+    async fn scan_inner(
+        &self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+        key_only: bool,
+    ) -> Result<Vec<KvPair>> {
+        if limit > MAX_RAW_KV_SCAN_LIMIT {
+            return Err(Error::max_scan_limit_exceeded(limit, MAX_RAW_KV_SCAN_LIMIT));
+        }
+
+        let res = requests::new_raw_scan_request(range, limit, key_only, self.cf.clone())
+            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+            .await;
+        res.map(|mut s| {
+            s.truncate(limit as usize);
+            s
+        })
+    }
+
+    async fn batch_scan_inner(
         &self,
         ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
         each_limit: u32,

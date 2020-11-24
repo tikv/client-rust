@@ -36,9 +36,17 @@ impl Snapshot {
         &self,
         range: impl Into<BoundRange>,
         limit: u32,
-        key_only: bool,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.transaction.scan(range, limit, key_only).await
+        self.transaction.scan(range, limit).await
+    }
+
+    /// Scan a range, return at most `limit` keys that lying in the range.
+    pub async fn scan_keys(
+        &self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Iterator<Item = Key>> {
+        self.transaction.scan_keys(range, limit).await
     }
 
     /// Unimplemented. Similar to scan, but in the reverse direction.
