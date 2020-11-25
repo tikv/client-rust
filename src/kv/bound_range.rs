@@ -1,16 +1,18 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::Key;
-use crate::{Error, Result};
-#[cfg(test)]
-use proptest_derive::Arbitrary;
 use std::{
     borrow::Borrow,
     cmp::{Eq, PartialEq},
-    convert::TryFrom,
-    ops::{Bound, Range, RangeBounds, RangeFrom, RangeInclusive},
+    ops::{
+        Bound, Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
+    },
 };
+
+#[cfg(test)]
+use proptest_derive::Arbitrary;
 use tikv_client_proto::kvrpcpb;
+
+use super::Key;
 
 /// A struct for expressing ranges. This type is semi-opaque and is not really meant for users to
 /// deal with directly. Most functions which operate on ranges will accept any types which
@@ -23,7 +25,7 @@ use tikv_client_proto::kvrpcpb;
 /// The unbounded lower bound in a [`Range`](Range) will be converted to an empty key.
 ///
 /// **Maximum key**: There is no limit of the maximum key. When an empty key is used as the upper bound, it means upper unbounded.
-/// The unbounded upper bound in a [`Range`](Range). The range covering all keys is just `vec![]..`.
+/// The unbounded upper bound in a [`Range`](Range). The range covering all keys is just `Key::EMPTY..`.
 ///
 /// **But, you should not need to worry about all this:** Most functions which operate
 /// on ranges will accept any types which implement `Into<BoundRange>`.
@@ -70,8 +72,6 @@ impl BoundRange {
     ///
     /// The caller must ensure that `from` is not `Unbounded`.
     fn new(from: Bound<Key>, to: Bound<Key>) -> BoundRange {
-        // Debug assert because this function is private.
-        debug_assert!(from != Bound::Unbounded);
         BoundRange { from, to }
     }
 
@@ -96,11 +96,29 @@ impl BoundRange {
     ///     BoundRange::from(range.to_owned()).into_keys(),
     ///     (Key::from("a".to_owned()), Some(Key::from("z\0".to_owned()))),
     /// );
-    /// // Open
+    /// // Open right
     /// let range = "a".to_owned()..;
     /// assert_eq!(
-    ///     BoundRange::from(range).into_keys(),
+    ///     BoundRange::from(range.to_owned()).into_keys(),
     ///     (Key::from("a".to_owned()), None),
+    /// );
+    /// // Left open right exclusive
+    /// let range = .."z";
+    /// assert_eq!(
+    ///     BoundRange::from(range.to_owned()).into_keys(),
+    ///     (Key::from("".to_owned()), Some(Key::from("z".to_owned()))),
+    /// );
+    /// // Left open right inclusive
+    /// let range = ..="z";
+    /// assert_eq!(
+    ///     BoundRange::from(range.to_owned()).into_keys(),
+    ///     (Key::from("".to_owned()), Some(Key::from("z\0".to_owned()))),
+    /// );
+    /// // Full range
+    /// let range = ..;
+    /// assert_eq!(
+    ///     BoundRange::from(range.to_owned()).into_keys(),
+    ///     (Key::from("".to_owned()), None),
     /// );
     // ```
     pub fn into_keys(self) -> (Key, Option<Key>) {
@@ -110,7 +128,7 @@ impl BoundRange {
                 v.push_zero();
                 v
             }
-            Bound::Unbounded => unreachable!(),
+            Bound::Unbounded => Key::EMPTY,
         };
         let end = match self.to {
             Bound::Included(mut v) => {
@@ -177,10 +195,28 @@ impl<T: Into<Key>> From<RangeFrom<T>> for BoundRange {
     }
 }
 
+impl<T: Into<Key>> From<RangeTo<T>> for BoundRange {
+    fn from(other: RangeTo<T>) -> BoundRange {
+        BoundRange::new(Bound::Unbounded, Bound::Excluded(other.end.into()))
+    }
+}
+
 impl<T: Into<Key>> From<RangeInclusive<T>> for BoundRange {
     fn from(other: RangeInclusive<T>) -> BoundRange {
         let (start, end) = other.into_inner();
         BoundRange::new(Bound::Included(start.into()), Bound::Included(end.into()))
+    }
+}
+
+impl<T: Into<Key>> From<RangeToInclusive<T>> for BoundRange {
+    fn from(other: RangeToInclusive<T>) -> BoundRange {
+        BoundRange::new(Bound::Unbounded, Bound::Included(other.end.into()))
+    }
+}
+
+impl From<RangeFull> for BoundRange {
+    fn from(_other: RangeFull) -> BoundRange {
+        BoundRange::new(Bound::Unbounded, Bound::Unbounded)
     }
 }
 
@@ -204,18 +240,12 @@ impl<T: Into<Key>> From<(T, T)> for BoundRange {
     }
 }
 
-impl<T: Into<Key> + Eq> TryFrom<(Bound<T>, Bound<T>)> for BoundRange {
-    type Error = Error;
-
-    fn try_from(bounds: (Bound<T>, Bound<T>)) -> Result<BoundRange> {
-        if bounds.0 == Bound::Unbounded {
-            Err(Error::invalid_key_range())
-        } else {
-            Ok(BoundRange::new(
-                convert_to_bound_key(bounds.0),
-                convert_to_bound_key(bounds.1),
-            ))
-        }
+impl<T: Into<Key> + Eq> From<(Bound<T>, Bound<T>)> for BoundRange {
+    fn from(bounds: (Bound<T>, Bound<T>)) -> BoundRange {
+        BoundRange::new(
+            convert_to_bound_key(bounds.0),
+            convert_to_bound_key(bounds.1),
+        )
     }
 }
 
@@ -242,7 +272,7 @@ impl From<kvrpcpb::KeyRange> for BoundRange {
 /// # Examples
 /// ```rust
 /// # use tikv_client::{ToOwnedRange, BoundRange};
-/// # use std::ops::{Range, RangeFrom, RangeInclusive};
+/// # use std::ops::*;
 /// let r1: Range<&str> = "s".."e";
 /// let r1: BoundRange = r1.to_owned();
 ///
@@ -251,6 +281,9 @@ impl From<kvrpcpb::KeyRange> for BoundRange {
 ///
 /// let r3: RangeInclusive<&str> = "s"..="e";
 /// let r3: BoundRange = r3.to_owned();
+///
+/// let r4: RangeTo<&str> = .."z";
+/// let r4: BoundRange = r4.to_owned();
 ///
 /// let k1: Vec<u8> = "start".to_owned().into_bytes();
 /// let k2: Vec<u8> = "end".to_owned().into_bytes();
@@ -283,10 +316,34 @@ impl<T: Into<Key> + Borrow<U>, U: ToOwned<Owned = T> + ?Sized> ToOwnedRange for 
     }
 }
 
+impl<T: Into<Key> + Borrow<U>, U: ToOwned<Owned = T> + ?Sized> ToOwnedRange for RangeTo<&U> {
+    fn to_owned(self) -> BoundRange {
+        From::from(RangeTo {
+            end: self.end.to_owned(),
+        })
+    }
+}
+
 impl<T: Into<Key> + Borrow<U>, U: ToOwned<Owned = T> + ?Sized> ToOwnedRange for RangeInclusive<&U> {
     fn to_owned(self) -> BoundRange {
         let (from, to) = self.into_inner();
         From::from(RangeInclusive::new(from.to_owned(), to.to_owned()))
+    }
+}
+
+impl<T: Into<Key> + Borrow<U>, U: ToOwned<Owned = T> + ?Sized> ToOwnedRange
+    for RangeToInclusive<&U>
+{
+    fn to_owned(self) -> BoundRange {
+        From::from(RangeToInclusive {
+            end: self.end.to_owned(),
+        })
+    }
+}
+
+impl ToOwnedRange for RangeFull {
+    fn to_owned(self) -> BoundRange {
+        From::from(self)
     }
 }
 

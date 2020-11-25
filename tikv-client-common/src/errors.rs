@@ -26,9 +26,6 @@ pub enum ErrorKind {
     /// Will raise this error when using a pessimistic txn only operation on an optimistic txn
     #[fail(display = "Invalid operation for this type of transaction")]
     InvalidTransactionType,
-    /// Invalid key range to scan. Only left bounded intervals are supported.
-    #[fail(display = "Only left bounded intervals are supported")]
-    InvalidKeyRange,
     /// It's not allowed to perform operations in a transaction after it has been committed or rolled back.
     #[fail(
         display = "Cannot read or write data after any attempt to commit or roll back the transaction"
@@ -117,10 +114,6 @@ impl Error {
 
     pub fn leader_not_found(region_id: u64) -> Self {
         Error::from(ErrorKind::LeaderNotFound { region_id })
-    }
-
-    pub fn invalid_key_range() -> Self {
-        Error::from(ErrorKind::InvalidKeyRange)
     }
 
     pub fn max_scan_limit_exceeded(limit: u32, max_limit: u32) -> Self {

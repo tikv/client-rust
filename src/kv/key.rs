@@ -73,6 +73,9 @@ impl AsRef<Key> for kvrpcpb::Mutation {
 }
 
 impl Key {
+    /// The empty key.
+    pub const EMPTY: Self = Key(Vec::new());
+
     /// Return whether the key is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
