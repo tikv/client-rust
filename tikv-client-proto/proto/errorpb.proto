@@ -88,6 +88,25 @@ message RaftEntryTooLarge {
 message MaxTimestampNotSynced {
 }
 
+// ReadIndexNotReady is the error variant that tells the read index request is not ready, that is,
+// the current region is in a status that not ready to serve the read index request. For example,
+// region is in splitting or merging status.
+// This can be retried at most time.
+message ReadIndexNotReady {
+    // The reason why the region is not ready to serve read index request
+    string reason = 1;
+    // The requested region ID
+    uint64 region_id = 2;
+}
+
+// ProposalInMergingMode is the error variant that tells the proposal is rejected because raft is
+// in the merging mode. This may happen when BR/Lightning try to ingest SST.
+// This can be retried at most time.
+message ProposalInMergingMode {
+    // The requested region ID
+    uint64 region_id = 1;
+}
+
 // Error wraps all region errors, indicates an error encountered by a request.
 message Error {
     reserved "stale_epoch";
@@ -103,4 +122,6 @@ message Error {
     StoreNotMatch store_not_match = 8;
     RaftEntryTooLarge raft_entry_too_large = 9;
     MaxTimestampNotSynced max_timestamp_not_synced = 10;
+    ReadIndexNotReady read_index_not_ready = 11;
+    ProposalInMergingMode proposal_in_merging_mode = 12;
 }

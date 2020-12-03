@@ -44,7 +44,13 @@ message Response {
     kvrpcpb.LockInfo locked = 3;
     string other_error = 4;
     KeyRange range = 5;
+
+    // This field is always filled for compatibility consideration. However
+    // newer TiDB should respect `exec_details_v2` field instead.
     kvrpcpb.ExecDetails exec_details = 6;
+    // This field is provided in later versions, containing more detailed
+    // information.
+    kvrpcpb.ExecDetailsV2 exec_details_v2 = 11;
 
     bool is_cache_hit = 7;
     uint64 cache_last_version = 8;
@@ -53,23 +59,23 @@ message Response {
 }
 
 message RegionInfo {
-        uint64 region_id = 1;
-        metapb.RegionEpoch region_epoch = 2;
-        repeated KeyRange ranges = 3;
+    uint64 region_id = 1;
+    metapb.RegionEpoch region_epoch = 2;
+    repeated KeyRange ranges = 3;
 }
 
 message BatchRequest {
-        kvrpcpb.Context context = 1;
-        int64 tp = 2;
-        bytes data = 3;
-        repeated RegionInfo regions = 4;
-        uint64 start_ts = 5;
-        // Any schema-ful storage to validate schema correctness if necessary.
-        int64 schema_ver = 6;
+    kvrpcpb.Context context = 1;
+    int64 tp = 2;
+    bytes data = 3;
+    repeated RegionInfo regions = 4;
+    uint64 start_ts = 5;
+    // Any schema-ful storage to validate schema correctness if necessary.
+    int64 schema_ver = 6;
 }
 
 message BatchResponse {
-        bytes data = 1 [(gogoproto.customtype) = "github.com/pingcap/kvproto/pkg/sharedbytes.SharedBytes", (gogoproto.nullable) = false];
-        string other_error = 2;
-        kvrpcpb.ExecDetails exec_details = 3;
+    bytes data = 1 [(gogoproto.customtype) = "github.com/pingcap/kvproto/pkg/sharedbytes.SharedBytes", (gogoproto.nullable) = false];
+    string other_error = 2;
+    kvrpcpb.ExecDetails exec_details = 3;
 }

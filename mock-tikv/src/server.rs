@@ -504,4 +504,13 @@ impl Tikv for MockTikv {
     ) {
         todo!()
     }
+
+    fn check_leader(
+        &mut self,
+        _: grpcio::RpcContext<'_>,
+        _: tikv_client_proto::kvrpcpb::CheckLeaderRequest,
+        _: grpcio::UnarySink<tikv_client_proto::kvrpcpb::CheckLeaderResponse>,
+    ) {
+        todo!()
+    }
 }
