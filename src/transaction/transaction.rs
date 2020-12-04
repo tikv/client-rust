@@ -43,25 +43,20 @@ pub struct TransactionStyle {
 }
 
 impl TransactionStyle {
-    pub fn new_optimistic() -> TransactionStyle {
+    pub fn new_optimistic(try_one_pc: bool) -> TransactionStyle {
         TransactionStyle {
             kind: TransactionKind::Optimistic,
-            try_one_pc: false,
+            try_one_pc,
             async_commit: false,
         }
     }
 
-    pub fn new_pessimistic() -> TransactionStyle {
+    pub fn new_pessimistic(try_one_pc: bool) -> TransactionStyle {
         TransactionStyle {
             kind: TransactionKind::Pessimistic(0),
-            try_one_pc: false,
+            try_one_pc,
             async_commit: false,
         }
-    }
-
-    pub fn try_one_pc(mut self) -> TransactionStyle {
-        self.try_one_pc = true;
-        self
     }
 
     pub fn async_commit(mut self) -> TransactionStyle {

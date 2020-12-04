@@ -37,6 +37,7 @@ pub struct Client {
     /// The thread pool for background tasks including committing secondary keys and failed
     /// transaction cleanups.
     bg_worker: ThreadPool,
+    config: Config,
 }
 
 impl Client {
@@ -77,7 +78,11 @@ impl Client {
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let bg_worker = ThreadPool::new()?;
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, true).await?);
-        Ok(Client { pd, bg_worker })
+        Ok(Client {
+            pd,
+            bg_worker,
+            config,
+        })
     }
 
     /// Creates a new [`Transaction`](Transaction) in optimistic mode.
@@ -102,7 +107,11 @@ impl Client {
     /// ```
     pub async fn begin(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
-        Ok(self.new_transaction(timestamp, TransactionStyle::new_optimistic(), false))
+        Ok(self.new_transaction(
+            timestamp,
+            TransactionStyle::new_optimistic(self.config.try_one_pc),
+            false,
+        ))
     }
 
     /// Creates a new [`Transaction`](Transaction) in pessimistic mode.
@@ -124,12 +133,20 @@ impl Client {
     /// ```
     pub async fn begin_pessimistic(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
-        Ok(self.new_transaction(timestamp, TransactionStyle::new_pessimistic(), false))
+        Ok(self.new_transaction(
+            timestamp,
+            TransactionStyle::new_pessimistic(self.config.try_one_pc),
+            false,
+        ))
     }
 
     /// Creates a new [`Snapshot`](Snapshot) at the given [`Timestamp`](Timestamp).
     pub fn snapshot(&self, timestamp: Timestamp) -> Snapshot {
-        Snapshot::new(self.new_transaction(timestamp, TransactionStyle::new_optimistic(), true))
+        Snapshot::new(self.new_transaction(
+            timestamp,
+            TransactionStyle::new_optimistic(self.config.try_one_pc),
+            true,
+        ))
     }
 
     /// Retrieves the current [`Timestamp`](Timestamp).
