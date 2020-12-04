@@ -102,7 +102,7 @@ impl Client {
     /// let mut transaction = client.begin().await.unwrap();
     /// // ... Issue some commands.
     /// let commit = transaction.commit();
-    /// let result: () = commit.await.unwrap();
+    /// let result = commit.await.unwrap();
     /// # });
     /// ```
     pub async fn begin(&self) -> Result<Transaction> {
@@ -128,7 +128,7 @@ impl Client {
     /// let mut transaction = client.begin_pessimistic().await.unwrap();
     /// // ... Issue some commands.
     /// let commit = transaction.commit();
-    /// let result: () = commit.await.unwrap();
+    /// let result = commit.await.unwrap();
     /// # });
     /// ```
     pub async fn begin_pessimistic(&self) -> Result<Transaction> {

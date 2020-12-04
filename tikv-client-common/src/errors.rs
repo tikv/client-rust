@@ -31,6 +31,9 @@ pub enum ErrorKind {
         display = "Cannot read or write data after any attempt to commit or roll back the transaction"
     )]
     OperationAfterCommitError,
+    /// We tried to use 1pc for a transaction, but it didn't work. Probably should have used 2pc.
+    #[fail(display = "1PC transaction could not be committed.")]
+    OnePcFailure,
     /// Wraps a `std::io::Error`.
     #[fail(display = "IO error: {}", _0)]
     Io(#[fail(cause)] std::io::Error),

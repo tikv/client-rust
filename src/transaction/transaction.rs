@@ -445,7 +445,7 @@ impl Transaction {
         Ok(())
     }
 
-    /// Commits the actions of the transaction.
+    /// Commits the actions of the transaction. On success, we return the commit timestamp.
     ///
     /// # Examples
     /// ```rust,no_run
@@ -456,10 +456,10 @@ impl Transaction {
     /// let mut txn = client.begin().await.unwrap();
     /// // ... Do some actions.
     /// let req = txn.commit();
-    /// let result: () = req.await.unwrap();
+    /// let result: u64 = req.await.unwrap();
     /// # });
     /// ```
-    pub async fn commit(&mut self) -> Result<()> {
+    pub async fn commit(&mut self) -> Result<u64> {
         if !matches!(
             self.status,
             TransactionStatus::StartedCommit | TransactionStatus::Active
@@ -575,6 +575,10 @@ impl Transaction {
     fn is_pessimistic(&self) -> bool {
         matches!(self.style.kind, TransactionKind::Pessimistic(_))
     }
+
+    pub fn use_async_commit(&mut self) {
+        self.style = self.style.async_commit();
+    }
 }
 
 /// The default TTL of a lock in milliseconds
@@ -599,59 +603,89 @@ struct TwoPhaseCommitter {
 }
 
 impl TwoPhaseCommitter {
-    async fn commit(mut self) -> Result<()> {
+    async fn commit(mut self) -> Result<u64> {
         if self.mutations.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
-        self.prewrite().await?;
-        match self.commit_primary().await {
-            Ok(commit_version) => {
-                self.bg_worker
-                    .clone()
-                    .spawn_ok(self.commit_secondary(commit_version).map(|res| {
-                        if let Err(e) = res {
-                            warn!("Failed to commit secondary keys: {}", e);
-                        }
-                    }));
-                Ok(())
-            }
-            Err(e) => {
-                if self.undetermined {
-                    Err(Error::undetermined_error(e))
-                } else {
-                    Err(e)
+
+        let min_commit_ts = self.prewrite().await?;
+
+        if self.style.try_one_pc {
+            return Ok(min_commit_ts);
+        }
+
+        let commit_ts = if self.style.async_commit {
+            assert_ne!(min_commit_ts, 0);
+            min_commit_ts
+        } else {
+            match self.commit_primary().await {
+                Ok(commit_ts) => commit_ts,
+                Err(e) => {
+                    return if self.undetermined {
+                        Err(Error::undetermined_error(e))
+                    } else {
+                        Err(e)
+                    };
                 }
             }
-        }
+        };
+        self.bg_worker
+            .clone()
+            .spawn_ok(self.commit_secondary(commit_ts).map(|res| {
+                if let Err(e) = res {
+                    warn!("Failed to commit secondary keys: {}", e);
+                }
+            }));
+        Ok(commit_ts)
     }
 
-    async fn prewrite(&mut self) -> Result<()> {
+    async fn prewrite(&mut self) -> Result<u64> {
         let primary_lock = self.mutations[0].key.clone().into();
         // TODO: calculate TTL for big transactions
         let lock_ttl = DEFAULT_LOCK_TTL;
-        match self.style.kind {
+        let mut request = match self.style.kind {
+            TransactionKind::Optimistic => new_prewrite_request(
+                self.mutations.clone(),
+                primary_lock,
+                self.start_version,
+                lock_ttl,
+            ),
+            TransactionKind::Pessimistic(for_update_ts) => new_pessimistic_prewrite_request(
+                self.mutations.clone(),
+                primary_lock,
+                self.start_version,
+                lock_ttl,
+                for_update_ts,
+            ),
+        };
+
+        request.use_async_commit = self.style.async_commit;
+        request.try_one_pc = self.style.try_one_pc;
+        request.secondaries = self.mutations[1..].iter().map(|m| m.key.clone()).collect();
+        // FIXME set max_commit_ts and min_commit_ts
+
+        let response = match self.style.kind {
             TransactionKind::Optimistic => {
-                new_prewrite_request(
-                    self.mutations.clone(),
-                    primary_lock,
-                    self.start_version,
-                    lock_ttl,
-                )
-                .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
-                .await
+                request
+                    .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+                    .await?
             }
-            TransactionKind::Pessimistic(for_update_ts) => {
-                new_pessimistic_prewrite_request(
-                    self.mutations.clone(),
-                    primary_lock,
-                    self.start_version,
-                    lock_ttl,
-                    for_update_ts,
-                )
-                .execute(self.rpc.clone(), PESSIMISTIC_BACKOFF)
-                .await
+            TransactionKind::Pessimistic(_) => {
+                request
+                    .execute(self.rpc.clone(), PESSIMISTIC_BACKOFF)
+                    .await?
             }
+        };
+
+        if self.style.try_one_pc {
+            if response.one_pc_commit_ts == 0 {
+                return Err(ErrorKind::OnePcFailure.into());
+            }
+
+            return Ok(response.one_pc_commit_ts);
         }
+        assert_eq!(response.one_pc_commit_ts, 0);
+        Ok(response.min_commit_ts)
     }
 
     /// Commits the primary key and returns the commit version
@@ -674,35 +708,42 @@ impl TwoPhaseCommitter {
     }
 
     async fn commit_secondary(self, commit_version: u64) -> Result<()> {
-        // No need to commit secondary keys when there is only one key
-        if self.mutations.len() == 1 {
-            return Ok(());
-        }
+        let primary_only = self.mutations.len() == 1;
+        let mutations = self.mutations.into_iter();
 
-        let keys = self
-            .mutations
-            .into_iter()
-            .skip(1) // skip primary key
-            .map(|mutation| mutation.key.into())
-            .collect();
+        // Only skip the primary if we committed it earlier (i.e., we are not using async commit).
+        let keys = if self.style.async_commit {
+            mutations.skip(0)
+        } else {
+            if primary_only {
+                return Ok(());
+            }
+            mutations.skip(1)
+        }
+        .map(|mutation| mutation.key.into())
+        .collect();
         new_commit_request(keys, self.start_version, commit_version)
             .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
             .await
     }
 
-    fn rollback(self) -> impl Future<Output = Result<()>> + 'static {
+    async fn rollback(self) -> Result<()> {
         let keys: Vec<_> = self
             .mutations
             .into_iter()
             .map(|mutation| mutation.key.into())
             .collect();
         match self.style.kind {
-            TransactionKind::Optimistic if keys.is_empty() => Box::pin(future::ready(Ok(()))),
-            TransactionKind::Optimistic => new_batch_rollback_request(keys, self.start_version)
-                .execute(self.rpc, OPTIMISTIC_BACKOFF),
+            TransactionKind::Optimistic if keys.is_empty() => Ok(()),
+            TransactionKind::Optimistic => {
+                new_batch_rollback_request(keys, self.start_version)
+                    .execute(self.rpc, OPTIMISTIC_BACKOFF)
+                    .await
+            }
             TransactionKind::Pessimistic(for_update_ts) => {
                 new_pessimistic_rollback_request(keys, self.start_version, for_update_ts)
                     .execute(self.rpc, OPTIMISTIC_BACKOFF)
+                    .await
             }
         }
     }

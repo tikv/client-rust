@@ -10,7 +10,7 @@ use std::{
     env, iter,
 };
 use tikv_client::{
-    ColumnFamily, Key, KvPair, RawClient, Result, Transaction, TransactionClient, Value,
+    ColumnFamily, Config, Key, KvPair, RawClient, Result, Transaction, TransactionClient, Value,
 };
 
 // Parameters used in test
@@ -254,7 +254,8 @@ async fn txn_write_million() -> Fallible<()> {
 #[serial]
 async fn txn_bank_transfer() -> Fallible<()> {
     clear_tikv().await?;
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let config = Config::default().try_one_pc();
+    let client = TransactionClient::new_with_config(pd_addrs(), config).await?;
     let mut rng = thread_rng();
 
     let people = gen_u32_keys(NUM_PEOPLE, &mut rng);
@@ -270,6 +271,7 @@ async fn txn_bank_transfer() -> Fallible<()> {
     // transfer
     for _ in 0..NUM_TRNASFER {
         let mut txn = client.begin().await?;
+        txn.use_async_commit();
         let chosen_people = people.iter().choose_multiple(&mut rng, 2);
         let alice = chosen_people[0];
         let mut alice_balance = get_txn_u32(&txn, alice.clone()).await?;
@@ -438,6 +440,7 @@ async fn test_update_safepoint() -> Fallible<()> {
     assert!(res);
     Fallible::Ok(())
 }
+
 /// Tests raw API when there are multiple regions.
 /// Write large volumes of data to enforce region splitting.
 /// In order to test `scan`, data is uniformly inserted.
