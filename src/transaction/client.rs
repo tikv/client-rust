@@ -6,7 +6,7 @@ use crate::{
     pd::{PdClient, PdRpcClient},
     request::{KvRequest, OPTIMISTIC_BACKOFF},
     timestamp::TimestampExt,
-    transaction::{Snapshot, Transaction},
+    transaction::{Snapshot, Transaction, TransactionStyle},
     Result,
 };
 use futures::executor::ThreadPool;
@@ -102,7 +102,7 @@ impl Client {
     /// ```
     pub async fn begin(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
-        Ok(self.new_transaction(timestamp, false, false))
+        Ok(self.new_transaction(timestamp, TransactionStyle::new_optimistic(), false))
     }
 
     /// Creates a new [`Transaction`](Transaction) in pessimistic mode.
@@ -124,12 +124,12 @@ impl Client {
     /// ```
     pub async fn begin_pessimistic(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
-        Ok(self.new_transaction(timestamp, true, false))
+        Ok(self.new_transaction(timestamp, TransactionStyle::new_pessimistic(), false))
     }
 
     /// Creates a new [`Snapshot`](Snapshot) at the given [`Timestamp`](Timestamp).
     pub fn snapshot(&self, timestamp: Timestamp) -> Snapshot {
-        Snapshot::new(self.new_transaction(timestamp, false, true))
+        Snapshot::new(self.new_transaction(timestamp, TransactionStyle::new_optimistic(), true))
     }
 
     /// Retrieves the current [`Timestamp`](Timestamp).
@@ -195,14 +195,14 @@ impl Client {
     fn new_transaction(
         &self,
         timestamp: Timestamp,
-        is_pessimistic: bool,
+        style: TransactionStyle,
         read_only: bool,
     ) -> Transaction {
         Transaction::new(
             timestamp,
             self.bg_worker.clone(),
             self.pd.clone(),
-            is_pessimistic,
+            style,
             read_only,
         )
     }

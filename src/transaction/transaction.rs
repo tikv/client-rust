@@ -28,6 +28,60 @@ enum TransactionStatus {
     StartedRollback,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum TransactionKind {
+    Optimistic,
+    /// Argument is for_update_ts
+    Pessimistic(u64),
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct TransactionStyle {
+    kind: TransactionKind,
+    try_one_pc: bool,
+    async_commit: bool,
+}
+
+impl TransactionStyle {
+    pub fn new_optimistic() -> TransactionStyle {
+        TransactionStyle {
+            kind: TransactionKind::Optimistic,
+            try_one_pc: false,
+            async_commit: false,
+        }
+    }
+
+    pub fn new_pessimistic() -> TransactionStyle {
+        TransactionStyle {
+            kind: TransactionKind::Pessimistic(0),
+            try_one_pc: false,
+            async_commit: false,
+        }
+    }
+
+    pub fn try_one_pc(mut self) -> TransactionStyle {
+        self.try_one_pc = true;
+        self
+    }
+
+    pub fn async_commit(mut self) -> TransactionStyle {
+        self.async_commit = true;
+        self
+    }
+
+    fn push_for_update_ts(&mut self, for_update_ts: u64) {
+        match &mut self.kind {
+            TransactionKind::Optimistic => {
+                self.kind = TransactionKind::Pessimistic(for_update_ts);
+            }
+            TransactionKind::Pessimistic(old_for_update_ts) => {
+                self.kind =
+                    TransactionKind::Pessimistic(std::cmp::max(*old_for_update_ts, for_update_ts));
+            }
+        }
+    }
+}
+
 /// A undo-able set of actions on the dataset.
 ///
 /// Using a transaction you can prepare a set of actions (such as `get`, or `put`) on data at a
@@ -63,8 +117,7 @@ pub struct Transaction {
     buffer: Buffer,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
-    for_update_ts: u64,
-    is_pessimistic: bool,
+    style: TransactionStyle,
 }
 
 impl Transaction {
@@ -72,7 +125,7 @@ impl Transaction {
         timestamp: Timestamp,
         bg_worker: ThreadPool,
         rpc: Arc<PdRpcClient>,
-        is_pessimistic: bool,
+        style: TransactionStyle,
         read_only: bool,
     ) -> Transaction {
         let status = if read_only {
@@ -86,8 +139,7 @@ impl Transaction {
             buffer: Default::default(),
             bg_worker,
             rpc,
-            for_update_ts: 0,
-            is_pessimistic,
+            style,
         }
     }
 
@@ -143,7 +195,7 @@ impl Transaction {
     /// ```
     pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         self.check_allow_operation()?;
-        if !self.is_pessimistic {
+        if !self.is_pessimistic() {
             Err(ErrorKind::InvalidTransactionType.into())
         } else {
             let key = key.into();
@@ -229,7 +281,7 @@ impl Transaction {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
         self.check_allow_operation()?;
-        if !self.is_pessimistic {
+        if !self.is_pessimistic() {
             Err(ErrorKind::InvalidTransactionType.into())
         } else {
             let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
@@ -335,7 +387,7 @@ impl Transaction {
     pub async fn put(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
         self.check_allow_operation()?;
         let key = key.into();
-        if self.is_pessimistic {
+        if self.is_pessimistic() {
             self.pessimistic_lock(iter::once(key.clone())).await?;
         }
         self.buffer.put(key, value.into()).await;
@@ -362,7 +414,7 @@ impl Transaction {
     pub async fn delete(&mut self, key: impl Into<Key>) -> Result<()> {
         self.check_allow_operation()?;
         let key = key.into();
-        if self.is_pessimistic {
+        if self.is_pessimistic() {
             self.pessimistic_lock(iter::once(key.clone())).await?;
         }
         self.buffer.delete(key).await;
@@ -426,7 +478,7 @@ impl Transaction {
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
-            self.for_update_ts,
+            self.style,
         )
         .commit()
         .await;
@@ -454,7 +506,7 @@ impl Transaction {
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
-            self.for_update_ts,
+            self.style,
         )
         .rollback()
         .await;
@@ -500,7 +552,7 @@ impl Transaction {
         let primary_lock = keys[0].clone();
         let lock_ttl = DEFAULT_LOCK_TTL;
         let for_update_ts = self.rpc.clone().get_timestamp().await.unwrap().version();
-        self.for_update_ts = std::cmp::max(self.for_update_ts, for_update_ts);
+        self.style.push_for_update_ts(for_update_ts);
         new_pessimistic_lock_request(
             keys,
             primary_lock,
@@ -524,6 +576,10 @@ impl Transaction {
             }
         }
     }
+
+    fn is_pessimistic(&self) -> bool {
+        matches!(self.style.kind, TransactionKind::Pessimistic(_))
+    }
 }
 
 /// The default TTL of a lock in milliseconds
@@ -542,7 +598,7 @@ struct TwoPhaseCommitter {
     start_version: u64,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
-    for_update_ts: u64,
+    style: TransactionStyle,
     #[new(default)]
     undetermined: bool,
 }
@@ -578,25 +634,28 @@ impl TwoPhaseCommitter {
         let primary_lock = self.mutations[0].key.clone().into();
         // TODO: calculate TTL for big transactions
         let lock_ttl = DEFAULT_LOCK_TTL;
-        if self.for_update_ts > 0 {
-            new_pessimistic_prewrite_request(
-                self.mutations.clone(),
-                primary_lock,
-                self.start_version,
-                lock_ttl,
-                self.for_update_ts,
-            )
-            .execute(self.rpc.clone(), PESSIMISTIC_BACKOFF)
-            .await
-        } else {
-            new_prewrite_request(
-                self.mutations.clone(),
-                primary_lock,
-                self.start_version,
-                lock_ttl,
-            )
-            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
-            .await
+        match self.style.kind {
+            TransactionKind::Optimistic => {
+                new_prewrite_request(
+                    self.mutations.clone(),
+                    primary_lock,
+                    self.start_version,
+                    lock_ttl,
+                )
+                .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+                .await
+            }
+            TransactionKind::Pessimistic(for_update_ts) => {
+                new_pessimistic_prewrite_request(
+                    self.mutations.clone(),
+                    primary_lock,
+                    self.start_version,
+                    lock_ttl,
+                    for_update_ts,
+                )
+                .execute(self.rpc.clone(), PESSIMISTIC_BACKOFF)
+                .await
+            }
         }
     }
 
@@ -637,19 +696,19 @@ impl TwoPhaseCommitter {
     }
 
     fn rollback(self) -> impl Future<Output = Result<()>> + 'static {
-        let keys = self
+        let keys: Vec<_> = self
             .mutations
             .into_iter()
             .map(|mutation| mutation.key.into())
             .collect();
-        if self.for_update_ts > 0 {
-            new_pessimistic_rollback_request(keys, self.start_version, self.for_update_ts)
-                .execute(self.rpc, OPTIMISTIC_BACKOFF)
-        } else if keys.is_empty() {
-            Box::pin(future::ready(Ok(())))
-        } else {
-            new_batch_rollback_request(keys, self.start_version)
-                .execute(self.rpc, OPTIMISTIC_BACKOFF)
+        match self.style.kind {
+            TransactionKind::Optimistic if keys.is_empty() => Box::pin(future::ready(Ok(()))),
+            TransactionKind::Optimistic => new_batch_rollback_request(keys, self.start_version)
+                .execute(self.rpc, OPTIMISTIC_BACKOFF),
+            TransactionKind::Pessimistic(for_update_ts) => {
+                new_pessimistic_rollback_request(keys, self.start_version, for_update_ts)
+                    .execute(self.rpc, OPTIMISTIC_BACKOFF)
+            }
         }
     }
 }
