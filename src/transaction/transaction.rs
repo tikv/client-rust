@@ -66,9 +66,7 @@ impl TransactionStyle {
 
     fn push_for_update_ts(&mut self, for_update_ts: u64) {
         match &mut self.kind {
-            TransactionKind::Optimistic => {
-                self.kind = TransactionKind::Pessimistic(for_update_ts);
-            }
+            TransactionKind::Optimistic => unreachable!(),
             TransactionKind::Pessimistic(old_for_update_ts) => {
                 self.kind =
                     TransactionKind::Pessimistic(std::cmp::max(*old_for_update_ts, for_update_ts));
@@ -534,10 +532,17 @@ impl Transaction {
     ///
     /// Once resovled it acquires a lock on the key in TiKV.
     /// The lock prevents other transactions from mutating the entry until it is released.
+    ///
+    /// Only valid for pessimistic transactions, panics if called on an optimistic transaction.
     async fn pessimistic_lock(
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<()> {
+        assert!(
+            matches!(self.style.kind, TransactionKind::Pessimistic(_)),
+            "`pessimistic_lock` is only valid to use with pessimistic transactions"
+        );
+
         let mut keys: Vec<Vec<u8>> = keys
             .into_iter()
             .map(|it| it.into())
@@ -610,6 +615,7 @@ impl TwoPhaseCommitter {
 
         let min_commit_ts = self.prewrite().await?;
 
+        // If we didn't use 1pc, prewrite will set `try_one_pc` to false.
         if self.style.try_one_pc {
             return Ok(min_commit_ts);
         }
@@ -677,15 +683,26 @@ impl TwoPhaseCommitter {
             }
         };
 
-        if self.style.try_one_pc {
-            if response.one_pc_commit_ts == 0 {
+        if self.style.try_one_pc && response.len() == 1 {
+            if response[0].one_pc_commit_ts == 0 {
                 return Err(ErrorKind::OnePcFailure.into());
             }
 
-            return Ok(response.one_pc_commit_ts);
+            return Ok(response[0].one_pc_commit_ts);
         }
-        assert_eq!(response.one_pc_commit_ts, 0);
-        Ok(response.min_commit_ts)
+
+        self.style.try_one_pc = false;
+
+        let min_commit_ts = response
+            .iter()
+            .map(|r| {
+                assert_eq!(r.one_pc_commit_ts, 0);
+                r.min_commit_ts
+            })
+            .max()
+            .unwrap();
+
+        Ok(min_commit_ts)
     }
 
     /// Commits the primary key and returns the commit version

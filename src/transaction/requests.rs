@@ -289,9 +289,10 @@ pub fn new_cleanup_request(key: impl Into<Key>, start_version: u64) -> kvrpcpb::
 
 #[async_trait]
 impl KvRequest for kvrpcpb::PrewriteRequest {
-    type Result = kvrpcpb::PrewriteResponse;
+    type Result = Vec<kvrpcpb::PrewriteResponse>;
     type RpcResponse = kvrpcpb::PrewriteResponse;
     type KeyData = Vec<kvrpcpb::Mutation>;
+
     fn make_rpc_request(&self, mutations: Self::KeyData, store: &Store) -> Result<Self> {
         let mut req = self.request_from_store(store)?;
 
@@ -331,14 +332,12 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
     }
 
     fn map_result(response: Self::RpcResponse) -> Self::Result {
-        response
+        // FIXME this is clown-shoes inefficient.
+        vec![response]
     }
 
     async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
-        results
-            .into_future()
-            .map(|(f, _)| f.expect("no results should be impossible"))
-            .await
+        results.try_concat().await
     }
 }
 
