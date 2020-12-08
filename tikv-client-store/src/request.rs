@@ -93,8 +93,24 @@ impl_request!(
     kv_pessimistic_lock_async_opt,
     "kv_pessimistic_lock"
 );
-impl_request!(TxnHeartBeatRequest, kv_txn_heart_beat_async_opt, "kv_txn_heart_beat");
-impl_request!(CheckTxnStatusRequest, kv_check_txn_status_async_opt, "kv_check_txn_status");
-impl_request!(CheckSecondaryLocksRequest, kv_check_secondary_locks_async_opt, "kv_check_secondary_locks_request");
+impl_request!(
+    TxnHeartBeatRequest,
+    kv_txn_heart_beat_async_opt,
+    "kv_txn_heart_beat"
+);
+impl_request!(
+    CheckTxnStatusRequest,
+    kv_check_txn_status_async_opt,
+    "kv_check_txn_status"
+);
+impl_request!(
+    CheckSecondaryLocksRequest,
+    kv_check_secondary_locks_async_opt,
+    "kv_check_secondary_locks_request"
+);
 impl_request!(GcRequest, kv_gc_async_opt, "kv_gc");
-impl_request!(DeleteRangeRequest, kv_delete_range_async_opt, "kv_delete_range");
+impl_request!(
+    DeleteRangeRequest,
+    kv_delete_range_async_opt,
+    "kv_delete_range"
+);

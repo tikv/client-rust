@@ -519,6 +519,7 @@ impl KvRequest for kvrpcpb::PessimisticLockRequest {
     type Result = ();
     type RpcResponse = kvrpcpb::PessimisticLockResponse;
     type KeyData = Vec<kvrpcpb::Mutation>;
+
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
@@ -591,6 +592,7 @@ impl KvRequest for kvrpcpb::ScanLockRequest {
     type Result = Vec<kvrpcpb::LockInfo>;
     type RpcResponse = kvrpcpb::ScanLockResponse;
     type KeyData = (Key, Key); // end_key should always be empty. Used to satisfy `store_stream_for_range`
+
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
@@ -629,16 +631,58 @@ pub fn new_scan_lock_request(
     req
 }
 
+#[async_trait]
+impl KvRequest for kvrpcpb::TxnHeartBeatRequest {
+    type Result = u64;
+    type RpcResponse = kvrpcpb::TxnHeartBeatResponse;
+    type KeyData = Key;
+
+    fn make_rpc_request(&self, key: Self::KeyData, store: &Store) -> Result<Self> {
+        let mut req = self.request_from_store(store)?;
+        req.set_start_version(self.start_version);
+        req.set_primary_lock(key.into());
+        req.set_advise_lock_ttl(self.advise_lock_ttl);
+
+        Ok(req)
+    }
+
+    fn store_stream<PdC: PdClient>(
+        &mut self,
+        pd_client: Arc<PdC>,
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store)>> {
+        let key = mem::take(&mut self.primary_lock).into();
+        store_stream_for_key(key, pd_client)
+    }
+
+    fn map_result(resp: Self::RpcResponse) -> Self::Result {
+        resp.lock_ttl
+    }
+
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results
+            .into_future()
+            .map(|(f, _)| f.expect("no results should be impossible"))
+            .await
+    }
+}
+
+pub fn new_heart_beat_request(
+    start_ts: Timestamp,
+    primary_lock: Key,
+    ttl: u64,
+) -> kvrpcpb::TxnHeartBeatRequest {
+    let mut req = kvrpcpb::TxnHeartBeatRequest::default();
+    req.set_start_version(start_ts.version());
+    req.set_primary_lock(primary_lock.into());
+    req.set_advise_lock_ttl(ttl);
+    req
+}
+
 impl HasLocks for kvrpcpb::CommitResponse {}
-
 impl HasLocks for kvrpcpb::CleanupResponse {}
-
 impl HasLocks for kvrpcpb::BatchRollbackResponse {}
-
 impl HasLocks for kvrpcpb::PessimisticRollbackResponse {}
-
 impl HasLocks for kvrpcpb::ResolveLockResponse {}
-
 impl HasLocks for kvrpcpb::ScanLockResponse {}
-
 impl HasLocks for kvrpcpb::PessimisticLockResponse {}
+impl HasLocks for kvrpcpb::TxnHeartBeatResponse {}

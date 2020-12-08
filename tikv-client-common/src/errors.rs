@@ -22,6 +22,9 @@ pub enum Error {
     /// We tried to use 1pc for a transaction, but it didn't work. Probably should have used 2pc.
     #[error("1PC transaction could not be committed.")]
     OnePcFailure,
+    /// An operation requires a primary key, but the transaction was empty.
+    #[fail(display = "transaction has no primary key")]
+    NoPrimaryKey,
     /// Wraps a `std::io::Error`.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

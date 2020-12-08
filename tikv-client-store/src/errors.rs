@@ -37,6 +37,8 @@ has_region_error!(kvrpcpb::CleanupResponse);
 has_region_error!(kvrpcpb::BatchGetResponse);
 has_region_error!(kvrpcpb::ScanLockResponse);
 has_region_error!(kvrpcpb::ResolveLockResponse);
+has_region_error!(kvrpcpb::TxnHeartBeatResponse);
+has_region_error!(kvrpcpb::DeleteRangeResponse);
 has_region_error!(kvrpcpb::GcResponse);
 has_region_error!(kvrpcpb::RawGetResponse);
 has_region_error!(kvrpcpb::RawBatchGetResponse);
@@ -44,7 +46,6 @@ has_region_error!(kvrpcpb::RawPutResponse);
 has_region_error!(kvrpcpb::RawBatchPutResponse);
 has_region_error!(kvrpcpb::RawDeleteResponse);
 has_region_error!(kvrpcpb::RawBatchDeleteResponse);
-has_region_error!(kvrpcpb::DeleteRangeResponse);
 has_region_error!(kvrpcpb::RawDeleteRangeResponse);
 has_region_error!(kvrpcpb::RawScanResponse);
 has_region_error!(kvrpcpb::RawBatchScanResponse);
@@ -70,6 +71,7 @@ has_key_error!(kvrpcpb::CleanupResponse);
 has_key_error!(kvrpcpb::ScanLockResponse);
 has_key_error!(kvrpcpb::ResolveLockResponse);
 has_key_error!(kvrpcpb::GcResponse);
+has_key_error!(kvrpcpb::TxnHeartBeatResponse);
 
 macro_rules! has_str_error {
     ($type:ty) => {
