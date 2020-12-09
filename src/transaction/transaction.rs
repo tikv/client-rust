@@ -459,12 +459,12 @@ impl Transaction {
     /// Returns the TTL set on the lock by the server.
     pub async fn send_heart_beat(&mut self) -> Result<u64> {
         self.check_allow_operation()?;
-        let primary_key = match self.buffer.primary_key().await {
+        let primary_key = match self.buffer.get_primary_key().await {
             Some(k) => k,
-            None => return Err(ErrorKind::NoPrimaryKey.into()),
+            None => return Err(Error::NoPrimaryKey),
         };
         new_heart_beat_request(self.timestamp.clone(), primary_key, DEFAULT_LOCK_TTL)
-            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
             .await
     }
 
@@ -540,7 +540,7 @@ impl Transaction {
 
 impl Drop for Transaction {
     fn drop(&mut self) {
-        if self.status == TransactionStatus::Active {
+        if !std::thread::panicking() && self.status == TransactionStatus::Active {
             match self.options.check_level {
                 CheckLevel::Panic => {
                     panic!("Dropping an active transaction. Consider commit or rollback it.")
@@ -666,14 +666,6 @@ impl TransactionOptions {
                 self.kind =
                     TransactionKind::Pessimistic(std::cmp::max(*old_for_update_ts, for_update_ts));
             }
-        }
-    }
-}
-
-impl Drop for Transaction {
-    fn drop(&mut self) {
-        if !std::thread::panicking() && self.status == TransactionStatus::Active {
-            panic!("Dropping an active transaction. Consider commit or rollback it.")
         }
     }
 }

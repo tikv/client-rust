@@ -23,7 +23,7 @@ pub enum Error {
     #[error("1PC transaction could not be committed.")]
     OnePcFailure,
     /// An operation requires a primary key, but the transaction was empty.
-    #[fail(display = "transaction has no primary key")]
+    #[error("transaction has no primary key")]
     NoPrimaryKey,
     /// Wraps a `std::io::Error`.
     #[error("IO error: {0}")]

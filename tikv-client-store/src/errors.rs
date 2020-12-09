@@ -38,6 +38,8 @@ has_region_error!(kvrpcpb::BatchGetResponse);
 has_region_error!(kvrpcpb::ScanLockResponse);
 has_region_error!(kvrpcpb::ResolveLockResponse);
 has_region_error!(kvrpcpb::TxnHeartBeatResponse);
+has_region_error!(kvrpcpb::CheckTxnStatusResponse);
+has_region_error!(kvrpcpb::CheckSecondaryLocksResponse);
 has_region_error!(kvrpcpb::DeleteRangeResponse);
 has_region_error!(kvrpcpb::GcResponse);
 has_region_error!(kvrpcpb::RawGetResponse);
@@ -72,6 +74,8 @@ has_key_error!(kvrpcpb::ScanLockResponse);
 has_key_error!(kvrpcpb::ResolveLockResponse);
 has_key_error!(kvrpcpb::GcResponse);
 has_key_error!(kvrpcpb::TxnHeartBeatResponse);
+has_key_error!(kvrpcpb::CheckTxnStatusResponse);
+has_key_error!(kvrpcpb::CheckSecondaryLocksResponse);
 
 macro_rules! has_str_error {
     ($type:ty) => {

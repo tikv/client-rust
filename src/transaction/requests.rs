@@ -13,7 +13,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
-use std::{iter, mem, sync::Arc};
+use std::{collections::HashMap, iter, mem, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
 #[async_trait]
@@ -678,6 +678,146 @@ pub fn new_heart_beat_request(
     req
 }
 
+#[async_trait]
+impl KvRequest for kvrpcpb::CheckTxnStatusRequest {
+    type Result = TransactionStatus;
+    type RpcResponse = kvrpcpb::CheckTxnStatusResponse;
+    type KeyData = Key;
+
+    fn make_rpc_request(&self, key: Self::KeyData, store: &Store) -> Result<Self> {
+        let mut req = self.request_from_store(store)?;
+        req.set_primary_key(key.into());
+        req.set_lock_ts(self.lock_ts);
+        req.set_caller_start_ts(self.caller_start_ts);
+        req.set_current_ts(self.current_ts);
+        req.set_rollback_if_not_exist(self.rollback_if_not_exist);
+
+        Ok(req)
+    }
+
+    fn store_stream<PdC: PdClient>(
+        &mut self,
+        pd_client: Arc<PdC>,
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store)>> {
+        let key = mem::take(&mut self.primary_key);
+        store_stream_for_key(key.into(), pd_client)
+    }
+
+    fn map_result(resp: Self::RpcResponse) -> Self::Result {
+        resp.into()
+    }
+
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results
+            .into_future()
+            .map(|(f, _)| f.expect("no results should be impossible"))
+            .await
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TransactionStatus {
+    pub kind: TransactionStatusKind,
+    pub action: kvrpcpb::Action,
+}
+
+impl From<kvrpcpb::CheckTxnStatusResponse> for TransactionStatus {
+    fn from(resp: kvrpcpb::CheckTxnStatusResponse) -> TransactionStatus {
+        TransactionStatus {
+            action: resp.get_action(),
+            kind: (resp.commit_version, resp.lock_ttl, resp.lock_info).into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum TransactionStatusKind {
+    Committed(Timestamp),
+    RolledBack,
+    Locked(u64, kvrpcpb::LockInfo),
+}
+
+impl From<(u64, u64, Option<kvrpcpb::LockInfo>)> for TransactionStatusKind {
+    fn from((ts, ttl, info): (u64, u64, Option<kvrpcpb::LockInfo>)) -> TransactionStatusKind {
+        match (ts, ttl, info) {
+            (0, 0, None) => TransactionStatusKind::RolledBack,
+            (ts, 0, None) => TransactionStatusKind::Committed(Timestamp::from_version(ts)),
+            (0, ttl, Some(info)) => TransactionStatusKind::Locked(ttl, info),
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[async_trait]
+impl KvRequest for kvrpcpb::CheckSecondaryLocksRequest {
+    type Result = SecondaryLocksStatus;
+    type RpcResponse = kvrpcpb::CheckSecondaryLocksResponse;
+    type KeyData = Vec<Key>;
+
+    fn make_rpc_request(&self, keys: Self::KeyData, store: &Store) -> Result<Self> {
+        let mut req = self.request_from_store(store)?;
+        req.set_keys(keys.into_iter().map(Into::into).collect());
+        req.set_start_version(self.start_version);
+
+        Ok(req)
+    }
+
+    fn store_stream<PdC: PdClient>(
+        &mut self,
+        pd_client: Arc<PdC>,
+    ) -> BoxStream<'static, Result<(Self::KeyData, Store)>> {
+        self.keys.sort();
+        let keys = mem::take(&mut self.keys);
+        store_stream_for_keys(keys, pd_client)
+    }
+
+    fn map_result(resp: Self::RpcResponse) -> Self::Result {
+        SecondaryLocksStatus {
+            locks: resp
+                .locks
+                .into_iter()
+                .map(|l| (l.key.clone().into(), l))
+                .collect(),
+            commit_ts: Timestamp::try_from_version(resp.commit_ts),
+        }
+    }
+
+    async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
+        results
+            .try_fold(
+                SecondaryLocksStatus {
+                    locks: HashMap::new(),
+                    commit_ts: None,
+                },
+                |mut a, b| async move {
+                    a.merge(b);
+                    Ok(a)
+                },
+            )
+            .await
+    }
+}
+
+pub struct SecondaryLocksStatus {
+    pub locks: HashMap<Key, kvrpcpb::LockInfo>,
+    pub commit_ts: Option<Timestamp>,
+}
+
+impl SecondaryLocksStatus {
+    fn merge(&mut self, other: SecondaryLocksStatus) {
+        self.commit_ts = match (self.commit_ts.take(), other.commit_ts) {
+            (Some(a), Some(b)) => {
+                assert_eq!(a, b);
+                Some(a)
+            }
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+        self.locks.extend(other.locks.into_iter());
+    }
+}
+
 impl HasLocks for kvrpcpb::CommitResponse {}
 impl HasLocks for kvrpcpb::CleanupResponse {}
 impl HasLocks for kvrpcpb::BatchRollbackResponse {}
@@ -686,3 +826,5 @@ impl HasLocks for kvrpcpb::ResolveLockResponse {}
 impl HasLocks for kvrpcpb::ScanLockResponse {}
 impl HasLocks for kvrpcpb::PessimisticLockResponse {}
 impl HasLocks for kvrpcpb::TxnHeartBeatResponse {}
+impl HasLocks for kvrpcpb::CheckTxnStatusResponse {}
+impl HasLocks for kvrpcpb::CheckSecondaryLocksResponse {}

@@ -204,22 +204,6 @@ impl Buffer {
             .collect()
     }
 
-    pub async fn primary_key(&self) -> Option<Key> {
-        self.mutations
-            .lock()
-            .await
-            .iter()
-            .filter_map(|(key, mutation)| {
-                if matches!(mutation, Mutation::Cached(_)) {
-                    None
-                } else {
-                    Some(key)
-                }
-            })
-            .next()
-            .cloned()
-    }
-
     async fn get_from_mutations(&self, key: &Key) -> MutationValue {
         self.mutations
             .lock()
