@@ -555,7 +555,7 @@ impl Transaction {
         self.style.push_for_update_ts(for_update_ts);
         new_pessimistic_lock_request(
             keys,
-            primary_lock,
+            primary_lock.into(),
             self.timestamp.version(),
             lock_ttl,
             for_update_ts,
