@@ -289,11 +289,26 @@ pub fn new_cleanup_request(key: impl Into<Key>, start_version: u64) -> kvrpcpb::
 
 #[async_trait]
 impl KvRequest for kvrpcpb::PrewriteRequest {
-    type Result = ();
+    type Result = Vec<kvrpcpb::PrewriteResponse>;
     type RpcResponse = kvrpcpb::PrewriteResponse;
     type KeyData = Vec<kvrpcpb::Mutation>;
+
     fn make_rpc_request(&self, mutations: Self::KeyData, store: &Store) -> Result<Self> {
         let mut req = self.request_from_store(store)?;
+
+        if self.use_async_commit {
+            // Only need to set secondary keys if we're sending the primary key.
+            if mutations.iter().any(|m| m.key == self.primary_lock) {
+                req.set_secondaries(self.secondaries.clone());
+            }
+            req.set_use_async_commit(true);
+            req.set_max_commit_ts(self.max_commit_ts);
+        }
+        // Only if there is only one request to send
+        if mutations.len() == self.secondaries.len() + 1 {
+            req.set_try_one_pc(self.try_one_pc);
+        }
+
         req.set_mutations(mutations);
         req.set_primary_lock(self.primary_lock.clone());
         req.set_start_version(self.start_version);
@@ -302,6 +317,7 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
         req.set_txn_size(self.txn_size);
         req.set_for_update_ts(self.for_update_ts);
         req.set_is_pessimistic_lock(self.is_pessimistic_lock.clone());
+        req.set_min_commit_ts(self.min_commit_ts);
 
         Ok(req)
     }
@@ -315,12 +331,13 @@ impl KvRequest for kvrpcpb::PrewriteRequest {
         store_stream_for_keys(mutations, pd_client)
     }
 
-    fn map_result(_: Self::RpcResponse) -> Self::Result {}
+    fn map_result(response: Self::RpcResponse) -> Self::Result {
+        // FIXME this is clown-shoes inefficient.
+        vec![response]
+    }
 
     async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
-        results
-            .try_for_each_concurrent(None, |_| future::ready(Ok(())))
-            .await
+        results.try_concat().await
     }
 }
 
