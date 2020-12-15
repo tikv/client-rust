@@ -11,7 +11,7 @@
 //! single `TsoRequest` to the PD server. The other future receives `TsoResponse`s from the PD
 //! server and allocates timestamps for the requests.
 
-use crate::{Error, Result};
+use crate::{ClientError, Result};
 use futures::{
     channel::{mpsc, oneshot},
     executor::block_on,
@@ -21,6 +21,7 @@ use futures::{
 };
 use grpcio::WriteFlags;
 use std::{cell::RefCell, collections::VecDeque, pin::Pin, rc::Rc, thread};
+use tikv_client_common::internal_err;
 use tikv_client_proto::pdpb::*;
 
 /// It is an empirical value.
@@ -66,14 +67,14 @@ impl TimestampOracle {
         self.request_tx
             .send(request)
             .await
-            .map_err(|_| Error::internal_error("TimestampRequest channel is closed"))?;
+            .map_err(|_| internal_err!("TimestampRequest channel is closed"))?;
         Ok(response.await?)
     }
 }
 
 async fn run_tso(
     cluster_id: u64,
-    mut rpc_sender: impl Sink<(TsoRequest, WriteFlags), Error = Error> + Unpin,
+    mut rpc_sender: impl Sink<(TsoRequest, WriteFlags), Error = ClientError> + Unpin,
     mut rpc_receiver: impl Stream<Item = Result<TsoResponse>> + Unpin,
     request_rx: mpsc::Receiver<TimestampRequest>,
 ) {
@@ -187,7 +188,7 @@ fn allocate_timestamps(
     let tail_ts = resp
         .timestamp
         .as_ref()
-        .ok_or_else(|| Error::internal_error("No timestamp in TsoResponse"))?;
+        .ok_or_else(|| internal_err!("No timestamp in TsoResponse"))?;
 
     let mut offset = resp.count;
     if let Some(RequestGroup {
@@ -196,8 +197,8 @@ fn allocate_timestamps(
     }) = pending_requests.pop_front()
     {
         if tso_request.count != offset {
-            return Err(Error::internal_error(
-                "PD gives different number of timestamps than expected",
+            return Err(internal_err!(
+                "PD gives different number of timestamps than expected"
             ));
         }
 
@@ -210,9 +211,7 @@ fn allocate_timestamps(
             let _ = request.send(ts);
         }
     } else {
-        return Err(Error::internal_error(
-            "PD gives more TsoResponse than expected",
-        ));
+        return Err(internal_err!("PD gives more TsoResponse than expected"));
     };
     Ok(())
 }

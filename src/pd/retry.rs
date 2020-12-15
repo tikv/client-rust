@@ -2,7 +2,7 @@
 
 //! A utility module for managing and retrying PD requests.
 
-use crate::{stats::pd_stats, Error, Region, RegionId, Result, SecurityManager, StoreId};
+use crate::{stats::pd_stats, ClientError, Region, RegionId, Result, SecurityManager, StoreId};
 use async_trait::async_trait;
 use futures_timer::Delay;
 use grpcio::Environment;
@@ -104,18 +104,20 @@ impl RetryClient<Cluster> {
                     .get_region(key.clone(), self.timeout)
                     .await
                     .and_then(|resp| {
-                        region_from_response(resp, || Error::region_for_key_not_found(key))
+                        region_from_response(resp, || ClientError::RegionForKeyNotFound { key })
                     })
             }
         })
     }
 
-    pub async fn get_region_by_id(self: Arc<Self>, id: RegionId) -> Result<Region> {
+    pub async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<Region> {
         retry!(self, "get_region_by_id", |cluster| async {
             cluster
-                .get_region_by_id(id, self.timeout)
+                .get_region_by_id(region_id, self.timeout)
                 .await
-                .and_then(|resp| region_from_response(resp, || Error::region_not_found(id)))
+                .and_then(|resp| {
+                    region_from_response(resp, || ClientError::RegionNotFound { region_id })
+                })
         })
     }
 
@@ -162,7 +164,7 @@ impl fmt::Debug for RetryClient {
 
 fn region_from_response(
     resp: pdpb::GetRegionResponse,
-    err: impl FnOnce() -> Error,
+    err: impl FnOnce() -> ClientError,
 ) -> Result<Region> {
     let region = resp.region.ok_or_else(err)?;
     Ok(Region::new(region, resp.leader))
@@ -215,7 +217,7 @@ mod test {
             async fn reconnect(&self, _: u64) -> Result<()> {
                 *self.reconnect_count.lock().unwrap() += 1;
                 // Not actually unimplemented, we just don't care about the error.
-                Err(Error::unimplemented())
+                Err(ClientError::Unimplemented)
             }
         }
 
@@ -224,7 +226,7 @@ mod test {
         }
 
         async fn retry_ok(client: Arc<MockClient>) -> Result<()> {
-            retry!(client, "test", |_c| ready(Ok::<_, Error>(())))
+            retry!(client, "test", |_c| ready(Ok::<_, ClientError>(())))
         }
 
         executor::block_on(async {

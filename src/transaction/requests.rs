@@ -7,7 +7,7 @@ use crate::{
     store::Store,
     timestamp::TimestampExt,
     transaction::HasLocks,
-    BoundRange, Error, Key, KvPair, Result, Value,
+    BoundRange, ClientError, Key, KvPair, Result, Value,
 };
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
@@ -199,7 +199,7 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
 
     fn on_region_error(
         self,
-        region_error: Error,
+        region_error: ClientError,
         _pd_client: Arc<impl PdClient>,
         _region_backoff: impl Backoff,
         _lock_backoff: impl Backoff,

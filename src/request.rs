@@ -6,7 +6,7 @@ use crate::{
     stats::tikv_stats,
     store::Store,
     transaction::{resolve_locks, HasLocks},
-    BoundRange, Error, ErrorKind, Key, Result,
+    BoundRange, ClientError, Key, Result,
 };
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
@@ -111,7 +111,7 @@ pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
 
     fn on_region_error(
         self,
-        region_error: Error,
+        region_error: ClientError,
         pd_client: Arc<impl PdClient>,
         mut region_backoff: impl Backoff,
         lock_backoff: impl Backoff,
@@ -140,7 +140,7 @@ pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
         mut lock_backoff: impl Backoff,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         lock_backoff.next_delay_duration().map_or(
-            stream::once(future::err(ErrorKind::ResolveLockError.into())).boxed(),
+            stream::once(future::err(ClientError::ResolveLockError.into())).boxed(),
             move |delay_duration| {
                 let fut = async move {
                     futures_timer::Delay::new(delay_duration).await;
@@ -274,14 +274,14 @@ mod test {
         struct MockRpcResponse;
 
         impl HasError for MockRpcResponse {
-            fn error(&mut self) -> Option<Error> {
+            fn error(&mut self) -> Option<ClientError> {
                 unreachable!()
             }
         }
 
         impl HasRegionError for MockRpcResponse {
-            fn region_error(&mut self) -> Option<Error> {
-                Some(Error::region_not_found(1))
+            fn region_error(&mut self) -> Option<ClientError> {
+                Some(ClientError::RegionNotFound { region_id: 1 })
             }
         }
 

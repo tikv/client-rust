@@ -3,7 +3,7 @@ use crate::{
     request::{KvRequest, OPTIMISTIC_BACKOFF},
     timestamp::TimestampExt,
     transaction::requests,
-    ErrorKind, Key, RegionVerId, Result,
+    ClientError, Key, RegionVerId, Result,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -101,14 +101,12 @@ async fn resolve_lock_with_retry(
             Ok(_) => {
                 return Ok(region.ver_id());
             }
-            Err(e) => match e.kind() {
-                ErrorKind::RegionError(_) => {
-                    // Retry on region error
-                    error = Some(e);
-                    continue;
-                }
-                _ => return Err(e),
-            },
+            Err(e @ ClientError::RegionError(_)) => {
+                // Retry on region error
+                error = Some(e);
+                continue;
+            }
+            Err(e) => return Err(e),
         }
     }
     Err(error.expect("no error is impossible"))

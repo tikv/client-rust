@@ -1,5 +1,5 @@
 use std::{io::Write, ptr};
-use tikv_client_common::Error;
+use tikv_client_common::internal_err;
 
 use crate::Result;
 
@@ -79,10 +79,7 @@ pub fn decode_bytes_in_place(data: &mut Vec<u8>, desc: bool) -> Result<()> {
     loop {
         let marker_offset = read_offset + ENC_GROUP_SIZE;
         if marker_offset >= data.len() {
-            return Err(Error::internal_error(format!(
-                "unexpected EOF, original key = {:?}",
-                data
-            )));
+            return Err(internal_err!("unexpected EOF, original key = {:?}", data));
         };
 
         unsafe {
@@ -109,7 +106,7 @@ pub fn decode_bytes_in_place(data: &mut Vec<u8>, desc: bool) -> Result<()> {
 
         if pad_size > 0 {
             if pad_size > ENC_GROUP_SIZE {
-                return Err(Error::internal_error("invalid key padding"));
+                return Err(internal_err!("invalid key padding"));
             }
 
             // check the padding pattern whether validate or not
@@ -119,7 +116,7 @@ pub fn decode_bytes_in_place(data: &mut Vec<u8>, desc: bool) -> Result<()> {
                 &ENC_ASC_PADDING[..pad_size]
             };
             if &data[write_offset - pad_size..write_offset] != padding_slice {
-                return Err(Error::internal_error("invalid key padding"));
+                return Err(internal_err!("invalid key padding"));
             }
             unsafe {
                 data.set_len(write_offset - pad_size);

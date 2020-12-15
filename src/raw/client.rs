@@ -1,11 +1,13 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use tikv_client_common::ClientError;
+
 use super::requests;
 use crate::{
     config::Config,
     pd::PdRpcClient,
     request::{KvRequest, OPTIMISTIC_BACKOFF},
-    BoundRange, ColumnFamily, Error, Key, KvPair, Result, Value,
+    BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
 use std::{sync::Arc, u32};
 
@@ -168,7 +170,7 @@ impl Client {
     ///
     /// # Examples
     /// ```rust,no_run
-    /// # use tikv_client::{Error, Result, KvPair, Key, Value, Config, RawClient, ToOwnedRange};
+    /// # use tikv_client::{Result, KvPair, Key, Value, Config, RawClient, ToOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
@@ -380,7 +382,10 @@ impl Client {
         key_only: bool,
     ) -> Result<Vec<KvPair>> {
         if limit > MAX_RAW_KV_SCAN_LIMIT {
-            return Err(Error::max_scan_limit_exceeded(limit, MAX_RAW_KV_SCAN_LIMIT));
+            return Err(ClientError::MaxScanLimitExceeded {
+                limit,
+                max_limit: MAX_RAW_KV_SCAN_LIMIT,
+            });
         }
 
         let res = requests::new_raw_scan_request(range, limit, key_only, self.cf.clone())
@@ -399,10 +404,10 @@ impl Client {
         key_only: bool,
     ) -> Result<Vec<KvPair>> {
         if each_limit > MAX_RAW_KV_SCAN_LIMIT {
-            return Err(Error::max_scan_limit_exceeded(
-                each_limit,
-                MAX_RAW_KV_SCAN_LIMIT,
-            ));
+            return Err(ClientError::MaxScanLimitExceeded {
+                limit: each_limit,
+                max_limit: MAX_RAW_KV_SCAN_LIMIT,
+            });
         }
 
         requests::new_raw_batch_scan_request(ranges, each_limit, key_only, self.cf.clone())
