@@ -189,7 +189,7 @@ impl Transaction {
     pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         self.check_allow_operation()?;
         if !self.is_pessimistic() {
-            Err(ClientError::InvalidTransactionType.into())
+            Err(ClientError::InvalidTransactionType)
         } else {
             let key = key.into();
             self.pessimistic_lock(iter::once(key.clone())).await?;
@@ -275,7 +275,7 @@ impl Transaction {
     ) -> Result<impl Iterator<Item = KvPair>> {
         self.check_allow_operation()?;
         if !self.is_pessimistic() {
-            Err(ClientError::InvalidTransactionType.into())
+            Err(ClientError::InvalidTransactionType)
         } else {
             let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
             self.pessimistic_lock(keys.clone()).await?;
@@ -683,7 +683,7 @@ impl TwoPhaseCommitter {
 
         if self.style.try_one_pc && response.len() == 1 {
             if response[0].one_pc_commit_ts == 0 {
-                return Err(ClientError::OnePcFailure.into());
+                return Err(ClientError::OnePcFailure);
             }
 
             return Ok(response[0].one_pc_commit_ts);
