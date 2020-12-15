@@ -248,10 +248,10 @@ mod tests {
     async fn set_and_get_from_buffer() {
         let buffer = Buffer::default();
         buffer
-            .put(b"key1".to_vec().into(), b"value1".to_vec().into())
+            .put(b"key1".to_vec().into(), b"value1".to_vec())
             .await;
         buffer
-            .put(b"key2".to_vec().into(), b"value2".to_vec().into())
+            .put(b"key2".to_vec().into(), b"value2".to_vec())
             .await;
         assert_eq!(
             block_on(buffer.get_or_else(b"key1".to_vec().into(), move |_| ready(panic!())))
@@ -261,9 +261,7 @@ mod tests {
         );
 
         buffer.delete(b"key2".to_vec().into()).await;
-        buffer
-            .put(b"key1".to_vec().into(), b"value".to_vec().into())
-            .await;
+        buffer.put(b"key1".to_vec().into(), b"value".to_vec()).await;
         assert_eq!(
             block_on(buffer.batch_get_or_else(
                 vec![b"key2".to_vec().into(), b"key1".to_vec().into()].into_iter(),
@@ -271,10 +269,7 @@ mod tests {
             ))
             .unwrap()
             .collect::<Vec<_>>(),
-            vec![KvPair(
-                Key::from(b"key1".to_vec()),
-                Value::from(b"value".to_vec())
-            ),]
+            vec![KvPair(Key::from(b"key1".to_vec()), b"value".to_vec()),]
         );
     }
 
@@ -285,17 +280,17 @@ mod tests {
         let k1_ = k1.clone();
         let k2: Key = b"key2".to_vec().into();
         let k2_ = k2.clone();
-        let v1: Value = b"value1".to_vec().into();
+        let v1: Value = b"value1".to_vec();
         let v1_ = v1.clone();
         let v1__ = v1.clone();
-        let v2: Value = b"value2".to_vec().into();
+        let v2: Value = b"value2".to_vec();
         let v2_ = v2.clone();
 
         let buffer = Buffer::default();
         let r1 = block_on(buffer.get_or_else(k1.clone(), move |_| ready(Ok(Some(v1_)))));
         let r2 = block_on(buffer.get_or_else(k1.clone(), move |_| ready(panic!())));
-        assert_eq!(r1.unwrap().unwrap(), v1.clone());
-        assert_eq!(r2.unwrap().unwrap(), v1.clone());
+        assert_eq!(r1.unwrap().unwrap(), v1);
+        assert_eq!(r2.unwrap().unwrap(), v1);
 
         let buffer = Buffer::default();
         let r1 = block_on(
@@ -316,13 +311,10 @@ mod tests {
                 KvPair(k2.clone(), v2.clone())
             ]
         );
-        assert_eq!(r2.unwrap().unwrap(), v2.clone());
+        assert_eq!(r2.unwrap().unwrap(), v2);
         assert_eq!(
             r3.unwrap().collect::<Vec<_>>(),
-            vec![
-                KvPair(k1.clone(), v1.clone()),
-                KvPair(k2.clone(), v2.clone())
-            ]
+            vec![KvPair(k1, v1), KvPair(k2, v2)]
         );
     }
 }

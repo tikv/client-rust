@@ -151,7 +151,7 @@ mod tests {
         // Test resolve lock over retry limit
         fail::cfg("region-error", "10*return").unwrap();
         let key: Key = vec![100].into();
-        executor::block_on(resolve_lock_with_retry(key, 3, 4, client.clone()))
+        executor::block_on(resolve_lock_with_retry(key, 3, 4, client))
             .expect_err("should return error");
     }
 }

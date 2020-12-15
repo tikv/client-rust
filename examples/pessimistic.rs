@@ -25,9 +25,9 @@ async fn main() {
         .expect("Could not connect to tikv");
 
     let key1: Key = b"key1".to_vec().into();
-    let value1: Value = b"value1".to_vec().into();
+    let value1: Value = b"value1".to_vec();
     let key2: Key = b"key2".to_vec().into();
-    let value2: Value = b"value2".to_vec().into();
+    let value2: Value = b"value2".to_vec();
     let mut txn0 = client.begin().await.expect("Could not begin a transaction");
     for (key, value) in vec![(key1, value1), (key2, value2)] {
         txn0.put(key, value).await.expect("Could not set key value");
@@ -49,13 +49,13 @@ async fn main() {
         // another txn cannot write to the locked key
         let mut txn2 = client.begin().await.expect("Could not begin a transaction");
         let key1: Key = b"key1".to_vec().into();
-        let value2: Value = b"value2".to_vec().into();
+        let value2: Value = b"value2".to_vec();
         txn2.put(key1, value2).await.unwrap();
         let result = txn2.commit().await;
         assert!(result.is_err());
     }
     // while this txn can still write it
-    let value3: Value = b"value3".to_vec().into();
+    let value3: Value = b"value3".to_vec();
     txn1.put(key1.clone(), value3).await.unwrap();
     txn1.commit().await.unwrap();
     let txn3 = client.begin().await.expect("Could not begin a transaction");

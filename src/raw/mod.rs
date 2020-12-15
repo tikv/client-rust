@@ -59,7 +59,7 @@ impl TryFrom<&str> for ColumnFamily {
             "lock" => Ok(ColumnFamily::Lock),
             "write" => Ok(ColumnFamily::Write),
             "ver_default" => Ok(ColumnFamily::VersionDefault),
-            s => Err(ClientError::ColumnFamilyError(s.to_owned()).into()),
+            s => Err(ClientError::ColumnFamilyError(s.to_owned())),
         }
     }
 }

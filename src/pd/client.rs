@@ -409,24 +409,21 @@ pub mod test {
             ranges1.1,
             vec![
                 (k1.clone(), k2.clone()).into(),
-                (k1.clone(), k_split.clone()).into()
+                (k1, k_split.clone()).into()
             ] as Vec<BoundRange>
         );
         assert_eq!(ranges2.0, 2);
         assert_eq!(
             ranges2.1,
-            vec![(k_split.clone(), k3.clone()).into()] as Vec<BoundRange>
+            vec![(k_split.clone(), k3).into()] as Vec<BoundRange>
         );
         assert_eq!(ranges3.0, 1);
         assert_eq!(
             ranges3.1,
-            vec![(k2.clone(), k_split.clone()).into()] as Vec<BoundRange>
+            vec![(k2, k_split.clone()).into()] as Vec<BoundRange>
         );
         assert_eq!(ranges4.0, 2);
-        assert_eq!(
-            ranges4.1,
-            vec![(k_split.clone(), k4.clone()).into()] as Vec<BoundRange>
-        );
+        assert_eq!(ranges4.1, vec![(k_split, k4).into()] as Vec<BoundRange>);
         assert!(stream.next().is_none());
     }
 }

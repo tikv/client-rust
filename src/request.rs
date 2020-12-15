@@ -140,7 +140,7 @@ pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
         mut lock_backoff: impl Backoff,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         lock_backoff.next_delay_duration().map_or(
-            stream::once(future::err(ClientError::ResolveLockError.into())).boxed(),
+            stream::once(future::err(ClientError::ResolveLockError)).boxed(),
             move |delay_duration| {
                 let fut = async move {
                     futures_timer::Delay::new(delay_duration).await;

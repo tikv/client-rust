@@ -144,7 +144,7 @@ impl Transaction {
     pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         self.check_allow_operation()?;
         if !self.is_pessimistic {
-            Err(ClientError::InvalidTransactionType.into())
+            Err(ClientError::InvalidTransactionType)
         } else {
             let key = key.into();
             self.pessimistic_lock(iter::once(key.clone())).await?;
@@ -230,7 +230,7 @@ impl Transaction {
     ) -> Result<impl Iterator<Item = KvPair>> {
         self.check_allow_operation()?;
         if !self.is_pessimistic {
-            Err(ClientError::InvalidTransactionType.into())
+            Err(ClientError::InvalidTransactionType)
         } else {
             let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
             self.pessimistic_lock(keys.clone()).await?;
@@ -417,7 +417,7 @@ impl Transaction {
             self.status,
             TransactionStatus::StartedCommit | TransactionStatus::Active
         ) {
-            return Err(ClientError::OperationAfterCommitError.into());
+            return Err(ClientError::OperationAfterCommitError);
         }
         self.status = TransactionStatus::StartedCommit;
 
@@ -445,7 +445,7 @@ impl Transaction {
             self.status,
             TransactionStatus::StartedRollback | TransactionStatus::Active
         ) {
-            return Err(ClientError::OperationAfterCommitError.into());
+            return Err(ClientError::OperationAfterCommitError);
         }
         self.status = TransactionStatus::StartedRollback;
 
@@ -519,9 +519,7 @@ impl Transaction {
             TransactionStatus::Committed
             | TransactionStatus::Rolledback
             | TransactionStatus::StartedCommit
-            | TransactionStatus::StartedRollback => {
-                Err(ClientError::OperationAfterCommitError.into())
-            }
+            | TransactionStatus::StartedRollback => Err(ClientError::OperationAfterCommitError),
         }
     }
 }
