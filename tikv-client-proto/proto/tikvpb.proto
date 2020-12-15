@@ -90,6 +90,13 @@ service Tikv {
     rpc DispatchMPPTask(mpp.DispatchTaskRequest) returns (mpp.DispatchTaskResponse) {}
     rpc CancelMPPTask(mpp.CancelTaskRequest) returns (mpp.CancelTaskResponse) {}
     rpc EstablishMPPConnection(mpp.EstablishMPPConnectionRequest) returns (stream mpp.MPPDataPacket) {}
+
+    /// CheckLeader sends all information (includes region term and epoch) to other stores.
+    /// Once a store receives a request, it checks term and epoch for each region, and sends the regions whose 
+    /// term and epoch match with local information in the store.
+    /// After the client collected all responses from all stores, it checks if got a quorum of responses from
+    /// other stores for every region, and decides to advance resolved ts from these regions.
+    rpc CheckLeader(kvrpcpb.CheckLeaderRequest) returns(kvrpcpb.CheckLeaderResponse);
 }
 
 message BatchCommandsRequest {

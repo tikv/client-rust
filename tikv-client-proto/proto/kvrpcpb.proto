@@ -36,8 +36,9 @@ message GetResponse {
     bytes value = 3;
     // True if the key does not exist in the database.
     bool not_found = 4;
-    // Set if ctx.scan_detail = true or meet slow query.
-    ScanDetailV2 scan_detail_v2 = 5;
+    reserved 5;
+    // Time and scan details when processing the request.
+    ExecDetailsV2 exec_details_v2 = 6;
 }
 
 // Scan fetches values for a range of keys; it is part of the transaction with
@@ -63,6 +64,10 @@ message ScanResponse {
     errorpb.Error region_error = 1;
     // Each KvPair may contain a key error.
     repeated KvPair pairs = 2;
+    // This KeyError exists when some key is locked but we cannot check locks of all keys.
+    // In this case, `pairs` should be empty and the client should redo scanning all the keys
+    // after resolving the lock.
+    KeyError error = 3;
 }
 
 // A prewrite is the first phase of writing to TiKV. It contains all data to be written in a transaction.
@@ -306,8 +311,13 @@ message BatchGetRequest {
 message BatchGetResponse {
     errorpb.Error region_error = 1;
     repeated KvPair pairs = 2;
-    // Set if ctx.scan_detail = true or meet slow query.
-    ScanDetailV2 scan_detail_v2 = 3;
+    reserved 3;
+    // Time and scan details when processing the request.
+    ExecDetailsV2 exec_details_v2 = 4;
+    // This KeyError exists when some key is locked but we cannot check locks of all keys.
+    // In this case, `pairs` should be empty and the client should redo batch get all the keys
+    // after resolving the lock.
+    KeyError error = 5;
 }
 
 // Rollback a prewritten transaction. This will remove the preliminary data from the database,
@@ -729,10 +739,12 @@ message Context {
     IsolationLevel isolation_level = 7;
     bool not_fill_cache = 8;
     bool sync_log = 9;
-    // True means return handle time detail.
-    bool handle_time = 10;
-    // True means return scan cf's detail.
-    bool scan_detail = 11;
+
+    // True means execution time statistics should be recorded and returned.
+    bool record_time_stat = 10;
+    // True means RocksDB scan statistics should be recorded and returned.
+    bool record_scan_stat = 11;
+
     bool replica_read = 12;
     repeated uint64 resolved_locks = 13;
     uint64 max_execution_duration_ms = 14;
@@ -817,11 +829,16 @@ enum IsolationLevel {
     RC = 1; // RC = read committed
 }
 
-message HandleTime {
-    // Time spent in queue.
-    int64 wait_ms = 1;
-    // Processing time, excluding wait time.
-    int64 process_ms = 2;
+message TimeDetail {
+    // Off-cpu wall time elapsed in TiKV side. Usually this includes queue waiting time and
+    // other kind of waitings in series.
+    int64 wait_wall_time_ms = 1;
+    // Off-cpu and on-cpu wall time elapsed to actually process the request payload. It does not
+    // include `wait_wall_time`.
+    // This field is very close to the CPU time in most cases. Some wait time spend in RocksDB
+    // cannot be excluded for now, like Mutex wait time, which is included in this field, so that
+    // this field is called wall time instead of CPU time.
+    int64 process_wall_time_ms = 2;
 }
 
 message ScanInfo {
@@ -829,6 +846,7 @@ message ScanInfo {
     int64 processed = 2;
 }
 
+// Only reserved for compatibility.
 message ScanDetail {
     ScanInfo write = 1;
     ScanInfo lock = 2;
@@ -836,20 +854,55 @@ message ScanDetail {
 }
 
 message ScanDetailV2 {
+    // Number of user keys scanned from the storage.
+    // It does not include deleted version or RocksDB tombstone keys.
+    // For Coprocessor requests, it includes keys that has been filtered out by
+    // Selection.
     uint64 processed_versions = 1;
+
+    // Approximate number of MVCC keys meet during scanning. It includes
+    // deleted versions, but does not include RocksDB tombstone keys.
+    //
+    // When this field is notably larger than `processed_versions`, it means
+    // there are a lot of deleted MVCC keys.
     uint64 total_versions = 2;
+
+    // Total number of deletes and single deletes skipped over during
+    // iteration, i.e. how many RocksDB tombstones are skipped.
     uint64 rocksdb_delete_skipped_count = 3;
+
+    // Total number of internal keys skipped over during iteration.
+    // See https://github.com/facebook/rocksdb/blob/9f1c84ca471d8b1ad7be9f3eebfc2c7e07dfd7a7/include/rocksdb/perf_context.h#L84 for details.
     uint64 rocksdb_key_skipped_count = 4;
+
+    // Total number of RocksDB block cache hits.
     uint64 rocksdb_block_cache_hit_count = 5;
+
+    // Total number of block reads (with IO).
     uint64 rocksdb_block_read_count = 6;
+
+    // Total number of bytes from block reads.
     uint64 rocksdb_block_read_byte = 7;
 }
 
 message ExecDetails {
-    HandleTime handle_time = 1;// set when ctx.handle_time = true or meet slow query
-    ScanDetail scan_detail = 2;// set when ctx.scan_detail = true or meet slow query
-    bool use_scan_detail_v2 = 3;// set when ctx.scan_detail = true or meet slow query
-    ScanDetailV2 scan_detail_v2 = 4;// set when ctx.scan_detail = true or meet slow query
+    // Available when ctx.record_time_stat = true or meet slow query.
+    TimeDetail time_detail = 1;
+
+    // Available when ctx.record_scan_stat = true or meet slow query.
+    ScanDetail scan_detail = 2;
+
+    // See https://github.com/pingcap/kvproto/pull/689
+    reserved 3;
+    reserved 4;
+}
+
+message ExecDetailsV2 {
+    // Available when ctx.record_time_stat = true or meet slow query.
+    TimeDetail time_detail = 1;
+
+    // Available when ctx.record_scan_stat = true or meet slow query.
+    ScanDetailV2 scan_detail_v2 = 2;
 }
 
 message KvPair {
@@ -928,4 +981,21 @@ enum ExtraOp {
     Noop = 0;
     // ReadOldValue represents to output the previous value for delete/update operations.
     ReadOldValue = 1;
+}
+
+message LeaderInfo {
+    uint64 region_id = 1;
+    uint64 peer_id = 2;
+    uint64 term = 3;
+    metapb.RegionEpoch region_epoch = 4;
+}
+
+message CheckLeaderRequest {
+    repeated LeaderInfo regions = 1;
+    uint64 ts = 2;
+}
+
+message CheckLeaderResponse {
+    repeated uint64 regions = 1;
+    uint64 ts = 2;
 }

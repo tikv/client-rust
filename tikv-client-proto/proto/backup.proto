@@ -72,6 +72,10 @@ message Schema {
     uint64 total_bytes = 5;
 
     uint32 tiflash_replicas = 6;
+
+    // stats represents the dump stats for a analyzed table, which generate by DumpStatsToJSON
+    // https://github.com/pingcap/tidb/blob/e136429d8dc5d70f43cd3f94179b0b9f47595097/statistics/handle/dump.go#L116
+    bytes stats = 7;
 }
 
 message RawRange {

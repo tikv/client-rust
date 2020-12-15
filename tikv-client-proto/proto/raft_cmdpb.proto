@@ -4,6 +4,7 @@ package raft_cmdpb;
 import "metapb.proto";
 import "errorpb.proto";
 import "eraftpb.proto";
+import "kvrpcpb.proto";
 import "import_sstpb.proto";
 import "rustproto.proto";
 
@@ -64,10 +65,16 @@ message IngestSSTRequest {
 
 message IngestSSTResponse {}
 
-message ReadIndexRequest {}
+message ReadIndexRequest {
+    // In replica read, leader uses start_ts and key_ranges to check memory locks.
+    uint64 start_ts = 1;
+    repeated kvrpcpb.KeyRange key_ranges = 2;
+}
 
 message ReadIndexResponse{
     uint64 read_index = 1;
+    // The memory lock blocking this read at the leader
+    kvrpcpb.LockInfo locked = 2;
 }
 
 enum CmdType {

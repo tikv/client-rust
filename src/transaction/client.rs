@@ -6,7 +6,7 @@ use crate::{
     pd::{PdClient, PdRpcClient},
     request::{KvRequest, OPTIMISTIC_BACKOFF},
     timestamp::TimestampExt,
-    transaction::{Snapshot, Transaction},
+    transaction::{Snapshot, Transaction, TransactionStyle},
     Result,
 };
 use futures::executor::ThreadPool;
@@ -37,6 +37,7 @@ pub struct Client {
     /// The thread pool for background tasks including committing secondary keys and failed
     /// transaction cleanups.
     bg_worker: ThreadPool,
+    config: Config,
 }
 
 impl Client {
@@ -77,7 +78,11 @@ impl Client {
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let bg_worker = ThreadPool::new()?;
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, true).await?);
-        Ok(Client { pd, bg_worker })
+        Ok(Client {
+            pd,
+            bg_worker,
+            config,
+        })
     }
 
     /// Creates a new [`Transaction`](Transaction) in optimistic mode.
@@ -97,12 +102,16 @@ impl Client {
     /// let mut transaction = client.begin().await.unwrap();
     /// // ... Issue some commands.
     /// let commit = transaction.commit();
-    /// let result: () = commit.await.unwrap();
+    /// let result = commit.await.unwrap();
     /// # });
     /// ```
     pub async fn begin(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
-        Ok(self.new_transaction(timestamp, false, false))
+        Ok(self.new_transaction(
+            timestamp,
+            TransactionStyle::new_optimistic(self.config.try_one_pc),
+            false,
+        ))
     }
 
     /// Creates a new [`Transaction`](Transaction) in pessimistic mode.
@@ -119,17 +128,25 @@ impl Client {
     /// let mut transaction = client.begin_pessimistic().await.unwrap();
     /// // ... Issue some commands.
     /// let commit = transaction.commit();
-    /// let result: () = commit.await.unwrap();
+    /// let result = commit.await.unwrap();
     /// # });
     /// ```
     pub async fn begin_pessimistic(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
-        Ok(self.new_transaction(timestamp, true, false))
+        Ok(self.new_transaction(
+            timestamp,
+            TransactionStyle::new_pessimistic(self.config.try_one_pc),
+            false,
+        ))
     }
 
     /// Creates a new [`Snapshot`](Snapshot) at the given [`Timestamp`](Timestamp).
     pub fn snapshot(&self, timestamp: Timestamp) -> Snapshot {
-        Snapshot::new(self.new_transaction(timestamp, false, true))
+        Snapshot::new(self.new_transaction(
+            timestamp,
+            TransactionStyle::new_optimistic(self.config.try_one_pc),
+            true,
+        ))
     }
 
     /// Retrieves the current [`Timestamp`](Timestamp).
@@ -195,14 +212,14 @@ impl Client {
     fn new_transaction(
         &self,
         timestamp: Timestamp,
-        is_pessimistic: bool,
+        style: TransactionStyle,
         read_only: bool,
     ) -> Transaction {
         Transaction::new(
             timestamp,
             self.bg_worker.clone(),
             self.pd.clone(),
-            is_pessimistic,
+            style,
             read_only,
         )
     }

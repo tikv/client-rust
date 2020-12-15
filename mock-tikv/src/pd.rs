@@ -326,4 +326,22 @@ impl Pd for MockPd {
     ) {
         todo!()
     }
+
+    fn split_regions(
+        &mut self,
+        _: ::grpcio::RpcContext<'_>,
+        _: SplitRegionsRequest,
+        _: ::grpcio::UnarySink<SplitRegionsResponse>,
+    ) {
+        todo!()
+    }
+
+    fn get_dc_locations(
+        &mut self,
+        _: ::grpcio::RpcContext<'_>,
+        _: GetDcLocationsRequest,
+        _: ::grpcio::UnarySink<GetDcLocationsResponse>,
+    ) {
+        todo!()
+    }
 }

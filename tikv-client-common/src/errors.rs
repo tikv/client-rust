@@ -19,6 +19,9 @@ pub enum ClientError {
     /// It's not allowed to perform operations in a transaction after it has been committed or rolled back.
     #[error("Cannot read or write data after any attempt to commit or roll back the transaction")]
     OperationAfterCommitError,
+    /// We tried to use 1pc for a transaction, but it didn't work. Probably should have used 2pc.
+    #[fail(display = "1PC transaction could not be committed.")]
+    OnePcFailure,
     /// Wraps a `std::io::Error`.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
