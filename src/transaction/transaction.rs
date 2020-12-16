@@ -468,7 +468,7 @@ impl Transaction {
 
     /// Pessimistically lock the keys.
     ///
-    /// Once resovled it acquires a lock on the key in TiKV.
+    /// Once resolved it acquires a lock on the key in TiKV.
     /// The lock prevents other transactions from mutating the entry until it is released.
     ///
     /// Only valid for pessimistic transactions, panics if called on an optimistic transaction.
@@ -481,19 +481,19 @@ impl Transaction {
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
         );
 
-        let mut keys: Vec<Vec<u8>> = keys
+        let keys: Vec<Vec<u8>> = keys
             .into_iter()
             .map(|it| it.into())
             .map(|it: Key| it.into())
             .collect();
-        keys.sort();
-        let primary_lock = keys[0].clone();
+        let first_key = keys[0].clone();
+        let primary_lock = self.buffer.get_primary_key_or(first_key.into()).await;
         let lock_ttl = DEFAULT_LOCK_TTL;
         let for_update_ts = self.rpc.clone().get_timestamp().await.unwrap().version();
         self.options.push_for_update_ts(for_update_ts);
         new_pessimistic_lock_request(
             keys,
-            primary_lock.into(),
+            primary_lock,
             self.timestamp.version(),
             lock_ttl,
             for_update_ts,
