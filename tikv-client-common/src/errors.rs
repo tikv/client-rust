@@ -1,190 +1,79 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use failure::{Backtrace, Context, Fail};
-use std::{
-    fmt::{self, Display},
-    result,
-};
-use tikv_client_proto::errorpb;
-
-/// The error type used in tikv-client.
-#[derive(Debug)]
-pub struct Error {
-    inner: Box<Context<ErrorKind>>,
-}
+use std::result;
+use thiserror::Error;
 
 /// An error originating from the TiKV client or dependencies.
-#[derive(Debug, Fail)]
+#[derive(Debug, Error)]
 #[allow(clippy::large_enum_variant)]
-pub enum ErrorKind {
+pub enum Error {
     /// Feature is not implemented.
-    #[fail(display = "Unimplemented feature")]
+    #[error("Unimplemented feature")]
     Unimplemented,
     /// Failed to resolve a lock
-    #[fail(display = "Failed to resolve lock")]
+    #[error("Failed to resolve lock")]
     ResolveLockError,
     /// Will raise this error when using a pessimistic txn only operation on an optimistic txn
-    #[fail(display = "Invalid operation for this type of transaction")]
+    #[error("Invalid operation for this type of transaction")]
     InvalidTransactionType,
     /// It's not allowed to perform operations in a transaction after it has been committed or rolled back.
-    #[fail(
-        display = "Cannot read or write data after any attempt to commit or roll back the transaction"
-    )]
+    #[error("Cannot read or write data after any attempt to commit or roll back the transaction")]
     OperationAfterCommitError,
     /// We tried to use 1pc for a transaction, but it didn't work. Probably should have used 2pc.
-    #[fail(display = "1PC transaction could not be committed.")]
+    #[error("1PC transaction could not be committed.")]
     OnePcFailure,
     /// Wraps a `std::io::Error`.
-    #[fail(display = "IO error: {}", _0)]
-    Io(#[fail(cause)] std::io::Error),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
     /// Wraps a `grpcio::Error`.
-    #[fail(display = "gRPC error: {}", _0)]
-    Grpc(#[fail(cause)] grpcio::Error),
+    #[error("gRPC error: {0}")]
+    Grpc(#[from] grpcio::Error),
     /// Represents that a futures oneshot channel was cancelled.
-    #[fail(display = "A futures oneshot channel was canceled. {}", _0)]
-    Canceled(#[fail(cause)] futures::channel::oneshot::Canceled),
+    #[error("A futures oneshot channel was canceled. {0}")]
+    Canceled(#[from] futures::channel::oneshot::Canceled),
     /// Errors caused by changes of region information
-    #[fail(display = "Region error: {:?}", _0)]
+    #[error("Region error: {0:?}")]
     RegionError(tikv_client_proto::errorpb::Error),
     /// Whether the transaction is committed or not is undetermined
-    #[fail(display = "Whether the transaction is committed or not is undetermined")]
-    UndeterminedError(#[fail(cause)] Error),
+    #[error("Whether the transaction is committed or not is undetermined")]
+    UndeterminedError(Box<Error>),
     /// Wraps `tikv_client_proto::kvrpcpb::KeyError`
-    #[fail(display = "{:?}", _0)]
+    #[error("{0:?}")]
     KeyError(tikv_client_proto::kvrpcpb::KeyError),
     /// Multiple errors
-    #[fail(display = "Multiple errors: {:?}", _0)]
+    #[error("Multiple errors: {0:?}")]
     MultipleErrors(Vec<Error>),
     /// Invalid ColumnFamily
-    #[fail(display = "Unsupported column family {}", _0)]
+    #[error("Unsupported column family {}", _0)]
     ColumnFamilyError(String),
     /// No region is found for the given key.
-    #[fail(display = "Region is not found for key: {:?}", key)]
+    #[error("Region is not found for key: {:?}", key)]
     RegionForKeyNotFound { key: Vec<u8> },
     /// No region is found for the given id.
-    #[fail(display = "Region {} is not found", region_id)]
+    #[error("Region {} is not found", region_id)]
     RegionNotFound { region_id: u64 },
     /// No leader is found for the given id.
-    #[fail(display = "Leader of region {} is not found", region_id)]
+    #[error("Leader of region {} is not found", region_id)]
     LeaderNotFound { region_id: u64 },
     /// Scan limit exceeds the maximum
-    #[fail(display = "Limit {} exceeds max scan limit {}", limit, max_limit)]
+    #[error("Limit {} exceeds max scan limit {}", limit, max_limit)]
     MaxScanLimitExceeded { limit: u32, max_limit: u32 },
     /// A string error returned by TiKV server
-    #[fail(display = "Kv error. {}", message)]
+    #[error("Kv error. {}", message)]
     KvError { message: String },
-    #[fail(display = "{}", message)]
+    #[error("{}", message)]
     InternalError { message: String },
 }
 
-impl Fail for Error {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.inner.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.inner.backtrace()
-    }
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Display::fmt(&self.inner, f)
-    }
-}
-
-impl Error {
-    pub fn kind(&self) -> &ErrorKind {
-        self.inner.get_context()
-    }
-
-    #[allow(dead_code)]
-    pub fn unimplemented() -> Self {
-        Error::from(ErrorKind::Unimplemented)
-    }
-
-    pub fn region_for_key_not_found(key: Vec<u8>) -> Self {
-        Error::from(ErrorKind::RegionForKeyNotFound { key })
-    }
-
-    pub fn region_error(error: tikv_client_proto::errorpb::Error) -> Self {
-        Error::from(ErrorKind::RegionError(error))
-    }
-
-    pub fn region_not_found(region_id: u64) -> Self {
-        Error::from(ErrorKind::RegionNotFound { region_id })
-    }
-
-    pub fn leader_not_found(region_id: u64) -> Self {
-        Error::from(ErrorKind::LeaderNotFound { region_id })
-    }
-
-    pub fn max_scan_limit_exceeded(limit: u32, max_limit: u32) -> Self {
-        Error::from(ErrorKind::MaxScanLimitExceeded { limit, max_limit })
-    }
-
-    pub fn kv_error(message: String) -> Self {
-        Error::from(ErrorKind::KvError { message })
-    }
-
-    pub fn internal_error(message: impl Into<String>) -> Self {
-        Error::from(ErrorKind::InternalError {
-            message: message.into(),
-        })
-    }
-
-    pub fn multiple_errors(errors: Vec<Error>) -> Self {
-        Error::from(ErrorKind::MultipleErrors(errors))
-    }
-
-    pub fn undetermined_error(error: Error) -> Self {
-        Error::from(ErrorKind::UndeterminedError(error))
-    }
-}
-
-impl From<errorpb::Error> for Error {
-    fn from(e: errorpb::Error) -> Error {
-        Error::region_error(e)
-    }
-}
-
-impl From<ErrorKind> for Error {
-    fn from(kind: ErrorKind) -> Error {
-        Error {
-            inner: Box::new(Context::new(kind)),
-        }
-    }
-}
-
-impl From<Context<ErrorKind>> for Error {
-    fn from(inner: Context<ErrorKind>) -> Error {
-        Error {
-            inner: Box::new(inner),
-        }
-    }
-}
-
-impl From<std::io::Error> for Error {
-    fn from(err: std::io::Error) -> Self {
-        Error::from(ErrorKind::Io(err))
-    }
-}
-
-impl From<grpcio::Error> for Error {
-    fn from(err: grpcio::Error) -> Self {
-        Error::from(ErrorKind::Grpc(err))
-    }
-}
-
-impl From<futures::channel::oneshot::Canceled> for Error {
-    fn from(err: futures::channel::oneshot::Canceled) -> Self {
-        Error::from(ErrorKind::Canceled(err))
+impl From<tikv_client_proto::errorpb::Error> for Error {
+    fn from(e: tikv_client_proto::errorpb::Error) -> Error {
+        Error::RegionError(e)
     }
 }
 
 impl From<tikv_client_proto::kvrpcpb::KeyError> for Error {
-    fn from(err: tikv_client_proto::kvrpcpb::KeyError) -> Self {
-        Error::from(ErrorKind::KeyError(err))
+    fn from(e: tikv_client_proto::kvrpcpb::KeyError) -> Error {
+        Error::KeyError(e)
     }
 }
 
@@ -194,10 +83,9 @@ pub type Result<T> = result::Result<T, Error>;
 #[macro_export]
 macro_rules! internal_err {
     ($e:expr) => ({
-        let kind = $crate::Error::internal_error(
-            format!("[{}:{}]: {}", file!(), line!(),  $e)
-        );
-        $crate::Error::from(kind)
+        $crate::Error::InternalError {
+            message: format!("[{}:{}]: {}", file!(), line!(),  $e)
+        }
     });
     ($f:tt, $($arg:expr),+) => ({
         internal_err!(format!($f, $($arg),+))

@@ -6,7 +6,7 @@ use crate::{
     stats::tikv_stats,
     store::Store,
     transaction::{resolve_locks, HasLocks},
-    BoundRange, Error, ErrorKind, Key, Result,
+    BoundRange, Error, Key, Result,
 };
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
@@ -140,7 +140,7 @@ pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
         mut lock_backoff: impl Backoff,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         lock_backoff.next_delay_duration().map_or(
-            stream::once(future::err(ErrorKind::ResolveLockError.into())).boxed(),
+            stream::once(future::err(Error::ResolveLockError)).boxed(),
             move |delay_duration| {
                 let fut = async move {
                     futures_timer::Delay::new(delay_duration).await;
@@ -281,7 +281,7 @@ mod test {
 
         impl HasRegionError for MockRpcResponse {
             fn region_error(&mut self) -> Option<Error> {
-                Some(Error::region_not_found(1))
+                Some(Error::RegionNotFound { region_id: 1 })
             }
         }
 

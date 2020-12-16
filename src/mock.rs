@@ -142,7 +142,7 @@ impl PdClient for MockPdClient {
         match id {
             1 => Ok(Self::region1()),
             2 => Ok(Self::region2()),
-            _ => Err(Error::region_not_found(id)),
+            _ => Err(Error::RegionNotFound { region_id: id }),
         }
     }
 

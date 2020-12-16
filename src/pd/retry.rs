@@ -104,18 +104,18 @@ impl RetryClient<Cluster> {
                     .get_region(key.clone(), self.timeout)
                     .await
                     .and_then(|resp| {
-                        region_from_response(resp, || Error::region_for_key_not_found(key))
+                        region_from_response(resp, || Error::RegionForKeyNotFound { key })
                     })
             }
         })
     }
 
-    pub async fn get_region_by_id(self: Arc<Self>, id: RegionId) -> Result<Region> {
+    pub async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<Region> {
         retry!(self, "get_region_by_id", |cluster| async {
             cluster
-                .get_region_by_id(id, self.timeout)
+                .get_region_by_id(region_id, self.timeout)
                 .await
-                .and_then(|resp| region_from_response(resp, || Error::region_not_found(id)))
+                .and_then(|resp| region_from_response(resp, || Error::RegionNotFound { region_id }))
         })
     }
 
@@ -215,7 +215,7 @@ mod test {
             async fn reconnect(&self, _: u64) -> Result<()> {
                 *self.reconnect_count.lock().unwrap() += 1;
                 // Not actually unimplemented, we just don't care about the error.
-                Err(Error::unimplemented())
+                Err(Error::Unimplemented)
             }
         }
 

@@ -10,7 +10,7 @@
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 
 pub use self::client::Client;
-use crate::{Error, ErrorKind};
+use crate::Error;
 use std::{convert::TryFrom, fmt};
 
 mod client;
@@ -59,7 +59,7 @@ impl TryFrom<&str> for ColumnFamily {
             "lock" => Ok(ColumnFamily::Lock),
             "write" => Ok(ColumnFamily::Write),
             "ver_default" => Ok(ColumnFamily::VersionDefault),
-            s => Err(ErrorKind::ColumnFamilyError(s.to_owned()).into()),
+            s => Err(Error::ColumnFamilyError(s.to_owned())),
         }
     }
 }

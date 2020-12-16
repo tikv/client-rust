@@ -78,7 +78,9 @@ macro_rules! has_str_error {
                 if self.get_error().is_empty() {
                     None
                 } else {
-                    Some(Error::kv_error(self.take_error()))
+                    Some(Error::KvError {
+                        message: self.take_error(),
+                    })
                 }
             }
         }
@@ -149,6 +151,6 @@ fn extract_errors(error_iter: impl Iterator<Item = Option<kvrpcpb::KeyError>>) -
     } else if errors.len() == 1 {
         Some(errors.into_iter().next().unwrap())
     } else {
-        Some(Error::multiple_errors(errors))
+        Some(Error::MultipleErrors(errors))
     }
 }

@@ -56,9 +56,9 @@ async fn main() {
 
     // set
     let key1: Key = b"key1".to_vec().into();
-    let value1: Value = b"value1".to_vec().into();
+    let value1: Value = b"value1".to_vec();
     let key2: Key = b"key2".to_vec().into();
-    let value2: Value = b"value2".to_vec().into();
+    let value2: Value = b"value2".to_vec();
     puts(&txn, vec![(key1, value1), (key2, value2)]).await;
 
     // get

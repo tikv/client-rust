@@ -10,4 +10,4 @@ pub use crate::{
     errors::{HasError, HasRegionError},
     request::Request,
 };
-pub use tikv_client_common::{security::SecurityManager, Error, ErrorKind, Result};
+pub use tikv_client_common::{security::SecurityManager, Error, Result};

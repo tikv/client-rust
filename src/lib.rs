@@ -110,4 +110,4 @@ pub use config::Config;
 #[doc(inline)]
 pub use region::{Region, RegionId, RegionVerId, StoreId};
 #[doc(inline)]
-pub use tikv_client_common::{security::SecurityManager, Error, ErrorKind, Result};
+pub use tikv_client_common::{security::SecurityManager, Error, Result};
