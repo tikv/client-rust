@@ -1,6 +1,6 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{ClientError, Result};
+use crate::{Error, Result};
 use async_trait::async_trait;
 use grpcio::CallOption;
 use std::any::Any;
@@ -27,7 +27,7 @@ macro_rules! impl_request {
                     .$fun(self, options)?
                     .await
                     .map(|r| Box::new(r) as Box<dyn Any>)
-                    .map_err(|e| ClientError::Grpc(e))
+                    .map_err(|e| Error::Grpc(e))
             }
 
             fn label(&self) -> &'static str {

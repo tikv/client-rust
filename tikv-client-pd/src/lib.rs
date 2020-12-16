@@ -3,7 +3,7 @@
 #[doc(inline)]
 pub use cluster::{Cluster, Connection};
 #[doc(inline)]
-pub use tikv_client_common::{security::SecurityManager, ClientError, Result};
+pub use tikv_client_common::{security::SecurityManager, Error, Result};
 
 #[macro_use]
 extern crate log;

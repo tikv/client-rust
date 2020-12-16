@@ -1,6 +1,6 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{timestamp::TimestampOracle, ClientError, Result, SecurityManager};
+use crate::{timestamp::TimestampOracle, Error, Result, SecurityManager};
 use async_trait::async_trait;
 use grpcio::{CallOption, Environment};
 use std::{
@@ -186,7 +186,7 @@ impl Connection {
         let option = CallOption::default().timeout(timeout);
         let resp = client
             .get_members_async_opt(&pdpb::GetMembersRequest::default(), option)
-            .map_err(ClientError::from)?
+            .map_err(Error::from)?
             .await?;
         Ok((client, resp))
     }

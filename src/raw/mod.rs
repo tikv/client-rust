@@ -10,7 +10,7 @@
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 
 pub use self::client::Client;
-use crate::ClientError;
+use crate::Error;
 use std::{convert::TryFrom, fmt};
 
 mod client;
@@ -51,7 +51,7 @@ pub enum ColumnFamily {
 }
 
 impl TryFrom<&str> for ColumnFamily {
-    type Error = ClientError;
+    type Error = Error;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
@@ -59,13 +59,13 @@ impl TryFrom<&str> for ColumnFamily {
             "lock" => Ok(ColumnFamily::Lock),
             "write" => Ok(ColumnFamily::Write),
             "ver_default" => Ok(ColumnFamily::VersionDefault),
-            s => Err(ClientError::ColumnFamilyError(s.to_owned())),
+            s => Err(Error::ColumnFamilyError(s.to_owned())),
         }
     }
 }
 
 impl TryFrom<String> for ColumnFamily {
-    type Error = ClientError;
+    type Error = Error;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         TryFrom::try_from(&*value)

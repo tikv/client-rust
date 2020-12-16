@@ -1,4 +1,4 @@
-use crate::{ClientError, Key, Result};
+use crate::{Error, Key, Result};
 use derive_new::new;
 use tikv_client_proto::{kvrpcpb, metapb};
 
@@ -43,7 +43,7 @@ impl Region {
     pub fn context(&self) -> Result<kvrpcpb::Context> {
         self.leader
             .as_ref()
-            .ok_or_else(|| ClientError::LeaderNotFound {
+            .ok_or_else(|| Error::LeaderNotFound {
                 region_id: self.region.get_id(),
             })
             .map(|l| {
@@ -85,7 +85,7 @@ impl Region {
         self.leader
             .as_ref()
             .cloned()
-            .ok_or_else(|| ClientError::LeaderNotFound {
+            .ok_or_else(|| Error::LeaderNotFound {
                 region_id: self.id(),
             })
             .map(|s| s.get_store_id())

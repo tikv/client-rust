@@ -1,6 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use tikv_client_common::ClientError;
+use tikv_client_common::Error;
 
 use super::requests;
 use crate::{
@@ -382,7 +382,7 @@ impl Client {
         key_only: bool,
     ) -> Result<Vec<KvPair>> {
         if limit > MAX_RAW_KV_SCAN_LIMIT {
-            return Err(ClientError::MaxScanLimitExceeded {
+            return Err(Error::MaxScanLimitExceeded {
                 limit,
                 max_limit: MAX_RAW_KV_SCAN_LIMIT,
             });
@@ -404,7 +404,7 @@ impl Client {
         key_only: bool,
     ) -> Result<Vec<KvPair>> {
         if each_limit > MAX_RAW_KV_SCAN_LIMIT {
-            return Err(ClientError::MaxScanLimitExceeded {
+            return Err(Error::MaxScanLimitExceeded {
                 limit: each_limit,
                 max_limit: MAX_RAW_KV_SCAN_LIMIT,
             });

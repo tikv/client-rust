@@ -11,7 +11,7 @@
 //! single `TsoRequest` to the PD server. The other future receives `TsoResponse`s from the PD
 //! server and allocates timestamps for the requests.
 
-use crate::{ClientError, Result};
+use crate::{Error, Result};
 use futures::{
     channel::{mpsc, oneshot},
     executor::block_on,
@@ -74,7 +74,7 @@ impl TimestampOracle {
 
 async fn run_tso(
     cluster_id: u64,
-    mut rpc_sender: impl Sink<(TsoRequest, WriteFlags), Error = ClientError> + Unpin,
+    mut rpc_sender: impl Sink<(TsoRequest, WriteFlags), Error = Error> + Unpin,
     mut rpc_receiver: impl Stream<Item = Result<TsoResponse>> + Unpin,
     request_rx: mpsc::Receiver<TimestampRequest>,
 ) {

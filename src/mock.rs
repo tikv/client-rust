@@ -8,7 +8,7 @@
 use crate::{
     pd::{PdClient, PdRpcClient, RetryClient},
     store::Store,
-    ClientError, Config, Key, Region, RegionId, Result, Timestamp,
+    Config, Error, Key, Region, RegionId, Result, Timestamp,
 };
 use async_trait::async_trait;
 use derive_new::new;
@@ -142,7 +142,7 @@ impl PdClient for MockPdClient {
         match id {
             1 => Ok(Self::region1()),
             2 => Ok(Self::region2()),
-            _ => Err(ClientError::RegionNotFound { region_id: id }),
+            _ => Err(Error::RegionNotFound { region_id: id }),
         }
     }
 

@@ -2,7 +2,7 @@
 
 //! A utility module for managing and retrying PD requests.
 
-use crate::{stats::pd_stats, ClientError, Region, RegionId, Result, SecurityManager, StoreId};
+use crate::{stats::pd_stats, Error, Region, RegionId, Result, SecurityManager, StoreId};
 use async_trait::async_trait;
 use futures_timer::Delay;
 use grpcio::Environment;
@@ -104,7 +104,7 @@ impl RetryClient<Cluster> {
                     .get_region(key.clone(), self.timeout)
                     .await
                     .and_then(|resp| {
-                        region_from_response(resp, || ClientError::RegionForKeyNotFound { key })
+                        region_from_response(resp, || Error::RegionForKeyNotFound { key })
                     })
             }
         })
@@ -115,9 +115,7 @@ impl RetryClient<Cluster> {
             cluster
                 .get_region_by_id(region_id, self.timeout)
                 .await
-                .and_then(|resp| {
-                    region_from_response(resp, || ClientError::RegionNotFound { region_id })
-                })
+                .and_then(|resp| region_from_response(resp, || Error::RegionNotFound { region_id }))
         })
     }
 
@@ -164,7 +162,7 @@ impl fmt::Debug for RetryClient {
 
 fn region_from_response(
     resp: pdpb::GetRegionResponse,
-    err: impl FnOnce() -> ClientError,
+    err: impl FnOnce() -> Error,
 ) -> Result<Region> {
     let region = resp.region.ok_or_else(err)?;
     Ok(Region::new(region, resp.leader))
@@ -217,7 +215,7 @@ mod test {
             async fn reconnect(&self, _: u64) -> Result<()> {
                 *self.reconnect_count.lock().unwrap() += 1;
                 // Not actually unimplemented, we just don't care about the error.
-                Err(ClientError::Unimplemented)
+                Err(Error::Unimplemented)
             }
         }
 
@@ -226,7 +224,7 @@ mod test {
         }
 
         async fn retry_ok(client: Arc<MockClient>) -> Result<()> {
-            retry!(client, "test", |_c| ready(Ok::<_, ClientError>(())))
+            retry!(client, "test", |_c| ready(Ok::<_, Error>(())))
         }
 
         executor::block_on(async {

@@ -5,7 +5,7 @@ use crate::{
     request::{KvRequest, OPTIMISTIC_BACKOFF, PESSIMISTIC_BACKOFF},
     timestamp::TimestampExt,
     transaction::{buffer::Buffer, requests::*},
-    BoundRange, ClientError, Key, KvPair, Result, Value,
+    BoundRange, Error, Key, KvPair, Result, Value,
 };
 use derive_new::new;
 use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
@@ -189,7 +189,7 @@ impl Transaction {
     pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         self.check_allow_operation()?;
         if !self.is_pessimistic() {
-            Err(ClientError::InvalidTransactionType)
+            Err(Error::InvalidTransactionType)
         } else {
             let key = key.into();
             self.pessimistic_lock(iter::once(key.clone())).await?;
@@ -275,7 +275,7 @@ impl Transaction {
     ) -> Result<impl Iterator<Item = KvPair>> {
         self.check_allow_operation()?;
         if !self.is_pessimistic() {
-            Err(ClientError::InvalidTransactionType)
+            Err(Error::InvalidTransactionType)
         } else {
             let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
             self.pessimistic_lock(keys.clone()).await?;
@@ -462,7 +462,7 @@ impl Transaction {
             self.status,
             TransactionStatus::StartedCommit | TransactionStatus::Active
         ) {
-            return Err(ClientError::OperationAfterCommitError);
+            return Err(Error::OperationAfterCommitError);
         }
         self.status = TransactionStatus::StartedCommit;
 
@@ -490,7 +490,7 @@ impl Transaction {
             self.status,
             TransactionStatus::StartedRollback | TransactionStatus::Active
         ) {
-            return Err(ClientError::OperationAfterCommitError);
+            return Err(Error::OperationAfterCommitError);
         }
         self.status = TransactionStatus::StartedRollback;
 
@@ -571,7 +571,7 @@ impl Transaction {
             TransactionStatus::Committed
             | TransactionStatus::Rolledback
             | TransactionStatus::StartedCommit
-            | TransactionStatus::StartedRollback => Err(ClientError::OperationAfterCommitError),
+            | TransactionStatus::StartedRollback => Err(Error::OperationAfterCommitError),
         }
     }
 
@@ -626,7 +626,7 @@ impl TwoPhaseCommitter {
                 Ok(commit_ts) => commit_ts,
                 Err(e) => {
                     return if self.undetermined {
-                        Err(ClientError::UndeterminedError(Box::new(e)))
+                        Err(Error::UndeterminedError(Box::new(e)))
                     } else {
                         Err(e)
                     };
@@ -683,7 +683,7 @@ impl TwoPhaseCommitter {
 
         if self.style.try_one_pc && response.len() == 1 {
             if response[0].one_pc_commit_ts == 0 {
-                return Err(ClientError::OnePcFailure);
+                return Err(Error::OnePcFailure);
             }
 
             return Ok(response[0].one_pc_commit_ts);
@@ -713,7 +713,7 @@ impl TwoPhaseCommitter {
                 // We don't know whether the transaction is committed or not if we fail to receive
                 // the response. Then, we mark the transaction as undetermined and propagate the
                 // error to the user.
-                if let ClientError::Grpc(_) = e {
+                if let Error::Grpc(_) = e {
                     self.undetermined = true;
                 }
             })

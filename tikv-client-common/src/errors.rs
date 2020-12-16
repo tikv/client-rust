@@ -6,7 +6,7 @@ use thiserror::Error;
 /// An error originating from the TiKV client or dependencies.
 #[derive(Debug, Error)]
 #[allow(clippy::large_enum_variant)]
-pub enum ClientError {
+pub enum Error {
     /// Feature is not implemented.
     #[error("Unimplemented feature")]
     Unimplemented,
@@ -36,13 +36,13 @@ pub enum ClientError {
     RegionError(tikv_client_proto::errorpb::Error),
     /// Whether the transaction is committed or not is undetermined
     #[error("Whether the transaction is committed or not is undetermined")]
-    UndeterminedError(Box<ClientError>),
+    UndeterminedError(Box<Error>),
     /// Wraps `tikv_client_proto::kvrpcpb::KeyError`
     #[error("{0:?}")]
     KeyError(tikv_client_proto::kvrpcpb::KeyError),
     /// Multiple errors
     #[error("Multiple errors: {0:?}")]
-    MultipleErrors(Vec<ClientError>),
+    MultipleErrors(Vec<Error>),
     /// Invalid ColumnFamily
     #[error("Unsupported column family {}", _0)]
     ColumnFamilyError(String),
@@ -65,25 +65,25 @@ pub enum ClientError {
     InternalError { message: String },
 }
 
-impl From<tikv_client_proto::errorpb::Error> for ClientError {
-    fn from(e: tikv_client_proto::errorpb::Error) -> ClientError {
-        ClientError::RegionError(e)
+impl From<tikv_client_proto::errorpb::Error> for Error {
+    fn from(e: tikv_client_proto::errorpb::Error) -> Error {
+        Error::RegionError(e)
     }
 }
 
-impl From<tikv_client_proto::kvrpcpb::KeyError> for ClientError {
-    fn from(e: tikv_client_proto::kvrpcpb::KeyError) -> ClientError {
-        ClientError::KeyError(e)
+impl From<tikv_client_proto::kvrpcpb::KeyError> for Error {
+    fn from(e: tikv_client_proto::kvrpcpb::KeyError) -> Error {
+        Error::KeyError(e)
     }
 }
 
 /// A result holding an [`Error`](Error).
-pub type Result<T> = result::Result<T, ClientError>;
+pub type Result<T> = result::Result<T, Error>;
 
 #[macro_export]
 macro_rules! internal_err {
     ($e:expr) => ({
-        $crate::ClientError::InternalError {
+        $crate::Error::InternalError {
             message: format!("[{}:{}]: {}", file!(), line!(),  $e)
         }
     });
