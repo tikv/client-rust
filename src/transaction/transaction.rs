@@ -404,8 +404,11 @@ impl Transaction {
         }
         self.status = TransactionStatus::StartedCommit;
 
+        let primary_key = self.buffer.get_primary_key().await;
+        let mutations = self.buffer.to_proto_mutations().await;
         let res = Committer::new(
-            self.buffer.to_proto_mutations().await,
+            primary_key,
+            mutations,
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
@@ -432,8 +435,11 @@ impl Transaction {
         }
         self.status = TransactionStatus::StartedRollback;
 
+        let primary_key = self.buffer.get_primary_key().await;
+        let mutations = self.buffer.to_proto_mutations().await;
         let res = Committer::new(
-            self.buffer.to_proto_mutations().await,
+            primary_key,
+            mutations,
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
@@ -637,6 +643,7 @@ const DEFAULT_LOCK_TTL: u64 = 3000;
 /// The committer implements `prewrite`, `commit` and `rollback` functions.
 #[derive(new)]
 struct Committer {
+    primary_key: Option<Key>,
     mutations: Vec<kvrpcpb::Mutation>,
     start_version: u64,
     bg_worker: ThreadPool,
@@ -649,6 +656,7 @@ struct Committer {
 impl Committer {
     async fn commit(mut self) -> Result<u64> {
         if self.mutations.is_empty() {
+            assert!(self.primary_key.is_none());
             return Ok(0);
         }
 
@@ -685,7 +693,7 @@ impl Committer {
     }
 
     async fn prewrite(&mut self) -> Result<u64> {
-        let primary_lock = self.mutations[0].key.clone().into();
+        let primary_lock = self.primary_key.clone().unwrap();
         // TODO: calculate TTL for big transactions
         let lock_ttl = DEFAULT_LOCK_TTL;
         let mut request = match self.options.kind {
@@ -737,7 +745,7 @@ impl Committer {
 
     /// Commits the primary key and returns the commit version
     async fn commit_primary(&mut self) -> Result<u64> {
-        let primary_key = vec![self.mutations[0].key.clone().into()];
+        let primary_key = vec![self.primary_key.clone().unwrap()];
         let commit_version = self.rpc.clone().get_timestamp().await?.version();
         new_commit_request(primary_key, self.start_version, commit_version)
             .execute(self.rpc.clone(), RetryOptions::default_optimistic())
