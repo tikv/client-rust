@@ -36,6 +36,10 @@ pub struct Buffer {
 
 impl Buffer {
     /// Get the primary key of the buffer, if not exists, use `key` as the primary key.
+    pub async fn get_primary_key(&self) -> Option<Key> {
+        self.mutations.lock().await.primary_key.clone()
+    }
+    /// Get the primary key of the buffer, if not exists, use `key` as the primary key.
     pub async fn get_primary_key_or(&self, key: Key) -> Key {
         self.mutations.lock().await.get_primary_key_or(key)
     }
@@ -191,14 +195,11 @@ impl Buffer {
 
     /// Converts the buffered mutations to the proto buffer version
     pub async fn to_proto_mutations(&self) -> Vec<kvrpcpb::Mutation> {
-        let mutations = self.mutations.lock().await;
-        let (primary, other) = mutations
+        self.mutations
+            .lock()
+            .await
             .key_mutation_map
             .iter()
-            .partition::<Vec<_>, _>(|(key, _)| *key == mutations.primary_key.as_ref().unwrap());
-        primary
-            .into_iter()
-            .chain(other.into_iter())
             .filter_map(|(key, mutation)| mutation.to_proto_with_key(key))
             .collect()
     }
