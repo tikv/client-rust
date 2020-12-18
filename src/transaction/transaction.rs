@@ -771,17 +771,17 @@ impl Committer {
         let primary_only = self.mutations.len() == 1;
         let mutations = self.mutations.into_iter();
 
-        // Only skip the primary if we committed it earlier (i.e., we are not using async commit).
-        let keys = if self.options.async_commit {
-            mutations.skip(0)
+        let keys: Vec<Key> = if self.options.async_commit {
+            mutations.map(|m| m.key.into()).collect()
+        } else if primary_only {
+            return Ok(());
         } else {
-            if primary_only {
-                return Ok(());
-            }
-            mutations.skip(1)
-        }
-        .map(|mutation| mutation.key.into())
-        .collect();
+            let primary_key = self.primary_key.unwrap();
+            mutations
+                .map(|m| m.key.into())
+                .filter(|key| &primary_key != key)
+                .collect()
+        };
         new_commit_request(keys, self.start_version, commit_version)
             .execute(self.rpc.clone(), RetryOptions::default_optimistic())
             .await
