@@ -739,7 +739,12 @@ impl Committer {
 
         request.use_async_commit = self.options.async_commit;
         request.try_one_pc = self.options.try_one_pc;
-        request.secondaries = self.mutations[1..].iter().map(|m| m.key.clone()).collect();
+        request.secondaries = self
+            .mutations
+            .iter()
+            .filter(|m| self.primary_key.as_ref().unwrap() != m.key.as_ref())
+            .map(|m| m.key.clone())
+            .collect();
         // FIXME set max_commit_ts and min_commit_ts
 
         let response = request
