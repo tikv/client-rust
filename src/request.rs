@@ -165,7 +165,9 @@ pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
 
 #[derive(Clone, Debug, new, Eq, PartialEq)]
 pub struct RetryOptions {
+    /// How to retry when there is a region error and we need to resolve regions with PD.
     pub region_backoff: Backoff,
+    /// How to retry when a key is locked.
     pub lock_backoff: Backoff,
 }
 

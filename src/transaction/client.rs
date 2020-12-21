@@ -107,10 +107,11 @@ impl Client {
     /// ```
     pub async fn begin_optimistic(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
-        Ok(self.new_transaction(
-            timestamp,
-            TransactionOptions::new_optimistic(self.config.try_one_pc),
-        ))
+        let mut options = TransactionOptions::new_optimistic();
+        if self.config.try_one_pc {
+            options = options.try_one_pc();
+        }
+        Ok(self.new_transaction(timestamp, options))
     }
 
     /// Creates a new [`Transaction`](Transaction) in pessimistic mode.
@@ -132,12 +133,30 @@ impl Client {
     /// ```
     pub async fn begin_pessimistic(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
-        Ok(self.new_transaction(
-            timestamp,
-            TransactionOptions::new_pessimistic(self.config.try_one_pc),
-        ))
+        let mut options = TransactionOptions::new_pessimistic();
+        if self.config.try_one_pc {
+            options = options.try_one_pc();
+        }
+        Ok(self.new_transaction(timestamp, options))
     }
 
+    /// Creates a new customized [`Transaction`](Transaction).
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// use tikv_client::{Config, TransactionClient, TransactionOptions};
+    /// use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let mut transaction = client
+    ///     .begin_with_options(TransactionOptions::default().async_commit())
+    ///     .await
+    ///     .unwrap();
+    /// // ... Issue some commands.
+    /// let commit = transaction.commit();
+    /// let result = commit.await.unwrap();
+    /// # });
+    /// ```
     pub async fn begin_with_options(&self, options: TransactionOptions) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, options))

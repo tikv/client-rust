@@ -5,6 +5,9 @@
 use rand::{thread_rng, Rng};
 use std::time::Duration;
 
+/// When a request is retried, we can backoff for some time to avoid saturating the network.
+///
+/// `Backoff` is an object which determines how long to wait for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Backoff {
     kind: BackoffKind,
@@ -64,10 +67,12 @@ impl Backoff {
         }
     }
 
+    /// True if we should not backoff at all (usually indicates that we should not retry a request).
     pub fn is_none(&self) -> bool {
         self.kind == BackoffKind::None
     }
 
+    /// Don't wait. Usually indicates that we should not retry a request.
     pub const fn no_backoff() -> Backoff {
         Backoff {
             kind: BackoffKind::None,
@@ -79,6 +84,11 @@ impl Backoff {
         }
     }
 
+    // Exponential backoff means that the retry delay should multiply a constant
+    // after each attempt, up to a maximum value. After each attempt, the new retry
+    // delay should be:
+    //
+    // new_delay = min(max_delay, base_delay * 2 ** attempts)
     pub const fn no_jitter_backoff(
         base_delay_ms: u64,
         max_delay_ms: u64,
@@ -94,6 +104,11 @@ impl Backoff {
         }
     }
 
+    // Adds Jitter to the basic exponential backoff. Returns a random value between
+    // zero and the calculated exponential backoff:
+    //
+    // temp = min(max_delay, base_delay * 2 ** attempts)
+    // new_delay = random_between(0, temp)
     pub fn full_jitter_backoff(
         base_delay_ms: u64,
         max_delay_ms: u64,
@@ -114,6 +129,11 @@ impl Backoff {
         }
     }
 
+    // Equal Jitter limits the random value should be equal or greater than half of
+    // the calculated exponential backoff:
+    //
+    // temp = min(max_delay, base_delay * 2 ** attempts)
+    // new_delay = random_between(temp / 2, temp)
     pub fn equal_jitter_backoff(
         base_delay_ms: u64,
         max_delay_ms: u64,
@@ -134,6 +154,11 @@ impl Backoff {
         }
     }
 
+    // Decorrelated Jitter is always calculated with the previous backoff
+    // (the initial value is base_delay):
+    //
+    // temp = random_between(base_delay, previous_delay * 3)
+    // new_delay = min(max_delay, temp)
     pub fn decorrelated_jitter_backoff(
         base_delay_ms: u64,
         max_delay_ms: u64,
@@ -152,33 +177,13 @@ impl Backoff {
     }
 }
 
+/// The pattern for computing backoff times.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum BackoffKind {
-    // NoBackoff means that we don't want any retry here.
     None,
-    // Exponential backoff means that the retry delay should multiply a constant
-    // after each attempt, up to a maximum value. After each attempt, the new retry
-    // delay should be:
-    //
-    // new_delay = min(max_delay, base_delay * 2 ** attempts)
     NoJitter,
-    // Adds Jitter to the basic exponential backoff. Returns a random value between
-    // zero and the calculated exponential backoff:
-    //
-    // temp = min(max_delay, base_delay * 2 ** attempts)
-    // new_delay = random_between(0, temp)
     FullJitter,
-    // Equal Jitter limits the random value should be equal or greater than half of
-    // the calculated exponential backoff:
-    //
-    // temp = min(max_delay, base_delay * 2 ** attempts)
-    // new_delay = random_between(temp / 2, temp)
     EqualJitter,
-    // Decorrelated Jitter is always calculated with the previous backoff
-    // (the initial value is base_delay):
-    //
-    // temp = random_between(base_delay, previous_delay * 3)
-    // new_delay = min(max_delay, temp)
     DecorrelatedJitter,
 }
 

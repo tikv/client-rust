@@ -526,6 +526,7 @@ impl Drop for Transaction {
     }
 }
 
+/// Optimistic or pessimistic transaction.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum TransactionKind {
     Optimistic,
@@ -533,62 +534,81 @@ pub enum TransactionKind {
     Pessimistic(u64),
 }
 
+/// Options for configuring a transaction.
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct TransactionOptions {
+    /// Optimistic or pessimistic (default) transaction.
     kind: TransactionKind,
+    /// Try using 1pc rather than 2pc (default is to always use 2pc).
     try_one_pc: bool,
+    /// Try to use async commit (default is not to).
     async_commit: bool,
+    /// Is the transaction read only? (Default is no).
     read_only: bool,
+    /// How to retry in the event of certain errors.
     retry_options: RetryOptions,
 }
 
 impl Default for TransactionOptions {
     fn default() -> TransactionOptions {
-        Self::new_pessimistic(false)
+        Self::new_pessimistic()
     }
 }
 
 impl TransactionOptions {
-    pub fn new_optimistic(try_one_pc: bool) -> TransactionOptions {
+    /// Default options for an optimistic transaction.
+    pub fn new_optimistic() -> TransactionOptions {
         TransactionOptions {
             kind: TransactionKind::Optimistic,
-            try_one_pc,
+            try_one_pc: false,
             async_commit: false,
             read_only: false,
             retry_options: RetryOptions::default_optimistic(),
         }
     }
 
-    pub fn new_pessimistic(try_one_pc: bool) -> TransactionOptions {
+    /// Default options for a pessimistic transaction.
+    pub fn new_pessimistic() -> TransactionOptions {
         TransactionOptions {
             kind: TransactionKind::Pessimistic(0),
-            try_one_pc,
+            try_one_pc: false,
             async_commit: false,
             read_only: false,
             retry_options: RetryOptions::default_pessimistic(),
         }
     }
 
+    /// Try to use async commit.
     pub fn async_commit(mut self) -> TransactionOptions {
         self.async_commit = true;
         self
     }
 
+    /// Try to use 1pc.
+    pub fn try_one_pc(mut self) -> TransactionOptions {
+        self.try_one_pc = true;
+        self
+    }
+
+    /// Make the transaction read only.
     pub fn read_only(mut self) -> TransactionOptions {
         self.read_only = true;
         self
     }
 
+    /// Don't automatically resolve locks and retry if keys are locked.
     pub fn no_resolve_locks(mut self) -> TransactionOptions {
         self.retry_options.lock_backoff = Backoff::no_backoff();
         self
     }
 
+    /// Don't automatically resolve regions with PD if we have outdated region information.
     pub fn no_resolve_regions(mut self) -> TransactionOptions {
         self.retry_options.region_backoff = Backoff::no_backoff();
         self
     }
 
+    /// Set RetryOptions.
     pub fn retry_options(mut self, options: RetryOptions) -> TransactionOptions {
         self.retry_options = options;
         self
