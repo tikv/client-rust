@@ -46,6 +46,7 @@ pub struct TransactionOptions {
     kind: TransactionKind,
     try_one_pc: bool,
     async_commit: bool,
+    read_only: bool,
 }
 
 impl TransactionOptions {
@@ -54,6 +55,7 @@ impl TransactionOptions {
             kind: TransactionKind::Optimistic,
             try_one_pc,
             async_commit: false,
+            read_only: false,
         }
     }
 
@@ -62,11 +64,17 @@ impl TransactionOptions {
             kind: TransactionKind::Pessimistic(0),
             try_one_pc,
             async_commit: false,
+            read_only: false,
         }
     }
 
     pub fn async_commit(mut self) -> TransactionOptions {
         self.async_commit = true;
+        self
+    }
+
+    pub fn read_only(mut self) -> TransactionOptions {
+        self.read_only = true;
         self
     }
 
@@ -116,7 +124,7 @@ pub struct Transaction {
     buffer: Buffer,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
-    style: TransactionOptions,
+    options: TransactionOptions,
 }
 
 impl Transaction {
@@ -124,10 +132,9 @@ impl Transaction {
         timestamp: Timestamp,
         bg_worker: ThreadPool,
         rpc: Arc<PdRpcClient>,
-        style: TransactionOptions,
-        read_only: bool,
+        options: TransactionOptions,
     ) -> Transaction {
-        let status = if read_only {
+        let status = if options.read_only {
             TransactionStatus::ReadOnly
         } else {
             TransactionStatus::Active
@@ -138,7 +145,7 @@ impl Transaction {
             buffer: Default::default(),
             bg_worker,
             rpc,
-            style,
+            options,
         }
     }
 
@@ -477,7 +484,7 @@ impl Transaction {
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
-            self.style,
+            self.options,
         )
         .commit()
         .await;
@@ -505,7 +512,7 @@ impl Transaction {
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
-            self.style,
+            self.options,
         )
         .rollback()
         .await;
@@ -545,7 +552,7 @@ impl Transaction {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<()> {
         assert!(
-            matches!(self.style.kind, TransactionKind::Pessimistic(_)),
+            matches!(self.options.kind, TransactionKind::Pessimistic(_)),
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
         );
 
@@ -558,7 +565,7 @@ impl Transaction {
         let primary_lock = keys[0].clone();
         let lock_ttl = DEFAULT_LOCK_TTL;
         let for_update_ts = self.rpc.clone().get_timestamp().await.unwrap().version();
-        self.style.push_for_update_ts(for_update_ts);
+        self.options.push_for_update_ts(for_update_ts);
         new_pessimistic_lock_request(
             keys,
             primary_lock.into(),
@@ -582,11 +589,7 @@ impl Transaction {
     }
 
     fn is_pessimistic(&self) -> bool {
-        matches!(self.style.kind, TransactionKind::Pessimistic(_))
-    }
-
-    pub fn use_async_commit(&mut self) {
-        self.style = self.style.async_commit();
+        matches!(self.options.kind, TransactionKind::Pessimistic(_))
     }
 }
 
@@ -606,7 +609,7 @@ struct TwoPhaseCommitter {
     start_version: u64,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
-    style: TransactionOptions,
+    options: TransactionOptions,
     #[new(default)]
     undetermined: bool,
 }
@@ -620,11 +623,11 @@ impl TwoPhaseCommitter {
         let min_commit_ts = self.prewrite().await?;
 
         // If we didn't use 1pc, prewrite will set `try_one_pc` to false.
-        if self.style.try_one_pc {
+        if self.options.try_one_pc {
             return Ok(min_commit_ts);
         }
 
-        let commit_ts = if self.style.async_commit {
+        let commit_ts = if self.options.async_commit {
             assert_ne!(min_commit_ts, 0);
             min_commit_ts
         } else {
@@ -653,7 +656,7 @@ impl TwoPhaseCommitter {
         let primary_lock = self.mutations[0].key.clone().into();
         // TODO: calculate TTL for big transactions
         let lock_ttl = DEFAULT_LOCK_TTL;
-        let mut request = match self.style.kind {
+        let mut request = match self.options.kind {
             TransactionKind::Optimistic => new_prewrite_request(
                 self.mutations.clone(),
                 primary_lock,
@@ -669,12 +672,12 @@ impl TwoPhaseCommitter {
             ),
         };
 
-        request.use_async_commit = self.style.async_commit;
-        request.try_one_pc = self.style.try_one_pc;
+        request.use_async_commit = self.options.async_commit;
+        request.try_one_pc = self.options.try_one_pc;
         request.secondaries = self.mutations[1..].iter().map(|m| m.key.clone()).collect();
         // FIXME set max_commit_ts and min_commit_ts
 
-        let response = match self.style.kind {
+        let response = match self.options.kind {
             TransactionKind::Optimistic => {
                 request
                     .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
@@ -687,7 +690,7 @@ impl TwoPhaseCommitter {
             }
         };
 
-        if self.style.try_one_pc && response.len() == 1 {
+        if self.options.try_one_pc && response.len() == 1 {
             if response[0].one_pc_commit_ts == 0 {
                 return Err(Error::OnePcFailure);
             }
@@ -695,7 +698,7 @@ impl TwoPhaseCommitter {
             return Ok(response[0].one_pc_commit_ts);
         }
 
-        self.style.try_one_pc = false;
+        self.options.try_one_pc = false;
 
         let min_commit_ts = response
             .iter()
@@ -733,7 +736,7 @@ impl TwoPhaseCommitter {
         let mutations = self.mutations.into_iter();
 
         // Only skip the primary if we committed it earlier (i.e., we are not using async commit).
-        let keys = if self.style.async_commit {
+        let keys = if self.options.async_commit {
             mutations.skip(0)
         } else {
             if primary_only {
@@ -754,7 +757,7 @@ impl TwoPhaseCommitter {
             .into_iter()
             .map(|mutation| mutation.key.into())
             .collect();
-        match self.style.kind {
+        match self.options.kind {
             TransactionKind::Optimistic if keys.is_empty() => Ok(()),
             TransactionKind::Optimistic => {
                 new_batch_rollback_request(keys, self.start_version)

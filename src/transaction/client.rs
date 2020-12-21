@@ -110,7 +110,6 @@ impl Client {
         Ok(self.new_transaction(
             timestamp,
             TransactionOptions::new_optimistic(self.config.try_one_pc),
-            false,
         ))
     }
 
@@ -136,22 +135,17 @@ impl Client {
         Ok(self.new_transaction(
             timestamp,
             TransactionOptions::new_pessimistic(self.config.try_one_pc),
-            false,
         ))
     }
 
-    pub async fn begin_with_options(&self, opts: TransactionOptions) -> Result<Transaction> {
+    pub async fn begin_with_options(&self, options: TransactionOptions) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
-        Ok(self.new_transaction(timestamp, opts, false))
+        Ok(self.new_transaction(timestamp, options))
     }
 
     /// Creates a new [`Snapshot`](Snapshot) at the given [`Timestamp`](Timestamp).
-    pub fn snapshot(&self, timestamp: Timestamp) -> Snapshot {
-        Snapshot::new(self.new_transaction(
-            timestamp,
-            TransactionOptions::new_optimistic(self.config.try_one_pc),
-            true,
-        ))
+    pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> Snapshot {
+        Snapshot::new(self.new_transaction(timestamp, options.read_only()))
     }
 
     /// Retrieves the current [`Timestamp`](Timestamp).
@@ -214,18 +208,7 @@ impl Client {
         Ok(res)
     }
 
-    fn new_transaction(
-        &self,
-        timestamp: Timestamp,
-        style: TransactionOptions,
-        read_only: bool,
-    ) -> Transaction {
-        Transaction::new(
-            timestamp,
-            self.bg_worker.clone(),
-            self.pd.clone(),
-            style,
-            read_only,
-        )
+    fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
+        Transaction::new(timestamp, self.bg_worker.clone(), self.pd.clone(), options)
     }
 }
