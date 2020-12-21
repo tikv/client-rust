@@ -35,31 +35,37 @@ pub enum TransactionKind {
     Pessimistic(u64),
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub struct TransactionStyle {
+impl Default for TransactionKind {
+    fn default() -> TransactionKind {
+        TransactionKind::Pessimistic(0)
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+pub struct TransactionOptions {
     kind: TransactionKind,
     try_one_pc: bool,
     async_commit: bool,
 }
 
-impl TransactionStyle {
-    pub fn new_optimistic(try_one_pc: bool) -> TransactionStyle {
-        TransactionStyle {
+impl TransactionOptions {
+    pub fn new_optimistic(try_one_pc: bool) -> TransactionOptions {
+        TransactionOptions {
             kind: TransactionKind::Optimistic,
             try_one_pc,
             async_commit: false,
         }
     }
 
-    pub fn new_pessimistic(try_one_pc: bool) -> TransactionStyle {
-        TransactionStyle {
+    pub fn new_pessimistic(try_one_pc: bool) -> TransactionOptions {
+        TransactionOptions {
             kind: TransactionKind::Pessimistic(0),
             try_one_pc,
             async_commit: false,
         }
     }
 
-    pub fn async_commit(mut self) -> TransactionStyle {
+    pub fn async_commit(mut self) -> TransactionOptions {
         self.async_commit = true;
         self
     }
@@ -101,7 +107,7 @@ impl TransactionStyle {
 /// use futures::prelude::*;
 /// # futures::executor::block_on(async {
 /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
-/// let txn = client.begin().await.unwrap();
+/// let txn = client.begin_optimistic().await.unwrap();
 /// # });
 /// ```
 pub struct Transaction {
@@ -110,7 +116,7 @@ pub struct Transaction {
     buffer: Buffer,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
-    style: TransactionStyle,
+    style: TransactionOptions,
 }
 
 impl Transaction {
@@ -118,7 +124,7 @@ impl Transaction {
         timestamp: Timestamp,
         bg_worker: ThreadPool,
         rpc: Arc<PdRpcClient>,
-        style: TransactionStyle,
+        style: TransactionOptions,
         read_only: bool,
     ) -> Transaction {
         let status = if read_only {
@@ -149,7 +155,7 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let result: Option<Value> = txn.get(key).await.unwrap();
     /// // Finish the transaction...
@@ -216,7 +222,7 @@ impl Transaction {
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let result: HashMap<Key, Value> = txn
     ///     .batch_get(keys)
@@ -297,7 +303,7 @@ impl Transaction {
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key1: Key = b"TiKV".to_vec().into();
     /// let key2: Key = b"TiDB".to_vec().into();
     /// let result: Vec<KvPair> = txn
@@ -331,7 +337,7 @@ impl Transaction {
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key1: Key = b"TiKV".to_vec().into();
     /// let key2: Key = b"TiDB".to_vec().into();
     /// let result: Vec<Key> = txn
@@ -369,7 +375,7 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let val = "TiKV".to_owned();
     /// txn.put(key, val);
@@ -397,7 +403,7 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// txn.delete(key);
     /// // Finish the transaction...
@@ -429,7 +435,7 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
     /// txn.lock_keys(vec!["TiKV".to_owned(), "Rust".to_owned()]);
     /// // ... Do some actions.
     /// txn.commit().await.unwrap();
@@ -451,7 +457,7 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
     /// // ... Do some actions.
     /// let req = txn.commit();
     /// let result: u64 = req.await.unwrap();
@@ -600,7 +606,7 @@ struct TwoPhaseCommitter {
     start_version: u64,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
-    style: TransactionStyle,
+    style: TransactionOptions,
     #[new(default)]
     undetermined: bool,
 }

@@ -28,7 +28,10 @@ async fn main() {
     let value1: Value = b"value1".to_vec();
     let key2: Key = b"key2".to_vec().into();
     let value2: Value = b"value2".to_vec();
-    let mut txn0 = client.begin().await.expect("Could not begin a transaction");
+    let mut txn0 = client
+        .begin_optimistic()
+        .await
+        .expect("Could not begin a transaction");
     for (key, value) in vec![(key1, value1), (key2, value2)] {
         txn0.put(key, value).await.expect("Could not set key value");
     }
@@ -47,7 +50,10 @@ async fn main() {
     println!("{:?}", (&key1, value));
     {
         // another txn cannot write to the locked key
-        let mut txn2 = client.begin().await.expect("Could not begin a transaction");
+        let mut txn2 = client
+            .begin_optimistic()
+            .await
+            .expect("Could not begin a transaction");
         let key1: Key = b"key1".to_vec().into();
         let value2: Value = b"value2".to_vec();
         txn2.put(key1, value2).await.unwrap();
@@ -58,7 +64,10 @@ async fn main() {
     let value3: Value = b"value3".to_vec();
     txn1.put(key1.clone(), value3).await.unwrap();
     txn1.commit().await.unwrap();
-    let mut txn3 = client.begin().await.expect("Could not begin a transaction");
+    let mut txn3 = client
+        .begin_optimistic()
+        .await
+        .expect("Could not begin a transaction");
     let result = txn3.get(key1.clone()).await.unwrap().unwrap();
     txn3.commit()
         .await

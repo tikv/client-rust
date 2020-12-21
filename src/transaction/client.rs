@@ -6,7 +6,7 @@ use crate::{
     pd::{PdClient, PdRpcClient},
     request::{KvRequest, OPTIMISTIC_BACKOFF},
     timestamp::TimestampExt,
-    transaction::{Snapshot, Transaction, TransactionStyle},
+    transaction::{Snapshot, Transaction, TransactionOptions},
     Result,
 };
 use futures::executor::ThreadPool;
@@ -99,17 +99,17 @@ impl Client {
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
-    /// let mut transaction = client.begin().await.unwrap();
+    /// let mut transaction = client.begin_optimistic().await.unwrap();
     /// // ... Issue some commands.
     /// let commit = transaction.commit();
     /// let result = commit.await.unwrap();
     /// # });
     /// ```
-    pub async fn begin(&self) -> Result<Transaction> {
+    pub async fn begin_optimistic(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(
             timestamp,
-            TransactionStyle::new_optimistic(self.config.try_one_pc),
+            TransactionOptions::new_optimistic(self.config.try_one_pc),
             false,
         ))
     }
@@ -135,16 +135,21 @@ impl Client {
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(
             timestamp,
-            TransactionStyle::new_pessimistic(self.config.try_one_pc),
+            TransactionOptions::new_pessimistic(self.config.try_one_pc),
             false,
         ))
+    }
+
+    pub async fn begin_with_options(&self, opts: TransactionOptions) -> Result<Transaction> {
+        let timestamp = self.current_timestamp().await?;
+        Ok(self.new_transaction(timestamp, opts, false))
     }
 
     /// Creates a new [`Snapshot`](Snapshot) at the given [`Timestamp`](Timestamp).
     pub fn snapshot(&self, timestamp: Timestamp) -> Snapshot {
         Snapshot::new(self.new_transaction(
             timestamp,
-            TransactionStyle::new_optimistic(self.config.try_one_pc),
+            TransactionOptions::new_optimistic(self.config.try_one_pc),
             true,
         ))
     }
@@ -212,7 +217,7 @@ impl Client {
     fn new_transaction(
         &self,
         timestamp: Timestamp,
-        style: TransactionStyle,
+        style: TransactionOptions,
         read_only: bool,
     ) -> Transaction {
         Transaction::new(

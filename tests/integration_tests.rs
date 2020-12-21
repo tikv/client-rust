@@ -55,7 +55,7 @@ async fn crud() -> Result<()> {
     clear_tikv().await?;
 
     let client = TransactionClient::new(pd_addrs()).await?;
-    let mut txn = client.begin().await?;
+    let mut txn = client.begin_optimistic().await?;
 
     // Get non-existent keys
     assert!(txn.get("foo".to_owned()).await?.is_none());
@@ -91,7 +91,7 @@ async fn crud() -> Result<()> {
     txn.commit().await?;
 
     // Read from TiKV then update and delete
-    let mut txn = client.begin().await?;
+    let mut txn = client.begin_optimistic().await?;
     assert_eq!(
         txn.get("foo".to_owned()).await?,
         Some("bar".to_owned().into())
@@ -199,13 +199,13 @@ async fn txn_write_million() -> Result<()> {
         .map(|u| u.to_be_bytes().to_vec())
         .take(2usize.pow(NUM_BITS_KEY_PER_TXN))
         .collect::<Vec<_>>(); // each txn puts 2 ^ 12 keys. 12 = 25 - 13
-        let mut txn = client.begin().await?;
+        let mut txn = client.begin_optimistic().await?;
         for (k, v) in keys.iter().zip(iter::repeat(1u32.to_be_bytes().to_vec())) {
             txn.put(k.clone(), v).await?;
         }
         txn.commit().await?;
 
-        let mut txn = client.begin().await?;
+        let mut txn = client.begin_optimistic().await?;
         let res = txn.batch_get(keys).await?;
         assert_eq!(res.count(), 2usize.pow(NUM_BITS_KEY_PER_TXN));
         txn.commit().await?;
@@ -258,7 +258,7 @@ async fn txn_bank_transfer() -> Result<()> {
     let mut rng = thread_rng();
 
     let people = gen_u32_keys(NUM_PEOPLE, &mut rng);
-    let mut txn = client.begin().await?;
+    let mut txn = client.begin_optimistic().await?;
     let mut sum: u32 = 0;
     for person in &people {
         let init = rng.gen::<u8>() as u32;
@@ -269,7 +269,7 @@ async fn txn_bank_transfer() -> Result<()> {
 
     // transfer
     for _ in 0..NUM_TRNASFER {
-        let mut txn = client.begin().await?;
+        let mut txn = client.begin_optimistic().await?;
         txn.use_async_commit();
         let chosen_people = people.iter().choose_multiple(&mut rng, 2);
         let alice = chosen_people[0];
@@ -291,7 +291,7 @@ async fn txn_bank_transfer() -> Result<()> {
 
     // check
     let mut new_sum = 0;
-    let mut txn = client.begin().await?;
+    let mut txn = client.begin_optimistic().await?;
     for person in people.iter() {
         new_sum += get_txn_u32(&txn, person.clone()).await?;
     }
