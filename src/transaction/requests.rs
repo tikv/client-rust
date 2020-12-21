@@ -1,9 +1,11 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    backoff::Backoff,
     pd::PdClient,
-    request::{store_stream_for_key, store_stream_for_keys, store_stream_for_range, KvRequest},
+    request::{
+        store_stream_for_key, store_stream_for_keys, store_stream_for_range, KvRequest,
+        RetryOptions,
+    },
     store::Store,
     timestamp::TimestampExt,
     transaction::HasLocks,
@@ -201,8 +203,7 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
         self,
         region_error: Error,
         _pd_client: Arc<impl PdClient>,
-        _region_backoff: impl Backoff,
-        _lock_backoff: impl Backoff,
+        _: RetryOptions,
     ) -> BoxStream<'static, Result<Self::RpcResponse>> {
         stream::once(future::err(region_error)).boxed()
     }

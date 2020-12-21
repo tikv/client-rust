@@ -4,7 +4,7 @@ use super::{requests::new_scan_lock_request, resolve_locks};
 use crate::{
     config::Config,
     pd::{PdClient, PdRpcClient},
-    request::{KvRequest, OPTIMISTIC_BACKOFF},
+    request::{KvRequest, RetryOptions},
     timestamp::TimestampExt,
     transaction::{Snapshot, Transaction, TransactionOptions},
     Result,
@@ -183,8 +183,9 @@ impl Client {
                 safepoint.clone(),
                 SCAN_LOCK_BATCH_SIZE,
             );
-            let res: Vec<kvrpcpb::LockInfo> =
-                req.execute(self.pd.clone(), OPTIMISTIC_BACKOFF).await?;
+            let res: Vec<kvrpcpb::LockInfo> = req
+                .execute(self.pd.clone(), RetryOptions::default_optimistic())
+                .await?;
             if res.is_empty() {
                 break;
             }

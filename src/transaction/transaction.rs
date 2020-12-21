@@ -2,7 +2,7 @@
 
 use crate::{
     pd::{PdClient, PdRpcClient},
-    request::{KvRequest, OPTIMISTIC_BACKOFF, PESSIMISTIC_BACKOFF},
+    request::{KvRequest, RetryOptions},
     timestamp::TimestampExt,
     transaction::{buffer::Buffer, requests::*},
     BoundRange, Error, Key, KvPair, Result, Value,
@@ -12,7 +12,7 @@ use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
 use std::{iter, ops::RangeBounds, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
-/// A undo-able set of actions on the dataset.
+/// An undo-able set of actions on the dataset.
 ///
 /// Using a transaction you can prepare a set of actions (such as `get`, or `put`) on data at a
 /// particular timestamp called `start_ts` obtained from the placement driver.
@@ -98,7 +98,7 @@ impl Transaction {
         self.buffer
             .get_or_else(key, |key| {
                 new_mvcc_get_request(key, self.timestamp.clone())
-                    .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+                    .execute(self.rpc.clone(), RetryOptions::default_optimistic())
             })
             .await
     }
@@ -132,7 +132,7 @@ impl Transaction {
             self.buffer
                 .get_or_else(key, |key| {
                     new_mvcc_get_request(key, self.timestamp.clone())
-                        .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+                        .execute(self.rpc.clone(), RetryOptions::default_optimistic())
                 })
                 .await
         }
@@ -173,7 +173,8 @@ impl Transaction {
         let rpc = self.rpc.clone();
         self.buffer
             .batch_get_or_else(keys.into_iter().map(|k| k.into()), move |keys| {
-                new_mvcc_get_batch_request(keys, timestamp).execute(rpc, OPTIMISTIC_BACKOFF)
+                new_mvcc_get_batch_request(keys, timestamp)
+                    .execute(rpc, RetryOptions::default_optimistic())
             })
             .await
     }
@@ -459,7 +460,7 @@ impl Transaction {
         self.buffer
             .scan_and_fetch(range.into(), limit, move |new_range, new_limit| {
                 new_mvcc_scan_request(new_range, timestamp, new_limit, key_only)
-                    .execute(rpc, OPTIMISTIC_BACKOFF)
+                    .execute(rpc, RetryOptions::default_optimistic())
             })
             .await
     }
@@ -496,7 +497,7 @@ impl Transaction {
             lock_ttl,
             for_update_ts,
         )
-        .execute(self.rpc.clone(), PESSIMISTIC_BACKOFF)
+        .execute(self.rpc.clone(), RetryOptions::default_pessimistic())
         .await
     }
 
@@ -581,6 +582,13 @@ impl TransactionOptions {
                 self.kind =
                     TransactionKind::Pessimistic(std::cmp::max(*old_for_update_ts, for_update_ts));
             }
+        }
+    }
+
+    fn retry_options(&self) -> RetryOptions {
+        match self.kind {
+            TransactionKind::Optimistic => RetryOptions::default_optimistic(),
+            TransactionKind::Pessimistic(_) => RetryOptions::default_pessimistic(),
         }
     }
 }
@@ -669,18 +677,9 @@ impl Committer {
         request.secondaries = self.mutations[1..].iter().map(|m| m.key.clone()).collect();
         // FIXME set max_commit_ts and min_commit_ts
 
-        let response = match self.options.kind {
-            TransactionKind::Optimistic => {
-                request
-                    .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
-                    .await?
-            }
-            TransactionKind::Pessimistic(_) => {
-                request
-                    .execute(self.rpc.clone(), PESSIMISTIC_BACKOFF)
-                    .await?
-            }
-        };
+        let response = request
+            .execute(self.rpc.clone(), self.options.retry_options())
+            .await?;
 
         if self.options.try_one_pc && response.len() == 1 {
             if response[0].one_pc_commit_ts == 0 {
@@ -709,7 +708,7 @@ impl Committer {
         let primary_key = vec![self.mutations[0].key.clone().into()];
         let commit_version = self.rpc.clone().get_timestamp().await?.version();
         new_commit_request(primary_key, self.start_version, commit_version)
-            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
             .inspect_err(|e| {
                 // We don't know whether the transaction is committed or not if we fail to receive
                 // the response. Then, we mark the transaction as undetermined and propagate the
@@ -739,7 +738,7 @@ impl Committer {
         .map(|mutation| mutation.key.into())
         .collect();
         new_commit_request(keys, self.start_version, commit_version)
-            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
             .await
     }
 
@@ -753,12 +752,12 @@ impl Committer {
             TransactionKind::Optimistic if keys.is_empty() => Ok(()),
             TransactionKind::Optimistic => {
                 new_batch_rollback_request(keys, self.start_version)
-                    .execute(self.rpc, OPTIMISTIC_BACKOFF)
+                    .execute(self.rpc, RetryOptions::default_optimistic())
                     .await
             }
             TransactionKind::Pessimistic(for_update_ts) => {
                 new_pessimistic_rollback_request(keys, self.start_version, for_update_ts)
-                    .execute(self.rpc, OPTIMISTIC_BACKOFF)
+                    .execute(self.rpc, RetryOptions::default_optimistic())
                     .await
             }
         }
