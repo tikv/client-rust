@@ -75,6 +75,9 @@ pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
             })
             .map_ok(move |(request, mut response)| {
                 if let Some(region_error) = response.region_error() {
+                    if !retry.auto_resolve_regions {
+                        return stream::once(future::err(region_error)).boxed();
+                    }
                     return request.on_region_error(region_error, pd_client.clone(), retry.clone());
                 }
                 // Resolve locks
@@ -169,6 +172,7 @@ pub struct RetryOptions {
     pub region_backoff: Backoff,
     pub lock_backoff: Backoff,
     pub auto_resolve_locks: bool,
+    pub auto_resolve_regions: bool,
 }
 
 impl RetryOptions {
@@ -177,6 +181,7 @@ impl RetryOptions {
             region_backoff: DEFAULT_REGION_BACKOFF,
             lock_backoff: OPTIMISTIC_BACKOFF,
             auto_resolve_locks: true,
+            auto_resolve_regions: true,
         }
     }
 
@@ -185,6 +190,7 @@ impl RetryOptions {
             region_backoff: DEFAULT_REGION_BACKOFF,
             lock_backoff: PESSIMISTIC_BACKOFF,
             auto_resolve_locks: true,
+            auto_resolve_regions: true,
         }
     }
 }
@@ -369,6 +375,7 @@ mod test {
             region_backoff: Backoff::no_jitter_backoff(1, 1, 3),
             lock_backoff: Backoff::no_jitter_backoff(1, 1, 3),
             auto_resolve_locks: true,
+            auto_resolve_regions: true,
         };
         let stream = request.retry_response_stream(pd_client, retry);
 
