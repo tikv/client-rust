@@ -5,7 +5,7 @@
 use rand::{thread_rng, Rng};
 use std::time::Duration;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Backoff {
     kind: BackoffKind,
     current_attempts: u32,
@@ -148,7 +148,7 @@ impl Backoff {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum BackoffKind {
     // NoBackoff means that we don't want any retry here.
     None,

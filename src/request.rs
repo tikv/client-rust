@@ -9,6 +9,7 @@ use crate::{
     BoundRange, Error, Key, Result,
 };
 use async_trait::async_trait;
+use derive_new::new;
 use futures::{prelude::*, stream::BoxStream};
 use std::{
     cmp::{max, min},
@@ -160,7 +161,7 @@ pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, new, Eq, PartialEq)]
 pub struct RetryOptions {
     region_backoff: Backoff,
     lock_backoff: Backoff,

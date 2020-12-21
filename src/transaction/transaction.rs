@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
+    backoff::Backoff,
     pd::{PdClient, PdRpcClient},
     request::{KvRequest, RetryOptions},
     timestamp::TimestampExt,
@@ -408,7 +409,7 @@ impl Transaction {
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
-            self.options,
+            self.options.clone(),
         )
         .commit()
         .await;
@@ -436,7 +437,7 @@ impl Transaction {
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
-            self.options,
+            self.options.clone(),
         )
         .rollback()
         .await;
@@ -532,18 +533,19 @@ pub enum TransactionKind {
     Pessimistic(u64),
 }
 
-impl Default for TransactionKind {
-    fn default() -> TransactionKind {
-        TransactionKind::Pessimistic(0)
-    }
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct TransactionOptions {
     kind: TransactionKind,
     try_one_pc: bool,
     async_commit: bool,
     read_only: bool,
+    retry_options: RetryOptions,
+}
+
+impl Default for TransactionOptions {
+    fn default() -> TransactionOptions {
+        Self::new_pessimistic(false)
+    }
 }
 
 impl TransactionOptions {
@@ -553,6 +555,7 @@ impl TransactionOptions {
             try_one_pc,
             async_commit: false,
             read_only: false,
+            retry_options: RetryOptions::default_optimistic(),
         }
     }
 
@@ -562,6 +565,7 @@ impl TransactionOptions {
             try_one_pc,
             async_commit: false,
             read_only: false,
+            retry_options: RetryOptions::default_pessimistic(),
         }
     }
 
@@ -575,6 +579,18 @@ impl TransactionOptions {
         self
     }
 
+    pub fn no_retry(self) -> TransactionOptions {
+        self.retry_options(RetryOptions::new(
+            Backoff::no_backoff(),
+            Backoff::no_backoff(),
+        ))
+    }
+
+    pub fn retry_options(mut self, options: RetryOptions) -> TransactionOptions {
+        self.retry_options = options;
+        self
+    }
+
     fn push_for_update_ts(&mut self, for_update_ts: u64) {
         match &mut self.kind {
             TransactionKind::Optimistic => unreachable!(),
@@ -582,13 +598,6 @@ impl TransactionOptions {
                 self.kind =
                     TransactionKind::Pessimistic(std::cmp::max(*old_for_update_ts, for_update_ts));
             }
-        }
-    }
-
-    fn retry_options(&self) -> RetryOptions {
-        match self.kind {
-            TransactionKind::Optimistic => RetryOptions::default_optimistic(),
-            TransactionKind::Pessimistic(_) => RetryOptions::default_pessimistic(),
         }
     }
 }
@@ -678,7 +687,7 @@ impl Committer {
         // FIXME set max_commit_ts and min_commit_ts
 
         let response = request
-            .execute(self.rpc.clone(), self.options.retry_options())
+            .execute(self.rpc.clone(), self.options.retry_options.clone())
             .await?;
 
         if self.options.try_one_pc && response.len() == 1 {
