@@ -402,7 +402,7 @@ impl Transaction {
         }
         self.status = TransactionStatus::StartedCommit;
 
-        let res = TwoPhaseCommitter::new(
+        let res = Committer::new(
             self.buffer.to_proto_mutations().await,
             self.timestamp.version(),
             self.bg_worker.clone(),
@@ -430,7 +430,7 @@ impl Transaction {
         }
         self.status = TransactionStatus::StartedRollback;
 
-        let res = TwoPhaseCommitter::new(
+        let res = Committer::new(
             self.buffer.to_proto_mutations().await,
             self.timestamp.version(),
             self.bg_worker.clone(),
@@ -596,7 +596,7 @@ const DEFAULT_LOCK_TTL: u64 = 3000;
 ///
 /// The committer implements `prewrite`, `commit` and `rollback` functions.
 #[derive(new)]
-struct TwoPhaseCommitter {
+struct Committer {
     mutations: Vec<kvrpcpb::Mutation>,
     start_version: u64,
     bg_worker: ThreadPool,
@@ -606,7 +606,7 @@ struct TwoPhaseCommitter {
     undetermined: bool,
 }
 
-impl TwoPhaseCommitter {
+impl Committer {
     async fn commit(mut self) -> Result<u64> {
         if self.mutations.is_empty() {
             return Ok(0);
