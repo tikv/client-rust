@@ -64,6 +64,10 @@ impl Backoff {
         }
     }
 
+    pub fn is_none(&self) -> bool {
+        self.kind == BackoffKind::None
+    }
+
     pub const fn no_backoff() -> Backoff {
         Backoff {
             kind: BackoffKind::None,

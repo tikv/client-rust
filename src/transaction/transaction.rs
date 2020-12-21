@@ -580,18 +580,12 @@ impl TransactionOptions {
     }
 
     pub fn no_resolve_locks(mut self) -> TransactionOptions {
-        self.retry_options.auto_resolve_locks = false;
+        self.retry_options.lock_backoff = Backoff::no_backoff();
         self
     }
 
     pub fn no_resolve_regions(mut self) -> TransactionOptions {
-        self.retry_options.auto_resolve_regions = false;
-        self
-    }
-
-    pub fn no_retry(mut self) -> TransactionOptions {
         self.retry_options.region_backoff = Backoff::no_backoff();
-        self.retry_options.lock_backoff = Backoff::no_backoff();
         self
     }
 
