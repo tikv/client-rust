@@ -12,83 +12,6 @@ use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
 use std::{iter, ops::RangeBounds, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
-#[derive(PartialEq)]
-enum TransactionStatus {
-    /// The transaction is read-only [`Snapshot`](super::Snapshot::Snapshot), no need to commit or rollback or panic on drop.
-    ReadOnly,
-    /// The transaction have not been committed or rolled back.
-    Active,
-    /// The transaction has committed.
-    Committed,
-    /// The transaction has tried to commit. Only `commit` is allowed.
-    StartedCommit,
-    /// The transaction has rolled back.
-    Rolledback,
-    /// The transaction has tried to rollback. Only `rollback` is allowed.
-    StartedRollback,
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum TransactionKind {
-    Optimistic,
-    /// Argument is for_update_ts
-    Pessimistic(u64),
-}
-
-impl Default for TransactionKind {
-    fn default() -> TransactionKind {
-        TransactionKind::Pessimistic(0)
-    }
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-pub struct TransactionOptions {
-    kind: TransactionKind,
-    try_one_pc: bool,
-    async_commit: bool,
-    read_only: bool,
-}
-
-impl TransactionOptions {
-    pub fn new_optimistic(try_one_pc: bool) -> TransactionOptions {
-        TransactionOptions {
-            kind: TransactionKind::Optimistic,
-            try_one_pc,
-            async_commit: false,
-            read_only: false,
-        }
-    }
-
-    pub fn new_pessimistic(try_one_pc: bool) -> TransactionOptions {
-        TransactionOptions {
-            kind: TransactionKind::Pessimistic(0),
-            try_one_pc,
-            async_commit: false,
-            read_only: false,
-        }
-    }
-
-    pub fn async_commit(mut self) -> TransactionOptions {
-        self.async_commit = true;
-        self
-    }
-
-    pub fn read_only(mut self) -> TransactionOptions {
-        self.read_only = true;
-        self
-    }
-
-    fn push_for_update_ts(&mut self, for_update_ts: u64) {
-        match &mut self.kind {
-            TransactionKind::Optimistic => unreachable!(),
-            TransactionKind::Pessimistic(old_for_update_ts) => {
-                self.kind =
-                    TransactionKind::Pessimistic(std::cmp::max(*old_for_update_ts, for_update_ts));
-            }
-        }
-    }
-}
-
 /// A undo-able set of actions on the dataset.
 ///
 /// Using a transaction you can prepare a set of actions (such as `get`, or `put`) on data at a
@@ -593,6 +516,75 @@ impl Transaction {
     }
 }
 
+impl Drop for Transaction {
+    fn drop(&mut self) {
+        if self.status == TransactionStatus::Active {
+            panic!("Dropping an active transaction. Consider commit or rollback it.")
+        }
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum TransactionKind {
+    Optimistic,
+    /// Argument is for_update_ts
+    Pessimistic(u64),
+}
+
+impl Default for TransactionKind {
+    fn default() -> TransactionKind {
+        TransactionKind::Pessimistic(0)
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+pub struct TransactionOptions {
+    kind: TransactionKind,
+    try_one_pc: bool,
+    async_commit: bool,
+    read_only: bool,
+}
+
+impl TransactionOptions {
+    pub fn new_optimistic(try_one_pc: bool) -> TransactionOptions {
+        TransactionOptions {
+            kind: TransactionKind::Optimistic,
+            try_one_pc,
+            async_commit: false,
+            read_only: false,
+        }
+    }
+
+    pub fn new_pessimistic(try_one_pc: bool) -> TransactionOptions {
+        TransactionOptions {
+            kind: TransactionKind::Pessimistic(0),
+            try_one_pc,
+            async_commit: false,
+            read_only: false,
+        }
+    }
+
+    pub fn async_commit(mut self) -> TransactionOptions {
+        self.async_commit = true;
+        self
+    }
+
+    pub fn read_only(mut self) -> TransactionOptions {
+        self.read_only = true;
+        self
+    }
+
+    fn push_for_update_ts(&mut self, for_update_ts: u64) {
+        match &mut self.kind {
+            TransactionKind::Optimistic => unreachable!(),
+            TransactionKind::Pessimistic(old_for_update_ts) => {
+                self.kind =
+                    TransactionKind::Pessimistic(std::cmp::max(*old_for_update_ts, for_update_ts));
+            }
+        }
+    }
+}
+
 /// The default TTL of a lock in milliseconds
 const DEFAULT_LOCK_TTL: u64 = 3000;
 
@@ -773,10 +765,18 @@ impl TwoPhaseCommitter {
     }
 }
 
-impl Drop for Transaction {
-    fn drop(&mut self) {
-        if self.status == TransactionStatus::Active {
-            panic!("Dropping an active transaction. Consider commit or rollback it.")
-        }
-    }
+#[derive(PartialEq)]
+enum TransactionStatus {
+    /// The transaction is read-only [`Snapshot`](super::Snapshot::Snapshot), no need to commit or rollback or panic on drop.
+    ReadOnly,
+    /// The transaction have not been committed or rolled back.
+    Active,
+    /// The transaction has committed.
+    Committed,
+    /// The transaction has tried to commit. Only `commit` is allowed.
+    StartedCommit,
+    /// The transaction has rolled back.
+    Rolledback,
+    /// The transaction has tried to rollback. Only `rollback` is allowed.
+    StartedRollback,
 }
