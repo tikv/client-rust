@@ -17,14 +17,14 @@ struct Mutations {
 impl Mutations {
     fn insert(&mut self, key: impl Into<Key>, mutation: Mutation) {
         let key = key.into();
-        if self.primary_key.is_none() {
-            self.primary_key = Some(key.clone());
+        if !matches!(mutation, Mutation::Cached(_)) {
+            self.primary_key.get_or_insert_with(|| key.clone());
         }
         self.key_mutation_map.insert(key, mutation);
     }
 
-    pub fn get_primary_key_or(&mut self, key: Key) -> Key {
-        self.primary_key.get_or_insert(key).clone()
+    pub fn get_primary_key_or(&mut self, key: &Key) -> &Key {
+        self.primary_key.get_or_insert(key.clone())
     }
 }
 
@@ -40,8 +40,8 @@ impl Buffer {
         self.mutations.lock().await.primary_key.clone()
     }
     /// Get the primary key of the buffer, if not exists, use `key` as the primary key.
-    pub async fn get_primary_key_or(&self, key: Key) -> Key {
-        self.mutations.lock().await.get_primary_key_or(key)
+    pub async fn get_primary_key_or(&self, key: &Key) -> Key {
+        self.mutations.lock().await.get_primary_key_or(key).clone()
     }
 
     /// Get a value from the buffer. If the value is not present, run `f` to get
