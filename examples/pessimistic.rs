@@ -71,5 +71,4 @@ async fn main() {
         .await
         .expect("Committing read-only transaction should not fail");
     println!("{:?}", (key1, result));
-    txn3.commit().await.unwrap();
 }

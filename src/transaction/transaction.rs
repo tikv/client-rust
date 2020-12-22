@@ -493,7 +493,7 @@ impl Transaction {
             .map(|it: Key| it.into())
             .collect();
         let first_key = keys[0].clone();
-        let primary_lock = self.buffer.get_primary_key_or(first_key.into()).await;
+        let primary_lock = self.buffer.get_primary_key_or(&first_key.into()).await;
         let lock_ttl = DEFAULT_LOCK_TTL;
         let for_update_ts = self.rpc.clone().get_timestamp().await.unwrap().version();
         self.options.push_for_update_ts(for_update_ts);
