@@ -1,6 +1,5 @@
 #![cfg(feature = "integration-tests")]
 
-use failure::Fallible;
 use futures::prelude::*;
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 use serial_test::serial;
@@ -18,7 +17,7 @@ const NUM_PEOPLE: u32 = 100;
 const NUM_TRNASFER: u32 = 100;
 
 /// Delete all entris in TiKV to leave a clean space for following tests.
-async fn clear_tikv() -> Fallible<()> {
+async fn clear_tikv() -> Result<()> {
     let cfs = vec![
         ColumnFamily::Default,
         ColumnFamily::Lock,
@@ -28,11 +27,11 @@ async fn clear_tikv() -> Fallible<()> {
         let raw_client = RawClient::new(pd_addrs()).await?.with_cf(cf);
         raw_client.delete_range(vec![]..).await?;
     }
-    Fallible::Ok(())
+    Ok(())
 }
 
 #[tokio::test]
-async fn get_timestamp() -> Fallible<()> {
+async fn get_timestamp() -> Result<()> {
     const COUNT: usize = 1 << 8; // use a small number to make test fast
     let client = TransactionClient::new(pd_addrs()).await?;
 
@@ -52,7 +51,7 @@ async fn get_timestamp() -> Fallible<()> {
 // Tests transactional get, put, delete, batch_get
 #[tokio::test]
 #[serial]
-async fn crud() -> Fallible<()> {
+async fn crud() -> Result<()> {
     clear_tikv().await?;
 
     let client = TransactionClient::new(pd_addrs()).await?;
@@ -126,13 +125,13 @@ async fn crud() -> Fallible<()> {
         Some(Value::from("foo".to_owned())).as_ref()
     );
     assert_eq!(batch_get_res.get(&Key::from("bar".to_owned())), None);
-    Fallible::Ok(())
+    Ok(())
 }
 
 /// bank transfer mainly tests raw put and get
 #[tokio::test]
 #[serial]
-async fn raw_bank_transfer() -> Fallible<()> {
+async fn raw_bank_transfer() -> Result<()> {
     clear_tikv().await?;
     let client = RawClient::new(pd_addrs()).await?;
     let mut rng = thread_rng();
@@ -174,7 +173,7 @@ async fn raw_bank_transfer() -> Fallible<()> {
         new_sum += get_u32(&client, person.clone()).await?;
     }
     assert_eq!(sum, new_sum);
-    Fallible::Ok(())
+    Ok(())
 }
 
 /// Tests transactional API when there are multiple regions.
@@ -182,7 +181,7 @@ async fn raw_bank_transfer() -> Fallible<()> {
 /// In order to test `scan`, data is uniformly inserted.
 #[tokio::test]
 #[serial]
-async fn txn_write_million() -> Fallible<()> {
+async fn txn_write_million() -> Result<()> {
     const NUM_BITS_TXN: u32 = 7;
     const NUM_BITS_KEY_PER_TXN: u32 = 3;
     let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
@@ -247,12 +246,12 @@ async fn txn_write_million() -> Fallible<()> {
 
     assert_eq!(sum, 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));
 
-    Fallible::Ok(())
+    Ok(())
 }
 
 #[tokio::test]
 #[serial]
-async fn txn_bank_transfer() -> Fallible<()> {
+async fn txn_bank_transfer() -> Result<()> {
     clear_tikv().await?;
     let config = Config::default().try_one_pc();
     let client = TransactionClient::new_with_config(pd_addrs(), config).await?;
@@ -298,12 +297,12 @@ async fn txn_bank_transfer() -> Fallible<()> {
     }
     assert_eq!(sum, new_sum);
     txn.commit().await?;
-    Fallible::Ok(())
+    Ok(())
 }
 
 #[tokio::test]
 #[serial]
-async fn raw_req() -> Fallible<()> {
+async fn raw_req() -> Result<()> {
     clear_tikv().await?;
     let client = RawClient::new(pd_addrs()).await?;
 
@@ -427,18 +426,18 @@ async fn raw_req() -> Fallible<()> {
     assert_eq!(res[5].1, "v4".as_bytes());
     assert_eq!(res[6].1, "v5".as_bytes());
 
-    Fallible::Ok(())
+    Ok(())
 }
 
 /// Only checks if we successfully update safepoint to PD.
 #[tokio::test]
 #[serial]
-async fn test_update_safepoint() -> Fallible<()> {
+async fn test_update_safepoint() -> Result<()> {
     clear_tikv().await?;
     let client = TransactionClient::new(pd_addrs()).await?;
     let res = client.gc(client.current_timestamp().await?).await?;
     assert!(res);
-    Fallible::Ok(())
+    Ok(())
 }
 
 /// Tests raw API when there are multiple regions.
@@ -449,7 +448,7 @@ async fn test_update_safepoint() -> Fallible<()> {
 #[tokio::test]
 #[serial]
 #[ignore]
-async fn raw_write_million() -> Fallible<()> {
+async fn raw_write_million() -> Result<()> {
     const NUM_BITS_TXN: u32 = 9;
     const NUM_BITS_KEY_PER_TXN: u32 = 10;
     let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
@@ -494,27 +493,27 @@ async fn raw_write_million() -> Fallible<()> {
         // assert_eq!(res.len(), limit as usize * batch_num);
     }
 
-    Fallible::Ok(())
+    Ok(())
 }
 
 // helper function
-async fn get_u32(client: &RawClient, key: Vec<u8>) -> Fallible<u32> {
+async fn get_u32(client: &RawClient, key: Vec<u8>) -> Result<u32> {
     let x = client.get(key).await?.unwrap();
     let boxed_slice = x.into_boxed_slice();
     let array: Box<[u8; 4]> = boxed_slice
         .try_into()
         .expect("Value should not exceed u32 (4 * u8)");
-    Fallible::Ok(u32::from_be_bytes(*array))
+    Ok(u32::from_be_bytes(*array))
 }
 
 // helper function
-async fn get_txn_u32(txn: &Transaction, key: Vec<u8>) -> Fallible<u32> {
+async fn get_txn_u32(txn: &Transaction, key: Vec<u8>) -> Result<u32> {
     let x = txn.get(key).await?.unwrap();
     let boxed_slice = x.into_boxed_slice();
     let array: Box<[u8; 4]> = boxed_slice
         .try_into()
         .expect("Value should not exceed u32 (4 * u8)");
-    Fallible::Ok(u32::from_be_bytes(*array))
+    Ok(u32::from_be_bytes(*array))
 }
 
 // helper function

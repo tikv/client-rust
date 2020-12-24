@@ -27,7 +27,7 @@ macro_rules! impl_request {
                     .$fun(self, options)?
                     .await
                     .map(|r| Box::new(r) as Box<dyn Any>)
-                    .map_err(|e| Error::Grpc(e))
+                    .map_err(Error::Grpc)
             }
 
             fn label(&self) -> &'static str {
