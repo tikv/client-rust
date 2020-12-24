@@ -58,7 +58,10 @@ async fn main() {
     let value3: Value = b"value3".to_vec();
     txn1.put(key1.clone(), value3).await.unwrap();
     txn1.commit().await.unwrap();
-    let txn3 = client.begin().await.expect("Could not begin a transaction");
+    let mut txn3 = client.begin().await.expect("Could not begin a transaction");
     let result = txn3.get(key1.clone()).await.unwrap().unwrap();
+    txn3.commit()
+        .await
+        .expect("Committing read-only transaction should not fail");
     println!("{:?}", (key1, result));
 }
