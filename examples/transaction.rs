@@ -15,8 +15,12 @@ async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>
 }
 
 async fn get(client: &Client, key: Key) -> Option<Value> {
-    let txn = client.begin().await.expect("Could not begin a transaction");
-    txn.get(key).await.expect("Could not get value")
+    let mut txn = client.begin().await.expect("Could not begin a transaction");
+    let res = txn.get(key).await.expect("Could not get value");
+    txn.commit()
+        .await
+        .expect("Committing read-only transaction should not fail");
+    res
 }
 
 async fn scan(client: &Client, range: impl Into<BoundRange>, limit: u32) {
