@@ -467,7 +467,7 @@ mod test {
     use super::*;
     use crate::{
         mock::{MockKvClient, MockPdClient},
-        request::OPTIMISTIC_BACKOFF,
+        request::RetryOptions,
     };
     use futures::executor;
     use std::any::Any;
@@ -502,7 +502,8 @@ mod test {
             key_only: true,
             ..Default::default()
         };
-        let scan = executor::block_on(scan.execute(client, OPTIMISTIC_BACKOFF)).unwrap();
+        let scan =
+            executor::block_on(scan.execute(client, RetryOptions::default_optimistic())).unwrap();
 
         assert_eq!(scan.len(), 10);
         // TODO test the keys returned.

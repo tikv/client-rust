@@ -6,7 +6,10 @@ use crate::common::parse_args;
 use tikv_client::{BoundRange, Config, Key, KvPair, TransactionClient as Client, Value};
 
 async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
-    let mut txn = client.begin().await.expect("Could not begin a transaction");
+    let mut txn = client
+        .begin_optimistic()
+        .await
+        .expect("Could not begin a transaction");
     for pair in pairs {
         let (key, value) = pair.into().into();
         txn.put(key, value).await.expect("Could not set key value");
@@ -15,7 +18,10 @@ async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>
 }
 
 async fn get(client: &Client, key: Key) -> Option<Value> {
-    let mut txn = client.begin().await.expect("Could not begin a transaction");
+    let mut txn = client
+        .begin_optimistic()
+        .await
+        .expect("Could not begin a transaction");
     let res = txn.get(key).await.expect("Could not get value");
     txn.commit()
         .await
@@ -24,7 +30,10 @@ async fn get(client: &Client, key: Key) -> Option<Value> {
 }
 
 async fn scan(client: &Client, range: impl Into<BoundRange>, limit: u32) {
-    let mut txn = client.begin().await.expect("Could not begin a transaction");
+    let mut txn = client
+        .begin_optimistic()
+        .await
+        .expect("Could not begin a transaction");
     txn.scan(range, limit)
         .await
         .expect("Could not scan key-value pairs in range")
@@ -33,7 +42,10 @@ async fn scan(client: &Client, range: impl Into<BoundRange>, limit: u32) {
 }
 
 async fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {
-    let mut txn = client.begin().await.expect("Could not begin a transaction");
+    let mut txn = client
+        .begin_optimistic()
+        .await
+        .expect("Could not begin a transaction");
     for key in keys {
         txn.delete(key).await.expect("Could not delete the key");
     }

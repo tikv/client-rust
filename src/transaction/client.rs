@@ -4,9 +4,9 @@ use super::{requests::new_scan_lock_request, resolve_locks};
 use crate::{
     config::Config,
     pd::{PdClient, PdRpcClient},
-    request::{KvRequest, OPTIMISTIC_BACKOFF},
+    request::{KvRequest, RetryOptions},
     timestamp::TimestampExt,
-    transaction::{Snapshot, Transaction, TransactionStyle},
+    transaction::{Snapshot, Transaction, TransactionOptions},
     Result,
 };
 use futures::executor::ThreadPool;
@@ -37,7 +37,6 @@ pub struct Client {
     /// The thread pool for background tasks including committing secondary keys and failed
     /// transaction cleanups.
     bg_worker: ThreadPool,
-    config: Config,
 }
 
 impl Client {
@@ -78,11 +77,7 @@ impl Client {
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let bg_worker = ThreadPool::new()?;
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, true).await?);
-        Ok(Client {
-            pd,
-            bg_worker,
-            config,
-        })
+        Ok(Client { pd, bg_worker })
     }
 
     /// Creates a new [`Transaction`](Transaction) in optimistic mode.
@@ -99,19 +94,15 @@ impl Client {
     /// use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
-    /// let mut transaction = client.begin().await.unwrap();
+    /// let mut transaction = client.begin_optimistic().await.unwrap();
     /// // ... Issue some commands.
     /// let commit = transaction.commit();
     /// let result = commit.await.unwrap();
     /// # });
     /// ```
-    pub async fn begin(&self) -> Result<Transaction> {
+    pub async fn begin_optimistic(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
-        Ok(self.new_transaction(
-            timestamp,
-            TransactionStyle::new_optimistic(self.config.try_one_pc),
-            false,
-        ))
+        Ok(self.new_transaction(timestamp, TransactionOptions::new_optimistic()))
     }
 
     /// Creates a new [`Transaction`](Transaction) in pessimistic mode.
@@ -133,20 +124,34 @@ impl Client {
     /// ```
     pub async fn begin_pessimistic(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
-        Ok(self.new_transaction(
-            timestamp,
-            TransactionStyle::new_pessimistic(self.config.try_one_pc),
-            false,
-        ))
+        Ok(self.new_transaction(timestamp, TransactionOptions::new_pessimistic()))
+    }
+
+    /// Creates a new customized [`Transaction`](Transaction).
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// use tikv_client::{Config, TransactionClient, TransactionOptions};
+    /// use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let mut transaction = client
+    ///     .begin_with_options(TransactionOptions::default().use_async_commit())
+    ///     .await
+    ///     .unwrap();
+    /// // ... Issue some commands.
+    /// let commit = transaction.commit();
+    /// let result = commit.await.unwrap();
+    /// # });
+    /// ```
+    pub async fn begin_with_options(&self, options: TransactionOptions) -> Result<Transaction> {
+        let timestamp = self.current_timestamp().await?;
+        Ok(self.new_transaction(timestamp, options))
     }
 
     /// Creates a new [`Snapshot`](Snapshot) at the given [`Timestamp`](Timestamp).
-    pub fn snapshot(&self, timestamp: Timestamp) -> Snapshot {
-        Snapshot::new(self.new_transaction(
-            timestamp,
-            TransactionStyle::new_optimistic(self.config.try_one_pc),
-            true,
-        ))
+    pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> Snapshot {
+        Snapshot::new(self.new_transaction(timestamp, options.read_only()))
     }
 
     /// Retrieves the current [`Timestamp`](Timestamp).
@@ -184,8 +189,9 @@ impl Client {
                 safepoint.clone(),
                 SCAN_LOCK_BATCH_SIZE,
             );
-            let res: Vec<kvrpcpb::LockInfo> =
-                req.execute(self.pd.clone(), OPTIMISTIC_BACKOFF).await?;
+            let res: Vec<kvrpcpb::LockInfo> = req
+                .execute(self.pd.clone(), RetryOptions::default_optimistic())
+                .await?;
             if res.is_empty() {
                 break;
             }
@@ -209,18 +215,7 @@ impl Client {
         Ok(res)
     }
 
-    fn new_transaction(
-        &self,
-        timestamp: Timestamp,
-        style: TransactionStyle,
-        read_only: bool,
-    ) -> Transaction {
-        Transaction::new(
-            timestamp,
-            self.bg_worker.clone(),
-            self.pd.clone(),
-            style,
-            read_only,
-        )
+    fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
+        Transaction::new(timestamp, self.bg_worker.clone(), self.pd.clone(), options)
     }
 }

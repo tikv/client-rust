@@ -1,6 +1,6 @@
 use crate::{
     pd::PdClient,
-    request::{KvRequest, OPTIMISTIC_BACKOFF},
+    request::{KvRequest, RetryOptions},
     timestamp::TimestampExt,
     transaction::requests,
     Error, Key, RegionVerId, Result,
@@ -54,7 +54,7 @@ pub async fn resolve_locks(
             Some(&commit_version) => commit_version,
             None => {
                 let commit_version = requests::new_cleanup_request(primary_key, lock.lock_version)
-                    .execute(pd_client.clone(), OPTIMISTIC_BACKOFF)
+                    .execute(pd_client.clone(), RetryOptions::default_optimistic())
                     .await?;
                 commit_versions.insert(lock.lock_version, commit_version);
                 commit_version
@@ -95,7 +95,7 @@ async fn resolve_lock_with_retry(
             }
         };
         match requests::new_resolve_lock_request(context, start_version, commit_version)
-            .execute(pd_client.clone(), OPTIMISTIC_BACKOFF)
+            .execute(pd_client.clone(), RetryOptions::default_optimistic())
             .await
         {
             Ok(_) => {

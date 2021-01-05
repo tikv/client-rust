@@ -99,13 +99,20 @@ mod proptests;
 extern crate log;
 
 #[doc(inline)]
+pub use crate::backoff::Backoff;
+#[doc(inline)]
 pub use crate::kv::{BoundRange, Key, KvPair, ToOwnedRange, Value};
 #[doc(inline)]
 pub use crate::raw::{Client as RawClient, ColumnFamily};
 #[doc(inline)]
+pub use crate::request::RetryOptions;
+#[doc(inline)]
 pub use crate::timestamp::{Timestamp, TimestampExt};
 #[doc(inline)]
-pub use crate::transaction::{Client as TransactionClient, Snapshot, Transaction};
+pub use crate::transaction::{
+    Client as TransactionClient, Snapshot, Transaction, TransactionOptions,
+};
+#[doc(inline)]
 pub use config::Config;
 #[doc(inline)]
 pub use region::{Region, RegionId, RegionVerId, StoreId};

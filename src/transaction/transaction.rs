@@ -1,8 +1,9 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
+    backoff::Backoff,
     pd::{PdClient, PdRpcClient},
-    request::{KvRequest, OPTIMISTIC_BACKOFF, PESSIMISTIC_BACKOFF},
+    request::{KvRequest, RetryOptions},
     timestamp::TimestampExt,
     transaction::{buffer::Buffer, requests::*},
     BoundRange, Error, Key, KvPair, Result, Value,
@@ -12,70 +13,7 @@ use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
 use std::{iter, ops::RangeBounds, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
-#[derive(PartialEq)]
-enum TransactionStatus {
-    /// The transaction is read-only [`Snapshot`](super::Snapshot::Snapshot), no need to commit or rollback or panic on drop.
-    ReadOnly,
-    /// The transaction have not been committed or rolled back.
-    Active,
-    /// The transaction has committed.
-    Committed,
-    /// The transaction has tried to commit. Only `commit` is allowed.
-    StartedCommit,
-    /// The transaction has rolled back.
-    Rolledback,
-    /// The transaction has tried to rollback. Only `rollback` is allowed.
-    StartedRollback,
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum TransactionKind {
-    Optimistic,
-    /// Argument is for_update_ts
-    Pessimistic(u64),
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub struct TransactionStyle {
-    kind: TransactionKind,
-    try_one_pc: bool,
-    async_commit: bool,
-}
-
-impl TransactionStyle {
-    pub fn new_optimistic(try_one_pc: bool) -> TransactionStyle {
-        TransactionStyle {
-            kind: TransactionKind::Optimistic,
-            try_one_pc,
-            async_commit: false,
-        }
-    }
-
-    pub fn new_pessimistic(try_one_pc: bool) -> TransactionStyle {
-        TransactionStyle {
-            kind: TransactionKind::Pessimistic(0),
-            try_one_pc,
-            async_commit: false,
-        }
-    }
-
-    pub fn async_commit(mut self) -> TransactionStyle {
-        self.async_commit = true;
-        self
-    }
-
-    fn push_for_update_ts(&mut self, for_update_ts: u64) {
-        match &mut self.kind {
-            TransactionKind::Optimistic => unreachable!(),
-            TransactionKind::Pessimistic(old_for_update_ts) => {
-                self.kind =
-                    TransactionKind::Pessimistic(std::cmp::max(*old_for_update_ts, for_update_ts));
-            }
-        }
-    }
-}
-
-/// A undo-able set of actions on the dataset.
+/// An undo-able set of actions on the dataset.
 ///
 /// Using a transaction you can prepare a set of actions (such as `get`, or `put`) on data at a
 /// particular timestamp called `start_ts` obtained from the placement driver.
@@ -101,7 +39,7 @@ impl TransactionStyle {
 /// use futures::prelude::*;
 /// # futures::executor::block_on(async {
 /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
-/// let txn = client.begin().await.unwrap();
+/// let txn = client.begin_optimistic().await.unwrap();
 /// # });
 /// ```
 pub struct Transaction {
@@ -110,7 +48,7 @@ pub struct Transaction {
     buffer: Buffer,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
-    style: TransactionStyle,
+    options: TransactionOptions,
 }
 
 impl Transaction {
@@ -118,10 +56,9 @@ impl Transaction {
         timestamp: Timestamp,
         bg_worker: ThreadPool,
         rpc: Arc<PdRpcClient>,
-        style: TransactionStyle,
-        read_only: bool,
+        options: TransactionOptions,
     ) -> Transaction {
-        let status = if read_only {
+        let status = if options.read_only {
             TransactionStatus::ReadOnly
         } else {
             TransactionStatus::Active
@@ -132,7 +69,7 @@ impl Transaction {
             buffer: Default::default(),
             bg_worker,
             rpc,
-            style,
+            options,
         }
     }
 
@@ -149,7 +86,7 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let result: Option<Value> = txn.get(key).await.unwrap();
     /// // Finish the transaction...
@@ -162,7 +99,7 @@ impl Transaction {
         self.buffer
             .get_or_else(key, |key| {
                 new_mvcc_get_request(key, self.timestamp.clone())
-                    .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+                    .execute(self.rpc.clone(), RetryOptions::default_optimistic())
             })
             .await
     }
@@ -196,7 +133,7 @@ impl Transaction {
             self.buffer
                 .get_or_else(key, |key| {
                     new_mvcc_get_request(key, self.timestamp.clone())
-                        .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+                        .execute(self.rpc.clone(), RetryOptions::default_optimistic())
                 })
                 .await
         }
@@ -216,7 +153,7 @@ impl Transaction {
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let result: HashMap<Key, Value> = txn
     ///     .batch_get(keys)
@@ -237,7 +174,8 @@ impl Transaction {
         let rpc = self.rpc.clone();
         self.buffer
             .batch_get_or_else(keys.into_iter().map(|k| k.into()), move |keys| {
-                new_mvcc_get_batch_request(keys, timestamp).execute(rpc, OPTIMISTIC_BACKOFF)
+                new_mvcc_get_batch_request(keys, timestamp)
+                    .execute(rpc, RetryOptions::default_optimistic())
             })
             .await
     }
@@ -297,7 +235,7 @@ impl Transaction {
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key1: Key = b"TiKV".to_vec().into();
     /// let key2: Key = b"TiDB".to_vec().into();
     /// let result: Vec<KvPair> = txn
@@ -331,7 +269,7 @@ impl Transaction {
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key1: Key = b"TiKV".to_vec().into();
     /// let key2: Key = b"TiDB".to_vec().into();
     /// let result: Vec<Key> = txn
@@ -369,7 +307,7 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let val = "TiKV".to_owned();
     /// txn.put(key, val);
@@ -397,7 +335,7 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// txn.delete(key);
     /// // Finish the transaction...
@@ -429,7 +367,7 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
     /// txn.lock_keys(vec!["TiKV".to_owned(), "Rust".to_owned()]);
     /// // ... Do some actions.
     /// txn.commit().await.unwrap();
@@ -451,7 +389,7 @@ impl Transaction {
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
-    /// let mut txn = client.begin().await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
     /// // ... Do some actions.
     /// let req = txn.commit();
     /// let result: u64 = req.await.unwrap();
@@ -466,12 +404,12 @@ impl Transaction {
         }
         self.status = TransactionStatus::StartedCommit;
 
-        let res = TwoPhaseCommitter::new(
+        let res = Committer::new(
             self.buffer.to_proto_mutations().await,
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
-            self.style,
+            self.options.clone(),
         )
         .commit()
         .await;
@@ -494,12 +432,12 @@ impl Transaction {
         }
         self.status = TransactionStatus::StartedRollback;
 
-        let res = TwoPhaseCommitter::new(
+        let res = Committer::new(
             self.buffer.to_proto_mutations().await,
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
-            self.style,
+            self.options.clone(),
         )
         .rollback()
         .await;
@@ -523,7 +461,7 @@ impl Transaction {
         self.buffer
             .scan_and_fetch(range.into(), limit, move |new_range, new_limit| {
                 new_mvcc_scan_request(new_range, timestamp, new_limit, key_only)
-                    .execute(rpc, OPTIMISTIC_BACKOFF)
+                    .execute(rpc, RetryOptions::default_optimistic())
             })
             .await
     }
@@ -539,7 +477,7 @@ impl Transaction {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<()> {
         assert!(
-            matches!(self.style.kind, TransactionKind::Pessimistic(_)),
+            matches!(self.options.kind, TransactionKind::Pessimistic(_)),
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
         );
 
@@ -552,7 +490,7 @@ impl Transaction {
         let primary_lock = keys[0].clone();
         let lock_ttl = DEFAULT_LOCK_TTL;
         let for_update_ts = self.rpc.clone().get_timestamp().await.unwrap().version();
-        self.style.push_for_update_ts(for_update_ts);
+        self.options.push_for_update_ts(for_update_ts);
         new_pessimistic_lock_request(
             keys,
             primary_lock.into(),
@@ -560,7 +498,7 @@ impl Transaction {
             lock_ttl,
             for_update_ts,
         )
-        .execute(self.rpc.clone(), PESSIMISTIC_BACKOFF)
+        .execute(self.rpc.clone(), RetryOptions::default_pessimistic())
         .await
     }
 
@@ -576,11 +514,114 @@ impl Transaction {
     }
 
     fn is_pessimistic(&self) -> bool {
-        matches!(self.style.kind, TransactionKind::Pessimistic(_))
+        matches!(self.options.kind, TransactionKind::Pessimistic(_))
+    }
+}
+
+impl Drop for Transaction {
+    fn drop(&mut self) {
+        if self.status == TransactionStatus::Active {
+            panic!("Dropping an active transaction. Consider commit or rollback it.")
+        }
+    }
+}
+
+/// Optimistic or pessimistic transaction.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum TransactionKind {
+    Optimistic,
+    /// Argument is for_update_ts
+    Pessimistic(u64),
+}
+
+/// Options for configuring a transaction.
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct TransactionOptions {
+    /// Optimistic or pessimistic (default) transaction.
+    kind: TransactionKind,
+    /// Try using 1pc rather than 2pc (default is to always use 2pc).
+    try_one_pc: bool,
+    /// Try to use async commit (default is not to).
+    async_commit: bool,
+    /// Is the transaction read only? (Default is no).
+    read_only: bool,
+    /// How to retry in the event of certain errors.
+    retry_options: RetryOptions,
+}
+
+impl Default for TransactionOptions {
+    fn default() -> TransactionOptions {
+        Self::new_pessimistic()
+    }
+}
+
+impl TransactionOptions {
+    /// Default options for an optimistic transaction.
+    pub fn new_optimistic() -> TransactionOptions {
+        TransactionOptions {
+            kind: TransactionKind::Optimistic,
+            try_one_pc: false,
+            async_commit: false,
+            read_only: false,
+            retry_options: RetryOptions::default_optimistic(),
+        }
     }
 
-    pub fn use_async_commit(&mut self) {
-        self.style = self.style.async_commit();
+    /// Default options for a pessimistic transaction.
+    pub fn new_pessimistic() -> TransactionOptions {
+        TransactionOptions {
+            kind: TransactionKind::Pessimistic(0),
+            try_one_pc: false,
+            async_commit: false,
+            read_only: false,
+            retry_options: RetryOptions::default_pessimistic(),
+        }
+    }
+
+    /// Try to use async commit.
+    pub fn use_async_commit(mut self) -> TransactionOptions {
+        self.async_commit = true;
+        self
+    }
+
+    /// Try to use 1pc.
+    pub fn try_one_pc(mut self) -> TransactionOptions {
+        self.try_one_pc = true;
+        self
+    }
+
+    /// Make the transaction read only.
+    pub fn read_only(mut self) -> TransactionOptions {
+        self.read_only = true;
+        self
+    }
+
+    /// Don't automatically resolve locks and retry if keys are locked.
+    pub fn no_resolve_locks(mut self) -> TransactionOptions {
+        self.retry_options.lock_backoff = Backoff::no_backoff();
+        self
+    }
+
+    /// Don't automatically resolve regions with PD if we have outdated region information.
+    pub fn no_resolve_regions(mut self) -> TransactionOptions {
+        self.retry_options.region_backoff = Backoff::no_backoff();
+        self
+    }
+
+    /// Set RetryOptions.
+    pub fn retry_options(mut self, options: RetryOptions) -> TransactionOptions {
+        self.retry_options = options;
+        self
+    }
+
+    fn push_for_update_ts(&mut self, for_update_ts: u64) {
+        match &mut self.kind {
+            TransactionKind::Optimistic => unreachable!(),
+            TransactionKind::Pessimistic(old_for_update_ts) => {
+                self.kind =
+                    TransactionKind::Pessimistic(std::cmp::max(*old_for_update_ts, for_update_ts));
+            }
+        }
     }
 }
 
@@ -595,17 +636,17 @@ const DEFAULT_LOCK_TTL: u64 = 3000;
 ///
 /// The committer implements `prewrite`, `commit` and `rollback` functions.
 #[derive(new)]
-struct TwoPhaseCommitter {
+struct Committer {
     mutations: Vec<kvrpcpb::Mutation>,
     start_version: u64,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
-    style: TransactionStyle,
+    options: TransactionOptions,
     #[new(default)]
     undetermined: bool,
 }
 
-impl TwoPhaseCommitter {
+impl Committer {
     async fn commit(mut self) -> Result<u64> {
         if self.mutations.is_empty() {
             return Ok(0);
@@ -614,11 +655,11 @@ impl TwoPhaseCommitter {
         let min_commit_ts = self.prewrite().await?;
 
         // If we didn't use 1pc, prewrite will set `try_one_pc` to false.
-        if self.style.try_one_pc {
+        if self.options.try_one_pc {
             return Ok(min_commit_ts);
         }
 
-        let commit_ts = if self.style.async_commit {
+        let commit_ts = if self.options.async_commit {
             assert_ne!(min_commit_ts, 0);
             min_commit_ts
         } else {
@@ -647,7 +688,7 @@ impl TwoPhaseCommitter {
         let primary_lock = self.mutations[0].key.clone().into();
         // TODO: calculate TTL for big transactions
         let lock_ttl = DEFAULT_LOCK_TTL;
-        let mut request = match self.style.kind {
+        let mut request = match self.options.kind {
             TransactionKind::Optimistic => new_prewrite_request(
                 self.mutations.clone(),
                 primary_lock,
@@ -663,25 +704,16 @@ impl TwoPhaseCommitter {
             ),
         };
 
-        request.use_async_commit = self.style.async_commit;
-        request.try_one_pc = self.style.try_one_pc;
+        request.use_async_commit = self.options.async_commit;
+        request.try_one_pc = self.options.try_one_pc;
         request.secondaries = self.mutations[1..].iter().map(|m| m.key.clone()).collect();
         // FIXME set max_commit_ts and min_commit_ts
 
-        let response = match self.style.kind {
-            TransactionKind::Optimistic => {
-                request
-                    .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
-                    .await?
-            }
-            TransactionKind::Pessimistic(_) => {
-                request
-                    .execute(self.rpc.clone(), PESSIMISTIC_BACKOFF)
-                    .await?
-            }
-        };
+        let response = request
+            .execute(self.rpc.clone(), self.options.retry_options.clone())
+            .await?;
 
-        if self.style.try_one_pc && response.len() == 1 {
+        if self.options.try_one_pc && response.len() == 1 {
             if response[0].one_pc_commit_ts == 0 {
                 return Err(Error::OnePcFailure);
             }
@@ -689,7 +721,7 @@ impl TwoPhaseCommitter {
             return Ok(response[0].one_pc_commit_ts);
         }
 
-        self.style.try_one_pc = false;
+        self.options.try_one_pc = false;
 
         let min_commit_ts = response
             .iter()
@@ -708,7 +740,7 @@ impl TwoPhaseCommitter {
         let primary_key = vec![self.mutations[0].key.clone().into()];
         let commit_version = self.rpc.clone().get_timestamp().await?.version();
         new_commit_request(primary_key, self.start_version, commit_version)
-            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
             .inspect_err(|e| {
                 // We don't know whether the transaction is committed or not if we fail to receive
                 // the response. Then, we mark the transaction as undetermined and propagate the
@@ -727,7 +759,7 @@ impl TwoPhaseCommitter {
         let mutations = self.mutations.into_iter();
 
         // Only skip the primary if we committed it earlier (i.e., we are not using async commit).
-        let keys = if self.style.async_commit {
+        let keys = if self.options.async_commit {
             mutations.skip(0)
         } else {
             if primary_only {
@@ -738,7 +770,7 @@ impl TwoPhaseCommitter {
         .map(|mutation| mutation.key.into())
         .collect();
         new_commit_request(keys, self.start_version, commit_version)
-            .execute(self.rpc.clone(), OPTIMISTIC_BACKOFF)
+            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
             .await
     }
 
@@ -748,26 +780,34 @@ impl TwoPhaseCommitter {
             .into_iter()
             .map(|mutation| mutation.key.into())
             .collect();
-        match self.style.kind {
+        match self.options.kind {
             TransactionKind::Optimistic if keys.is_empty() => Ok(()),
             TransactionKind::Optimistic => {
                 new_batch_rollback_request(keys, self.start_version)
-                    .execute(self.rpc, OPTIMISTIC_BACKOFF)
+                    .execute(self.rpc, RetryOptions::default_optimistic())
                     .await
             }
             TransactionKind::Pessimistic(for_update_ts) => {
                 new_pessimistic_rollback_request(keys, self.start_version, for_update_ts)
-                    .execute(self.rpc, OPTIMISTIC_BACKOFF)
+                    .execute(self.rpc, RetryOptions::default_optimistic())
                     .await
             }
         }
     }
 }
 
-impl Drop for Transaction {
-    fn drop(&mut self) {
-        if self.status == TransactionStatus::Active {
-            panic!("Dropping an active transaction. Consider commit or rollback it.")
-        }
-    }
+#[derive(PartialEq)]
+enum TransactionStatus {
+    /// The transaction is read-only [`Snapshot`](super::Snapshot::Snapshot), no need to commit or rollback or panic on drop.
+    ReadOnly,
+    /// The transaction have not been committed or rolled back.
+    Active,
+    /// The transaction has committed.
+    Committed,
+    /// The transaction has tried to commit. Only `commit` is allowed.
+    StartedCommit,
+    /// The transaction has rolled back.
+    Rolledback,
+    /// The transaction has tried to rollback. Only `rollback` is allowed.
+    StartedRollback,
 }
