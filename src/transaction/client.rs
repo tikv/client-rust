@@ -37,7 +37,6 @@ pub struct Client {
     /// The thread pool for background tasks including committing secondary keys and failed
     /// transaction cleanups.
     bg_worker: ThreadPool,
-    config: Config,
 }
 
 impl Client {
@@ -78,11 +77,7 @@ impl Client {
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let bg_worker = ThreadPool::new()?;
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, true).await?);
-        Ok(Client {
-            pd,
-            bg_worker,
-            config,
-        })
+        Ok(Client { pd, bg_worker })
     }
 
     /// Creates a new [`Transaction`](Transaction) in optimistic mode.
@@ -107,11 +102,7 @@ impl Client {
     /// ```
     pub async fn begin_optimistic(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
-        let mut options = TransactionOptions::new_optimistic();
-        if self.config.try_one_pc {
-            options = options.try_one_pc();
-        }
-        Ok(self.new_transaction(timestamp, options))
+        Ok(self.new_transaction(timestamp, TransactionOptions::new_optimistic()))
     }
 
     /// Creates a new [`Transaction`](Transaction) in pessimistic mode.
@@ -133,11 +124,7 @@ impl Client {
     /// ```
     pub async fn begin_pessimistic(&self) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
-        let mut options = TransactionOptions::new_pessimistic();
-        if self.config.try_one_pc {
-            options = options.try_one_pc();
-        }
-        Ok(self.new_transaction(timestamp, options))
+        Ok(self.new_transaction(timestamp, TransactionOptions::new_pessimistic()))
     }
 
     /// Creates a new customized [`Transaction`](Transaction).
@@ -149,7 +136,7 @@ impl Client {
     /// # futures::executor::block_on(async {
     /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let mut transaction = client
-    ///     .begin_with_options(TransactionOptions::default().async_commit())
+    ///     .begin_with_options(TransactionOptions::default().use_async_commit())
     ///     .await
     ///     .unwrap();
     /// // ... Issue some commands.

@@ -24,15 +24,15 @@ async fn main() {
         .await
         .expect("Could not connect to tikv");
 
-    let key1: Key = b"key1".to_vec().into();
+    let key1: Key = b"key01".to_vec().into();
     let value1: Value = b"value1".to_vec();
-    let key2: Key = b"key2".to_vec().into();
+    let key2: Key = b"key02".to_vec().into();
     let value2: Value = b"value2".to_vec();
     let mut txn0 = client
         .begin_optimistic()
         .await
         .expect("Could not begin a transaction");
-    for (key, value) in vec![(key1, value1), (key2, value2)] {
+    for (key, value) in vec![(key1.clone(), value1), (key2, value2)] {
         txn0.put(key, value).await.expect("Could not set key value");
     }
     txn0.commit().await.expect("Could not commit");
@@ -42,7 +42,6 @@ async fn main() {
         .await
         .expect("Could not begin a transaction");
     // lock the key
-    let key1: Key = b"key1".to_vec().into();
     let value = txn1
         .get_for_update(key1.clone())
         .await
@@ -54,9 +53,8 @@ async fn main() {
             .begin_optimistic()
             .await
             .expect("Could not begin a transaction");
-        let key1: Key = b"key1".to_vec().into();
         let value2: Value = b"value2".to_vec();
-        txn2.put(key1, value2).await.unwrap();
+        txn2.put(key1.clone(), value2).await.unwrap();
         let result = txn2.commit().await;
         assert!(result.is_err());
     }

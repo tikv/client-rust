@@ -27,7 +27,6 @@ pub struct Config {
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
     pub timeout: Duration,
-    pub try_one_pc: bool,
 }
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -39,7 +38,6 @@ impl Default for Config {
             cert_path: None,
             key_path: None,
             timeout: DEFAULT_REQUEST_TIMEOUT,
-            try_one_pc: false,
         }
     }
 }
@@ -79,11 +77,6 @@ impl Config {
     /// ```
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
-        self
-    }
-
-    pub fn try_one_pc(mut self) -> Self {
-        self.try_one_pc = true;
         self
     }
 }

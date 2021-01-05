@@ -579,7 +579,7 @@ impl TransactionOptions {
     }
 
     /// Try to use async commit.
-    pub fn async_commit(mut self) -> TransactionOptions {
+    pub fn use_async_commit(mut self) -> TransactionOptions {
         self.async_commit = true;
         self
     }

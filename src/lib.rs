@@ -105,6 +105,8 @@ pub use crate::kv::{BoundRange, Key, KvPair, ToOwnedRange, Value};
 #[doc(inline)]
 pub use crate::raw::{Client as RawClient, ColumnFamily};
 #[doc(inline)]
+pub use crate::request::RetryOptions;
+#[doc(inline)]
 pub use crate::timestamp::{Timestamp, TimestampExt};
 #[doc(inline)]
 pub use crate::transaction::{

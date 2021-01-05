@@ -9,7 +9,8 @@ use std::{
     env, iter,
 };
 use tikv_client::{
-    ColumnFamily, Config, Key, KvPair, RawClient, Result, Transaction, TransactionClient, Value,
+    ColumnFamily, Key, KvPair, RawClient, Result, Transaction, TransactionClient,
+    TransactionOptions, Value,
 };
 
 // Parameters used in test
@@ -114,7 +115,10 @@ async fn crud() -> Result<()> {
     txn.commit().await?;
 
     // Read again from TiKV
-    let snapshot = client.snapshot(client.current_timestamp().await?);
+    let snapshot = client.snapshot(
+        client.current_timestamp().await?,
+        TransactionOptions::default(),
+    );
     let batch_get_res: HashMap<Key, Value> = snapshot
         .batch_get(vec!["foo".to_owned(), "bar".to_owned()])
         .await?
@@ -213,7 +217,10 @@ async fn txn_write_million() -> Result<()> {
 
     // test scan
     let limit = 2u32.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN + 2); // large enough
-    let snapshot = client.snapshot(client.current_timestamp().await?);
+    let snapshot = client.snapshot(
+        client.current_timestamp().await?,
+        TransactionOptions::default(),
+    );
     let res = snapshot.scan(vec![].., limit).await?;
     assert_eq!(res.count(), 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));
 
@@ -228,7 +235,10 @@ async fn txn_write_million() -> Result<()> {
     let mut sum = 0;
 
     // empty key to key[0]
-    let snapshot = client.snapshot(client.current_timestamp().await?);
+    let snapshot = client.snapshot(
+        client.current_timestamp().await?,
+        TransactionOptions::default(),
+    );
     let res = snapshot.scan(vec![]..keys[0].clone(), limit).await?;
     sum += res.count();
 
@@ -253,12 +263,13 @@ async fn txn_write_million() -> Result<()> {
 #[serial]
 async fn txn_bank_transfer() -> Result<()> {
     clear_tikv().await?;
-    let config = Config::default().try_one_pc();
-    let client = TransactionClient::new_with_config(pd_addrs(), config).await?;
+    let client = TransactionClient::new(pd_addrs()).await?;
     let mut rng = thread_rng();
 
     let people = gen_u32_keys(NUM_PEOPLE, &mut rng);
-    let mut txn = client.begin_optimistic().await?;
+    let mut txn = client
+        .begin_with_options(TransactionOptions::new_optimistic().try_one_pc())
+        .await?;
     let mut sum: u32 = 0;
     for person in &people {
         let init = rng.gen::<u8>() as u32;
@@ -269,8 +280,9 @@ async fn txn_bank_transfer() -> Result<()> {
 
     // transfer
     for _ in 0..NUM_TRNASFER {
-        let mut txn = client.begin_optimistic().await?;
-        txn.use_async_commit();
+        let mut txn = client
+            .begin_with_options(TransactionOptions::new_optimistic().use_async_commit())
+            .await?;
         let chosen_people = people.iter().choose_multiple(&mut rng, 2);
         let alice = chosen_people[0];
         let mut alice_balance = get_txn_u32(&txn, alice.clone()).await?;
