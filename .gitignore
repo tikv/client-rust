@@ -25,6 +25,6 @@ target
 tmp
 /bin
 
-# Cargo.lock
+Cargo.lock
 *.rs.bk
 *.rs.fmt
