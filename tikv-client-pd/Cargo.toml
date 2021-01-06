@@ -6,14 +6,13 @@ edition = "2018"
 [dependencies]
 async-trait = "0.1"
 futures = { version = "0.3.5", features = ["compat", "async-await", "thread-pool"] }
-grpcio = { version = "0.6", features = [ "secure", "prost-codec" ], default-features = false }
+grpcio = { version = "0.7", features = [ "secure", "prost-codec" ], default-features = false }
 log = "0.4"
 tikv-client-common = { path = "../tikv-client-common" }
 tikv-client-proto = { path = "../tikv-client-proto" }
 
 [dev-dependencies]
 clap = "2.32"
-fail = { version = "0.3", features = [ "failpoints" ] }
-proptest = "0.9"
-proptest-derive = "0.1.0"
-tempdir = "0.3"
+fail = { version = "0.4", features = [ "failpoints" ] }
+proptest = "0.10"
+proptest-derive = "0.2"

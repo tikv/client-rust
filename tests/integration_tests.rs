@@ -160,7 +160,7 @@ async fn raw_bank_transfer() -> Result<()> {
         if alice_balance == 0 {
             continue;
         }
-        let transfer = rng.gen_range(0, alice_balance);
+        let transfer = rng.gen_range(0..alice_balance);
         alice_balance -= transfer;
         bob_balance += transfer;
         client
@@ -291,7 +291,7 @@ async fn txn_bank_transfer() -> Result<()> {
         if alice_balance == 0 {
             continue;
         }
-        let transfer = rng.gen_range(0, alice_balance);
+        let transfer = rng.gen_range(0..alice_balance);
         alice_balance -= transfer;
         bob_balance += transfer;
         txn.put(alice.clone(), alice_balance.to_be_bytes().to_vec())

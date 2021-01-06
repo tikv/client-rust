@@ -12,5 +12,5 @@ protobuf = "=2.8.0"
 prost = { version = "0.6" }
 prost-derive = { version = "0.6" }
 futures = "0.3.5"
-grpcio = { version = "0.6.0", default-features = false, features = ["secure", "prost-codec"] }
+grpcio = { version = "0.7", default-features = false, features = ["secure", "prost-codec"] }
 lazy_static = { version = "1.3" }

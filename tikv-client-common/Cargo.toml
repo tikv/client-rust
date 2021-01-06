@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 thiserror = "1"
 futures = { version = "0.3.5", features = ["compat", "async-await", "thread-pool"] }
-grpcio = { version = "0.6", features = [ "secure", "prost-codec" ], default-features = false }
+grpcio = { version = "0.7", features = [ "secure", "prost-codec" ], default-features = false }
 lazy_static = "1"
 log = "0.4"
 regex = "1"
@@ -15,8 +15,8 @@ tikv-client-proto = { path = "../tikv-client-proto" }
 
 [dev-dependencies]
 clap = "2.32"
-fail = { version = "0.3", features = [ "failpoints" ] }
-proptest = "0.9"
-proptest-derive = "0.1.0"
-tempdir = "0.3"
-tokio = { version = "0.2", features = ["rt-threaded", "macros"] }
+fail = { version = "0.4", features = [ "failpoints" ] }
+proptest = "0.10"
+proptest-derive = "0.2"
+tempfile = "3"
+tokio = "1.0"

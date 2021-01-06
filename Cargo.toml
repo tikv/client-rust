@@ -22,16 +22,16 @@ async-trait = "0.1"
 derive-new = "0.5"
 futures = { version = "0.3.5", features = ["async-await", "thread-pool"] }
 futures-timer = "3.0"
-grpcio = { version = "0.6", features = [ "secure", "prost-codec" ], default-features = false }
+grpcio = { version = "0.7", features = [ "secure", "prost-codec" ], default-features = false }
 lazy_static = "1"
 log = "0.4"
-prometheus = { version = "0.8", features = [ "push", "process" ], default-features = false } 
-rand = "0.7"
+prometheus = { version = "0.11", features = [ "push", "process" ], default-features = false } 
+rand = "0.8"
 regex = "1"
 serde = "1.0"
 serde_derive = "1.0"
 thiserror = "1"
-tokio = { version = "0.2", features = ["sync"] }
+tokio = { version = "1.0", features = [ "sync" ] }
 
 tikv-client-common = { path = "tikv-client-common" }
 tikv-client-pd = { path = "tikv-client-pd" }
@@ -42,13 +42,12 @@ mock-tikv = {path = "mock-tikv"}
 
 [dev-dependencies]
 clap = "2.32"
-fail = { version = "0.3", features = [ "failpoints" ] }
-proptest = "0.9"
-proptest-derive = "0.1.0"
-tempdir = "0.3"
+fail = { version = "0.4", features = [ "failpoints" ] }
+proptest = "0.10"
+proptest-derive = "0.2"
 serial_test = "0.5.0"
 simple_logger = "1.9.0"
-tokio = { version = "0.2", features = ["rt-threaded", "macros"] }
+tokio = { version = "1.0", features = [ "sync", "rt-multi-thread", "macros" ] }
 
 [workspace]
 members = [

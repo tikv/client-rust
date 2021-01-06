@@ -96,16 +96,14 @@ impl SecurityManager {
 
 #[cfg(test)]
 mod tests {
-    extern crate tempdir;
     use super::*;
 
     use std::{fs::File, io::Write, path::PathBuf};
-
-    use self::tempdir::TempDir;
+    use tempfile;
 
     #[test]
     fn test_security() {
-        let temp = TempDir::new("test_cred").unwrap();
+        let temp = tempfile::tempdir().unwrap();
         let example_ca = temp.path().join("ca");
         let example_cert = temp.path().join("cert");
         let example_pem = temp.path().join("key");
