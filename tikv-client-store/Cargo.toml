@@ -7,7 +7,7 @@ edition = "2018"
 async-trait = "0.1"
 derive-new = "0.5"
 futures = { version = "0.3.5", features = ["compat", "async-await", "thread-pool"] }
-grpcio = { version = "0.6", features = ["secure", "prost-codec"], default-features = false }
+grpcio = { version = "0.7", features = ["secure", "prost-codec"], default-features = false }
 log = "0.4"
 tikv-client-common = { path = "../tikv-client-common" }
 tikv-client-proto = { path = "../tikv-client-proto" }
