@@ -38,7 +38,7 @@ impl Backoff {
                 let delay_ms = self.max_delay_ms.min(self.current_delay_ms);
 
                 let mut rng = thread_rng();
-                let delay_ms: u64 = rng.gen_range(0, delay_ms);
+                let delay_ms: u64 = rng.gen_range(0..delay_ms);
                 self.current_delay_ms <<= 1;
 
                 Some(Duration::from_millis(delay_ms))
@@ -48,7 +48,7 @@ impl Backoff {
                 let half_delay_ms = delay_ms >> 1;
 
                 let mut rng = thread_rng();
-                let delay_ms: u64 = rng.gen_range(0, half_delay_ms) + half_delay_ms;
+                let delay_ms: u64 = rng.gen_range(0..half_delay_ms) + half_delay_ms;
                 self.current_delay_ms <<= 1;
 
                 Some(Duration::from_millis(delay_ms))
@@ -56,7 +56,7 @@ impl Backoff {
             BackoffKind::DecorrelatedJitter => {
                 let mut rng = thread_rng();
                 let delay_ms: u64 = rng
-                    .gen_range(0, self.current_delay_ms * 3 - self.base_delay_ms)
+                    .gen_range(0..self.current_delay_ms * 3 - self.base_delay_ms)
                     + self.base_delay_ms;
 
                 let delay_ms = delay_ms.min(self.max_delay_ms);

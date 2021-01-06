@@ -26,7 +26,7 @@ grpcio = { version = "0.7", features = [ "secure", "prost-codec" ], default-feat
 lazy_static = "1"
 log = "0.4"
 prometheus = { version = "0.11", features = [ "push", "process" ], default-features = false } 
-rand = "0.7"
+rand = "0.8"
 regex = "1"
 serde = "1.0"
 serde_derive = "1.0"
