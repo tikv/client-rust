@@ -18,5 +18,5 @@ clap = "2.32"
 fail = { version = "0.3", features = [ "failpoints" ] }
 proptest = "0.9"
 proptest-derive = "0.1.0"
-tempdir = "0.3"
+tempfile = "3"
 tokio = "1.0"

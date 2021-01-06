@@ -45,7 +45,6 @@ clap = "2.32"
 fail = { version = "0.3", features = [ "failpoints" ] }
 proptest = "0.9"
 proptest-derive = "0.1.0"
-tempdir = "0.3"
 serial_test = "0.5.0"
 simple_logger = "1.9.0"
 tokio = { version = "1.0", features = [ "sync", "rt-multi-thread", "macros" ] }
