@@ -31,7 +31,7 @@ regex = "1"
 serde = "1.0"
 serde_derive = "1.0"
 thiserror = "1"
-tokio = { version = "0.2", features = ["sync"] }
+tokio = { version = "1.0", features = [ "sync" ] }
 
 tikv-client-common = { path = "tikv-client-common" }
 tikv-client-pd = { path = "tikv-client-pd" }
@@ -48,7 +48,7 @@ proptest-derive = "0.1.0"
 tempdir = "0.3"
 serial_test = "0.5.0"
 simple_logger = "1.9.0"
-tokio = { version = "0.2", features = ["rt-threaded", "macros"] }
+tokio = { version = "1.0", features = [ "sync", "rt-multi-thread", "macros" ] }
 
 [workspace]
 members = [
