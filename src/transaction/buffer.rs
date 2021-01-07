@@ -6,7 +6,7 @@ use std::{
     future::Future,
 };
 use tikv_client_proto::kvrpcpb;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard};
 
 /// A caching layer which buffers reads and writes in a transaction.
 #[derive(Default)]
@@ -28,7 +28,7 @@ impl Buffer {
             MutationValue::Undetermined => {
                 let value = f(key.clone()).await?;
                 let mut mutations = self.mutations.lock().await;
-                mutations.insert(key, BufferEntry::Cached(value.clone()));
+                self.update_cache(&mut mutations, key, value.clone());
                 Ok(value)
             }
         }
@@ -74,8 +74,10 @@ impl Buffer {
 
         let fetched_results = f(undetermined_keys).await?;
         let mut mutations = self.mutations.lock().await;
-        for pair in &fetched_results {
-            mutations.insert(pair.0.clone(), BufferEntry::Cached(Some(pair.1.clone())));
+        for kvpair in &fetched_results {
+            let key = kvpair.0.clone();
+            let value = Some(kvpair.1.clone());
+            self.update_cache(&mut mutations, key, value);
         }
 
         let results = cached_results.chain(fetched_results.into_iter());
@@ -126,7 +128,7 @@ impl Buffer {
 
         // update local buffer
         for (k, v) in &results {
-            mutations.insert(k.clone(), BufferEntry::Cached(Some(v.clone())));
+            self.update_cache(&mut mutations, k.clone(), Some(v.clone()));
         }
 
         let mut res = results
@@ -181,6 +183,23 @@ impl Buffer {
             .get(&key)
             .map(BufferEntry::get_value)
             .unwrap_or(MutationValue::Undetermined)
+    }
+
+    fn update_cache(
+        &self,
+        mutations: &mut MutexGuard<BTreeMap<Key, BufferEntry>>,
+        key: Key,
+        value: Option<Value>,
+    ) {
+        match mutations.get(&key) {
+            Some(BufferEntry::ReadLockCached(None)) => {
+                mutations.insert(key, BufferEntry::ReadLockCached(Some(value)));
+            }
+            None => {
+                mutations.insert(key, BufferEntry::Cached(value));
+            }
+            _ => unreachable!(),
+        }
     }
 }
 

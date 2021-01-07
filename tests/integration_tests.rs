@@ -520,8 +520,7 @@ async fn pessimistic_rollback() -> Result<()> {
 
     preload_txn.put(key.clone(), value).await?;
     preload_txn.commit().await?;
-    for i in 0..100 {
-        println!("{}", i);
+    for _ in 0..100 {
         let mut txn = client.begin_pessimistic().await?;
         let result = get_for_update(&mut txn, key.clone()).await;
         txn.rollback().await?;
