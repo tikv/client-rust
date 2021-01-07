@@ -319,7 +319,8 @@ impl Transaction {
         self.check_allow_operation()?;
         let key = key.into();
         if self.is_pessimistic() {
-            self.pessimistic_lock(iter::once(key.clone()), false).await?;
+            self.pessimistic_lock(iter::once(key.clone()), false)
+                .await?;
         }
         self.buffer.put(key, value.into()).await;
         Ok(())
@@ -346,7 +347,8 @@ impl Transaction {
         self.check_allow_operation()?;
         let key = key.into();
         if self.is_pessimistic() {
-            self.pessimistic_lock(iter::once(key.clone()), false).await?;
+            self.pessimistic_lock(iter::once(key.clone()), false)
+                .await?;
         }
         self.buffer.delete(key).await;
         Ok(())
@@ -374,6 +376,9 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn lock_keys(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
+        if self.is_pessimistic() {
+            return Err(Error::InvalidTransactionType);
+        }
         self.check_allow_operation()?;
         for key in keys {
             self.buffer.lock(key.into()).await;
@@ -498,7 +503,7 @@ impl Transaction {
             self.timestamp.version(),
             lock_ttl,
             for_update_ts,
-            need_value
+            need_value,
         )
         .execute(self.rpc.clone(), RetryOptions::default_pessimistic())
         .await
