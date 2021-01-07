@@ -508,6 +508,34 @@ async fn raw_write_million() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+#[serial]
+async fn pessimistic_rollback() -> Result<()> {
+    clear_tikv().await?;
+    let client =
+        TransactionClient::new_with_config(vec!["127.0.0.1:2379"], Default::default()).await?;
+    let mut preload_txn = client.begin_optimistic().await?;
+    let key = vec![1];
+    let value = key.clone();
+
+    preload_txn.put(key.clone(), value).await?;
+    preload_txn.commit().await?;
+    for i in 0..100 {
+        println!("{}", i);
+        let mut txn = client.begin_pessimistic().await?;
+        let result = get_for_update(&mut txn, key.clone()).await;
+        txn.rollback().await?;
+        result?;
+    }
+
+    Ok(())
+}
+
+async fn get_for_update(txn: &mut Transaction, key: Vec<u8>) -> Result<()> {
+    txn.get_for_update(key).await?.unwrap();
+    Ok(())
+}
+
 // helper function
 async fn get_u32(client: &RawClient, key: Vec<u8>) -> Result<u32> {
     let x = client.get(key).await?.unwrap();

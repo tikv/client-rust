@@ -129,7 +129,7 @@ impl Transaction {
             Err(Error::InvalidTransactionType)
         } else {
             let key = key.into();
-            self.pessimistic_lock(iter::once(key.clone())).await?;
+            self.pessimistic_lock(iter::once(key.clone()), true).await?;
             self.buffer
                 .get_or_else(key, |key| {
                     new_mvcc_get_request(key, self.timestamp.clone())
@@ -216,7 +216,7 @@ impl Transaction {
             Err(Error::InvalidTransactionType)
         } else {
             let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
-            self.pessimistic_lock(keys.clone()).await?;
+            self.pessimistic_lock(keys.clone(), true).await?;
             self.batch_get(keys).await
         }
     }
@@ -319,7 +319,7 @@ impl Transaction {
         self.check_allow_operation()?;
         let key = key.into();
         if self.is_pessimistic() {
-            self.pessimistic_lock(iter::once(key.clone())).await?;
+            self.pessimistic_lock(iter::once(key.clone()), false).await?;
         }
         self.buffer.put(key, value.into()).await;
         Ok(())
@@ -346,7 +346,7 @@ impl Transaction {
         self.check_allow_operation()?;
         let key = key.into();
         if self.is_pessimistic() {
-            self.pessimistic_lock(iter::once(key.clone())).await?;
+            self.pessimistic_lock(iter::once(key.clone()), false).await?;
         }
         self.buffer.delete(key).await;
         Ok(())
@@ -475,7 +475,8 @@ impl Transaction {
     async fn pessimistic_lock(
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
-    ) -> Result<()> {
+        need_value: bool,
+    ) -> Result<Vec<Vec<u8>>> {
         assert!(
             matches!(self.options.kind, TransactionKind::Pessimistic(_)),
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
@@ -497,6 +498,7 @@ impl Transaction {
             self.timestamp.version(),
             lock_ttl,
             for_update_ts,
+            need_value
         )
         .execute(self.rpc.clone(), RetryOptions::default_pessimistic())
         .await

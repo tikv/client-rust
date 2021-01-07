@@ -378,6 +378,7 @@ pub fn new_pessimistic_prewrite_request(
     let len = mutations.len();
     let mut req = new_prewrite_request(mutations, primary_lock, start_version, lock_ttl);
     req.set_for_update_ts(for_update_ts);
+    // FIXME!!!!
     req.set_is_pessimistic_lock(iter::repeat(true).take(len).collect());
     req
 }
@@ -516,7 +517,7 @@ pub fn new_pessimistic_rollback_request(
 
 #[async_trait]
 impl KvRequest for kvrpcpb::PessimisticLockRequest {
-    type Result = ();
+    type Result = Vec<Vec<u8>>;
     type RpcResponse = kvrpcpb::PessimisticLockResponse;
     type KeyData = Vec<kvrpcpb::Mutation>;
     fn store_stream<PdC: PdClient>(
@@ -544,12 +545,12 @@ impl KvRequest for kvrpcpb::PessimisticLockRequest {
         Ok(req)
     }
 
-    fn map_result(_result: Self::RpcResponse) -> Self::Result {}
+    fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
+        resp.take_values()
+    }
 
     async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
-        results
-            .try_for_each_concurrent(None, |_| future::ready(Ok(())))
-            .await
+        results.try_concat().await
     }
 }
 
@@ -559,6 +560,7 @@ pub fn new_pessimistic_lock_request(
     start_version: u64,
     lock_ttl: u64,
     for_update_ts: u64,
+    need_value: bool,
 ) -> kvrpcpb::PessimisticLockRequest {
     let mut req = kvrpcpb::PessimisticLockRequest::default();
     let mutations = keys
@@ -579,7 +581,7 @@ pub fn new_pessimistic_lock_request(
     req.set_is_first_lock(false);
     req.set_wait_timeout(0);
     req.set_force(false);
-    req.set_return_values(false);
+    req.set_return_values(need_value);
     // todo: support large transaction
     req.set_min_commit_ts(0);
 
