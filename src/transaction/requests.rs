@@ -517,6 +517,10 @@ pub fn new_pessimistic_rollback_request(
 
 #[async_trait]
 impl KvRequest for kvrpcpb::PessimisticLockRequest {
+    // FIXME: PessimisticLockResponse only contains values.
+    // We need to pair keys and values returned somewhere.
+    // But it's blocked by the structure of the program that `map_result` only accepts the response as input
+    // Before we fix this `batch_get_for_update` is problematic.
     type Result = Vec<Vec<u8>>;
     type RpcResponse = kvrpcpb::PessimisticLockResponse;
     type KeyData = Vec<kvrpcpb::Mutation>;

@@ -219,7 +219,10 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn batch_get_for_update(
+    // This is temporarily disabled because we cannot correctly match the keys and values.
+    // See `impl KvRequest for kvrpcpb::PessimisticLockRequest` for details.
+    #[allow(dead_code)]
+    async fn batch_get_for_update(
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
