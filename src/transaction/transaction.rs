@@ -104,13 +104,16 @@ impl Transaction {
             .await
     }
 
-    /// Create a `get_for_udpate` request.
+    /// Create a `get for udpate` request.
     /// Once resolved this request will pessimistically lock and fetch the value associated with the given key **at current timestamp**.
     ///
     /// Note: The behavior of this command does not follow snapshot isolation. It is similar to `select for update` in TiDB,
     /// which is similar to that in MySQL. It reads the latest value (using current timestamp),
     /// and the value is not cached in the local buffer.
     /// So normal `get`-like commands after `get_for_update` will not be influenced, they still read values at `start_ts`.
+    ///
+    /// Different from `get`, this request does not distinguish between empty values and non-existent keys
+    /// , i.e. querying non-existent keys will result in empty values.
     ///
     /// It can only be used in pessimistic mode.
     ///
@@ -181,7 +184,7 @@ impl Transaction {
             .await
     }
 
-    /// Create a new 'batch get' request.
+    /// Create a new 'batch get for update' request.
     ///
     /// Once resolved this request will pessimistically lock the keys and
     /// fetch the values associated with the given keys.
@@ -191,7 +194,8 @@ impl Transaction {
     /// and the value is not cached in the local buffer.
     /// So normal `get`-like commands after `batch_get_for_update` will not be influenced, they still read values at `start_ts`.
     ///
-    /// Non-existent entries will not appear in the result. The order of the keys is not retained in the result.
+    /// Different from `batch_get`, this request does not distinguish between empty values and non-existent keys
+    /// , i.e. querying non-existent keys will result in empty values.
     ///
     /// It can only be used in pessimistic mode.
     ///
