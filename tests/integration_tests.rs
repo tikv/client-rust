@@ -9,7 +9,7 @@ use std::{
     env, iter,
 };
 use tikv_client::{
-    ColumnFamily, Key, KvPair, RawClient, Result, Transaction, TransactionClient,
+    ColumnFamily, Key, KvPair, RawClient, Result, TimestampExt, Transaction, TransactionClient,
     TransactionOptions, Value,
 };
 
@@ -531,7 +531,7 @@ async fn pessimistic_rollback() -> Result<()> {
 }
 
 async fn get_for_update(txn: &mut Transaction, key: Vec<u8>) -> Result<()> {
-    txn.get_for_update(key).await?.unwrap();
+    txn.get_for_update(key).await?;
     Ok(())
 }
 

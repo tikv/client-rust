@@ -11,7 +11,6 @@ use tokio::sync::{Mutex, MutexGuard};
 /// A caching layer which buffers reads and writes in a transaction.
 #[derive(Default)]
 pub struct Buffer {
-    // key -> (mutation, is_pessimistic_locked)
     mutations: Mutex<BTreeMap<Key, BufferEntry>>,
 }
 
@@ -140,7 +139,7 @@ impl Buffer {
         Ok(res.into_iter().take(limit as usize))
     }
 
-    /// Lock the given key if necessary. Only for optimistic transactions
+    /// Lock the given key if necessary.
     pub async fn lock(&self, key: Key) {
         let mut mutations = self.mutations.lock().await;
         let value = mutations
