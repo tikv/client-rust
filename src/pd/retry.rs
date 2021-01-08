@@ -54,16 +54,14 @@ macro_rules! retry {
         let stats = pd_stats($tag);
         let mut last_err = Ok(());
         for _ in 0..LEADER_CHANGE_RETRY {
-            let res = {
-                let $cluster = &$self.cluster.read().await.0;
-                let res = $call.await;
-                res
-            };
-
-            match stats.done(res) {
+            let $cluster = &$self.cluster.read().await.0;
+            
+            match stats.done($call.await) {
                 Ok(r) => return Ok(r),
                 Err(e) => last_err = Err(e),
             }
+            
+            drop($cluster);
 
             let mut reconnect_count = MAX_REQUEST_COUNT;
             while let Err(e) = $self.reconnect(RECONNECT_INTERVAL_SEC).await {
