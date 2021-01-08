@@ -515,23 +515,29 @@ async fn pessimistic_rollback() -> Result<()> {
     let client =
         TransactionClient::new_with_config(vec!["127.0.0.1:2379"], Default::default()).await?;
     let mut preload_txn = client.begin_optimistic().await?;
-    let key = vec![1];
-    let value = key.clone();
+    let key1 = vec![1];
+    let key2 = vec![2];
+    let value = key1.clone();
 
-    preload_txn.put(key.clone(), value).await?;
+    preload_txn.put(key1.clone(), value).await?;
     preload_txn.commit().await?;
+
     for _ in 0..100 {
         let mut txn = client.begin_pessimistic().await?;
-        let result = get_for_update(&mut txn, key.clone()).await;
+        let result = txn.get_for_update(key1.clone()).await;
         txn.rollback().await?;
         result?;
     }
 
-    Ok(())
-}
+    for _ in 0..100 {
+        let mut txn = client.begin_pessimistic().await?;
+        let result = txn
+            .batch_get_for_update(vec![key1.clone(), key2.clone()])
+            .await;
+        txn.rollback().await?;
+        let _ = result?;
+    }
 
-async fn get_for_update(txn: &mut Transaction, key: Vec<u8>) -> Result<()> {
-    txn.get_for_update(key).await?;
     Ok(())
 }
 
