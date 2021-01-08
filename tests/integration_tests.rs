@@ -9,7 +9,7 @@ use std::{
     env, iter,
 };
 use tikv_client::{
-    ColumnFamily, Key, KvPair, RawClient, Result, TimestampExt, Transaction, TransactionClient,
+    ColumnFamily, Key, KvPair, RawClient, Result, Transaction, TransactionClient,
     TransactionOptions, Value,
 };
 

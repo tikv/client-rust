@@ -378,7 +378,6 @@ pub fn new_pessimistic_prewrite_request(
     let len = mutations.len();
     let mut req = new_prewrite_request(mutations, primary_lock, start_version, lock_ttl);
     req.set_for_update_ts(for_update_ts);
-    // FIXME!!!!
     req.set_is_pessimistic_lock(iter::repeat(true).take(len).collect());
     req
 }
@@ -480,6 +479,7 @@ impl KvRequest for kvrpcpb::PessimisticRollbackRequest {
         let mut req = self.request_from_store(store)?;
         req.set_keys(keys);
         req.set_start_version(self.start_version);
+        req.set_for_update_ts(self.for_update_ts);
 
         Ok(req)
     }
