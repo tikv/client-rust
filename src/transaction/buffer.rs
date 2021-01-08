@@ -197,7 +197,15 @@ impl Buffer {
             None => {
                 mutations.insert(key, BufferEntry::Cached(value));
             }
-            _ => unreachable!(),
+            Some(BufferEntry::Cached(v)) | Some(BufferEntry::ReadLockCached(Some(v))) => {
+                assert!(&value == v);
+            }
+            Some(BufferEntry::Put(v)) => {
+                assert!(value.as_ref() == Some(v))
+            }
+            Some(BufferEntry::Del) => {
+                assert!(value.is_none());
+            }
         }
     }
 }
