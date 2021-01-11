@@ -5,7 +5,7 @@
 mod common;
 
 use crate::common::parse_args;
-use tikv_client::{Config, Key, KvPair, RawClient as Client, Result, ToOwnedRange, Value};
+use tikv_client::{Config, IntoOwnedRange, Key, KvPair, RawClient as Client, Result, Value};
 
 const KEY: &str = "TiKV";
 const VALUE: &str = "Rust";
@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
     let start = "k1";
     let end = "k2";
     let pairs = client
-        .scan((start..=end).to_owned(), 10)
+        .scan((start..=end).into_owned(), 10)
         .await
         .expect("Could not scan");
 

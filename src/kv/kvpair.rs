@@ -90,9 +90,9 @@ where
     }
 }
 
-impl Into<(Key, Value)> for KvPair {
-    fn into(self) -> (Key, Value) {
-        (self.0, self.1)
+impl From<KvPair> for (Key, Value) {
+    fn from(pair: KvPair) -> Self {
+        (pair.0, pair.1)
     }
 }
 
@@ -102,10 +102,10 @@ impl From<kvrpcpb::KvPair> for KvPair {
     }
 }
 
-impl Into<kvrpcpb::KvPair> for KvPair {
-    fn into(self) -> kvrpcpb::KvPair {
+impl From<KvPair> for kvrpcpb::KvPair {
+    fn from(pair: KvPair) -> Self {
         let mut result = kvrpcpb::KvPair::default();
-        let (key, value) = self.into();
+        let (key, value) = pair.into();
         result.set_key(key.into());
         result.set_value(value);
         result

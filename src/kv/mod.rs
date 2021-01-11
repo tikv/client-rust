@@ -7,7 +7,7 @@ mod key;
 mod kvpair;
 mod value;
 
-pub use bound_range::{BoundRange, ToOwnedRange};
+pub use bound_range::{BoundRange, IntoOwnedRange};
 pub use key::Key;
 pub use kvpair::KvPair;
 pub use value::Value;
