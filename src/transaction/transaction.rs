@@ -528,6 +528,7 @@ impl Drop for Transaction {
                 CheckLevel::Warn => {
                     warn!("Dropping an active transaction. Consider commit or rollback it.")
                 }
+                CheckLevel::None => {}
             }
         }
     }
@@ -562,6 +563,7 @@ pub struct TransactionOptions {
 pub enum CheckLevel {
     Panic,
     Warn,
+    None,
 }
 
 impl Default for TransactionOptions {
@@ -633,12 +635,8 @@ impl TransactionOptions {
 
     /// Whether to be strict when transaction is dropped without an attempt to commit or rollback,
     /// `true` => panic, `false` => warning.
-    pub fn drop_check(mut self, be_strict: bool) -> TransactionOptions {
-        if be_strict {
-            self.check_level = CheckLevel::Panic;
-        } else {
-            self.check_level = CheckLevel::Warn;
-        }
+    pub fn drop_check(mut self, level: CheckLevel) -> TransactionOptions {
+        self.check_level = level;
         self
     }
 
