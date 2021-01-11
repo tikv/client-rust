@@ -140,15 +140,15 @@ impl From<String> for Key {
     }
 }
 
-impl Into<Vec<u8>> for Key {
-    fn into(self) -> Vec<u8> {
-        self.0
+impl From<Key> for Vec<u8> {
+    fn from(key: Key) -> Self {
+        key.0
     }
 }
 
-impl<'a> Into<&'a [u8]> for &'a Key {
-    fn into(self) -> &'a [u8] {
-        &self.0
+impl<'a> From<&'a Key> for &'a [u8] {
+    fn from(key: &'a Key) -> Self {
+        &key.0
     }
 }
 

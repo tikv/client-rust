@@ -101,7 +101,7 @@ extern crate log;
 #[doc(inline)]
 pub use crate::backoff::Backoff;
 #[doc(inline)]
-pub use crate::kv::{BoundRange, Key, KvPair, ToOwnedRange, Value};
+pub use crate::kv::{BoundRange, IntoOwnedRange, Key, KvPair, Value};
 #[doc(inline)]
 pub use crate::raw::{Client as RawClient, ColumnFamily};
 #[doc(inline)]

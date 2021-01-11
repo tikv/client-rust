@@ -170,7 +170,7 @@ impl Client {
     ///
     /// # Examples
     /// ```rust,no_run
-    /// # use tikv_client::{Result, KvPair, Key, Value, Config, RawClient, ToOwnedRange};
+    /// # use tikv_client::{Result, KvPair, Key, Value, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
@@ -242,12 +242,12 @@ impl Client {
     ///
     /// # Examples
     /// ```rust,no_run
-    /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
+    /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
-    /// let req = client.delete_range(inclusive_range.to_owned());
+    /// let req = client.delete_range(inclusive_range.into_owned());
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
@@ -267,12 +267,12 @@ impl Client {
     ///
     /// # Examples
     /// ```rust,no_run
-    /// # use tikv_client::{KvPair, Config, RawClient, ToOwnedRange};
+    /// # use tikv_client::{KvPair, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
-    /// let req = client.scan(inclusive_range.to_owned(), 2);
+    /// let req = client.scan(inclusive_range.into_owned(), 2);
     /// let result: Vec<KvPair> = req.await.unwrap();
     /// # });
     /// ```
@@ -290,12 +290,12 @@ impl Client {
     ///
     /// # Examples
     /// ```rust,no_run
-    /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
+    /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
-    /// let req = client.scan_keys(inclusive_range.to_owned(), 2);
+    /// let req = client.scan_keys(inclusive_range.into_owned(), 2);
     /// let result: Vec<Key> = req.await.unwrap();
     /// # });
     /// ```
@@ -320,13 +320,13 @@ impl Client {
     ///
     /// # Examples
     /// ```rust,no_run
-    /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
+    /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let inclusive_range1 = "TiDB"..="TiKV";
     /// let inclusive_range2 = "TiKV"..="TiSpark";
-    /// let iterable = vec![inclusive_range1.to_owned(), inclusive_range2.to_owned()];
+    /// let iterable = vec![inclusive_range1.into_owned(), inclusive_range2.into_owned()];
     /// let req = client.batch_scan(iterable, 2);
     /// let result = req.await;
     /// # });
@@ -351,13 +351,13 @@ impl Client {
     ///
     /// # Examples
     /// ```rust,no_run
-    /// # use tikv_client::{Key, Config, RawClient, ToOwnedRange};
+    /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let inclusive_range1 = "TiDB"..="TiKV";
     /// let inclusive_range2 = "TiKV"..="TiSpark";
-    /// let iterable = vec![inclusive_range1.to_owned(), inclusive_range2.to_owned()];
+    /// let iterable = vec![inclusive_range1.into_owned(), inclusive_range2.into_owned()];
     /// let req = client.batch_scan(iterable, 2);
     /// let result = req.await;
     /// # });
