@@ -27,7 +27,7 @@ impl Buffer {
             MutationValue::Undetermined => {
                 let value = f(key.clone()).await?;
                 let mut mutations = self.mutations.lock().await;
-                self.update_cache(&mut mutations, key, value.clone());
+                Self::update_cache(&mut mutations, key, value.clone());
                 Ok(value)
             }
         }
@@ -76,7 +76,7 @@ impl Buffer {
         for kvpair in &fetched_results {
             let key = kvpair.0.clone();
             let value = Some(kvpair.1.clone());
-            self.update_cache(&mut mutations, key, value);
+            Self::update_cache(&mut mutations, key, value);
         }
 
         let results = cached_results.chain(fetched_results.into_iter());
@@ -127,7 +127,7 @@ impl Buffer {
 
         // update local buffer
         for (k, v) in &results {
-            self.update_cache(&mut mutations, k.clone(), Some(v.clone()));
+            Self::update_cache(&mut mutations, k.clone(), Some(v.clone()));
         }
 
         let mut res = results
@@ -185,17 +185,16 @@ impl Buffer {
     }
 
     fn update_cache(
-        &self,
-        mutations: &mut MutexGuard<BTreeMap<Key, BufferEntry>>,
+        entries: &mut MutexGuard<BTreeMap<Key, BufferEntry>>,
         key: Key,
         value: Option<Value>,
     ) {
-        match mutations.get(&key) {
+        match entries.get(&key) {
             Some(BufferEntry::ReadLockCached(None)) => {
-                mutations.insert(key, BufferEntry::ReadLockCached(Some(value)));
+                entries.insert(key, BufferEntry::ReadLockCached(Some(value)));
             }
             None => {
-                mutations.insert(key, BufferEntry::Cached(value));
+                entries.insert(key, BufferEntry::Cached(value));
             }
             Some(BufferEntry::Cached(v)) | Some(BufferEntry::ReadLockCached(Some(v))) => {
                 assert!(&value == v);

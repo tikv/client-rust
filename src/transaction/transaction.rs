@@ -105,7 +105,10 @@ impl Transaction {
     }
 
     /// Create a `get for udpate` request.
-    /// Once resolved this request will pessimistically lock and fetch the value associated with the given key **at current timestamp**.
+    /// Once resolved this request will pessimistically lock and fetch the latest
+    /// value associated with the given key at **current timestamp**.
+    ///
+    /// The "current timestamp" (also called `for_update_ts` of the request) is fetched immediately from PD.
     ///
     /// Note: The behavior of this command does not follow snapshot isolation. It is similar to `select for update` in TiDB,
     /// which is similar to that in MySQL. It reads the latest value (using current timestamp),
@@ -200,7 +203,7 @@ impl Transaction {
     /// It can only be used in pessimistic mode.
     ///
     /// # Examples
-    /// ```rust,no_run
+    /// ```rust,no_run,compile_fail
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
@@ -377,6 +380,7 @@ impl Transaction {
     /// "I do not want to commit if the value associated with this key has been modified".
     /// It's useful to avoid *write skew* anomaly.
     ///
+    /// It's only available in optimistic mode.
     /// In pessimistic mode, please use [`get_for_update`](Transaction::get_for_update) instead.
     ///
     /// # Examples
@@ -519,7 +523,7 @@ impl Transaction {
         let lock_ttl = DEFAULT_LOCK_TTL;
         let for_update_ts = self.rpc.clone().get_timestamp().await.unwrap().version();
         self.options.push_for_update_ts(for_update_ts);
-        let values: Vec<Vec<u8>> = new_pessimistic_lock_request(
+        let values = new_pessimistic_lock_request(
             keys.clone(),
             primary_lock.into(),
             self.timestamp.version(),
