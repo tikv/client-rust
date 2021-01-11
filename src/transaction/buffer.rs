@@ -8,13 +8,42 @@ use std::{
 use tikv_client_proto::kvrpcpb;
 use tokio::sync::Mutex;
 
+#[derive(Default)]
+struct Mutations {
+    primary_key: Option<Key>,
+    key_mutation_map: BTreeMap<Key, Mutation>,
+}
+
+impl Mutations {
+    fn insert(&mut self, key: impl Into<Key>, mutation: Mutation) {
+        let key = key.into();
+        if !matches!(mutation, Mutation::Cached(_)) {
+            self.primary_key.get_or_insert_with(|| key.clone());
+        }
+        self.key_mutation_map.insert(key, mutation);
+    }
+
+    pub fn get_primary_key_or(&mut self, key: &Key) -> &Key {
+        self.primary_key.get_or_insert(key.clone())
+    }
+}
+
 /// A caching layer which buffers reads and writes in a transaction.
 #[derive(Default)]
 pub struct Buffer {
-    mutations: Mutex<BTreeMap<Key, Mutation>>,
+    mutations: Mutex<Mutations>,
 }
 
 impl Buffer {
+    /// Get the primary key of the buffer.
+    pub async fn get_primary_key(&self) -> Option<Key> {
+        self.mutations.lock().await.primary_key.clone()
+    }
+    /// Get the primary key of the buffer, if not exists, use `key` as the primary key.
+    pub async fn get_primary_key_or(&self, key: &Key) -> Key {
+        self.mutations.lock().await.get_primary_key_or(key).clone()
+    }
+
     /// Get a value from the buffer. If the value is not present, run `f` to get
     /// the value.
     pub async fn get_or_else<F, Fut>(&self, key: Key, f: F) -> Result<Option<Value>>
@@ -54,6 +83,7 @@ impl Buffer {
             ) = keys
                 .map(|key| {
                     let value = mutations
+                        .key_mutation_map
                         .get(&key)
                         .map(Mutation::get_value)
                         .unwrap_or(MutationValue::Undetermined);
@@ -92,7 +122,7 @@ impl Buffer {
     {
         // read from local buffer
         let mut mutations = self.mutations.lock().await;
-        let mutation_range = mutations.range(range.clone());
+        let mutation_range = mutations.key_mutation_map.range(range.clone());
 
         // fetch from TiKV
         // fetch more entries because some of them may be deleted.
@@ -137,8 +167,10 @@ impl Buffer {
 
     /// Lock the given key if necessary.
     pub async fn lock(&self, key: Key) {
-        let mut mutations = self.mutations.lock().await;
+        let mutations = &mut self.mutations.lock().await;
+        mutations.primary_key.get_or_insert(key.clone());
         let value = mutations
+            .key_mutation_map
             .entry(key)
             // Mutated keys don't need a lock.
             .or_insert(Mutation::Lock);
@@ -166,6 +198,7 @@ impl Buffer {
         self.mutations
             .lock()
             .await
+            .key_mutation_map
             .iter()
             .filter_map(|(key, mutation)| mutation.to_proto_with_key(key))
             .collect()
@@ -175,6 +208,7 @@ impl Buffer {
         self.mutations
             .lock()
             .await
+            .key_mutation_map
             .get(&key)
             .map(Mutation::get_value)
             .unwrap_or(MutationValue::Undetermined)
@@ -269,7 +303,10 @@ mod tests {
             ))
             .unwrap()
             .collect::<Vec<_>>(),
-            vec![KvPair(Key::from(b"key1".to_vec()), b"value".to_vec()),]
+            vec![KvPair(
+                Key::from(b"key1".to_vec()),
+                Value::from(b"value".to_vec()),
+            ),]
         );
     }
 
