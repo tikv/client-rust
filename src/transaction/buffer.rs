@@ -35,7 +35,7 @@ pub struct Buffer {
 }
 
 impl Buffer {
-    /// Get the primary key of the buffer, if not exists, use `key` as the primary key.
+    /// Get the primary key of the buffer.
     pub async fn get_primary_key(&self) -> Option<Key> {
         self.mutations.lock().await.primary_key.clone()
     }
