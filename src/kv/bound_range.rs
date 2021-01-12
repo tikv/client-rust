@@ -296,9 +296,6 @@ pub trait ToOwnedRange {
     fn to_owned(self) -> BoundRange;
 }
 
-#[test]
-fn test_to_owned() {}
-
 impl<T: Into<Key> + Borrow<U>, U: ToOwned<Owned = T> + ?Sized> ToOwnedRange for Range<&U> {
     fn to_owned(self) -> BoundRange {
         From::from(Range {

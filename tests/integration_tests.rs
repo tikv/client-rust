@@ -540,6 +540,40 @@ async fn pessimistic_rollback() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+#[serial]
+async fn lock_keys() -> Result<()> {
+    clear_tikv().await?;
+    let client =
+        TransactionClient::new_with_config(vec!["127.0.0.1:2379"], Default::default()).await?;
+
+    let k1 = b"key1".to_vec();
+    let k2 = b"key2".to_vec();
+    let v = b"some value".to_vec();
+
+    // optimistic
+    let mut t1 = client.begin_optimistic().await?;
+    let mut t2 = client.begin_optimistic().await?;
+    t1.lock_keys(vec![k1.clone(), k2.clone()]).await?;
+    t2.put(k1.clone(), v.clone()).await?;
+    t2.commit().await?;
+    // must have commit conflict
+    assert!(t1.commit().await.is_err());
+
+    // pessimistic
+    let k3 = b"key3".to_vec();
+    let k4 = b"key4".to_vec();
+    let mut t3 = client.begin_pessimistic().await?;
+    let mut t4 = client.begin_pessimistic().await?;
+    t3.lock_keys(vec![k3.clone(), k4.clone()]).await?;
+    assert!(t4.lock_keys(vec![k3.clone(), k4.clone()]).await.is_err());
+
+    t3.rollback().await?;
+    t4.lock_keys(vec![k3.clone(), k4.clone()]).await?;
+    t4.commit().await?;
+
+    Ok(())
+}
 // helper function
 async fn get_u32(client: &RawClient, key: Vec<u8>) -> Result<u32> {
     let x = client.get(key).await?.unwrap();

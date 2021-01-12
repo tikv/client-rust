@@ -380,8 +380,8 @@ impl Transaction {
     /// "I do not want to commit if the value associated with this key has been modified".
     /// It's useful to avoid *write skew* anomaly.
     ///
-    /// It's only available in optimistic mode.
-    /// In pessimistic mode, please use [`get_for_update`](Transaction::get_for_update) instead.
+    /// In pessimistic mode, it is similar to [`batch_get_for_update`](Transaction::batch_get_for_update),
+    /// except that it does not read values.
     ///
     /// # Examples
     /// ```rust,no_run
@@ -395,13 +395,20 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn lock_keys(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
-        if self.is_pessimistic() {
-            return Err(Error::InvalidTransactionType);
-        }
+    pub async fn lock_keys(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> Result<()> {
         self.check_allow_operation()?;
-        for key in keys {
-            self.buffer.lock(key.into()).await;
+        match self.options.kind {
+            TransactionKind::Optimistic => {
+                for key in keys {
+                    self.buffer.lock(key.into()).await;
+                }
+            }
+            TransactionKind::Pessimistic(_) => {
+                self.pessimistic_lock(keys, false).await?;
+            }
         }
         Ok(())
     }
