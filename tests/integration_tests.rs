@@ -289,6 +289,7 @@ async fn txn_bank_transfer() -> Result<()> {
         let bob = chosen_people[1];
         let mut bob_balance = get_txn_u32(&txn, bob.clone()).await?;
         if alice_balance == 0 {
+            txn.rollback().await?;
             continue;
         }
         let transfer = rng.gen_range(0..alice_balance);

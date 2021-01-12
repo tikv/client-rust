@@ -8,13 +8,42 @@ use std::{
 use tikv_client_proto::kvrpcpb;
 use tokio::sync::{Mutex, MutexGuard};
 
+#[derive(Default)]
+struct InnerBuffer {
+    primary_key: Option<Key>,
+    entry_map: BTreeMap<Key, BufferEntry>,
+}
+
+impl InnerBuffer {
+    fn insert(&mut self, key: impl Into<Key>, entry: BufferEntry) {
+        let key = key.into();
+        if !matches!(entry, BufferEntry::Cached(_)) {
+            self.primary_key.get_or_insert_with(|| key.clone());
+        }
+        self.entry_map.insert(key, entry);
+    }
+
+    pub fn get_primary_key_or(&mut self, key: &Key) -> &Key {
+        self.primary_key.get_or_insert(key.clone())
+    }
+}
+
 /// A caching layer which buffers reads and writes in a transaction.
 #[derive(Default)]
 pub struct Buffer {
-    mutations: Mutex<BTreeMap<Key, BufferEntry>>,
+    mutations: Mutex<InnerBuffer>,
 }
 
 impl Buffer {
+    /// Get the primary key of the buffer.
+    pub async fn get_primary_key(&self) -> Option<Key> {
+        self.mutations.lock().await.primary_key.clone()
+    }
+    /// Get the primary key of the buffer, if not exists, use `key` as the primary key.
+    pub async fn get_primary_key_or(&self, key: &Key) -> Key {
+        self.mutations.lock().await.get_primary_key_or(key).clone()
+    }
+
     /// Get a value from the buffer. If the value is not present, run `f` to get
     /// the value.
     pub async fn get_or_else<F, Fut>(&self, key: Key, f: F) -> Result<Option<Value>>
@@ -56,6 +85,7 @@ impl Buffer {
             ) = keys
                 .map(|key| {
                     let value = mutations
+                        .entry_map
                         .get(&key)
                         .map(BufferEntry::get_value)
                         .unwrap_or(MutationValue::Undetermined);
@@ -96,7 +126,7 @@ impl Buffer {
     {
         // read from local buffer
         let mut mutations = self.mutations.lock().await;
-        let mutation_range = mutations.range(range.clone());
+        let mutation_range = mutations.entry_map.range(range.clone());
 
         // fetch from TiKV
         // fetch more entries because some of them may be deleted.
@@ -141,8 +171,10 @@ impl Buffer {
 
     /// Lock the given key if necessary.
     pub async fn lock(&self, key: Key) {
-        let mut mutations = self.mutations.lock().await;
+        let mutations = &mut self.mutations.lock().await;
+        mutations.primary_key.get_or_insert(key.clone());
         let value = mutations
+            .entry_map
             .entry(key)
             // Mutated keys don't need a lock.
             .or_insert(BufferEntry::ReadLockCached(None));
@@ -170,6 +202,7 @@ impl Buffer {
         self.mutations
             .lock()
             .await
+            .entry_map
             .iter()
             .filter_map(|(key, mutation)| mutation.to_proto_with_key(key))
             .collect()
@@ -179,22 +212,21 @@ impl Buffer {
         self.mutations
             .lock()
             .await
+            .entry_map
             .get(&key)
             .map(BufferEntry::get_value)
             .unwrap_or(MutationValue::Undetermined)
     }
 
-    fn update_cache(
-        entries: &mut MutexGuard<BTreeMap<Key, BufferEntry>>,
-        key: Key,
-        value: Option<Value>,
-    ) {
-        match entries.get(&key) {
+    fn update_cache(buffer: &mut MutexGuard<InnerBuffer>, key: Key, value: Option<Value>) {
+        match buffer.entry_map.get(&key) {
             Some(BufferEntry::ReadLockCached(None)) => {
-                entries.insert(key, BufferEntry::ReadLockCached(Some(value)));
+                buffer
+                    .entry_map
+                    .insert(key, BufferEntry::ReadLockCached(Some(value)));
             }
             None => {
-                entries.insert(key, BufferEntry::Cached(value));
+                buffer.entry_map.insert(key, BufferEntry::Cached(value));
             }
             Some(BufferEntry::Cached(v)) | Some(BufferEntry::ReadLockCached(Some(v))) => {
                 assert!(&value == v);
@@ -320,7 +352,10 @@ mod tests {
             ))
             .unwrap()
             .collect::<Vec<_>>(),
-            vec![KvPair(Key::from(b"key1".to_vec()), b"value".to_vec()),]
+            vec![KvPair(
+                Key::from(b"key1".to_vec()),
+                Value::from(b"value".to_vec()),
+            ),]
         );
     }
 

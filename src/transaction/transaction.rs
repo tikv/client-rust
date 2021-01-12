@@ -436,8 +436,11 @@ impl Transaction {
         }
         self.status = TransactionStatus::StartedCommit;
 
+        let primary_key = self.buffer.get_primary_key().await;
+        let mutations = self.buffer.to_proto_mutations().await;
         let res = Committer::new(
-            self.buffer.to_proto_mutations().await,
+            primary_key,
+            mutations,
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
@@ -464,8 +467,11 @@ impl Transaction {
         }
         self.status = TransactionStatus::StartedRollback;
 
+        let primary_key = self.buffer.get_primary_key().await;
+        let mutations = self.buffer.to_proto_mutations().await;
         let res = Committer::new(
-            self.buffer.to_proto_mutations().await,
+            primary_key,
+            mutations,
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
@@ -500,9 +506,7 @@ impl Transaction {
 
     /// Pessimistically lock the keys.
     ///
-    /// Note: `keys` must be sorted by caller.
-    ///
-    /// Once resovled it acquires a lock on the key in TiKV.
+    /// Once resolved it acquires a lock on the key in TiKV.
     /// The lock prevents other transactions from mutating the entry until it is released.
     ///
     /// Only valid for pessimistic transactions, panics if called on an optimistic transaction.
@@ -521,18 +525,14 @@ impl Transaction {
             .map(|it| it.into())
             .map(|it: Key| it.into())
             .collect();
-
-        // assert keys are sorted
-        // TODO: is_sorted is available in nightly. Use it when it is stabilized.
-        assert!(keys.windows(2).all(|w| w[0] <= w[1]));
-        let primary_lock = keys[0].clone();
-
+        let first_key = keys[0].clone();
+        let primary_lock = self.buffer.get_primary_key_or(&first_key.into()).await;
         let lock_ttl = DEFAULT_LOCK_TTL;
         let for_update_ts = self.rpc.clone().get_timestamp().await.unwrap().version();
         self.options.push_for_update_ts(for_update_ts);
         let values = new_pessimistic_lock_request(
             keys.clone(),
-            primary_lock.into(),
+            primary_lock,
             self.timestamp.version(),
             lock_ttl,
             for_update_ts,
@@ -567,7 +567,15 @@ impl Transaction {
 impl Drop for Transaction {
     fn drop(&mut self) {
         if self.status == TransactionStatus::Active {
-            panic!("Dropping an active transaction. Consider commit or rollback it.")
+            match self.options.check_level {
+                CheckLevel::Panic => {
+                    panic!("Dropping an active transaction. Consider commit or rollback it.")
+                }
+                CheckLevel::Warn => {
+                    warn!("Dropping an active transaction. Consider commit or rollback it.")
+                }
+                CheckLevel::None => {}
+            }
         }
     }
 }
@@ -593,6 +601,15 @@ pub struct TransactionOptions {
     read_only: bool,
     /// How to retry in the event of certain errors.
     retry_options: RetryOptions,
+    /// What to do if the transaction is dropped without an attempt to commit or rollback
+    check_level: CheckLevel,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub enum CheckLevel {
+    Panic,
+    Warn,
+    None,
 }
 
 impl Default for TransactionOptions {
@@ -610,6 +627,7 @@ impl TransactionOptions {
             async_commit: false,
             read_only: false,
             retry_options: RetryOptions::default_optimistic(),
+            check_level: CheckLevel::Panic,
         }
     }
 
@@ -621,6 +639,7 @@ impl TransactionOptions {
             async_commit: false,
             read_only: false,
             retry_options: RetryOptions::default_pessimistic(),
+            check_level: CheckLevel::Panic,
         }
     }
 
@@ -660,6 +679,12 @@ impl TransactionOptions {
         self
     }
 
+    /// Set the behavior when dropping a transaction without an attempt to commit or rollback it.
+    pub fn drop_check(mut self, level: CheckLevel) -> TransactionOptions {
+        self.check_level = level;
+        self
+    }
+
     fn push_for_update_ts(&mut self, for_update_ts: u64) {
         match &mut self.kind {
             TransactionKind::Optimistic => unreachable!(),
@@ -683,6 +708,7 @@ const DEFAULT_LOCK_TTL: u64 = 3000;
 /// The committer implements `prewrite`, `commit` and `rollback` functions.
 #[derive(new)]
 struct Committer {
+    primary_key: Option<Key>,
     mutations: Vec<kvrpcpb::Mutation>,
     start_version: u64,
     bg_worker: ThreadPool,
@@ -695,6 +721,7 @@ struct Committer {
 impl Committer {
     async fn commit(mut self) -> Result<u64> {
         if self.mutations.is_empty() {
+            assert!(self.primary_key.is_none());
             return Ok(0);
         }
 
@@ -731,7 +758,7 @@ impl Committer {
     }
 
     async fn prewrite(&mut self) -> Result<u64> {
-        let primary_lock = self.mutations[0].key.clone().into();
+        let primary_lock = self.primary_key.clone().unwrap();
         // TODO: calculate TTL for big transactions
         let lock_ttl = DEFAULT_LOCK_TTL;
         let mut request = match self.options.kind {
@@ -752,7 +779,12 @@ impl Committer {
 
         request.use_async_commit = self.options.async_commit;
         request.try_one_pc = self.options.try_one_pc;
-        request.secondaries = self.mutations[1..].iter().map(|m| m.key.clone()).collect();
+        request.secondaries = self
+            .mutations
+            .iter()
+            .filter(|m| self.primary_key.as_ref().unwrap() != m.key.as_ref())
+            .map(|m| m.key.clone())
+            .collect();
         // FIXME set max_commit_ts and min_commit_ts
 
         let response = request
@@ -783,7 +815,7 @@ impl Committer {
 
     /// Commits the primary key and returns the commit version
     async fn commit_primary(&mut self) -> Result<u64> {
-        let primary_key = vec![self.mutations[0].key.clone().into()];
+        let primary_key = vec![self.primary_key.clone().unwrap()];
         let commit_version = self.rpc.clone().get_timestamp().await?.version();
         new_commit_request(primary_key, self.start_version, commit_version)
             .execute(self.rpc.clone(), RetryOptions::default_optimistic())
@@ -804,17 +836,17 @@ impl Committer {
         let primary_only = self.mutations.len() == 1;
         let mutations = self.mutations.into_iter();
 
-        // Only skip the primary if we committed it earlier (i.e., we are not using async commit).
-        let keys = if self.options.async_commit {
-            mutations.skip(0)
+        let keys: Vec<Key> = if self.options.async_commit {
+            mutations.map(|m| m.key.into()).collect()
+        } else if primary_only {
+            return Ok(());
         } else {
-            if primary_only {
-                return Ok(());
-            }
-            mutations.skip(1)
-        }
-        .map(|mutation| mutation.key.into())
-        .collect();
+            let primary_key = self.primary_key.unwrap();
+            mutations
+                .map(|m| m.key.into())
+                .filter(|key| &primary_key != key)
+                .collect()
+        };
         new_commit_request(keys, self.start_version, commit_version)
             .execute(self.rpc.clone(), RetryOptions::default_optimistic())
             .await
