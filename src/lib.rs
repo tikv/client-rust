@@ -110,7 +110,7 @@ pub use crate::request::RetryOptions;
 pub use crate::timestamp::{Timestamp, TimestampExt};
 #[doc(inline)]
 pub use crate::transaction::{
-    Client as TransactionClient, Snapshot, Transaction, TransactionOptions,
+    CheckLevel, Client as TransactionClient, Snapshot, Transaction, TransactionOptions,
 };
 #[doc(inline)]
 pub use config::Config;
