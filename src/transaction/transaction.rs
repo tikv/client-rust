@@ -404,8 +404,11 @@ impl Transaction {
         }
         self.status = TransactionStatus::StartedCommit;
 
+        let primary_key = self.buffer.get_primary_key().await;
+        let mutations = self.buffer.to_proto_mutations().await;
         let res = Committer::new(
-            self.buffer.to_proto_mutations().await,
+            primary_key,
+            mutations,
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
@@ -432,8 +435,11 @@ impl Transaction {
         }
         self.status = TransactionStatus::StartedRollback;
 
+        let primary_key = self.buffer.get_primary_key().await;
+        let mutations = self.buffer.to_proto_mutations().await;
         let res = Committer::new(
-            self.buffer.to_proto_mutations().await,
+            primary_key,
+            mutations,
             self.timestamp.version(),
             self.bg_worker.clone(),
             self.rpc.clone(),
@@ -468,7 +474,7 @@ impl Transaction {
 
     /// Pessimistically lock the keys.
     ///
-    /// Once resovled it acquires a lock on the key in TiKV.
+    /// Once resolved it acquires a lock on the key in TiKV.
     /// The lock prevents other transactions from mutating the entry until it is released.
     ///
     /// Only valid for pessimistic transactions, panics if called on an optimistic transaction.
@@ -481,19 +487,19 @@ impl Transaction {
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
         );
 
-        let mut keys: Vec<Vec<u8>> = keys
+        let keys: Vec<Vec<u8>> = keys
             .into_iter()
             .map(|it| it.into())
             .map(|it: Key| it.into())
             .collect();
-        keys.sort();
-        let primary_lock = keys[0].clone();
+        let first_key = keys[0].clone();
+        let primary_lock = self.buffer.get_primary_key_or(&first_key.into()).await;
         let lock_ttl = DEFAULT_LOCK_TTL;
         let for_update_ts = self.rpc.clone().get_timestamp().await.unwrap().version();
         self.options.push_for_update_ts(for_update_ts);
         new_pessimistic_lock_request(
             keys,
-            primary_lock.into(),
+            primary_lock,
             self.timestamp.version(),
             lock_ttl,
             for_update_ts,
@@ -662,6 +668,7 @@ const DEFAULT_LOCK_TTL: u64 = 3000;
 /// The committer implements `prewrite`, `commit` and `rollback` functions.
 #[derive(new)]
 struct Committer {
+    primary_key: Option<Key>,
     mutations: Vec<kvrpcpb::Mutation>,
     start_version: u64,
     bg_worker: ThreadPool,
@@ -674,6 +681,7 @@ struct Committer {
 impl Committer {
     async fn commit(mut self) -> Result<u64> {
         if self.mutations.is_empty() {
+            assert!(self.primary_key.is_none());
             return Ok(0);
         }
 
@@ -710,7 +718,7 @@ impl Committer {
     }
 
     async fn prewrite(&mut self) -> Result<u64> {
-        let primary_lock = self.mutations[0].key.clone().into();
+        let primary_lock = self.primary_key.clone().unwrap();
         // TODO: calculate TTL for big transactions
         let lock_ttl = DEFAULT_LOCK_TTL;
         let mut request = match self.options.kind {
@@ -731,7 +739,12 @@ impl Committer {
 
         request.use_async_commit = self.options.async_commit;
         request.try_one_pc = self.options.try_one_pc;
-        request.secondaries = self.mutations[1..].iter().map(|m| m.key.clone()).collect();
+        request.secondaries = self
+            .mutations
+            .iter()
+            .filter(|m| self.primary_key.as_ref().unwrap() != m.key.as_ref())
+            .map(|m| m.key.clone())
+            .collect();
         // FIXME set max_commit_ts and min_commit_ts
 
         let response = request
@@ -762,7 +775,7 @@ impl Committer {
 
     /// Commits the primary key and returns the commit version
     async fn commit_primary(&mut self) -> Result<u64> {
-        let primary_key = vec![self.mutations[0].key.clone().into()];
+        let primary_key = vec![self.primary_key.clone().unwrap()];
         let commit_version = self.rpc.clone().get_timestamp().await?.version();
         new_commit_request(primary_key, self.start_version, commit_version)
             .execute(self.rpc.clone(), RetryOptions::default_optimistic())
@@ -783,17 +796,17 @@ impl Committer {
         let primary_only = self.mutations.len() == 1;
         let mutations = self.mutations.into_iter();
 
-        // Only skip the primary if we committed it earlier (i.e., we are not using async commit).
-        let keys = if self.options.async_commit {
-            mutations.skip(0)
+        let keys: Vec<Key> = if self.options.async_commit {
+            mutations.map(|m| m.key.into()).collect()
+        } else if primary_only {
+            return Ok(());
         } else {
-            if primary_only {
-                return Ok(());
-            }
-            mutations.skip(1)
-        }
-        .map(|mutation| mutation.key.into())
-        .collect();
+            let primary_key = self.primary_key.unwrap();
+            mutations
+                .map(|m| m.key.into())
+                .filter(|key| &primary_key != key)
+                .collect()
+        };
         new_commit_request(keys, self.start_version, commit_version)
             .execute(self.rpc.clone(), RetryOptions::default_optimistic())
             .await
