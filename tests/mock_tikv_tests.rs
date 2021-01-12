@@ -7,6 +7,7 @@ mod test {
     use tikv_client::{KvPair, RawClient};
 
     #[tokio::test]
+    #[ignore]
     async fn test_raw_put_get() {
         SimpleLogger::new().init().unwrap();
         redirect_log();
