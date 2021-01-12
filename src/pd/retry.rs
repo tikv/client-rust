@@ -55,9 +55,9 @@ macro_rules! retry {
         let mut last_err = Ok(());
         for _ in 0..LEADER_CHANGE_RETRY {
             let res = {
-                let guard = $self.cluster.read().await;
-                let $cluster = &guard.0;
-                $call.await
+                let $cluster = &$self.cluster.read().await.0;
+                let res = $call.await;
+                res
             };
 
             match stats.done(res) {
