@@ -233,10 +233,9 @@ impl Transaction {
         if !self.is_pessimistic() {
             Err(Error::InvalidTransactionType)
         } else {
-            let mut keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
-            keys.sort();
-            let values = self.pessimistic_lock(keys.clone(), true).await?;
-            Ok(keys.into_iter().zip(values).map(From::from))
+            let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
+            self.pessimistic_lock(keys.clone(), false).await?;
+            self.batch_get(keys).await
         }
     }
 
