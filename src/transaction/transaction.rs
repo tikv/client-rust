@@ -527,7 +527,15 @@ impl Transaction {
 impl Drop for Transaction {
     fn drop(&mut self) {
         if self.status == TransactionStatus::Active {
-            panic!("Dropping an active transaction. Consider commit or rollback it.")
+            match self.options.check_level {
+                CheckLevel::Panic => {
+                    panic!("Dropping an active transaction. Consider commit or rollback it.")
+                }
+                CheckLevel::Warn => {
+                    warn!("Dropping an active transaction. Consider commit or rollback it.")
+                }
+                CheckLevel::None => {}
+            }
         }
     }
 }
@@ -553,6 +561,15 @@ pub struct TransactionOptions {
     read_only: bool,
     /// How to retry in the event of certain errors.
     retry_options: RetryOptions,
+    /// What to do if the transaction is dropped without an attempt to commit or rollback
+    check_level: CheckLevel,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub enum CheckLevel {
+    Panic,
+    Warn,
+    None,
 }
 
 impl Default for TransactionOptions {
@@ -570,6 +587,7 @@ impl TransactionOptions {
             async_commit: false,
             read_only: false,
             retry_options: RetryOptions::default_optimistic(),
+            check_level: CheckLevel::Panic,
         }
     }
 
@@ -581,6 +599,7 @@ impl TransactionOptions {
             async_commit: false,
             read_only: false,
             retry_options: RetryOptions::default_pessimistic(),
+            check_level: CheckLevel::Panic,
         }
     }
 
@@ -617,6 +636,12 @@ impl TransactionOptions {
     /// Set RetryOptions.
     pub fn retry_options(mut self, options: RetryOptions) -> TransactionOptions {
         self.retry_options = options;
+        self
+    }
+
+    /// Set the behavior when dropping a transaction without an attempt to commit or rollback it.
+    pub fn drop_check(mut self, level: CheckLevel) -> TransactionOptions {
+        self.check_level = level;
         self
     }
 
