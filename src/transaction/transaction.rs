@@ -633,8 +633,7 @@ impl TransactionOptions {
         self
     }
 
-    /// Whether to be strict when transaction is dropped without an attempt to commit or rollback,
-    /// `true` => panic, `false` => warning.
+    /// Set the behavior when dropping a transaction without an attempt to commit or rollback it.
     pub fn drop_check(mut self, level: CheckLevel) -> TransactionOptions {
         self.check_level = level;
         self
