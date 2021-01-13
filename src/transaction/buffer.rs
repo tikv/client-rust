@@ -177,10 +177,10 @@ impl Buffer {
             .entry_map
             .entry(key)
             // Mutated keys don't need a lock.
-            .or_insert(BufferEntry::CachedAndLocked(None));
+            .or_insert(BufferEntry::Locked(None));
         // But values which we have only read, but not written, do.
         if let BufferEntry::Cached(v) = value {
-            *value = BufferEntry::CachedAndLocked(Some(v.take()))
+            *value = BufferEntry::Locked(Some(v.take()))
         }
     }
 
@@ -220,15 +220,15 @@ impl Buffer {
 
     fn update_cache(buffer: &mut MutexGuard<InnerBuffer>, key: Key, value: Option<Value>) {
         match buffer.entry_map.get(&key) {
-            Some(BufferEntry::CachedAndLocked(None)) => {
+            Some(BufferEntry::Locked(None)) => {
                 buffer
                     .entry_map
-                    .insert(key, BufferEntry::CachedAndLocked(Some(value)));
+                    .insert(key, BufferEntry::Locked(Some(value)));
             }
             None => {
                 buffer.entry_map.insert(key, BufferEntry::Cached(value));
             }
-            Some(BufferEntry::Cached(v)) | Some(BufferEntry::CachedAndLocked(Some(v))) => {
+            Some(BufferEntry::Cached(v)) | Some(BufferEntry::Locked(Some(v))) => {
                 assert!(&value == v);
             }
             Some(BufferEntry::Put(v)) => {
@@ -269,7 +269,7 @@ enum BufferEntry {
     //
     // In pessimistic transaction:
     //   The key is locked by `get_for_update` or `batch_get_for_update`
-    CachedAndLocked(Option<Option<Value>>),
+    Locked(Option<Option<Value>>),
     // Value has been written.
     Put(Value),
     // Value has been deleted.
@@ -286,7 +286,7 @@ impl BufferEntry {
                 pb.set_value(v.clone());
             }
             BufferEntry::Del => pb.set_op(kvrpcpb::Op::Del),
-            BufferEntry::CachedAndLocked(_) => pb.set_op(kvrpcpb::Op::Lock),
+            BufferEntry::Locked(_) => pb.set_op(kvrpcpb::Op::Lock),
         };
         pb.set_key(key.clone().into());
         Some(pb)
@@ -297,8 +297,8 @@ impl BufferEntry {
             BufferEntry::Cached(value) => MutationValue::Determined(value.clone()),
             BufferEntry::Put(value) => MutationValue::Determined(Some(value.clone())),
             BufferEntry::Del => MutationValue::Determined(None),
-            BufferEntry::CachedAndLocked(None) => MutationValue::Undetermined,
-            BufferEntry::CachedAndLocked(Some(value)) => MutationValue::Determined(value.clone()),
+            BufferEntry::Locked(None) => MutationValue::Undetermined,
+            BufferEntry::Locked(Some(value)) => MutationValue::Determined(value.clone()),
         }
     }
 }
