@@ -54,6 +54,8 @@ macro_rules! retry {
         let stats = pd_stats($tag);
         let mut last_err = Ok(());
         for _ in 0..LEADER_CHANGE_RETRY {
+            // use the block here to drop the guard of the read lock,
+            // otherwise `reconnect` will try to acquire the write lock and results in a deadlock
             let res = {
                 let $cluster = &$self.cluster.read().await.0;
                 let res = $call.await;
