@@ -134,7 +134,7 @@ async fn crud() -> Result<()> {
 
 #[tokio::test]
 #[serial]
-async fn pessimistic() -> Fallible<()> {
+async fn pessimistic() -> Result<()> {
     clear_tikv().await?;
 
     let client = TransactionClient::new(pd_addrs()).await?;
@@ -146,7 +146,7 @@ async fn pessimistic() -> Fallible<()> {
 
     txn.commit().await.unwrap();
 
-    Fallible::Ok(())
+    Ok(())
 }
 
 /// bank transfer mainly tests raw put and get
