@@ -479,6 +479,7 @@ impl KvRequest for kvrpcpb::PessimisticRollbackRequest {
         let mut req = self.request_from_store(store)?;
         req.set_keys(keys);
         req.set_start_version(self.start_version);
+        req.set_for_update_ts(self.for_update_ts);
 
         Ok(req)
     }
@@ -516,7 +517,11 @@ pub fn new_pessimistic_rollback_request(
 
 #[async_trait]
 impl KvRequest for kvrpcpb::PessimisticLockRequest {
-    type Result = ();
+    // FIXME: PessimisticLockResponse only contains values.
+    // We need to pair keys and values returned somewhere.
+    // But it's blocked by the structure of the program that `map_result` only accepts the response as input
+    // Before we fix this `batch_get_for_update` is problematic.
+    type Result = Vec<Vec<u8>>;
     type RpcResponse = kvrpcpb::PessimisticLockResponse;
     type KeyData = Vec<kvrpcpb::Mutation>;
 
@@ -545,12 +550,12 @@ impl KvRequest for kvrpcpb::PessimisticLockRequest {
         Ok(req)
     }
 
-    fn map_result(_result: Self::RpcResponse) -> Self::Result {}
+    fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
+        resp.take_values()
+    }
 
     async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {
-        results
-            .try_for_each_concurrent(None, |_| future::ready(Ok(())))
-            .await
+        results.try_concat().await
     }
 }
 
@@ -560,6 +565,7 @@ pub fn new_pessimistic_lock_request(
     start_version: u64,
     lock_ttl: u64,
     for_update_ts: u64,
+    need_value: bool,
 ) -> kvrpcpb::PessimisticLockRequest {
     let mut req = kvrpcpb::PessimisticLockRequest::default();
     let mutations = keys
@@ -580,7 +586,7 @@ pub fn new_pessimistic_lock_request(
     req.set_is_first_lock(false);
     req.set_wait_timeout(0);
     req.set_force(false);
-    req.set_return_values(false);
+    req.set_return_values(need_value);
     // todo: support large transaction
     req.set_min_commit_ts(0);
 

@@ -6,21 +6,21 @@ use std::{
     future::Future,
 };
 use tikv_client_proto::kvrpcpb;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard};
 
 #[derive(Default)]
-struct Mutations {
+struct InnerBuffer {
     primary_key: Option<Key>,
-    key_mutation_map: BTreeMap<Key, Mutation>,
+    entry_map: BTreeMap<Key, BufferEntry>,
 }
 
-impl Mutations {
-    fn insert(&mut self, key: impl Into<Key>, mutation: Mutation) {
+impl InnerBuffer {
+    fn insert(&mut self, key: impl Into<Key>, entry: BufferEntry) {
         let key = key.into();
-        if !matches!(mutation, Mutation::Cached(_)) {
+        if !matches!(entry, BufferEntry::Cached(_)) {
             self.primary_key.get_or_insert_with(|| key.clone());
         }
-        self.key_mutation_map.insert(key, mutation);
+        self.entry_map.insert(key, entry);
     }
 
     pub fn get_primary_key_or(&mut self, key: &Key) -> &Key {
@@ -31,7 +31,7 @@ impl Mutations {
 /// A caching layer which buffers reads and writes in a transaction.
 #[derive(Default)]
 pub struct Buffer {
-    mutations: Mutex<Mutations>,
+    mutations: Mutex<InnerBuffer>,
 }
 
 impl Buffer {
@@ -56,7 +56,7 @@ impl Buffer {
             MutationValue::Undetermined => {
                 let value = f(key.clone()).await?;
                 let mut mutations = self.mutations.lock().await;
-                mutations.insert(key, Mutation::Cached(value.clone()));
+                Self::update_cache(&mut mutations, key, value.clone());
                 Ok(value)
             }
         }
@@ -64,6 +64,8 @@ impl Buffer {
 
     /// Get multiple values from the buffer. If any are not present, run `f` to
     /// get the missing values.
+    ///
+    /// only used for snapshot read (i.e. not for `batch_get_for_update`)
     pub async fn batch_get_or_else<F, Fut>(
         &self,
         keys: impl Iterator<Item = Key>,
@@ -83,9 +85,9 @@ impl Buffer {
             ) = keys
                 .map(|key| {
                     let value = mutations
-                        .key_mutation_map
+                        .entry_map
                         .get(&key)
-                        .map(Mutation::get_value)
+                        .map(BufferEntry::get_value)
                         .unwrap_or(MutationValue::Undetermined);
                     (key, value)
                 })
@@ -101,8 +103,10 @@ impl Buffer {
 
         let fetched_results = f(undetermined_keys).await?;
         let mut mutations = self.mutations.lock().await;
-        for pair in &fetched_results {
-            mutations.insert(pair.0.clone(), Mutation::Cached(Some(pair.1.clone())));
+        for kvpair in &fetched_results {
+            let key = kvpair.0.clone();
+            let value = Some(kvpair.1.clone());
+            Self::update_cache(&mut mutations, key, value);
         }
 
         let results = cached_results.chain(fetched_results.into_iter());
@@ -122,14 +126,14 @@ impl Buffer {
     {
         // read from local buffer
         let mut mutations = self.mutations.lock().await;
-        let mutation_range = mutations.key_mutation_map.range(range.clone());
+        let mutation_range = mutations.entry_map.range(range.clone());
 
         // fetch from TiKV
         // fetch more entries because some of them may be deleted.
         let redundant_limit = limit
             + mutation_range
                 .clone()
-                .filter(|(_, m)| matches!(m, Mutation::Del))
+                .filter(|(_, m)| matches!(m, BufferEntry::Del))
                 .count() as u32;
 
         let mut results = f(range, redundant_limit)
@@ -141,10 +145,10 @@ impl Buffer {
         // override using local data
         for (k, m) in mutation_range {
             match m {
-                Mutation::Put(v) => {
+                BufferEntry::Put(v) => {
                     results.insert(k.clone(), v.clone());
                 }
-                Mutation::Del => {
+                BufferEntry::Del => {
                     results.remove(k);
                 }
                 _ => {}
@@ -153,7 +157,7 @@ impl Buffer {
 
         // update local buffer
         for (k, v) in &results {
-            mutations.insert(k.clone(), Mutation::Cached(Some(v.clone())));
+            Self::update_cache(&mut mutations, k.clone(), Some(v.clone()));
         }
 
         let mut res = results
@@ -170,13 +174,13 @@ impl Buffer {
         let mutations = &mut self.mutations.lock().await;
         mutations.primary_key.get_or_insert(key.clone());
         let value = mutations
-            .key_mutation_map
+            .entry_map
             .entry(key)
             // Mutated keys don't need a lock.
-            .or_insert(Mutation::Lock);
+            .or_insert(BufferEntry::Locked(None));
         // But values which we have only read, but not written, do.
-        if let Mutation::Cached(_) = value {
-            *value = Mutation::Lock
+        if let BufferEntry::Cached(v) = value {
+            *value = BufferEntry::Locked(Some(v.take()))
         }
     }
 
@@ -185,12 +189,12 @@ impl Buffer {
         self.mutations
             .lock()
             .await
-            .insert(key, Mutation::Put(value));
+            .insert(key, BufferEntry::Put(value));
     }
 
     /// Mark a value as deleted.
     pub async fn delete(&self, key: Key) {
-        self.mutations.lock().await.insert(key, Mutation::Del);
+        self.mutations.lock().await.insert(key, BufferEntry::Del);
     }
 
     /// Converts the buffered mutations to the proto buffer version
@@ -198,7 +202,7 @@ impl Buffer {
         self.mutations
             .lock()
             .await
-            .key_mutation_map
+            .entry_map
             .iter()
             .filter_map(|(key, mutation)| mutation.to_proto_with_key(key))
             .collect()
@@ -208,37 +212,81 @@ impl Buffer {
         self.mutations
             .lock()
             .await
-            .key_mutation_map
+            .entry_map
             .get(&key)
-            .map(Mutation::get_value)
+            .map(BufferEntry::get_value)
             .unwrap_or(MutationValue::Undetermined)
+    }
+
+    fn update_cache(buffer: &mut MutexGuard<InnerBuffer>, key: Key, value: Option<Value>) {
+        match buffer.entry_map.get(&key) {
+            Some(BufferEntry::Locked(None)) => {
+                buffer
+                    .entry_map
+                    .insert(key, BufferEntry::Locked(Some(value)));
+            }
+            None => {
+                buffer.entry_map.insert(key, BufferEntry::Cached(value));
+            }
+            Some(BufferEntry::Cached(v)) | Some(BufferEntry::Locked(Some(v))) => {
+                assert!(&value == v);
+            }
+            Some(BufferEntry::Put(v)) => {
+                assert!(value.as_ref() == Some(v))
+            }
+            Some(BufferEntry::Del) => {
+                assert!(value.is_none());
+            }
+        }
     }
 }
 
-// The state of a value in the buffer.
+// The state of a key-value pair in the buffer.
+// It includes two kinds of state:
+//
+// Mutations:
+//   - `Put`
+//   - `Del`
+// Cache of read requests:
+//   - `Cached`, generated by normal read requests
+//   - `ReadLockCached`, generated by lock commands (`lock_keys`, `get_for_update`) and optionally read requests
+//
 #[derive(Debug, Clone)]
-enum Mutation {
+enum BufferEntry {
     // The value has been read from the server. None means there is no entry.
+    // Also means the entry isn't locked.
     Cached(Option<Value>),
+    // Key is locked.
+    //
+    // Cached value:
+    //   - Outer Option: Whether there is cached value
+    //   - Inner Option: Whether the value is empty
+    //   - Note: The cache is not what the lock request reads, but what normal read (`get`) requests read.
+    //
+    // In optimistic transaction:
+    //   The key is locked by `lock_keys`.
+    //   It means letting the server check for conflicts when committing
+    //
+    // In pessimistic transaction:
+    //   The key is locked by `get_for_update` or `batch_get_for_update`
+    Locked(Option<Option<Value>>),
     // Value has been written.
     Put(Value),
     // Value has been deleted.
     Del,
-    // Key has been locked.
-    Lock,
 }
 
-impl Mutation {
+impl BufferEntry {
     fn to_proto_with_key(&self, key: &Key) -> Option<kvrpcpb::Mutation> {
         let mut pb = kvrpcpb::Mutation::default();
         match self {
-            Mutation::Cached(_) => return None,
-            Mutation::Put(v) => {
+            BufferEntry::Cached(_) => return None,
+            BufferEntry::Put(v) => {
                 pb.set_op(kvrpcpb::Op::Put);
                 pb.set_value(v.clone());
             }
-            Mutation::Del => pb.set_op(kvrpcpb::Op::Del),
-            Mutation::Lock => pb.set_op(kvrpcpb::Op::Lock),
+            BufferEntry::Del => pb.set_op(kvrpcpb::Op::Del),
+            BufferEntry::Locked(_) => pb.set_op(kvrpcpb::Op::Lock),
         };
         pb.set_key(key.clone().into());
         Some(pb)
@@ -246,10 +294,11 @@ impl Mutation {
 
     fn get_value(&self) -> MutationValue {
         match self {
-            Mutation::Cached(value) => MutationValue::Determined(value.clone()),
-            Mutation::Put(value) => MutationValue::Determined(Some(value.clone())),
-            Mutation::Del => MutationValue::Determined(None),
-            Mutation::Lock => MutationValue::Undetermined,
+            BufferEntry::Cached(value) => MutationValue::Determined(value.clone()),
+            BufferEntry::Put(value) => MutationValue::Determined(Some(value.clone())),
+            BufferEntry::Del => MutationValue::Determined(None),
+            BufferEntry::Locked(None) => MutationValue::Undetermined,
+            BufferEntry::Locked(Some(value)) => MutationValue::Determined(value.clone()),
         }
     }
 }

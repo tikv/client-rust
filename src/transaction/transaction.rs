@@ -104,8 +104,19 @@ impl Transaction {
             .await
     }
 
-    /// Create a `get_for_udpate` request.
-    /// Once resolved this request will pessimistically lock and fetch the value associated with the given key.
+    /// Create a `get for udpate` request.
+    /// Once resolved this request will pessimistically lock and fetch the latest
+    /// value associated with the given key at **current timestamp**.
+    ///
+    /// The "current timestamp" (also called `for_update_ts` of the request) is fetched immediately from PD.
+    ///
+    /// Note: The behavior of this command does not follow snapshot isolation. It is similar to `select for update` in TiDB,
+    /// which is similar to that in MySQL. It reads the latest value (using current timestamp),
+    /// and the value is not cached in the local buffer.
+    /// So normal `get`-like commands after `get_for_update` will not be influenced, they still read values at `start_ts`.
+    ///
+    /// Different from `get`, this request does not distinguish between empty values and non-existent keys
+    /// , i.e. querying non-existent keys will result in empty values.
     ///
     /// It can only be used in pessimistic mode.
     ///
@@ -117,25 +128,21 @@ impl Transaction {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
-    /// let result: Option<Value> = txn.get_for_update(key).await.unwrap();
+    /// let result: Value = txn.get_for_update(key).await.unwrap();
     /// // now the key "TiKV" is locked, other transactions cannot modify it
     /// // Finish the transaction...
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
+    pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Value> {
         self.check_allow_operation()?;
         if !self.is_pessimistic() {
             Err(Error::InvalidTransactionType)
         } else {
             let key = key.into();
-            self.pessimistic_lock(iter::once(key.clone())).await?;
-            self.buffer
-                .get_or_else(key, |key| {
-                    new_mvcc_get_request(key, self.timestamp.clone())
-                        .execute(self.rpc.clone(), RetryOptions::default_optimistic())
-                })
-                .await
+            let mut values = self.pessimistic_lock(iter::once(key.clone()), true).await?;
+            assert!(values.len() == 1);
+            Ok(values.swap_remove(0))
         }
     }
 
@@ -180,15 +187,23 @@ impl Transaction {
             .await
     }
 
-    /// Create a new 'batch get' request.
+    /// Create a new 'batch get for update' request.
     ///
     /// Once resolved this request will pessimistically lock the keys and
     /// fetch the values associated with the given keys.
     ///
-    /// Non-existent entries will not appear in the result. The order of the keys is not retained in the result.
+    /// Note: The behavior of this command does not follow snapshot isolation. It is similar to `select for update` in TiDB,
+    /// which is similar to that in MySQL. It reads the latest value (using current timestamp),
+    /// and the value is not cached in the local buffer.
+    /// So normal `get`-like commands after `batch_get_for_update` will not be influenced, they still read values at `start_ts`.
+    ///
+    /// Different from `batch_get`, this request does not distinguish between empty values and non-existent keys
+    /// , i.e. querying non-existent keys will result in empty values.
+    ///
+    /// It can only be used in pessimistic mode.
     ///
     /// # Examples
-    /// ```rust,no_run
+    /// ```rust,no_run,compile_fail
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
@@ -207,7 +222,10 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn batch_get_for_update(
+    // This is temporarily disabled because we cannot correctly match the keys and values.
+    // See `impl KvRequest for kvrpcpb::PessimisticLockRequest` for details.
+    #[allow(dead_code)]
+    async fn batch_get_for_update(
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
@@ -216,7 +234,7 @@ impl Transaction {
             Err(Error::InvalidTransactionType)
         } else {
             let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
-            self.pessimistic_lock(keys.clone()).await?;
+            self.pessimistic_lock(keys.clone(), false).await?;
             self.batch_get(keys).await
         }
     }
@@ -319,7 +337,8 @@ impl Transaction {
         self.check_allow_operation()?;
         let key = key.into();
         if self.is_pessimistic() {
-            self.pessimistic_lock(iter::once(key.clone())).await?;
+            self.pessimistic_lock(iter::once(key.clone()), false)
+                .await?;
         }
         self.buffer.put(key, value.into()).await;
         Ok(())
@@ -346,7 +365,8 @@ impl Transaction {
         self.check_allow_operation()?;
         let key = key.into();
         if self.is_pessimistic() {
-            self.pessimistic_lock(iter::once(key.clone())).await?;
+            self.pessimistic_lock(iter::once(key.clone()), false)
+                .await?;
         }
         self.buffer.delete(key).await;
         Ok(())
@@ -359,7 +379,8 @@ impl Transaction {
     /// "I do not want to commit if the value associated with this key has been modified".
     /// It's useful to avoid *write skew* anomaly.
     ///
-    /// In pessimistic mode, please use [`get_for_update`](Transaction::get_for_update) instead.
+    /// In pessimistic mode, it is similar to [`batch_get_for_update`](Transaction::batch_get_for_update),
+    /// except that it does not read values.
     ///
     /// # Examples
     /// ```rust,no_run
@@ -373,10 +394,20 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn lock_keys(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
+    pub async fn lock_keys(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> Result<()> {
         self.check_allow_operation()?;
-        for key in keys {
-            self.buffer.lock(key.into()).await;
+        match self.options.kind {
+            TransactionKind::Optimistic => {
+                for key in keys {
+                    self.buffer.lock(key.into()).await;
+                }
+            }
+            TransactionKind::Pessimistic(_) => {
+                self.pessimistic_lock(keys, false).await?;
+            }
         }
         Ok(())
     }
@@ -495,7 +526,8 @@ impl Transaction {
     async fn pessimistic_lock(
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
-    ) -> Result<()> {
+        need_value: bool,
+    ) -> Result<Vec<Vec<u8>>> {
         assert!(
             matches!(self.options.kind, TransactionKind::Pessimistic(_)),
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
@@ -511,15 +543,22 @@ impl Transaction {
         let lock_ttl = DEFAULT_LOCK_TTL;
         let for_update_ts = self.rpc.clone().get_timestamp().await.unwrap().version();
         self.options.push_for_update_ts(for_update_ts);
-        new_pessimistic_lock_request(
-            keys,
+        let values = new_pessimistic_lock_request(
+            keys.clone(),
             primary_lock,
             self.timestamp.version(),
             lock_ttl,
             for_update_ts,
+            need_value,
         )
         .execute(self.rpc.clone(), RetryOptions::default_pessimistic())
-        .await
+        .await?;
+
+        for key in keys {
+            self.buffer.lock(key.into()).await;
+        }
+
+        Ok(values)
     }
 
     /// Checks if the transaction can perform arbitrary operations.
