@@ -14,11 +14,13 @@ const LOGICAL_MASK: i64 = (1 << PHYSICAL_SHIFT_BITS) - 1;
 ///
 /// Currently the only implmentation of this trait is [`Timestamp`](Timestamp) in TiKV.
 /// It contains a physical part (first 46 bits) and a logical part (last 18 bits).
-pub trait TimestampExt {
+pub trait TimestampExt: Sized {
     /// Convert the timestamp to u64.
     fn version(&self) -> u64;
     /// Convert u64 to a timestamp.
     fn from_version(version: u64) -> Self;
+    /// Convert u64 to an optional timestamp, where `0` represents no timestamp.
+    fn try_from_version(version: u64) -> Option<Self>;
 }
 
 impl TimestampExt for Timestamp {
@@ -33,6 +35,14 @@ impl TimestampExt for Timestamp {
         Self {
             physical: version >> PHYSICAL_SHIFT_BITS,
             logical: version & LOGICAL_MASK,
+        }
+    }
+
+    fn try_from_version(version: u64) -> Option<Self> {
+        if version == 0 {
+            None
+        } else {
+            Some(Self::from_version(version))
         }
     }
 }

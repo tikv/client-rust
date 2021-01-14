@@ -485,6 +485,20 @@ impl Transaction {
         res
     }
 
+    /// Send a heart beat message to keep the transaction alive on the server and update its TTL.
+    ///
+    /// Returns the TTL set on the lock by the server.
+    pub async fn send_heart_beat(&mut self) -> Result<u64> {
+        self.check_allow_operation()?;
+        let primary_key = match self.buffer.get_primary_key().await {
+            Some(k) => k,
+            None => return Err(Error::NoPrimaryKey),
+        };
+        new_heart_beat_request(self.timestamp.clone(), primary_key, DEFAULT_LOCK_TTL)
+            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
+            .await
+    }
+
     async fn scan_inner(
         &self,
         range: impl Into<BoundRange>,
@@ -565,7 +579,7 @@ impl Transaction {
 
 impl Drop for Transaction {
     fn drop(&mut self) {
-        if self.status == TransactionStatus::Active {
+        if !std::thread::panicking() && self.status == TransactionStatus::Active {
             match self.options.check_level {
                 CheckLevel::Panic => {
                     panic!("Dropping an active transaction. Consider commit or rollback it.")
