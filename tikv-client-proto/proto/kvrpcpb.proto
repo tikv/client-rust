@@ -160,6 +160,10 @@ message PessimisticLockResponse {
     // The values is set if 'return_values' is true in the request and no error.
     // If 'force' is true, this field is not used.
     repeated bytes values = 5;
+    // Indicates whether the values at the same index is correspond to an existing key.
+    // In legacy TiKV, this field is not used even 'force' is false. In that case, an empty value indicates
+    // two possible situations: (1) the key does not exist. (2) the key exists but the value is empty.
+    repeated bool not_founds = 6;
 }
 
 // Unlock keys locked using `PessimisticLockRequest`.
