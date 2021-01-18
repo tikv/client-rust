@@ -23,6 +23,11 @@ impl Snapshot {
         self.transaction.get(key).await
     }
 
+    /// Check whether the key exists.
+    pub async fn key_exists(&self, key: impl Into<Key>) -> Result<bool> {
+        self.transaction.key_exists(key).await
+    }
+
     /// Get the values associated with the given keys.
     pub async fn batch_get(
         &self,
