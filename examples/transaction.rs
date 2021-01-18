@@ -29,6 +29,21 @@ async fn get(client: &Client, key: Key) -> Option<Value> {
     res
 }
 
+async fn key_exists(client: &Client, key: Key) -> bool {
+    let mut txn = client
+        .begin_optimistic()
+        .await
+        .expect("Could not begin a transaction");
+    let res = txn
+        .key_exists(key)
+        .await
+        .expect("Could not check key exists");
+    txn.commit()
+        .await
+        .expect("Committing read-only transaction should not fail");
+    res
+}
+
 async fn scan(client: &Client, range: impl Into<BoundRange>, limit: u32) {
     let mut txn = client
         .begin_optimistic()
@@ -81,6 +96,16 @@ async fn main() {
     let key1: Key = b"key1".to_vec().into();
     let value1 = get(&txn, key1.clone()).await;
     println!("{:?}", (key1, value1));
+
+    // check key exists
+    let key1: Key = b"key1".to_vec().into();
+    let key1_exists = key_exists(&txn, key1.clone()).await;
+    let key2: Key = b"key_not_exist".to_vec().into();
+    let key2_exists = key_exists(&txn, key2.clone()).await;
+    println!(
+        "check exists {:?}",
+        vec![(key1, key1_exists), (key2, key2_exists)]
+    );
 
     // scan
     let key1: Key = b"key1".to_vec().into();
