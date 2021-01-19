@@ -49,14 +49,6 @@ pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
     }
 
     fn response_stream(
-        self,
-        pd_client: Arc<impl PdClient>,
-        retry: RetryOptions,
-    ) -> BoxStream<'static, Result<Self::RpcResponse>> {
-        self.retry_response_stream(pd_client, retry)
-    }
-
-    fn retry_response_stream(
         mut self,
         pd_client: Arc<impl PdClient>,
         retry: RetryOptions,
@@ -116,7 +108,7 @@ pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
                     Ok(())
                 };
 
-                fut.map_ok(move |_| self.retry_response_stream(pd_client, retry))
+                fut.map_ok(move |_| self.response_stream(pd_client, retry))
                     .try_flatten_stream()
                     .boxed()
             },
@@ -135,7 +127,7 @@ pub trait KvRequest: Request + Clone + Sync + Send + 'static + Sized {
                     futures_timer::Delay::new(delay_duration).await;
                     Ok(())
                 };
-                fut.map_ok(move |_| self.retry_response_stream(pd_client, retry))
+                fut.map_ok(move |_| self.response_stream(pd_client, retry))
                     .try_flatten_stream()
                     .boxed()
             },
@@ -367,7 +359,7 @@ mod test {
             region_backoff: Backoff::no_jitter_backoff(1, 1, 3),
             lock_backoff: Backoff::no_jitter_backoff(1, 1, 3),
         };
-        let stream = request.retry_response_stream(pd_client, retry);
+        let stream = request.response_stream(pd_client, retry);
 
         executor::block_on(async { stream.collect::<Vec<Result<MockRpcResponse>>>().await });
 
