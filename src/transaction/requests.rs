@@ -18,6 +18,7 @@ impl KvRequest for kvrpcpb::GetRequest {
     type Result = Option<Value>;
     type RpcResponse = kvrpcpb::GetResponse;
     type KeyData = Key;
+
     fn store_stream<PdC: PdClient>(
         &mut self,
         pd_client: Arc<PdC>,
@@ -60,9 +61,9 @@ impl HasLocks for kvrpcpb::GetResponse {
     }
 }
 
-pub fn new_mvcc_get_request(key: impl Into<Key>, timestamp: Timestamp) -> kvrpcpb::GetRequest {
+pub fn new_mvcc_get_request(key: Key, timestamp: Timestamp) -> kvrpcpb::GetRequest {
     let mut req = kvrpcpb::GetRequest::default();
-    req.set_key(key.into().into());
+    req.set_key(key.into());
     req.set_version(timestamp.version());
     req
 }
@@ -72,6 +73,7 @@ impl KvRequest for kvrpcpb::BatchGetRequest {
     type Result = Vec<KvPair>;
     type RpcResponse = kvrpcpb::BatchGetResponse;
     type KeyData = Vec<Key>;
+
     fn make_rpc_request(&self, keys: Self::KeyData, store: &Store) -> Result<Self> {
         let mut req = self.request_from_store(store)?;
         req.set_keys(keys.into_iter().map(Into::into).collect());
@@ -153,12 +155,12 @@ impl KvRequest for kvrpcpb::ScanRequest {
 }
 
 pub fn new_mvcc_scan_request(
-    range: impl Into<BoundRange>,
+    range: BoundRange,
     timestamp: Timestamp,
     limit: u32,
     key_only: bool,
 ) -> kvrpcpb::ScanRequest {
-    let (start_key, end_key) = range.into().into_keys();
+    let (start_key, end_key) = range.into_keys();
     let mut req = kvrpcpb::ScanRequest::default();
     req.set_start_key(start_key.into());
     req.set_end_key(end_key.unwrap_or_default().into());
@@ -574,7 +576,7 @@ impl KvRequest for kvrpcpb::PessimisticLockRequest {
 }
 
 pub fn new_pessimistic_lock_request(
-    keys: Vec<impl Into<Key>>,
+    keys: Vec<Key>,
     primary_lock: Key,
     start_version: u64,
     lock_ttl: u64,
@@ -587,7 +589,7 @@ pub fn new_pessimistic_lock_request(
         .map(|key| {
             let mut mutation = kvrpcpb::Mutation::default();
             mutation.set_op(kvrpcpb::Op::PessimisticLock);
-            mutation.set_key(key.into().into());
+            mutation.set_key(key.into());
             mutation
         })
         .collect();
@@ -640,12 +642,12 @@ impl KvRequest for kvrpcpb::ScanLockRequest {
 }
 
 pub fn new_scan_lock_request(
-    start_key: impl Into<Key>,
+    start_key: Key,
     safepoint: Timestamp,
     limit: u32,
 ) -> kvrpcpb::ScanLockRequest {
     let mut req = kvrpcpb::ScanLockRequest::default();
-    req.set_start_key(start_key.into().into());
+    req.set_start_key(start_key.into());
     req.set_max_version(safepoint.version());
     req.set_limit(limit);
     req

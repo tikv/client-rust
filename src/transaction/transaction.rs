@@ -455,7 +455,8 @@ impl Transaction {
                 }
             }
             TransactionKind::Pessimistic(_) => {
-                self.pessimistic_lock(keys, false).await?;
+                self.pessimistic_lock(keys.into_iter().map(|k| k.into()), false)
+                    .await?;
             }
         }
         Ok(())
@@ -574,7 +575,7 @@ impl Transaction {
     /// Only valid for pessimistic transactions, panics if called on an optimistic transaction.
     async fn pessimistic_lock(
         &mut self,
-        keys: impl IntoIterator<Item = impl Into<Key>>,
+        keys: impl IntoIterator<Item = Key>,
         need_value: bool,
     ) -> Result<Vec<Option<Vec<u8>>>> {
         assert!(
@@ -582,11 +583,7 @@ impl Transaction {
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
         );
 
-        let keys: Vec<Vec<u8>> = keys
-            .into_iter()
-            .map(|it| it.into())
-            .map(|it: Key| it.into())
-            .collect();
+        let keys: Vec<Key> = keys.into_iter().collect();
         let first_key = keys[0].clone();
         let primary_lock = self.buffer.get_primary_key_or(&first_key.into()).await;
         let lock_ttl = DEFAULT_LOCK_TTL;
