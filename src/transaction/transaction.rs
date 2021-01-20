@@ -907,7 +907,7 @@ impl Committer {
 
 #[derive(PartialEq)]
 enum TransactionStatus {
-    /// The transaction is read-only [`Snapshot`](super::Snapshot::Snapshot), no need to commit or rollback or panic on drop.
+    /// The transaction is read-only [`Snapshot`](super::Snapshot), no need to commit or rollback or panic on drop.
     ReadOnly,
     /// The transaction have not been committed or rolled back.
     Active,

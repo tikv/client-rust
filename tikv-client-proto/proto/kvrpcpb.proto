@@ -872,7 +872,7 @@ message ScanDetailV2 {
     uint64 rocksdb_delete_skipped_count = 3;
 
     // Total number of internal keys skipped over during iteration.
-    // See https://github.com/facebook/rocksdb/blob/9f1c84ca471d8b1ad7be9f3eebfc2c7e07dfd7a7/include/rocksdb/perf_context.h#L84 for details.
+    // See `<https://github.com/facebook/rocksdb/blob/9f1c84ca471d8b1ad7be9f3eebfc2c7e07dfd7a7/include/rocksdb/perf_context.h#L84>` for details.
     uint64 rocksdb_key_skipped_count = 4;
 
     // Total number of RocksDB block cache hits.
@@ -892,7 +892,7 @@ message ExecDetails {
     // Available when ctx.record_scan_stat = true or meet slow query.
     ScanDetail scan_detail = 2;
 
-    // See https://github.com/pingcap/kvproto/pull/689
+    // See `<https://github.com/pingcap/kvproto/pull/689>`
     reserved 3;
     reserved 4;
 }
