@@ -3,11 +3,11 @@
 use super::RawRpcRequest;
 use crate::{
     pd::PdClient,
-    request::{
+    request::KvRequest,
+    store::{
         store_stream_for_key, store_stream_for_keys, store_stream_for_range,
-        store_stream_for_ranges, KvRequest,
+        store_stream_for_ranges, Store,
     },
-    store::Store,
     transaction::HasLocks,
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
