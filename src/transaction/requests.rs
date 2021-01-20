@@ -2,11 +2,8 @@
 
 use crate::{
     pd::PdClient,
-    request::{
-        store_stream_for_key, store_stream_for_keys, store_stream_for_range, KvRequest,
-        RetryOptions,
-    },
-    store::Store,
+    request::{KvRequest, RetryOptions},
+    store::{store_stream_for_key, store_stream_for_keys, store_stream_for_range, Store},
     timestamp::TimestampExt,
     transaction::HasLocks,
     BoundRange, Error, Key, KvPair, Result, Value,
