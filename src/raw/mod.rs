@@ -14,6 +14,7 @@ use crate::Error;
 use std::{convert::TryFrom, fmt};
 
 mod client;
+pub mod lowering;
 mod requests;
 
 /// A [`ColumnFamily`](ColumnFamily) is an optional parameter for [`raw::Client`](Client) requests.

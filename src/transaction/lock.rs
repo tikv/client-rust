@@ -39,8 +39,10 @@ pub async fn resolve_locks(
     let mut commit_versions: HashMap<u64, u64> = HashMap::new();
     let mut clean_regions: HashMap<u64, HashSet<RegionVerId>> = HashMap::new();
     for lock in expired_locks {
-        let primary_key: Key = lock.primary_lock.into();
-        let region_ver_id = pd_client.region_for_key(&primary_key).await?.ver_id();
+        let region_ver_id = pd_client
+            .region_for_key(&lock.primary_lock.clone().into())
+            .await?
+            .ver_id();
         // skip if the region is cleaned
         if clean_regions
             .get(&lock.lock_version)
@@ -53,9 +55,10 @@ pub async fn resolve_locks(
         let commit_version = match commit_versions.get(&lock.lock_version) {
             Some(&commit_version) => commit_version,
             None => {
-                let commit_version = requests::new_cleanup_request(primary_key, lock.lock_version)
-                    .execute(pd_client.clone(), RetryOptions::default_optimistic())
-                    .await?;
+                let commit_version =
+                    requests::new_cleanup_request(lock.primary_lock, lock.lock_version)
+                        .execute(pd_client.clone(), RetryOptions::default_optimistic())
+                        .await?;
                 commit_versions.insert(lock.lock_version, commit_version);
                 commit_version
             }

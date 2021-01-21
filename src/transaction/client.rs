@@ -185,8 +185,8 @@ impl Client {
         let mut start_key = vec![];
         loop {
             let req = new_scan_lock_request(
-                mem::take(&mut start_key).into(),
-                safepoint.clone(),
+                mem::take(&mut start_key),
+                safepoint.version(),
                 SCAN_LOCK_BATCH_SIZE,
             );
             let res: Vec<kvrpcpb::LockInfo> = req
