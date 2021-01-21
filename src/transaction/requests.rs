@@ -61,10 +61,10 @@ impl HasLocks for kvrpcpb::GetResponse {
     }
 }
 
-pub fn new_mvcc_get_request(key: Key, timestamp: Timestamp) -> kvrpcpb::GetRequest {
+pub fn new_get_request(key: Vec<u8>, timestamp: u64) -> kvrpcpb::GetRequest {
     let mut req = kvrpcpb::GetRequest::default();
-    req.set_key(key.into());
-    req.set_version(timestamp.version());
+    req.set_key(key);
+    req.set_version(timestamp);
     req
 }
 
@@ -109,13 +109,10 @@ impl HasLocks for kvrpcpb::BatchGetResponse {
     }
 }
 
-pub fn new_mvcc_get_batch_request(
-    keys: Vec<Key>,
-    timestamp: Timestamp,
-) -> kvrpcpb::BatchGetRequest {
+pub fn new_get_batch_request(keys: Vec<Vec<u8>>, timestamp: u64) -> kvrpcpb::BatchGetRequest {
     let mut req = kvrpcpb::BatchGetRequest::default();
-    req.set_keys(keys.into_iter().map(Into::into).collect());
-    req.set_version(timestamp.version());
+    req.set_keys(keys);
+    req.set_version(timestamp);
     req
 }
 
@@ -154,19 +151,19 @@ impl KvRequest for kvrpcpb::ScanRequest {
     }
 }
 
-pub fn new_mvcc_scan_request(
-    range: BoundRange,
-    timestamp: Timestamp,
+pub fn new_scan_request(
+    start_key: Vec<u8>,
+    end_key: Vec<u8>,
+    timestamp: u64,
     limit: u32,
     key_only: bool,
 ) -> kvrpcpb::ScanRequest {
-    let (start_key, end_key) = range.into_keys();
     let mut req = kvrpcpb::ScanRequest::default();
-    req.set_start_key(start_key.into());
-    req.set_end_key(end_key.unwrap_or_default().into());
+    req.set_start_key(start_key);
+    req.set_end_key(end_key);
     req.set_limit(limit);
     req.set_key_only(key_only);
-    req.set_version(timestamp.version());
+    req.set_version(timestamp);
     req
 }
 
@@ -279,9 +276,9 @@ impl KvRequest for kvrpcpb::CleanupRequest {
     }
 }
 
-pub fn new_cleanup_request(key: impl Into<Key>, start_version: u64) -> kvrpcpb::CleanupRequest {
+pub fn new_cleanup_request(key: Vec<u8>, start_version: u64) -> kvrpcpb::CleanupRequest {
     let mut req = kvrpcpb::CleanupRequest::default();
-    req.set_key(key.into().into());
+    req.set_key(key);
     req.set_start_version(start_version);
 
     req
@@ -352,13 +349,13 @@ impl HasLocks for kvrpcpb::PrewriteResponse {
 
 pub fn new_prewrite_request(
     mutations: Vec<kvrpcpb::Mutation>,
-    primary_lock: Key,
+    primary_lock: Vec<u8>,
     start_version: u64,
     lock_ttl: u64,
 ) -> kvrpcpb::PrewriteRequest {
     let mut req = kvrpcpb::PrewriteRequest::default();
     req.set_mutations(mutations);
-    req.set_primary_lock(primary_lock.into());
+    req.set_primary_lock(primary_lock);
     req.set_start_version(start_version);
     req.set_lock_ttl(lock_ttl);
     // TODO: Lite resolve lock is currently disabled
@@ -369,7 +366,7 @@ pub fn new_prewrite_request(
 
 pub fn new_pessimistic_prewrite_request(
     mutations: Vec<kvrpcpb::Mutation>,
-    primary_lock: Key,
+    primary_lock: Vec<u8>,
     start_version: u64,
     lock_ttl: u64,
     for_update_ts: u64,
@@ -414,12 +411,12 @@ impl KvRequest for kvrpcpb::CommitRequest {
 }
 
 pub fn new_commit_request(
-    keys: Vec<Key>,
+    keys: Vec<Vec<u8>>,
     start_version: u64,
     commit_version: u64,
 ) -> kvrpcpb::CommitRequest {
     let mut req = kvrpcpb::CommitRequest::default();
-    req.set_keys(keys.into_iter().map(Into::into).collect());
+    req.set_keys(keys);
     req.set_start_version(start_version);
     req.set_commit_version(commit_version);
 
@@ -502,12 +499,12 @@ impl KvRequest for kvrpcpb::PessimisticRollbackRequest {
 }
 
 pub fn new_pessimistic_rollback_request(
-    keys: Vec<Key>,
+    keys: Vec<Vec<u8>>,
     start_version: u64,
     for_update_ts: u64,
 ) -> kvrpcpb::PessimisticRollbackRequest {
     let mut req = kvrpcpb::PessimisticRollbackRequest::default();
-    req.set_keys(keys.into_iter().map(Into::into).collect());
+    req.set_keys(keys);
     req.set_start_version(start_version);
     req.set_for_update_ts(for_update_ts);
 
@@ -559,25 +556,16 @@ impl KvRequest for kvrpcpb::PessimisticLockRequest {
 }
 
 pub fn new_pessimistic_lock_request(
-    keys: Vec<Key>,
-    primary_lock: Key,
+    mutations: Vec<kvrpcpb::Mutation>,
+    primary_lock: Vec<u8>,
     start_version: u64,
     lock_ttl: u64,
     for_update_ts: u64,
     need_value: bool,
 ) -> kvrpcpb::PessimisticLockRequest {
     let mut req = kvrpcpb::PessimisticLockRequest::default();
-    let mutations = keys
-        .into_iter()
-        .map(|key| {
-            let mut mutation = kvrpcpb::Mutation::default();
-            mutation.set_op(kvrpcpb::Op::PessimisticLock);
-            mutation.set_key(key.into());
-            mutation
-        })
-        .collect();
     req.set_mutations(mutations);
-    req.set_primary_lock(primary_lock.into());
+    req.set_primary_lock(primary_lock);
     req.set_start_version(start_version);
     req.set_lock_ttl(lock_ttl);
     req.set_for_update_ts(for_update_ts);
@@ -625,13 +613,13 @@ impl KvRequest for kvrpcpb::ScanLockRequest {
 }
 
 pub fn new_scan_lock_request(
-    start_key: Key,
-    safepoint: Timestamp,
+    start_key: Vec<u8>,
+    safepoint: u64,
     limit: u32,
 ) -> kvrpcpb::ScanLockRequest {
     let mut req = kvrpcpb::ScanLockRequest::default();
-    req.set_start_key(start_key.into());
-    req.set_max_version(safepoint.version());
+    req.set_start_key(start_key);
+    req.set_max_version(safepoint);
     req.set_limit(limit);
     req
 }
@@ -672,13 +660,13 @@ impl KvRequest for kvrpcpb::TxnHeartBeatRequest {
 }
 
 pub fn new_heart_beat_request(
-    start_ts: Timestamp,
-    primary_lock: Key,
+    start_ts: u64,
+    primary_lock: Vec<u8>,
     ttl: u64,
 ) -> kvrpcpb::TxnHeartBeatRequest {
     let mut req = kvrpcpb::TxnHeartBeatRequest::default();
-    req.set_start_version(start_ts.version());
-    req.set_primary_lock(primary_lock.into());
+    req.set_start_version(start_ts);
+    req.set_primary_lock(primary_lock);
     req.set_advise_lock_ttl(ttl);
     req
 }

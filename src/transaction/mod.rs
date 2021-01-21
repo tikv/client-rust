@@ -15,6 +15,7 @@ pub use transaction::{CheckLevel, Transaction, TransactionOptions};
 
 mod buffer;
 mod client;
+pub mod lowering;
 #[macro_use]
 mod requests;
 mod lock;
