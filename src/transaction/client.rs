@@ -2,9 +2,10 @@
 
 use super::{requests::new_scan_lock_request, resolve_locks};
 use crate::{
+    backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     config::Config,
     pd::{PdClient, PdRpcClient},
-    request::{KvRequest, RetryOptions},
+    request::Plan,
     timestamp::TimestampExt,
     transaction::{Snapshot, Transaction, TransactionOptions},
     Result,
@@ -13,7 +14,7 @@ use futures::executor::ThreadPool;
 use std::{mem, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
-const SCAN_LOCK_BATCH_SIZE: u32 = 1024; // TODO: cargo-culted value
+const SCAN_LOCK_BATCH_SIZE: u32 = 1024; // FIXME: cargo-culted value
 
 /// The TiKV transactional `Client` is used to interact with TiKV using transactional (MVCC) requests.
 ///
@@ -189,9 +190,15 @@ impl Client {
                 safepoint.version(),
                 SCAN_LOCK_BATCH_SIZE,
             );
-            let res: Vec<kvrpcpb::LockInfo> = req
-                .execute(self.pd.clone(), RetryOptions::default_optimistic())
-                .await?;
+
+            let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
+                .resolve_lock(OPTIMISTIC_BACKOFF)
+                .multi_region()
+                .retry_region(DEFAULT_REGION_BACKOFF)
+                .merge(crate::request::Collect)
+                .plan();
+            let res: Vec<kvrpcpb::LockInfo> = plan.execute().await?;
+
             if res.is_empty() {
                 break;
             }

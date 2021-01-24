@@ -5,6 +5,10 @@
 use rand::{thread_rng, Rng};
 use std::time::Duration;
 
+pub const DEFAULT_REGION_BACKOFF: Backoff = Backoff::no_jitter_backoff(2, 500, 10);
+pub const OPTIMISTIC_BACKOFF: Backoff = Backoff::no_jitter_backoff(2, 500, 10);
+pub const PESSIMISTIC_BACKOFF: Backoff = Backoff::no_backoff();
+
 /// When a request is retried, we can backoff for some time to avoid saturating the network.
 ///
 /// `Backoff` is an object which determines how long to wait for.

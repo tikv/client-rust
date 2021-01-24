@@ -13,6 +13,7 @@ use std::{
     thread,
 };
 use tikv_client_pd::Cluster;
+use tikv_client_proto::kvrpcpb;
 use tikv_client_store::{KvClient, KvConnect, TikvConnect};
 
 const CQ_COUNT: usize = 1;
@@ -53,8 +54,8 @@ pub trait PdClient: Send + Sync + 'static {
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
 
     /// In transactional API, `key` is in raw format
-    async fn store_for_key(self: Arc<Self>, key: Key) -> Result<Store> {
-        let region = self.region_for_key(&key).await?;
+    async fn store_for_key(self: Arc<Self>, key: &Key) -> Result<Store> {
+        let region = self.region_for_key(key).await?;
         self.map_region_to_store(region).await
     }
 
@@ -63,10 +64,14 @@ pub trait PdClient: Send + Sync + 'static {
         self.map_region_to_store(region).await
     }
 
-    fn group_keys_by_region<K: AsRef<Key> + Send + Sync + 'static>(
+    fn group_keys_by_region<K, K2>(
         self: Arc<Self>,
         keys: impl Iterator<Item = K> + Send + Sync + 'static,
-    ) -> BoxStream<'static, Result<(RegionId, Vec<K>)>> {
+    ) -> BoxStream<'static, Result<(RegionId, Vec<K2>)>>
+    where
+        K: AsRef<Key> + Into<K2> + Send + Sync + 'static,
+        K2: Send + Sync + 'static,
+    {
         let keys = keys.peekable();
         stream_fn(keys, move |mut keys| {
             let this = self.clone();
@@ -74,12 +79,12 @@ pub trait PdClient: Send + Sync + 'static {
                 if let Some(key) = keys.next() {
                     let region = this.region_for_key(key.as_ref()).await?;
                     let id = region.id();
-                    let mut grouped = vec![key];
+                    let mut grouped = vec![key.into()];
                     while let Some(key) = keys.peek() {
                         if !region.contains(key.as_ref()) {
                             break;
                         }
-                        grouped.push(keys.next().unwrap());
+                        grouped.push(keys.next().unwrap().into());
                     }
                     Ok(Some((keys, (id, grouped))))
                 } else {
@@ -121,8 +126,8 @@ pub trait PdClient: Send + Sync + 'static {
     /// Returns a Stream which iterates over the contexts for ranges in the same region.
     fn group_ranges_by_region(
         self: Arc<Self>,
-        mut ranges: Vec<BoundRange>,
-    ) -> BoxStream<'static, Result<(RegionId, Vec<BoundRange>)>> {
+        mut ranges: Vec<kvrpcpb::KeyRange>,
+    ) -> BoxStream<'static, Result<(RegionId, Vec<kvrpcpb::KeyRange>)>> {
         ranges.reverse();
         stream_fn(Some(ranges), move |ranges| {
             let this = self.clone();
@@ -133,38 +138,42 @@ pub trait PdClient: Send + Sync + 'static {
                 };
 
                 if let Some(range) = ranges.pop() {
-                    let (start_key, end_key) = range.clone().into_keys();
+                    let start_key: Key = range.start_key.clone().into();
+                    let end_key: Key = range.end_key.clone().into();
                     let region = this.region_for_key(&start_key).await?;
                     let id = region.id();
                     let region_start = region.start_key();
                     let region_end = region.end_key();
                     let mut grouped = vec![];
-                    if !region_end.is_empty()
-                        && end_key
-                            .clone()
-                            .map(|x| x > region_end || x.is_empty())
-                            .unwrap_or(true)
-                    {
-                        grouped.push((start_key, region_end.clone()).into());
-                        ranges.push((region_end, end_key).into());
+                    if !region_end.is_empty() && (end_key > region_end || end_key.is_empty()) {
+                        grouped.push(kvrpcpb::KeyRange {
+                            start_key: start_key.into(),
+                            end_key: region_end.clone().into(),
+                        });
+                        ranges.push(kvrpcpb::KeyRange {
+                            start_key: region_end.into(),
+                            end_key: end_key.into(),
+                        });
                         return Ok(Some((Some(ranges), (id, grouped))));
                     }
                     grouped.push(range);
 
                     while let Some(range) = ranges.pop() {
-                        let (start_key, end_key) = range.clone().into_keys();
+                        let start_key: Key = range.start_key.clone().into();
+                        let end_key: Key = range.end_key.clone().into();
                         if start_key < region_start {
                             ranges.push(range);
                             break;
                         }
-                        if !region_end.is_empty()
-                            && end_key
-                                .clone()
-                                .map(|x| x > region_end || x.is_empty())
-                                .unwrap_or(true)
-                        {
-                            grouped.push((start_key, region_end.clone()).into());
-                            ranges.push((region_end, end_key).into());
+                        if !region_end.is_empty() && (end_key > region_end || end_key.is_empty()) {
+                            grouped.push(kvrpcpb::KeyRange {
+                                start_key: start_key.into(),
+                                end_key: region_end.clone().into(),
+                            });
+                            ranges.push(kvrpcpb::KeyRange {
+                                start_key: region_end.into(),
+                                end_key: end_key.into(),
+                            });
                             return Ok(Some((Some(ranges), (id, grouped))));
                         }
                         grouped.push(range);
@@ -204,7 +213,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         let store_id = region.get_store_id()?;
         let store = self.pd.clone().get_store(store_id).await?;
         let kv_client = self.kv_client(store.get_address())?;
-        Ok(Store::new(region, Box::new(kv_client)))
+        Ok(Store::new(region, Arc::new(kv_client)))
     }
 
     async fn region_for_key(&self, key: &Key) -> Result<Region> {
@@ -352,7 +361,7 @@ pub mod test {
         let mut stream = executor::block_on_stream(stream);
 
         assert_eq!(
-            stream.next().unwrap().unwrap().1,
+            stream.next().unwrap().unwrap().1: Vec<Key>,
             vec![
                 vec![1].into(),
                 vec![2].into(),
@@ -388,15 +397,24 @@ pub mod test {
     #[test]
     fn test_group_ranges_by_region() {
         let client = Arc::new(MockPdClient::default());
-        let k1: Key = vec![1].into();
-        let k2: Key = vec![5, 2].into();
-        let k3: Key = vec![11, 4].into();
-        let k4: Key = vec![16, 4].into();
-        let k_split: Key = vec![10].into();
-        let range1 = (k1.clone(), k2.clone()).into();
-        let range2 = (k1.clone(), k3.clone()).into();
-        let range3 = (k2.clone(), k4.clone()).into();
-        let ranges: Vec<BoundRange> = vec![range1, range2, range3];
+        let k1 = vec![1];
+        let k2 = vec![5, 2];
+        let k3 = vec![11, 4];
+        let k4 = vec![16, 4];
+        let k_split = vec![10];
+        let range1 = kvrpcpb::KeyRange {
+            start_key: k1.clone(),
+            end_key: k2.clone(),
+        };
+        let range2 = kvrpcpb::KeyRange {
+            start_key: k1.clone(),
+            end_key: k3.clone(),
+        };
+        let range3 = kvrpcpb::KeyRange {
+            start_key: k2.clone(),
+            end_key: k4.clone(),
+        };
+        let ranges = vec![range1, range2, range3];
 
         let mut stream = executor::block_on_stream(client.group_ranges_by_region(ranges));
         let ranges1 = stream.next().unwrap().unwrap();
@@ -408,22 +426,40 @@ pub mod test {
         assert_eq!(
             ranges1.1,
             vec![
-                (k1.clone(), k2.clone()).into(),
-                (k1, k_split.clone()).into()
-            ] as Vec<BoundRange>
+                kvrpcpb::KeyRange {
+                    start_key: k1.clone(),
+                    end_key: k2.clone()
+                },
+                kvrpcpb::KeyRange {
+                    start_key: k1,
+                    end_key: k_split.clone()
+                }
+            ]
         );
         assert_eq!(ranges2.0, 2);
         assert_eq!(
             ranges2.1,
-            vec![(k_split.clone(), k3).into()] as Vec<BoundRange>
+            vec![kvrpcpb::KeyRange {
+                start_key: k_split.clone(),
+                end_key: k3
+            }]
         );
         assert_eq!(ranges3.0, 1);
         assert_eq!(
             ranges3.1,
-            vec![(k2, k_split.clone()).into()] as Vec<BoundRange>
+            vec![kvrpcpb::KeyRange {
+                start_key: k2,
+                end_key: k_split.clone()
+            }]
         );
         assert_eq!(ranges4.0, 2);
-        assert_eq!(ranges4.1, vec![(k_split, k4).into()] as Vec<BoundRange>);
+        assert_eq!(
+            ranges4.1,
+            vec![kvrpcpb::KeyRange {
+                start_key: k_split,
+                end_key: k4
+            }]
+        );
         assert!(stream.next().is_none());
     }
 }
