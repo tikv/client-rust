@@ -117,7 +117,8 @@ async fn crud() -> Result<()> {
     // Read again from TiKV
     let snapshot = client.snapshot(
         client.current_timestamp().await?,
-        TransactionOptions::default(),
+        // TODO needed because pessimistic does not check locks (#235)
+        TransactionOptions::new_optimistic(),
     );
     let batch_get_res: HashMap<Key, Value> = snapshot
         .batch_get(vec!["foo".to_owned(), "bar".to_owned()])

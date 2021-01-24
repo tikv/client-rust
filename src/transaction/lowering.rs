@@ -11,11 +11,11 @@ pub fn new_get_request(key: Key, timestamp: Timestamp) -> kvrpcpb::GetRequest {
     requests::new_get_request(key.into(), timestamp.version())
 }
 
-pub fn new_get_batch_request(
+pub fn new_batch_get_request(
     keys: impl Iterator<Item = Key>,
     timestamp: Timestamp,
 ) -> kvrpcpb::BatchGetRequest {
-    requests::new_get_batch_request(keys.map(Into::into).collect(), timestamp.version())
+    requests::new_batch_get_request(keys.map(Into::into).collect(), timestamp.version())
 }
 
 pub fn new_scan_request(
@@ -35,11 +35,10 @@ pub fn new_scan_request(
 }
 
 pub fn new_resolve_lock_request(
-    context: kvrpcpb::Context,
     start_version: Timestamp,
     commit_version: Timestamp,
 ) -> kvrpcpb::ResolveLockRequest {
-    requests::new_resolve_lock_request(context, start_version.version(), commit_version.version())
+    requests::new_resolve_lock_request(start_version.version(), commit_version.version())
 }
 
 pub fn new_cleanup_request(key: Key, start_version: Timestamp) -> kvrpcpb::CleanupRequest {

@@ -75,6 +75,14 @@ impl BoundRange {
         BoundRange { from, to }
     }
 
+    /// Create a new BoundRange bounded below by `from` and unbounded above.
+    pub fn range_from(from: Key) -> BoundRange {
+        BoundRange {
+            from: Bound::Included(from),
+            to: Bound::Unbounded,
+        }
+    }
+
     /// Ranges used in scanning TiKV have a particularity to them.
     ///
     /// The **start** of a scan is inclusive, unless appended with an '\0', then it is exclusive.

@@ -6,6 +6,8 @@
 #![allow(clippy::type_complexity)]
 #![allow(incomplete_features)]
 #![cfg_attr(test, feature(specialization))]
+#![feature(associated_type_bounds)]
+#![feature(decl_macro)]
 
 //! This crate provides a clean, ready to use client for [TiKV](https://github.com/tikv/tikv), a
 //! distributed transactional Key-Value database written in Rust.
@@ -89,6 +91,7 @@ mod request;
 mod stats;
 mod store;
 mod timestamp;
+mod util;
 
 #[cfg(test)]
 mod mock;

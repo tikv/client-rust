@@ -96,6 +96,12 @@ impl From<KvPair> for (Key, Value) {
     }
 }
 
+impl From<KvPair> for Key {
+    fn from(pair: KvPair) -> Self {
+        pair.0
+    }
+}
+
 impl From<kvrpcpb::KvPair> for KvPair {
     fn from(mut pair: kvrpcpb::KvPair) -> Self {
         KvPair(Key::from(pair.take_key()), pair.take_value())

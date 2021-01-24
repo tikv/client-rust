@@ -150,6 +150,42 @@ impl HasError for kvrpcpb::PessimisticRollbackResponse {
     }
 }
 
+impl<T: HasError, E> HasError for Result<T, E> {
+    fn error(&mut self) -> Option<Error> {
+        self.as_mut().ok().and_then(|t| t.error())
+    }
+}
+
+impl<T: HasError> HasError for Vec<T> {
+    fn error(&mut self) -> Option<Error> {
+        for t in self {
+            if let Some(e) = t.error() {
+                return Some(e);
+            }
+        }
+
+        None
+    }
+}
+
+impl<T: HasRegionError, E> HasRegionError for Result<T, E> {
+    fn region_error(&mut self) -> Option<Error> {
+        self.as_mut().ok().and_then(|t| t.region_error())
+    }
+}
+
+impl<T: HasRegionError> HasRegionError for Vec<T> {
+    fn region_error(&mut self) -> Option<Error> {
+        for t in self {
+            if let Some(e) = t.region_error() {
+                return Some(e);
+            }
+        }
+
+        None
+    }
+}
+
 fn extract_errors(error_iter: impl Iterator<Item = Option<kvrpcpb::KeyError>>) -> Option<Error> {
     let errors: Vec<Error> = error_iter.flatten().map(Into::into).collect();
     if errors.is_empty() {
