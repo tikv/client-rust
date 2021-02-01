@@ -74,8 +74,10 @@ There are some [examples](examples) which show how to use the client in a Rust p
 | ----------- | ------------------- | ---------------------- | ------------------------------------------------------------------ |
 | `put`       | `KvPair`            | `()`                   |                                                                    |
 | `get`       | `Key`               | `Option<value>`        |                                                                    |
+| `key_exists` | `Key`               | `bool`                 |                                                                    |
 | `delete`    | `Key`               | `()`                   |                                                                    |
 | `scan`      | `BoundRange`        | `Iter<KvPair>`         |                                                                    |
+| `scan_keys` | `BoundRange`        | `Iter<Key>`            |                                                                    |
 | `batch_get` | `Iter<Key>`         | `Iter<KvPair>`         | Skip non-existent keys; Does not retain order                      |
 | `lock_keys` | `Iter<Key>`         | `()`                   |                                                                    |
 | `gc`        | `Timestamp`         | `bool`                 | It returns whether the latest safepoint in PD equals the parameter |

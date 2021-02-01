@@ -146,6 +146,24 @@ impl Transaction {
         }
     }
 
+    /// Check whether the key exists.
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// # use tikv_client::{Value, Config, TransactionClient};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// let mut txn = client.begin_pessimistic().await.unwrap();
+    /// let exists = txn.key_exists("k1".to_owned()).await.unwrap();
+    /// txn.commit().await.unwrap();
+    /// # });
+    /// ```
+    pub async fn key_exists(&self, key: impl Into<Key>) -> Result<bool> {
+        let key = key.into();
+        Ok(self.scan_keys(key.clone()..=key, 1).await?.next().is_some())
+    }
+
     /// Create a new 'batch get' request.
     ///
     /// Once resolved this request will result in the fetching of the values associated with the
@@ -889,7 +907,7 @@ impl Committer {
 
 #[derive(PartialEq)]
 enum TransactionStatus {
-    /// The transaction is read-only [`Snapshot`](super::Snapshot::Snapshot), no need to commit or rollback or panic on drop.
+    /// The transaction is read-only [`Snapshot`](super::Snapshot), no need to commit or rollback or panic on drop.
     ReadOnly,
     /// The transaction have not been committed or rolled back.
     Active,
