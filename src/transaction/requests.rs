@@ -521,7 +521,7 @@ impl KvRequest for kvrpcpb::PessimisticLockRequest {
     // We need to pair keys and values returned somewhere.
     // But it's blocked by the structure of the program that `map_result` only accepts the response as input
     // Before we fix this `batch_get_for_update` is problematic.
-    type Result = Vec<Vec<u8>>;
+    type Result = Vec<Option<Vec<u8>>>;
     type RpcResponse = kvrpcpb::PessimisticLockResponse;
     type KeyData = Vec<kvrpcpb::Mutation>;
 
@@ -551,7 +551,24 @@ impl KvRequest for kvrpcpb::PessimisticLockRequest {
     }
 
     fn map_result(mut resp: Self::RpcResponse) -> Self::Result {
-        resp.take_values()
+        let values = resp.take_values();
+        let not_founds = resp.take_not_founds();
+        if not_founds.is_empty() {
+            // Legacy TiKV does not distiguish not existing key and existing key
+            // that with empty value. We assume that key does not exist if value
+            // is emtpy.
+            values
+                .into_iter()
+                .map(|v| if v.is_empty() { None } else { Some(v) })
+                .collect()
+        } else {
+            assert_eq!(values.len(), not_founds.len());
+            values
+                .into_iter()
+                .zip(not_founds.into_iter())
+                .map(|(v, not_found)| if not_found { None } else { Some(v) })
+                .collect()
+        }
     }
 
     async fn reduce(results: BoxStream<'static, Result<Self::Result>>) -> Result<Self::Result> {

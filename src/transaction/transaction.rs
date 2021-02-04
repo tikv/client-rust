@@ -128,13 +128,13 @@ impl Transaction {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
-    /// let result: Value = txn.get_for_update(key).await.unwrap();
+    /// let result: Value = txn.get_for_update(key).await.unwrap().unwrap();
     /// // now the key "TiKV" is locked, other transactions cannot modify it
     /// // Finish the transaction...
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Value> {
+    pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         self.check_allow_operation()?;
         if !self.is_pessimistic() {
             Err(Error::InvalidTransactionType)
@@ -142,7 +142,7 @@ impl Transaction {
             let key = key.into();
             let mut values = self.pessimistic_lock(iter::once(key.clone()), true).await?;
             assert!(values.len() == 1);
-            Ok(values.swap_remove(0))
+            Ok(values.pop().unwrap())
         }
     }
 
@@ -545,7 +545,7 @@ impl Transaction {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
         need_value: bool,
-    ) -> Result<Vec<Vec<u8>>> {
+    ) -> Result<Vec<Option<Vec<u8>>>> {
         assert!(
             matches!(self.options.kind, TransactionKind::Pessimistic(_)),
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
