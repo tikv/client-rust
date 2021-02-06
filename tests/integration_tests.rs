@@ -132,6 +132,31 @@ async fn crud() -> Result<()> {
     Ok(())
 }
 
+// Tests transactional insert and delete-your-writes cases
+#[tokio::test]
+#[serial]
+async fn insert_duplicate_keys() -> Result<()> {
+    clear_tikv().await?;
+
+    let client = TransactionClient::new(pd_addrs()).await?;
+    // Initialize TiKV store with {foo => bar}
+    let mut txn = client.begin_optimistic().await?;
+    txn.put("foo".to_owned(), "bar".to_owned()).await?;
+    txn.commit().await?;
+    // Try insert foo again
+    let mut txn = client.begin_optimistic().await?;
+    txn.insert("foo".to_owned(), "foo".to_owned()).await?;
+    assert!(txn.commit().await.is_err());
+
+    // Delete-your-writes
+    let mut txn = client.begin_optimistic().await?;
+    txn.insert("foo".to_owned(), "foo".to_owned()).await?;
+    txn.delete("foo".to_owned()).await?;
+    assert!(txn.commit().await.is_err());
+
+    Ok(())
+}
+
 #[tokio::test]
 #[serial]
 async fn pessimistic() -> Result<()> {
