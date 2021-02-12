@@ -10,6 +10,9 @@ pub enum Error {
     /// Feature is not implemented.
     #[error("Unimplemented feature")]
     Unimplemented,
+    /// Duplicate key insertion happens.
+    #[error("Duplicate key insertion")]
+    DuplicateKeyInsertion,
     /// Failed to resolve a lock
     #[error("Failed to resolve lock")]
     ResolveLockError,

@@ -362,6 +362,37 @@ impl Transaction {
         Ok(())
     }
 
+    /// Inserts the value associated with the given key.
+    /// It has a constraint that key should not exist before.
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Value, Config, TransactionClient};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
+    /// let key = "TiKV".to_owned();
+    /// let val = "TiKV".to_owned();
+    /// txn.insert(key, val);
+    /// // Finish the transaction...
+    /// txn.commit().await.unwrap();
+    /// # });
+    /// ```
+    pub async fn insert(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
+        self.check_allow_operation()?;
+        let key = key.into();
+        if self.buffer.get(&key).await.is_some() {
+            return Err(Error::DuplicateKeyInsertion);
+        }
+        if self.is_pessimistic() {
+            self.pessimistic_lock(iter::once(key.clone()), false)
+                .await?;
+        }
+        self.buffer.insert(key, value.into()).await;
+        Ok(())
+    }
+
     /// Deletes the given key.
     ///
     /// Deleting a non-existent key will not result in an error.
