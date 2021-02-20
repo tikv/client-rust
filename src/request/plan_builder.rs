@@ -98,9 +98,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         }
     }
 
-    /// Apply a processing step to a response (usually only needed if the request is sent to a
-    /// single region because post-porcessing can be incorporated in the merge step for multi-region
-    /// requests).
+    /// spawn a heartbeat request.
     pub fn heart_beat(self, status: Arc<RwLock<TransactionStatus>>) -> PlanBuilder<PdC, HeartbeatPlan<P>, Ph>
     where
         P: Plan<Result: HasError>,

@@ -557,7 +557,6 @@ impl Transaction {
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_region(self.options.retry_options.region_backoff.clone())
             .heart_beat(self.status.clone())
-            .post_process()
             .plan();
         plan.execute().await
     }
