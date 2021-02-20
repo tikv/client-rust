@@ -233,23 +233,23 @@ impl<P: Plan<Result: HasLocks>, PdC: PdClient> Plan for ResolveLockPlan<P, PdC> 
 }
 
 #[derive(Clone)]
-pub struct HeartbeatPlan<Req: TxnHeartBeatRequest, P: Plan> {
+pub struct HeartbeatPlan<P: Plan> {
     pub inner: P,
     pub status: Arc<RwLock<TransactionStatus>>,
 }
 
 #[async_trait]
-impl<Req: TxnHeartBeatRequest, P: Plan> Plan for HeartbeatPlan<Req, P> {
-    type Result = Req::Response;
+impl<P: Plan> Plan for HeartbeatPlan<P> {
+    type Result = P::Result;
 
     async fn execute(&self) -> Result<Self::Result> {
         loop {
             tokio::sleep(tokio::time::Duration::from_millis(5000));
             let mut status = self.status.read().unwrap();
-            if *status != TransactionStatus::Active {
-                return Result();
-            }
             result = self.inner.execute().await?;
+            if *status != TransactionStatus::Active {
+                return result;
+            }
         }
     }
 }
