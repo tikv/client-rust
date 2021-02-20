@@ -12,6 +12,8 @@ use derive_new::new;
 use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
 use std::{iter, ops::RangeBounds, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use std::sync::RwLock;
+use futures::task::SpawnExt;
 
 /// An undo-able set of actions on the dataset.
 ///
@@ -43,12 +45,13 @@ use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 /// # });
 /// ```
 pub struct Transaction {
-    status: TransactionStatus,
+    status: Arc<RwLock<TransactionStatus>>,
     timestamp: Timestamp,
     buffer: Buffer,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
     options: TransactionOptions,
+    first_pessimistic_lock: bool,
 }
 
 impl Transaction {
@@ -64,12 +67,13 @@ impl Transaction {
             TransactionStatus::Active
         };
         Transaction {
-            status,
+            status: Arc::new(RwLock::new(status)),
             timestamp,
             buffer: Default::default(),
             bg_worker,
             rpc,
             options,
+            first_pessimistic_lock: false,
         }
     }
 
@@ -474,10 +478,15 @@ impl Transaction {
         ) {
             return Err(Error::OperationAfterCommitError);
         }
-        self.status = TransactionStatus::StartedCommit;
+        let mut status = self.status.write().unwrap();
+        *status = TransactionStatus::StartedCommit;
+        // self.status = TransactionStatus::StartedCommit;
 
-        let primary_key = self.buffer.get_primary_key().await;
+        let &mut primary_key = self.buffer.get_primary_key().await;
         let mutations = self.buffer.to_proto_mutations().await;
+        if self.options.kind == TransactionKind::Optimistic {
+            self.send_heart_beat();
+        }
         let res = Committer::new(
             primary_key,
             mutations,
@@ -490,7 +499,9 @@ impl Transaction {
         .await;
 
         if res.is_ok() {
-            self.status = TransactionStatus::Committed;
+            // self.status = TransactionStatus::Committed;
+            let mut status = self.status.write().unwrap();
+            *status = TransactionStatus::Committed;
         }
         res
     }
@@ -505,7 +516,9 @@ impl Transaction {
         ) {
             return Err(Error::OperationAfterCommitError);
         }
-        self.status = TransactionStatus::StartedRollback;
+        let mut status = self.status.write().unwrap();
+        *status = TransactionStatus::StartedRollback;
+        // self.status = TransactionStatus::StartedRollback;
 
         let primary_key = self.buffer.get_primary_key().await;
         let mutations = self.buffer.to_proto_mutations().await;
@@ -521,7 +534,9 @@ impl Transaction {
         .await;
 
         if res.is_ok() {
-            self.status = TransactionStatus::Rolledback;
+            let mut status = self.status.write().unwrap();
+            *status = TransactionStatus::Rolledback;
+            // self.status = TransactionStatus::Rolledback;
         }
         res
     }
@@ -593,6 +608,11 @@ impl Transaction {
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
         );
 
+        if !self.first_pessimistic_lock {
+            self.first_pessimistic_lock = true;
+            self.send_heart_beat();
+        }
+
         let keys: Vec<Key> = keys.into_iter().collect();
         let first_key = keys[0].clone();
         let primary_lock = self.buffer.get_primary_key_or(&first_key).await;
@@ -627,7 +647,9 @@ impl Transaction {
 
     /// Checks if the transaction can perform arbitrary operations.
     fn check_allow_operation(&self) -> Result<()> {
-        match self.status {
+        let status = self.status.read().unwrap();
+        match *status {
+        // match self.status {
             TransactionStatus::ReadOnly | TransactionStatus::Active => Ok(()),
             TransactionStatus::Committed
             | TransactionStatus::Rolledback
@@ -643,7 +665,9 @@ impl Transaction {
 
 impl Drop for Transaction {
     fn drop(&mut self) {
-        if !std::thread::panicking() && self.status == TransactionStatus::Active {
+        let status = self.status.read().unwrap();
+        // if !std::thread::panicking() && self.status == TransactionStatus::Active {
+        if !std::thread::panicking() && *status == TransactionStatus::Active {
             match self.options.check_level {
                 CheckLevel::Panic => {
                     panic!("Dropping an active transaction. Consider commit or rollback it.")
@@ -680,6 +704,8 @@ pub struct TransactionOptions {
     retry_options: RetryOptions,
     /// What to do if the transaction is dropped without an attempt to commit or rollback
     check_level: CheckLevel,
+    /// Whether heartbeat will be sent automatically
+    heartbeat: bool,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -705,6 +731,7 @@ impl TransactionOptions {
             read_only: false,
             retry_options: RetryOptions::default_optimistic(),
             check_level: CheckLevel::Panic,
+            heartbeat: true,
         }
     }
 
@@ -717,6 +744,7 @@ impl TransactionOptions {
             read_only: false,
             retry_options: RetryOptions::default_pessimistic(),
             check_level: CheckLevel::Panic,
+            heartbeat: true,
         }
     }
 
@@ -982,7 +1010,7 @@ impl Committer {
 }
 
 #[derive(PartialEq)]
-enum TransactionStatus {
+pub enum TransactionStatus {
     /// The transaction is read-only [`Snapshot`](super::Snapshot::Snapshot), no need to commit or rollback or panic on drop.
     ReadOnly,
     /// The transaction have not been committed or rolled back.

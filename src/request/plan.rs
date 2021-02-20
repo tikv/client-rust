@@ -1,17 +1,14 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    backoff::Backoff,
-    pd::PdClient,
-    request::{KvRequest, Shardable},
-    stats::tikv_stats,
-    transaction::{resolve_locks, HasLocks},
-    Error, Result,
-};
+use crate::{backoff::Backoff, pd::PdClient, request::{KvRequest, Shardable}, stats::tikv_stats, transaction::{resolve_locks, HasLocks, TransactionStatus}, Error, Result, TransactionOptions};
 use async_trait::async_trait;
 use futures::{prelude::*, stream::StreamExt};
 use std::{marker::PhantomData, sync::Arc};
+use tikv_client_proto::kvrpcpb;
 use tikv_client_store::{HasError, HasRegionError, KvClient};
+use tokio::time;
+use std::sync::RwLock;
+use std::task::RawWaker;
 
 /// A plan for how to execute a request. A user builds up a plan with various
 /// options, then exectutes it.
@@ -231,6 +228,28 @@ impl<P: Plan<Result: HasLocks>, PdC: PdClient> Plan for ResolveLockPlan<P, PdC> 
                     }
                 }
             }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct HeartbeatPlan<Req: TxnHeartBeatRequest, P: Plan> {
+    pub inner: P,
+    pub status: Arc<RwLock<TransactionStatus>>,
+}
+
+#[async_trait]
+impl<Req: TxnHeartBeatRequest, P: Plan> Plan for HeartbeatPlan<Req, P> {
+    type Result = Req::Response;
+
+    async fn execute(&self) -> Result<Self::Result> {
+        loop {
+            tokio::sleep(tokio::time::Duration::from_millis(5000));
+            let mut status = self.status.read().unwrap();
+            if *status != TransactionStatus::Active {
+                return Result();
+            }
+            result = self.inner.execute().await?;
         }
     }
 }

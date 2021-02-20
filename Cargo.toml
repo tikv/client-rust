@@ -31,7 +31,7 @@ regex = "1"
 serde = "1.0"
 serde_derive = "1.0"
 thiserror = "1"
-tokio = { version = "1.0", features = [ "sync" ] }
+tokio = { version = "1.0", features = [ "sync", "time" ] }
 
 tikv-client-common = { path = "tikv-client-common" }
 tikv-client-pd = { path = "tikv-client-pd" }

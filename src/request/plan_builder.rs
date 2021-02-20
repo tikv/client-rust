@@ -1,18 +1,13 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    backoff::Backoff,
-    pd::PdClient,
-    request::{
-        Dispatch, KvRequest, Merge, MergeResponse, MultiRegionPlan, Plan, Process, ProcessResponse,
-        ResolveLockPlan, RetryRegionPlan, Shardable,
-    },
-    store::Store,
-    transaction::HasLocks,
-    Result,
-};
+use crate::{backoff::Backoff, pd::PdClient, request::{
+    Dispatch, KvRequest, Merge, MergeResponse, MultiRegionPlan, Plan, Process, ProcessResponse,
+    ResolveLockPlan, RetryRegionPlan, Shardable,
+}, store::Store, transaction::HasLocks, Result, Transaction};
 use std::{marker::PhantomData, sync::Arc};
 use tikv_client_store::HasError;
+use crate::request::plan::HeartbeatPlan;
+use std::sync::RwLock;
 
 /// Builder type for plans (see that module for more).
 pub struct PlanBuilder<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> {
@@ -106,15 +101,15 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     /// Apply a processing step to a response (usually only needed if the request is sent to a
     /// single region because post-porcessing can be incorporated in the merge step for multi-region
     /// requests).
-    pub fn post_process(self) -> PlanBuilder<PdC, ProcessResponse<P, P::Result>, Ph>
+    pub fn heart_beat(self, status: Arc<RwLock<TransactionStatus>>) -> PlanBuilder<PdC, HeartbeatPlan<P>, Ph>
     where
-        P: Plan<Result: Process>,
+        P: Plan<Result: HasError>,
     {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
-            plan: ProcessResponse {
+            plan: HeartbeatPlan {
                 inner: self.plan,
-                phantom: PhantomData,
+                status,
             },
             phantom: PhantomData,
         }
