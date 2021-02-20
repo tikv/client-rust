@@ -484,7 +484,7 @@ impl Transaction {
 
         let &mut primary_key = self.buffer.get_primary_key().await;
         let mutations = self.buffer.to_proto_mutations().await;
-        if self.options.kind == TransactionKind::Optimistic {
+        if self.options.kind == TransactionKind::Optimistic && self.options.heartbeat {
             self.send_heart_beat();
         }
         let res = Committer::new(
@@ -611,7 +611,9 @@ impl Transaction {
 
         if !self.first_pessimistic_lock {
             self.first_pessimistic_lock = true;
-            self.send_heart_beat();
+            if self.options.heartbeat {
+                self.send_heart_beat();
+            }
         }
 
         let keys: Vec<Key> = keys.into_iter().collect();
