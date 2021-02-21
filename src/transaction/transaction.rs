@@ -13,7 +13,6 @@ use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
 use std::{iter, ops::RangeBounds, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 use std::sync::RwLock;
-use futures::task::SpawnExt;
 
 /// An undo-able set of actions on the dataset.
 ///
@@ -472,8 +471,9 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn commit(&mut self) -> Result<Option<Timestamp>> {
+        let mut status = self.status.read().unwrap();
         if !matches!(
-            self.status,
+            *status,
             TransactionStatus::StartedCommit | TransactionStatus::Active
         ) {
             return Err(Error::OperationAfterCommitError);
@@ -510,8 +510,9 @@ impl Transaction {
     ///
     /// If it succeeds, all mutations made by this transaciton will not take effect.
     pub async fn rollback(&mut self) -> Result<()> {
+        let status = self.status.read().unwrap();
         if !matches!(
-            self.status,
+            *status,
             TransactionStatus::StartedRollback | TransactionStatus::Active
         ) {
             return Err(Error::OperationAfterCommitError);

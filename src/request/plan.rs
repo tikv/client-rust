@@ -1,14 +1,11 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{backoff::Backoff, pd::PdClient, request::{KvRequest, Shardable}, stats::tikv_stats, transaction::{resolve_locks, HasLocks, TransactionStatus}, Error, Result, TransactionOptions};
+use crate::{backoff::Backoff, pd::PdClient, request::{KvRequest, Shardable}, stats::tikv_stats, transaction::{resolve_locks, HasLocks, TransactionStatus}, Error, Result};
 use async_trait::async_trait;
 use futures::{prelude::*, stream::StreamExt};
 use std::{marker::PhantomData, sync::Arc};
-use tikv_client_proto::kvrpcpb;
 use tikv_client_store::{HasError, HasRegionError, KvClient};
-use tokio::time;
 use std::sync::RwLock;
-use std::task::RawWaker;
 
 /// A plan for how to execute a request. A user builds up a plan with various
 /// options, then exectutes it.
@@ -244,11 +241,11 @@ impl<P: Plan> Plan for HeartbeatPlan<P> {
 
     async fn execute(&self) -> Result<Self::Result> {
         loop {
-            tokio::sleep(tokio::time::Duration::from_millis(5000));
-            let mut status = self.status.read().unwrap();
-            result = self.inner.execute().await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(5000));
+            let status = self.status.read().unwrap();
+            let result = self.inner.execute().await?;
             if *status != TransactionStatus::Active {
-                return result;
+                result;
             }
         }
     }
