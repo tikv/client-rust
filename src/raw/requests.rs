@@ -345,7 +345,7 @@ mod test {
             .resolve_lock(OPTIMISTIC_BACKOFF)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
-            .merge(Collect::new(0))
+            .merge(Collect)
             .plan();
         let scan = executor::block_on(async { plan.execute().await }).unwrap();
 

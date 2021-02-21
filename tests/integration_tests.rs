@@ -117,7 +117,8 @@ async fn crud() -> Result<()> {
     // Read again from TiKV
     let snapshot = client.snapshot(
         client.current_timestamp().await?,
-        TransactionOptions::default(),
+        // TODO needed because pessimistic does not check locks (#235)
+        TransactionOptions::new_optimistic(),
     );
     let batch_get_res: HashMap<Key, Value> = snapshot
         .batch_get(vec!["foo".to_owned(), "bar".to_owned()])
@@ -129,6 +130,31 @@ async fn crud() -> Result<()> {
         Some(Value::from("foo".to_owned())).as_ref()
     );
     assert_eq!(batch_get_res.get(&Key::from("bar".to_owned())), None);
+    Ok(())
+}
+
+// Tests transactional insert and delete-your-writes cases
+#[tokio::test]
+#[serial]
+async fn insert_duplicate_keys() -> Result<()> {
+    clear_tikv().await?;
+
+    let client = TransactionClient::new(pd_addrs()).await?;
+    // Initialize TiKV store with {foo => bar}
+    let mut txn = client.begin_optimistic().await?;
+    txn.put("foo".to_owned(), "bar".to_owned()).await?;
+    txn.commit().await?;
+    // Try insert foo again
+    let mut txn = client.begin_optimistic().await?;
+    txn.insert("foo".to_owned(), "foo".to_owned()).await?;
+    assert!(txn.commit().await.is_err());
+
+    // Delete-your-writes
+    let mut txn = client.begin_optimistic().await?;
+    txn.insert("foo".to_owned(), "foo".to_owned()).await?;
+    txn.delete("foo".to_owned()).await?;
+    assert!(txn.commit().await.is_err());
+
     Ok(())
 }
 

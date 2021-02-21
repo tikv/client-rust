@@ -11,11 +11,11 @@ pub fn new_get_request(key: Key, timestamp: Timestamp) -> kvrpcpb::GetRequest {
     requests::new_get_request(key.into(), timestamp.version())
 }
 
-pub fn new_get_batch_request(
+pub fn new_batch_get_request(
     keys: impl Iterator<Item = Key>,
     timestamp: Timestamp,
 ) -> kvrpcpb::BatchGetRequest {
-    requests::new_get_batch_request(keys.map(Into::into).collect(), timestamp.version())
+    requests::new_batch_get_request(keys.map(Into::into).collect(), timestamp.version())
 }
 
 pub fn new_scan_request(

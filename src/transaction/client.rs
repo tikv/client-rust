@@ -19,7 +19,7 @@ const SCAN_LOCK_BATCH_SIZE: u32 = 1024; // FIXME: cargo-culted value
 /// The TiKV transactional `Client` is used to interact with TiKV using transactional (MVCC) requests.
 ///
 /// A [`Transaction`](crate::transaction::Transaction) provides a SQL-like interface.
-/// It begins with a [`begin`](Client::begin) or [`begin_pessimistic`](Client::begin_pessimistic) request
+/// It begins with a [`begin_optimistic`](Client::begin_optimistic) or [`begin_pessimistic`](Client::begin_pessimistic) request
 /// and ends with a `rollback` or `commit` request.
 /// If a `Transaction` is dropped before it's rolled back or committed, it is automatically rolled back.
 ///

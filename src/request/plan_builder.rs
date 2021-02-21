@@ -1,13 +1,19 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{backoff::Backoff, pd::PdClient, request::{
-    Dispatch, KvRequest, Merge, MergeResponse, MultiRegionPlan, Plan, Process, ProcessResponse,
-    ResolveLockPlan, RetryRegionPlan, Shardable,
-}, store::Store, transaction::{HasLocks, TransactionStatus}, Result};
-use std::{marker::PhantomData, sync::Arc};
+use crate::{
+    backoff::Backoff,
+    pd::PdClient,
+    request::{
+        Dispatch, KvRequest, Merge, MergeResponse, MultiRegionPlan, Plan, Process, ProcessResponse,
+        ResolveLockPlan, RetryRegionPlan, Shardable,
+    },
+    store::Store,
+    transaction::{HasLocks, TransactionStatus},
+    Result,
+};
+use std::{marker::PhantomData, sync::{Arc, RwLock}};
 use tikv_client_store::HasError;
 use crate::request::plan::HeartbeatPlan;
-use std::sync::RwLock;
 
 /// Builder type for plans (see that module for more).
 pub struct PlanBuilder<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> {
@@ -102,8 +108,8 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     /// single region because post-porcessing can be incorporated in the merge step for multi-region
     /// requests).
     pub fn post_process(self) -> PlanBuilder<PdC, ProcessResponse<P, P::Result>, Ph>
-        where
-            P: Plan<Result: Process>,
+    where
+        P: Plan<Result: Process>,
     {
         PlanBuilder {
             pd_client: self.pd_client.clone(),

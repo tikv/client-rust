@@ -360,8 +360,9 @@ pub mod test {
         let stream = Arc::new(client).group_keys_by_region(tasks.into_iter());
         let mut stream = executor::block_on_stream(stream);
 
+        let result: Vec<Key> = stream.next().unwrap().unwrap().1;
         assert_eq!(
-            stream.next().unwrap().unwrap().1: Vec<Key>,
+            result,
             vec![
                 vec![1].into(),
                 vec![2].into(),

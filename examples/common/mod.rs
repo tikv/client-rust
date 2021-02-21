@@ -24,7 +24,8 @@ pub fn parse_args(app_name: &str) -> CommandArgs {
                 .takes_value(true)
                 .multiple(true)
                 .value_delimiter(",")
-                .required(true),
+                .required(false)
+                .default_value("localhost:2379"),
         )
         // A cyclic dependency between CA, cert and key is made
         // to ensure that no security options are missing.

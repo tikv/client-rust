@@ -10,6 +10,9 @@ pub enum Error {
     /// Feature is not implemented.
     #[error("Unimplemented feature")]
     Unimplemented,
+    /// Duplicate key insertion happens.
+    #[error("Duplicate key insertion")]
+    DuplicateKeyInsertion,
     /// Failed to resolve a lock
     #[error("Failed to resolve lock")]
     ResolveLockError,
@@ -80,7 +83,7 @@ impl From<tikv_client_proto::kvrpcpb::KeyError> for Error {
     }
 }
 
-/// A result holding an [`Error`](Error).
+/// A result holding an [`Error`](enum@Error).
 pub type Result<T> = result::Result<T, Error>;
 
 #[macro_export]

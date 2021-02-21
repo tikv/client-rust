@@ -27,14 +27,14 @@ pub trait KvConnectStore: KvConnect {
 impl KvConnectStore for TikvConnect {}
 
 /// Maps keys to a stream of stores. `key_data` must be sorted in increasing order
-pub fn store_stream_for_keys<K, K2, PdC>(
+pub fn store_stream_for_keys<K, KOut, PdC>(
     key_data: impl Iterator<Item = K> + Send + Sync + 'static,
     pd_client: Arc<PdC>,
-) -> BoxStream<'static, Result<(Vec<K2>, Store)>>
+) -> BoxStream<'static, Result<(Vec<KOut>, Store)>>
 where
     PdC: PdClient,
-    K: AsRef<Key> + Into<K2> + Send + Sync + 'static,
-    K2: Send + Sync + 'static,
+    K: AsRef<Key> + Into<KOut> + Send + Sync + 'static,
+    KOut: Send + Sync + 'static,
 {
     pd_client
         .clone()

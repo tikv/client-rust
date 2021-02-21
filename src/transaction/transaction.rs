@@ -142,13 +142,13 @@ impl Transaction {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
-    /// let result: Value = txn.get_for_update(key).await.unwrap();
+    /// let result: Value = txn.get_for_update(key).await.unwrap().unwrap();
     /// // now the key "TiKV" is locked, other transactions cannot modify it
     /// // Finish the transaction...
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Value> {
+    pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         self.check_allow_operation()?;
         if !self.is_pessimistic() {
             Err(Error::InvalidTransactionType)
@@ -156,7 +156,7 @@ impl Transaction {
             let key = key.into();
             let mut values = self.pessimistic_lock(iter::once(key.clone()), true).await?;
             assert!(values.len() == 1);
-            Ok(values.swap_remove(0))
+            Ok(values.pop().unwrap())
         }
     }
 
@@ -215,7 +215,7 @@ impl Transaction {
 
         self.buffer
             .batch_get_or_else(keys.into_iter().map(|k| k.into()), move |keys| async move {
-                let request = new_get_batch_request(keys, timestamp);
+                let request = new_batch_get_request(keys, timestamp);
                 let plan = PlanBuilder::new(rpc, request)
                     .resolve_lock(retry_options.lock_backoff)
                     .multi_region()
@@ -383,6 +383,37 @@ impl Transaction {
                 .await?;
         }
         self.buffer.put(key, value.into()).await;
+        Ok(())
+    }
+
+    /// Inserts the value associated with the given key.
+    /// It has a constraint that key should not exist before.
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Value, Config, TransactionClient};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
+    /// let key = "TiKV".to_owned();
+    /// let val = "TiKV".to_owned();
+    /// txn.insert(key, val);
+    /// // Finish the transaction...
+    /// txn.commit().await.unwrap();
+    /// # });
+    /// ```
+    pub async fn insert(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
+        self.check_allow_operation()?;
+        let key = key.into();
+        if self.buffer.get(&key).await.is_some() {
+            return Err(Error::DuplicateKeyInsertion);
+        }
+        if self.is_pessimistic() {
+            self.pessimistic_lock(iter::once(key.clone()), false)
+                .await?;
+        }
+        self.buffer.insert(key, value.into()).await;
         Ok(())
     }
 
@@ -558,6 +589,7 @@ impl Transaction {
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_region(self.options.retry_options.region_backoff.clone())
             .heart_beat(self.status.clone())
+            .post_process()
             .plan();
         plan.execute().await
     }
@@ -603,7 +635,7 @@ impl Transaction {
         &mut self,
         keys: impl IntoIterator<Item = Key>,
         need_value: bool,
-    ) -> Result<Vec<Value>> {
+    ) -> Result<Vec<Option<Value>>> {
         assert!(
             matches!(self.options.kind, TransactionKind::Pessimistic(_)),
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
@@ -1014,7 +1046,7 @@ impl Committer {
 
 #[derive(PartialEq)]
 pub enum TransactionStatus {
-    /// The transaction is read-only [`Snapshot`](super::Snapshot::Snapshot), no need to commit or rollback or panic on drop.
+    /// The transaction is read-only [`Snapshot`](super::Snapshot), no need to commit or rollback or panic on drop.
     ReadOnly,
     /// The transaction have not been committed or rolled back.
     Active,

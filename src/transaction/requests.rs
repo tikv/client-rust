@@ -55,7 +55,7 @@ impl HasLocks for kvrpcpb::GetResponse {
     }
 }
 
-pub fn new_get_batch_request(keys: Vec<Vec<u8>>, timestamp: u64) -> kvrpcpb::BatchGetRequest {
+pub fn new_batch_get_request(keys: Vec<Vec<u8>>, timestamp: u64) -> kvrpcpb::BatchGetRequest {
     let mut req = kvrpcpb::BatchGetRequest::default();
     req.set_keys(keys);
     req.set_version(timestamp);
@@ -353,12 +353,33 @@ impl Merge<kvrpcpb::PessimisticLockResponse> for Collect {
     // We need to pair keys and values returned somewhere.
     // But it's blocked by the structure of the program that `map_result` only accepts the response as input
     // Before we fix this `batch_get_for_update` is problematic.
-    type Out = Vec<Value>;
+    type Out = Vec<Option<Value>>;
 
     fn merge(&self, input: Vec<Result<kvrpcpb::PessimisticLockResponse>>) -> Result<Self::Out> {
         input
             .into_iter()
-            .flat_map_ok(|mut resp| resp.take_values().into_iter().map(Into::into))
+            .flat_map_ok(|mut resp| {
+                let values = resp.take_values();
+                let not_founds = resp.take_not_founds();
+                let v: Vec<_> = if not_founds.is_empty() {
+                    // Legacy TiKV does not distiguish not existing key and existing key
+                    // that with empty value. We assume that key does not exist if value
+                    // is empty.
+                    values
+                        .into_iter()
+                        .map(|v| if v.is_empty() { None } else { Some(v) })
+                        .collect()
+                } else {
+                    assert_eq!(values.len(), not_founds.len());
+                    values
+                        .into_iter()
+                        .zip(not_founds.into_iter())
+                        .map(|(v, not_found)| if not_found { None } else { Some(v) })
+                        .collect()
+                };
+                // FIXME sucks to collect and re-iterate, but the iterators have different types
+                v.into_iter()
+            })
             .collect()
     }
 }
