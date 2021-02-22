@@ -12,7 +12,7 @@ use derive_new::new;
 use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
 use std::{iter, ops::RangeBounds, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
-use std::sync::RwLock;
+use tokio::sync::RwLock;
 
 /// An undo-able set of actions on the dataset.
 ///
@@ -97,7 +97,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         let key = key.into();
@@ -149,7 +149,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         if !self.is_pessimistic() {
             Err(Error::InvalidTransactionType)
         } else {
@@ -208,7 +208,7 @@ impl Transaction {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         let retry_options = self.options.retry_options.clone();
@@ -271,7 +271,7 @@ impl Transaction {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         if !self.is_pessimistic() {
             Err(Error::InvalidTransactionType)
         } else {
@@ -376,7 +376,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn put(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         let key = key.into();
         if self.is_pessimistic() {
             self.pessimistic_lock(iter::once(key.clone()), false)
@@ -404,7 +404,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn insert(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         let key = key.into();
         if self.buffer.get(&key).await.is_some() {
             return Err(Error::DuplicateKeyInsertion);
@@ -435,7 +435,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn delete(&mut self, key: impl Into<Key>) -> Result<()> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         let key = key.into();
         if self.is_pessimistic() {
             self.pessimistic_lock(iter::once(key.clone()), false)
@@ -471,7 +471,7 @@ impl Transaction {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<()> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         match self.options.kind {
             TransactionKind::Optimistic => {
                 for key in keys {
@@ -502,21 +502,25 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn commit(&mut self) -> Result<Option<Timestamp>> {
-        let mut status = self.status.write().unwrap();
-        if !matches!(
-            *status,
-            TransactionStatus::StartedCommit | TransactionStatus::Active
-        ) {
-            return Err(Error::OperationAfterCommitError);
+        {
+            let mut status = self.status.write().await;
+            if !matches!(
+                *status,
+                TransactionStatus::StartedCommit | TransactionStatus::Active
+            ) {
+                return Err(Error::OperationAfterCommitError);
+            }
+            *status = TransactionStatus::StartedCommit;
         }
-        *status = TransactionStatus::StartedCommit;
-        drop(status);
 
         let primary_key = self.buffer.get_primary_key().await;
         let mutations = self.buffer.to_proto_mutations().await;
-        if self.options.kind == TransactionKind::Optimistic && self.options.heartbeat && self.spawn_heartbeat {
+        if self.options.kind == TransactionKind::Optimistic
+            && self.options.heartbeat
+            && self.spawn_heartbeat
+        {
             self.spawn_heartbeat = false;
-            self.spawn_heartbeat();
+            self.spawn_heartbeat().await;
         }
         let res = Committer::new(
             primary_key,
@@ -530,7 +534,7 @@ impl Transaction {
         .await;
 
         if res.is_ok() {
-            let mut status = self.status.write().unwrap();
+            let mut status = self.status.write().await;
             *status = TransactionStatus::Committed;
         }
         res
@@ -540,14 +544,14 @@ impl Transaction {
     ///
     /// If it succeeds, all mutations made by this transaciton will not take effect.
     pub async fn rollback(&mut self) -> Result<()> {
-        let status = self.status.read().unwrap();
+        let status = self.status.read().await;
         if !matches!(
             *status,
             TransactionStatus::StartedRollback | TransactionStatus::Active
         ) {
             return Err(Error::OperationAfterCommitError);
         }
-        let mut status = self.status.write().unwrap();
+        let mut status = self.status.write().await;
         *status = TransactionStatus::StartedRollback;
 
         let primary_key = self.buffer.get_primary_key().await;
@@ -564,9 +568,8 @@ impl Transaction {
         .await;
 
         if res.is_ok() {
-            let mut status = self.status.write().unwrap();
+            let mut status = self.status.write().await;
             *status = TransactionStatus::Rolledback;
-            // self.status = TransactionStatus::Rolledback;
         }
         res
     }
@@ -575,7 +578,7 @@ impl Transaction {
     ///
     /// Returns the TTL set on the lock by the server.
     pub async fn send_heart_beat(&mut self) -> Result<u64> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         let primary_key = match self.buffer.get_primary_key().await {
             Some(k) => k,
             None => return Err(Error::NoPrimaryKey),
@@ -597,7 +600,7 @@ impl Transaction {
         limit: u32,
         key_only: bool,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         let retry_options = self.options.retry_options.clone();
@@ -640,7 +643,7 @@ impl Transaction {
 
         if !self.spawn_heartbeat {
             self.spawn_heartbeat = true;
-            self.spawn_heartbeat();
+            self.spawn_heartbeat().await;
         }
 
         let keys: Vec<Key> = keys.into_iter().collect();
@@ -676,8 +679,8 @@ impl Transaction {
     }
 
     /// Checks if the transaction can perform arbitrary operations.
-    fn check_allow_operation(&self) -> Result<()> {
-        let status = self.status.read().unwrap();
+    async fn check_allow_operation(&self) -> Result<()> {
+        let status = self.status.read().await;
         match *status {
             TransactionStatus::ReadOnly | TransactionStatus::Active => Ok(()),
             TransactionStatus::Committed
@@ -691,41 +694,56 @@ impl Transaction {
         matches!(self.options.kind, TransactionKind::Pessimistic(_))
     }
 
-    fn spawn_heartbeat(&mut self) {
+    async fn spawn_heartbeat(&mut self) {
         let c_status = self.status.clone();
+        let primary_key = match self.buffer.get_primary_key().await {
+            Some(k) => k,
+            None => panic!("should have primary key"),
+        };
+        let start_ts = self.timestamp.clone();
+        let resolve_lock = self.options.retry_options.lock_backoff.clone();
+        let retry_region = self.options.retry_options.region_backoff.clone();
+        let rpc = self.rpc.clone();
         self.bg_worker.spawn_ok(async move {
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(10000));
-                let status = c_status.read().unwrap();
-                if !matches!(
-                *status,
-                TransactionStatus::Rolledback | TransactionStatus::Committed
-                ) {
-                    let primary_key = match self.buffer.get_primary_key().await {
-                        Some(k) => k,
-                        None => return Err(Error::NoPrimaryKey),
-                    };
-                    let request = new_heart_beat_request(self.timestamp.clone(), primary_key, DEFAULT_LOCK_TTL);
-                    let plan = PlanBuilder::new(self.rpc.clone(), request)
+                tokio::time::sleep(tokio::time::Duration::from_millis(
+                    DEFAULT_HEARTBEAT_INTERVAL,
+                ))
+                .await;
+                {
+                    let status = c_status.read().await;
+                    if matches!(
+                        *status,
+                        TransactionStatus::Rolledback | TransactionStatus::Committed
+                    ) {
+                        break;
+                    }
+                }
+                {
+                    let request = new_heart_beat_request(
+                        start_ts.clone(),
+                        primary_key.clone(),
+                        DEFAULT_LOCK_TTL,
+                    );
+                    let plan = PlanBuilder::new(rpc.clone(), request)
                         .single_region()
-                        .await?
-                        .resolve_lock(self.options.retry_options.lock_backoff.clone())
-                        .retry_region(self.options.retry_options.region_backoff.clone())
+                        .await
+                        .expect("gg")
+                        .resolve_lock(resolve_lock.clone())
+                        .retry_region(retry_region.clone())
                         .post_process()
                         .plan();
-                    plan.execute().await;
-                } else {
-                    break;
+                    plan.execute().await.unwrap();
                 }
             }
-            ready(())
+            ()
         });
     }
 }
 
 impl Drop for Transaction {
     fn drop(&mut self) {
-        let status = self.status.read().unwrap();
+        let status = futures::executor::block_on(self.status.read());
         if !std::thread::panicking() && *status == TransactionStatus::Active {
             match self.options.check_level {
                 CheckLevel::Panic => {
@@ -864,6 +882,8 @@ impl TransactionOptions {
 
 /// The default TTL of a lock in milliseconds
 const DEFAULT_LOCK_TTL: u64 = 3000;
+/// The default heartbeat interval in milliseconds
+const DEFAULT_HEARTBEAT_INTERVAL: u64 = 10000;
 
 /// A struct wrapping the details of two-phase commit protocol (2PC).
 ///
