@@ -5,14 +5,13 @@ use crate::{
     pd::PdClient,
     request::{KvRequest, Shardable},
     stats::tikv_stats,
-    transaction::{resolve_locks, HasLocks, TransactionStatus},
+    transaction::{resolve_locks, HasLocks},
     Error, Result,
 };
 use async_trait::async_trait;
 use futures::{prelude::*, stream::StreamExt};
 use std::{marker::PhantomData, sync::Arc};
 use tikv_client_store::{HasError, HasRegionError, KvClient};
-use std::sync::RwLock;
 
 /// A plan for how to execute a request. A user builds up a plan with various
 /// options, then exectutes it.
@@ -240,28 +239,6 @@ where
                         result = clone.inner.execute().await?;
                     }
                 }
-            }
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct HeartbeatPlan<P: Plan> {
-    pub inner: P,
-    pub status: Arc<RwLock<TransactionStatus>>,
-}
-
-#[async_trait]
-impl<P: Plan> Plan for HeartbeatPlan<P> {
-    type Result = P::Result;
-
-    async fn execute(&self) -> Result<Self::Result> {
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(5000));
-            let status = self.status.read().unwrap();
-            let result = self.inner.execute().await?;
-            if *status != TransactionStatus::Active {
-                result;
             }
         }
     }

@@ -8,12 +8,11 @@ use crate::{
         ResolveLock, RetryRegion, Shardable,
     },
     store::Store,
-    transaction::{HasLocks, TransactionStatus},
+    transaction::HasLocks,
     Result,
 };
-use std::{marker::PhantomData, sync::{Arc, RwLock}};
+use std::{marker::PhantomData, sync::Arc};
 use tikv_client_store::HasError;
-use crate::request::plan::HeartbeatPlan;
 
 /// Builder type for plans (see that module for more).
 pub struct PlanBuilder<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> {
@@ -117,21 +116,6 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
             plan: ProcessResponse {
                 inner: self.plan,
                 phantom: PhantomData,
-            },
-            phantom: PhantomData,
-        }
-    }
-
-    /// spawn a heartbeat request.
-    pub fn heart_beat(self, status: Arc<RwLock<TransactionStatus>>) -> PlanBuilder<PdC, HeartbeatPlan<P>, Ph>
-    where
-        P: Plan<Result: HasError>,
-    {
-        PlanBuilder {
-            pd_client: self.pd_client.clone(),
-            plan: HeartbeatPlan {
-                inner: self.plan,
-                status,
             },
             phantom: PhantomData,
         }

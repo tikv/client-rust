@@ -11,7 +11,7 @@
 pub use client::Client;
 pub(crate) use lock::{resolve_locks, HasLocks};
 pub use snapshot::Snapshot;
-pub use transaction::{CheckLevel, Transaction, TransactionOptions, TransactionStatus};
+pub use transaction::{CheckLevel, Transaction, TransactionOptions};
 
 mod buffer;
 mod client;

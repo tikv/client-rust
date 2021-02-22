@@ -50,7 +50,7 @@ pub struct Transaction {
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
     options: TransactionOptions,
-    first_pessimistic_lock: bool,
+    spawn_heartbeat: bool,
 }
 
 impl Transaction {
@@ -72,7 +72,7 @@ impl Transaction {
             bg_worker,
             rpc,
             options,
-            first_pessimistic_lock: false,
+            spawn_heartbeat: true,
         }
     }
 
@@ -502,21 +502,21 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn commit(&mut self) -> Result<Option<Timestamp>> {
-        let mut status = self.status.read().unwrap();
+        let mut status = self.status.write().unwrap();
         if !matches!(
             *status,
             TransactionStatus::StartedCommit | TransactionStatus::Active
         ) {
             return Err(Error::OperationAfterCommitError);
         }
-        let mut status = self.status.write().unwrap();
         *status = TransactionStatus::StartedCommit;
-        // self.status = TransactionStatus::StartedCommit;
+        drop(status);
 
-        let &mut primary_key = self.buffer.get_primary_key().await;
+        let primary_key = self.buffer.get_primary_key().await;
         let mutations = self.buffer.to_proto_mutations().await;
-        if self.options.kind == TransactionKind::Optimistic && self.options.heartbeat {
-            self.send_heart_beat();
+        if self.options.kind == TransactionKind::Optimistic && self.options.heartbeat && self.spawn_heartbeat {
+            self.spawn_heartbeat = false;
+            self.spawn_heartbeat();
         }
         let res = Committer::new(
             primary_key,
@@ -530,7 +530,6 @@ impl Transaction {
         .await;
 
         if res.is_ok() {
-            // self.status = TransactionStatus::Committed;
             let mut status = self.status.write().unwrap();
             *status = TransactionStatus::Committed;
         }
@@ -550,7 +549,6 @@ impl Transaction {
         }
         let mut status = self.status.write().unwrap();
         *status = TransactionStatus::StartedRollback;
-        // self.status = TransactionStatus::StartedRollback;
 
         let primary_key = self.buffer.get_primary_key().await;
         let mutations = self.buffer.to_proto_mutations().await;
@@ -588,7 +586,6 @@ impl Transaction {
             .await?
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_region(self.options.retry_options.region_backoff.clone())
-            .heart_beat(self.status.clone())
             .post_process()
             .plan();
         plan.execute().await
@@ -641,11 +638,9 @@ impl Transaction {
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
         );
 
-        if !self.first_pessimistic_lock {
-            self.first_pessimistic_lock = true;
-            if self.options.heartbeat {
-                self.send_heart_beat();
-            }
+        if !self.spawn_heartbeat {
+            self.spawn_heartbeat = true;
+            self.spawn_heartbeat();
         }
 
         let keys: Vec<Key> = keys.into_iter().collect();
@@ -684,7 +679,6 @@ impl Transaction {
     fn check_allow_operation(&self) -> Result<()> {
         let status = self.status.read().unwrap();
         match *status {
-        // match self.status {
             TransactionStatus::ReadOnly | TransactionStatus::Active => Ok(()),
             TransactionStatus::Committed
             | TransactionStatus::Rolledback
@@ -696,12 +690,42 @@ impl Transaction {
     fn is_pessimistic(&self) -> bool {
         matches!(self.options.kind, TransactionKind::Pessimistic(_))
     }
+
+    fn spawn_heartbeat(&mut self) {
+        let c_status = self.status.clone();
+        self.bg_worker.spawn_ok(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(10000));
+                let status = c_status.read().unwrap();
+                if !matches!(
+                *status,
+                TransactionStatus::Rolledback | TransactionStatus::Committed
+                ) {
+                    let primary_key = match self.buffer.get_primary_key().await {
+                        Some(k) => k,
+                        None => return Err(Error::NoPrimaryKey),
+                    };
+                    let request = new_heart_beat_request(self.timestamp.clone(), primary_key, DEFAULT_LOCK_TTL);
+                    let plan = PlanBuilder::new(self.rpc.clone(), request)
+                        .single_region()
+                        .await?
+                        .resolve_lock(self.options.retry_options.lock_backoff.clone())
+                        .retry_region(self.options.retry_options.region_backoff.clone())
+                        .post_process()
+                        .plan();
+                    plan.execute().await;
+                } else {
+                    break;
+                }
+            }
+            ready(())
+        });
+    }
 }
 
 impl Drop for Transaction {
     fn drop(&mut self) {
         let status = self.status.read().unwrap();
-        // if !std::thread::panicking() && self.status == TransactionStatus::Active {
         if !std::thread::panicking() && *status == TransactionStatus::Active {
             match self.options.check_level {
                 CheckLevel::Panic => {
@@ -1045,7 +1069,7 @@ impl Committer {
 }
 
 #[derive(PartialEq)]
-pub enum TransactionStatus {
+enum TransactionStatus {
     /// The transaction is read-only [`Snapshot`](super::Snapshot), no need to commit or rollback or panic on drop.
     ReadOnly,
     /// The transaction have not been committed or rolled back.
