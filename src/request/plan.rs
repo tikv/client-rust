@@ -49,14 +49,14 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
     }
 }
 
-pub struct MultiRegionPlan<P: Plan, PdC: PdClient> {
+pub struct MultiRegion<P: Plan, PdC: PdClient> {
     pub(super) inner: P,
     pub pd_client: Arc<PdC>,
 }
 
-impl<P: Plan, PdC: PdClient> Clone for MultiRegionPlan<P, PdC> {
+impl<P: Plan, PdC: PdClient> Clone for MultiRegion<P, PdC> {
     fn clone(&self) -> Self {
-        MultiRegionPlan {
+        MultiRegion {
             inner: self.inner.clone(),
             pd_client: self.pd_client.clone(),
         }
@@ -64,7 +64,10 @@ impl<P: Plan, PdC: PdClient> Clone for MultiRegionPlan<P, PdC> {
 }
 
 #[async_trait]
-impl<P: Plan<Result: HasError> + Shardable, PdC: PdClient> Plan for MultiRegionPlan<P, PdC> {
+impl<P: Plan + Shardable, PdC: PdClient> Plan for MultiRegion<P, PdC>
+where
+    P::Result: HasError,
+{
     type Result = Vec<Result<P::Result>>;
 
     async fn execute(&self) -> Result<Self::Result> {
@@ -150,15 +153,15 @@ impl<P: Plan<Result = Pr>, Pr: Process> Plan for ProcessResponse<P, Pr> {
     }
 }
 
-pub struct RetryRegionPlan<P: Plan, PdC: PdClient> {
+pub struct RetryRegion<P: Plan, PdC: PdClient> {
     pub inner: P,
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
 }
 
-impl<P: Plan, PdC: PdClient> Clone for RetryRegionPlan<P, PdC> {
+impl<P: Plan, PdC: PdClient> Clone for RetryRegion<P, PdC> {
     fn clone(&self) -> Self {
-        RetryRegionPlan {
+        RetryRegion {
             inner: self.inner.clone(),
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
@@ -167,7 +170,10 @@ impl<P: Plan, PdC: PdClient> Clone for RetryRegionPlan<P, PdC> {
 }
 
 #[async_trait]
-impl<P: Plan<Result: HasError>, PdC: PdClient> Plan for RetryRegionPlan<P, PdC> {
+impl<P: Plan, PdC: PdClient> Plan for RetryRegion<P, PdC>
+where
+    P::Result: HasError,
+{
     type Result = P::Result;
 
     async fn execute(&self) -> Result<Self::Result> {
@@ -187,15 +193,15 @@ impl<P: Plan<Result: HasError>, PdC: PdClient> Plan for RetryRegionPlan<P, PdC> 
     }
 }
 
-pub struct ResolveLockPlan<P: Plan, PdC: PdClient> {
+pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub inner: P,
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
 }
 
-impl<P: Plan, PdC: PdClient> Clone for ResolveLockPlan<P, PdC> {
+impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
     fn clone(&self) -> Self {
-        ResolveLockPlan {
+        ResolveLock {
             inner: self.inner.clone(),
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
@@ -204,7 +210,10 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLockPlan<P, PdC> {
 }
 
 #[async_trait]
-impl<P: Plan<Result: HasLocks>, PdC: PdClient> Plan for ResolveLockPlan<P, PdC> {
+impl<P: Plan, PdC: PdClient> Plan for ResolveLock<P, PdC>
+where
+    P::Result: HasLocks,
+{
     type Result = P::Result;
 
     async fn execute(&self) -> Result<Self::Result> {

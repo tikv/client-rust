@@ -5,9 +5,6 @@
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::type_complexity)]
 #![allow(incomplete_features)]
-#![cfg_attr(test, feature(specialization))]
-#![feature(associated_type_bounds)]
-#![feature(decl_macro)]
 
 //! This crate provides a clean, ready to use client for [TiKV](https://github.com/tikv/tikv), a
 //! distributed transactional Key-Value database written in Rust.
@@ -78,6 +75,9 @@
 //! At this point, you should seek the documentation in the related API modules.
 
 #[macro_use]
+mod request;
+
+#[macro_use]
 mod transaction;
 
 mod backoff;
@@ -87,7 +87,6 @@ mod kv;
 mod pd;
 mod raw;
 mod region;
-mod request;
 mod stats;
 mod store;
 mod timestamp;

@@ -147,8 +147,8 @@ impl Client {
         let request = new_raw_batch_get_request(keys.into_iter().map(Into::into), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .resolve_lock(OPTIMISTIC_BACKOFF)
-            .retry_region(DEFAULT_REGION_BACKOFF)
             .multi_region()
+            .retry_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
         plan.execute()
