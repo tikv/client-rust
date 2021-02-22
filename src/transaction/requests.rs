@@ -2,9 +2,7 @@
 
 use crate::{
     pd::PdClient,
-    request::{
-        shardable_keys, shardable_range, Collect, KvRequest, Merge, Process, Shardable, SingleKey,
-    },
+    request::{Collect, KvRequest, Merge, Process, Shardable, SingleKey},
     store::{store_stream_for_keys, store_stream_for_range_by_start_key, Store},
     timestamp::TimestampExt,
     transaction::HasLocks,
@@ -343,7 +341,7 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
         self.set_context(store.region.context()?);
-        self.set_mutations(shard.into_iter().map(Into::into).collect());
+        self.set_mutations(shard);
         Ok(())
     }
 }
