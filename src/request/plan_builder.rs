@@ -4,8 +4,8 @@ use crate::{
     backoff::Backoff,
     pd::PdClient,
     request::{
-        Dispatch, KvRequest, Merge, MergeResponse, MultiRegionPlan, Plan, Process, ProcessResponse,
-        ResolveLockPlan, RetryRegionPlan, Shardable,
+        DefaultProcessor, Dispatch, KvRequest, Merge, MergeResponse, MultiRegion, Plan, Process,
+        ProcessResponse, ResolveLock, RetryRegion, Shardable,
     },
     store::Store,
     transaction::HasLocks,
@@ -52,13 +52,13 @@ impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted> {
 
 impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     /// If there is a lock error, then resolve the lock and retry the request.
-    pub fn resolve_lock(self, backoff: Backoff) -> PlanBuilder<PdC, ResolveLockPlan<P, PdC>, Ph>
+    pub fn resolve_lock(self, backoff: Backoff) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
     where
         P::Result: HasLocks,
     {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
-            plan: ResolveLockPlan {
+            plan: ResolveLock {
                 inner: self.plan,
                 backoff,
                 pd_client: self.pd_client,
@@ -70,13 +70,13 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     /// If there is a region error, re-shard the request and re-resolve regions, then retry.
     ///
     /// Note that this plan must wrap a multi-region plan if the request should be re-sharded.
-    pub fn retry_region(self, backoff: Backoff) -> PlanBuilder<PdC, RetryRegionPlan<P, PdC>, Ph>
+    pub fn retry_region(self, backoff: Backoff) -> PlanBuilder<PdC, RetryRegion<P, PdC>, Ph>
     where
         P::Result: HasError,
     {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
-            plan: RetryRegionPlan {
+            plan: RetryRegion {
                 inner: self.plan,
                 backoff,
                 pd_client: self.pd_client,
@@ -103,17 +103,21 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         }
     }
 
-    /// Apply a processing step to a response (usually only needed if the request is sent to a
-    /// single region because post-porcessing can be incorporated in the merge step for multi-region
-    /// requests).
-    pub fn post_process(self) -> PlanBuilder<PdC, ProcessResponse<P, P::Result>, Ph>
+    /// Apply the default processing step to a response (usually only needed if the request is sent
+    /// to a single region because post-porcessing can be incorporated in the merge step for
+    /// multi-region requests).
+    pub fn post_process_default<In: Clone + Sync + Send + 'static>(
+        self,
+    ) -> PlanBuilder<PdC, ProcessResponse<P, In, DefaultProcessor>, Ph>
     where
-        P: Plan<Result: Process>,
+        P: Plan<Result = In>,
+        DefaultProcessor: Process<In>,
     {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: ProcessResponse {
                 inner: self.plan,
+                processor: DefaultProcessor,
                 phantom: PhantomData,
             },
             phantom: PhantomData,
@@ -126,10 +130,10 @@ where
     P::Result: HasError,
 {
     /// Split the request into shards sending a request to the region of each shard.
-    pub fn multi_region(self) -> PlanBuilder<PdC, MultiRegionPlan<P, PdC>, Targetted> {
+    pub fn multi_region(self) -> PlanBuilder<PdC, MultiRegion<P, PdC>, Targetted> {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
-            plan: MultiRegionPlan {
+            plan: MultiRegion {
                 inner: self.plan,
                 pd_client: self.pd_client,
             },

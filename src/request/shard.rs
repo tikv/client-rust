@@ -2,7 +2,7 @@
 
 use crate::{
     pd::PdClient,
-    request::{Dispatch, KvRequest, Plan, ResolveLockPlan, RetryRegionPlan},
+    request::{Dispatch, KvRequest, Plan, ResolveLock, RetryRegion},
     store::Store,
     Result,
 };
@@ -36,7 +36,7 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
     }
 }
 
-impl<P: Plan + Shardable, PdC: PdClient> Shardable for ResolveLockPlan<P, PdC> {
+impl<P: Plan + Shardable, PdC: PdClient> Shardable for ResolveLock<P, PdC> {
     type Shard = P::Shard;
 
     fn shards(
@@ -51,7 +51,7 @@ impl<P: Plan + Shardable, PdC: PdClient> Shardable for ResolveLockPlan<P, PdC> {
     }
 }
 
-impl<P: Plan + Shardable, PdC: PdClient> Shardable for RetryRegionPlan<P, PdC> {
+impl<P: Plan + Shardable, PdC: PdClient> Shardable for RetryRegion<P, PdC> {
     type Shard = P::Shard;
 
     fn shards(
@@ -66,55 +66,63 @@ impl<P: Plan + Shardable, PdC: PdClient> Shardable for RetryRegionPlan<P, PdC> {
     }
 }
 
-pub macro shardable_keys($type_: ty) {
-    impl Shardable for $type_ {
-        type Shard = Vec<Vec<u8>>;
+#[macro_export]
+macro_rules! shardable_keys {
+    ($type_: ty) => {
+        impl Shardable for $type_ {
+            type Shard = Vec<Vec<u8>>;
 
-        fn shards(
-            &self,
-            pd_client: &std::sync::Arc<impl crate::pd::PdClient>,
-        ) -> futures::stream::BoxStream<'static, crate::Result<(Self::Shard, crate::store::Store)>>
-        {
-            let mut keys = self.keys.clone();
-            keys.sort();
-            crate::store::store_stream_for_keys(keys.into_iter(), pd_client.clone())
-        }
+            fn shards(
+                &self,
+                pd_client: &std::sync::Arc<impl crate::pd::PdClient>,
+            ) -> futures::stream::BoxStream<
+                'static,
+                crate::Result<(Self::Shard, crate::store::Store)>,
+            > {
+                let mut keys = self.keys.clone();
+                keys.sort();
+                crate::store::store_stream_for_keys(keys.into_iter(), pd_client.clone())
+            }
 
-        fn apply_shard(
-            &mut self,
-            shard: Self::Shard,
-            store: &crate::store::Store,
-        ) -> crate::Result<()> {
-            self.set_context(store.region.context()?);
-            self.set_keys(shard.into_iter().map(Into::into).collect());
-            Ok(())
+            fn apply_shard(
+                &mut self,
+                shard: Self::Shard,
+                store: &crate::store::Store,
+            ) -> crate::Result<()> {
+                self.set_context(store.region.context()?);
+                self.set_keys(shard.into_iter().map(Into::into).collect());
+                Ok(())
+            }
         }
-    }
+    };
 }
 
-pub macro shardable_range($type_: ty) {
-    impl Shardable for $type_ {
-        type Shard = (Vec<u8>, Vec<u8>);
+#[macro_export]
+macro_rules! shardable_range {
+    ($type_: ty) => {
+        impl Shardable for $type_ {
+            type Shard = (Vec<u8>, Vec<u8>);
 
-        fn shards(
-            &self,
-            pd_client: &Arc<impl crate::pd::PdClient>,
-        ) -> BoxStream<'static, crate::Result<(Self::Shard, crate::store::Store)>> {
-            let start_key = self.start_key.clone().into();
-            let end_key = self.end_key.clone().into();
-            crate::store::store_stream_for_range((start_key, end_key), pd_client.clone())
+            fn shards(
+                &self,
+                pd_client: &Arc<impl crate::pd::PdClient>,
+            ) -> BoxStream<'static, crate::Result<(Self::Shard, crate::store::Store)>> {
+                let start_key = self.start_key.clone().into();
+                let end_key = self.end_key.clone().into();
+                crate::store::store_stream_for_range((start_key, end_key), pd_client.clone())
+            }
+
+            fn apply_shard(
+                &mut self,
+                shard: Self::Shard,
+                store: &crate::store::Store,
+            ) -> crate::Result<()> {
+                self.set_context(store.region.context()?);
+
+                self.set_start_key(shard.0.into());
+                self.set_end_key(shard.1.into());
+                Ok(())
+            }
         }
-
-        fn apply_shard(
-            &mut self,
-            shard: Self::Shard,
-            store: &crate::store::Store,
-        ) -> crate::Result<()> {
-            self.set_context(store.region.context()?);
-
-            self.set_start_key(shard.0.into());
-            self.set_end_key(shard.1.into());
-            Ok(())
-        }
-    }
+    };
 }

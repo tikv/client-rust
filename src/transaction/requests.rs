@@ -2,9 +2,7 @@
 
 use crate::{
     pd::PdClient,
-    request::{
-        shardable_keys, shardable_range, Collect, KvRequest, Merge, Process, Shardable, SingleKey,
-    },
+    request::{Collect, DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey},
     store::{store_stream_for_keys, store_stream_for_range_by_start_key, Store},
     timestamp::TimestampExt,
     transaction::HasLocks,
@@ -32,10 +30,10 @@ impl SingleKey for kvrpcpb::GetRequest {
     }
 }
 
-impl Process for kvrpcpb::GetResponse {
+impl Process<kvrpcpb::GetResponse> for DefaultProcessor {
     type Out = Option<Value>;
 
-    fn process(input: Result<Self>) -> Result<Self::Out> {
+    fn process(&self, input: Result<kvrpcpb::GetResponse>) -> Result<Self::Out> {
         let mut input = input?;
         Ok(if input.not_found {
             None
@@ -163,10 +161,10 @@ impl SingleKey for kvrpcpb::CleanupRequest {
     }
 }
 
-impl Process for kvrpcpb::CleanupResponse {
+impl Process<kvrpcpb::CleanupResponse> for DefaultProcessor {
     type Out = u64;
 
-    fn process(input: Result<Self>) -> Result<Self::Out> {
+    fn process(&self, input: Result<kvrpcpb::CleanupResponse>) -> Result<Self::Out> {
         Ok(input?.commit_version)
     }
 }
@@ -343,7 +341,7 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
         self.set_context(store.region.context()?);
-        self.set_mutations(shard.into_iter().map(Into::into).collect());
+        self.set_mutations(shard);
         Ok(())
     }
 }
@@ -450,10 +448,10 @@ impl SingleKey for kvrpcpb::TxnHeartBeatRequest {
     }
 }
 
-impl Process for kvrpcpb::TxnHeartBeatResponse {
+impl Process<kvrpcpb::TxnHeartBeatResponse> for DefaultProcessor {
     type Out = u64;
 
-    fn process(input: Result<Self>) -> Result<Self::Out> {
+    fn process(&self, input: Result<kvrpcpb::TxnHeartBeatResponse>) -> Result<Self::Out> {
         Ok(input?.lock_ttl)
     }
 }
@@ -468,10 +466,10 @@ impl SingleKey for kvrpcpb::CheckTxnStatusRequest {
     }
 }
 
-impl Process for kvrpcpb::CheckTxnStatusResponse {
+impl Process<kvrpcpb::CheckTxnStatusResponse> for DefaultProcessor {
     type Out = TransactionStatus;
 
-    fn process(input: Result<Self>) -> Result<Self::Out> {
+    fn process(&self, input: Result<kvrpcpb::CheckTxnStatusResponse>) -> Result<Self::Out> {
         Ok(input?.into())
     }
 }

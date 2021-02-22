@@ -48,14 +48,14 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
     }
 }
 
-pub struct MultiRegionPlan<P: Plan, PdC: PdClient> {
+pub struct MultiRegion<P: Plan, PdC: PdClient> {
     pub(super) inner: P,
     pub pd_client: Arc<PdC>,
 }
 
-impl<P: Plan, PdC: PdClient> Clone for MultiRegionPlan<P, PdC> {
+impl<P: Plan, PdC: PdClient> Clone for MultiRegion<P, PdC> {
     fn clone(&self) -> Self {
-        MultiRegionPlan {
+        MultiRegion {
             inner: self.inner.clone(),
             pd_client: self.pd_client.clone(),
         }
@@ -63,7 +63,10 @@ impl<P: Plan, PdC: PdClient> Clone for MultiRegionPlan<P, PdC> {
 }
 
 #[async_trait]
-impl<P: Plan<Result: HasError> + Shardable, PdC: PdClient> Plan for MultiRegionPlan<P, PdC> {
+impl<P: Plan + Shardable, PdC: PdClient> Plan for MultiRegion<P, PdC>
+where
+    P::Result: HasError,
+{
     type Result = Vec<Result<P::Result>>;
 
     async fn execute(&self) -> Result<Self::Result> {
@@ -105,8 +108,7 @@ impl<In: Clone + Send + Sync + 'static, P: Plan<Result = Vec<Result<In>>>, M: Me
     type Result = M::Out;
 
     async fn execute(&self) -> Result<Self::Result> {
-        let result = self.inner.execute().await?;
-        self.merge.merge(result)
+        self.merge.merge(self.inner.execute().await?)
     }
 }
 
@@ -128,36 +130,42 @@ impl<T: Send> Merge<T> for CollectError {
 }
 
 /// Process data into another kind of data.
-pub trait Process: Sized + Clone + Send + Sync + 'static {
+pub trait Process<In>: Sized + Clone + Send + Sync + 'static {
     type Out: Send;
 
-    fn process(input: Result<Self>) -> Result<Self::Out>;
+    fn process(&self, input: Result<In>) -> Result<Self::Out>;
 }
 
 #[derive(Clone)]
-pub struct ProcessResponse<P: Plan, Pr: Process> {
+pub struct ProcessResponse<P: Plan, In, Pr: Process<In>> {
     pub inner: P,
-    pub phantom: PhantomData<Pr>,
+    pub processor: Pr,
+    pub phantom: PhantomData<In>,
 }
 
 #[async_trait]
-impl<P: Plan<Result = Pr>, Pr: Process> Plan for ProcessResponse<P, Pr> {
+impl<In: Clone + Sync + Send + 'static, P: Plan<Result = In>, Pr: Process<In>> Plan
+    for ProcessResponse<P, In, Pr>
+{
     type Result = Pr::Out;
 
     async fn execute(&self) -> Result<Self::Result> {
-        Pr::process(self.inner.execute().await)
+        self.processor.process(self.inner.execute().await)
     }
 }
 
-pub struct RetryRegionPlan<P: Plan, PdC: PdClient> {
+#[derive(Clone, Copy, Debug)]
+pub struct DefaultProcessor;
+
+pub struct RetryRegion<P: Plan, PdC: PdClient> {
     pub inner: P,
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
 }
 
-impl<P: Plan, PdC: PdClient> Clone for RetryRegionPlan<P, PdC> {
+impl<P: Plan, PdC: PdClient> Clone for RetryRegion<P, PdC> {
     fn clone(&self) -> Self {
-        RetryRegionPlan {
+        RetryRegion {
             inner: self.inner.clone(),
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
@@ -166,7 +174,10 @@ impl<P: Plan, PdC: PdClient> Clone for RetryRegionPlan<P, PdC> {
 }
 
 #[async_trait]
-impl<P: Plan<Result: HasError>, PdC: PdClient> Plan for RetryRegionPlan<P, PdC> {
+impl<P: Plan, PdC: PdClient> Plan for RetryRegion<P, PdC>
+where
+    P::Result: HasError,
+{
     type Result = P::Result;
 
     async fn execute(&self) -> Result<Self::Result> {
@@ -186,15 +197,15 @@ impl<P: Plan<Result: HasError>, PdC: PdClient> Plan for RetryRegionPlan<P, PdC> 
     }
 }
 
-pub struct ResolveLockPlan<P: Plan, PdC: PdClient> {
+pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub inner: P,
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
 }
 
-impl<P: Plan, PdC: PdClient> Clone for ResolveLockPlan<P, PdC> {
+impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
     fn clone(&self) -> Self {
-        ResolveLockPlan {
+        ResolveLock {
             inner: self.inner.clone(),
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
@@ -203,11 +214,15 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLockPlan<P, PdC> {
 }
 
 #[async_trait]
-impl<P: Plan<Result: HasLocks>, PdC: PdClient> Plan for ResolveLockPlan<P, PdC> {
+impl<P: Plan, PdC: PdClient> Plan for ResolveLock<P, PdC>
+where
+    P::Result: HasLocks,
+{
     type Result = P::Result;
 
     async fn execute(&self) -> Result<Self::Result> {
         let mut result = self.inner.execute().await?;
+        let mut clone = self.clone();
         loop {
             let locks = result.take_locks();
             if locks.is_empty() {
@@ -222,7 +237,6 @@ impl<P: Plan<Result: HasLocks>, PdC: PdClient> Plan for ResolveLockPlan<P, PdC> 
             if resolve_locks(locks, pd_client.clone()).await? {
                 result = self.inner.execute().await?;
             } else {
-                let mut clone = self.clone();
                 match clone.backoff.next_delay_duration() {
                     None => return Err(Error::ResolveLockError),
                     Some(delay_duration) => {
@@ -232,5 +246,63 @@ impl<P: Plan<Result: HasLocks>, PdC: PdClient> Plan for ResolveLockPlan<P, PdC> 
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::mock::{mock_store, MockPdClient};
+    use futures::stream::BoxStream;
+    use tikv_client_proto::kvrpcpb::BatchGetResponse;
+
+    #[derive(Clone)]
+    struct ErrPlan;
+
+    #[async_trait]
+    impl Plan for ErrPlan {
+        type Result = BatchGetResponse;
+
+        async fn execute(&self) -> Result<Self::Result> {
+            Err(Error::Unimplemented)
+        }
+    }
+
+    impl Shardable for ErrPlan {
+        type Shard = u8;
+
+        fn shards(
+            &self,
+            _: &Arc<impl crate::pd::PdClient>,
+        ) -> BoxStream<'static, crate::Result<(Self::Shard, crate::store::Store)>> {
+            Box::pin(stream::iter(1..=3).map(|_| Err(Error::Unimplemented)))
+                .map_ok(|_: u8| (42, mock_store()))
+                .boxed()
+        }
+
+        fn apply_shard(&mut self, _: Self::Shard, _: &crate::store::Store) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_err() {
+        let plan = RetryRegion {
+            inner: MultiRegion {
+                inner: ResolveLock {
+                    inner: ErrPlan,
+                    backoff: Backoff::no_backoff(),
+                    pd_client: Arc::new(MockPdClient::default()),
+                },
+                pd_client: Arc::new(MockPdClient::default()),
+            },
+            backoff: Backoff::no_backoff(),
+            pd_client: Arc::new(MockPdClient::default()),
+        };
+        plan.execute()
+            .await
+            .unwrap()
+            .iter()
+            .for_each(|r| assert!(r.is_err()));
     }
 }

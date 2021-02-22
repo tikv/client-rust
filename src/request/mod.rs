@@ -10,15 +10,16 @@ use tikv_client_store::{HasError, Request};
 
 pub use self::{
     plan::{
-        Collect, CollectError, Dispatch, Merge, MergeResponse, MultiRegionPlan, Plan, Process,
-        ProcessResponse, ResolveLockPlan, RetryRegionPlan,
+        Collect, CollectError, DefaultProcessor, Dispatch, Merge, MergeResponse, MultiRegion, Plan,
+        Process, ProcessResponse, ResolveLock, RetryRegion,
     },
     plan_builder::{PlanBuilder, SingleKey},
-    shard::{shardable_keys, shardable_range, Shardable},
+    shard::Shardable,
 };
 
 mod plan;
 mod plan_builder;
+#[macro_use]
 mod shard;
 
 /// Abstracts any request sent to a TiKV server.

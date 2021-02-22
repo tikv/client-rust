@@ -3,9 +3,7 @@
 use super::RawRpcRequest;
 use crate::{
     pd::PdClient,
-    request::{
-        shardable_keys, shardable_range, Collect, KvRequest, Merge, Process, Shardable, SingleKey,
-    },
+    request::{Collect, DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey},
     store::{store_stream_for_keys, store_stream_for_ranges, Store},
     transaction::HasLocks,
     util::iter::FlatMapOkIterExt,
@@ -33,10 +31,10 @@ impl SingleKey for kvrpcpb::RawGetRequest {
     }
 }
 
-impl Process for kvrpcpb::RawGetResponse {
+impl Process<kvrpcpb::RawGetResponse> for DefaultProcessor {
     type Out = Option<Value>;
 
-    fn process(input: Result<Self>) -> Result<Self::Out> {
+    fn process(&self, input: Result<kvrpcpb::RawGetResponse>) -> Result<Self::Out> {
         let mut input = input?;
         Ok(if input.not_found {
             None

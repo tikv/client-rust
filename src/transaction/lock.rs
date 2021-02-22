@@ -64,7 +64,7 @@ pub async fn resolve_locks(
                     .await?
                     .resolve_lock(OPTIMISTIC_BACKOFF)
                     .retry_region(DEFAULT_REGION_BACKOFF)
-                    .post_process()
+                    .post_process_default()
                     .plan();
                 let commit_version = plan.execute().await?;
                 commit_versions.insert(lock.lock_version, commit_version);

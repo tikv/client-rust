@@ -108,7 +108,7 @@ impl Transaction {
                     .await?
                     .resolve_lock(retry_options.lock_backoff)
                     .retry_region(retry_options.region_backoff)
-                    .post_process()
+                    .post_process_default()
                     .plan();
                 plan.execute().await
             })
@@ -572,7 +572,7 @@ impl Transaction {
             .await?
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_region(self.options.retry_options.region_backoff.clone())
-            .post_process()
+            .post_process_default()
             .plan();
         plan.execute().await
     }
