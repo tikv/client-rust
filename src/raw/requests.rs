@@ -3,9 +3,7 @@
 use super::RawRpcRequest;
 use crate::{
     pd::PdClient,
-    request::{
-        shardable_keys, shardable_range, Collect, KvRequest, Merge, Process, Shardable, SingleKey,
-    },
+    request::{Collect, KvRequest, Merge, Process, Shardable, SingleKey},
     store::{store_stream_for_keys, store_stream_for_ranges, Store},
     transaction::HasLocks,
     util::iter::FlatMapOkIterExt,

@@ -63,7 +63,6 @@ pub fn store_stream_for_range<PdC: PdClient>(
             );
             ((result_range.0.into(), result_range.1.into()), store)
         })
-        .into_stream()
         .boxed()
 }
 
@@ -83,7 +82,6 @@ pub fn store_stream_for_range_by_start_key<PdC: PdClient>(
                 store,
             )
         })
-        .into_stream()
         .boxed()
 }
 
@@ -113,6 +111,5 @@ pub fn store_stream_for_ranges<PdC: PdClient>(
                 .store_for_id(region_id)
                 .map_ok(move |store| (range, store))
         })
-        .into_stream()
         .boxed()
 }

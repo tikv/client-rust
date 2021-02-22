@@ -6,6 +6,6 @@ edition = "2018"
 [dependencies]
 derive-new = "0.5.8"
 futures = "0.3.5"
-grpcio = { version = "0.7", features = [ "secure", "prost-codec" ], default-features = false }
+grpcio = { version = "0.8", features = [ "secure", "prost-codec", "use-bindgen" ], default-features = false }
 log = "0.4"
 tikv-client-proto = { path = "../tikv-client-proto"}
