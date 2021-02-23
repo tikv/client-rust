@@ -728,7 +728,7 @@ impl Transaction {
                     .retry_region(retry_region.clone())
                     .post_process()
                     .plan();
-                plan.execute().await.unwrap();
+                plan.execute().await?;
             }
             Ok::<(), Error>(())
         };
