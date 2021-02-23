@@ -719,21 +719,16 @@ impl Transaction {
                         break;
                     }
                 }
-                {
-                    let request = new_heart_beat_request(
-                        start_ts.clone(),
-                        primary_key.clone(),
-                        DEFAULT_LOCK_TTL,
-                    );
-                    let plan = PlanBuilder::new(rpc.clone(), request)
-                        .single_region()
-                        .await?
-                        .resolve_lock(resolve_lock.clone())
-                        .retry_region(retry_region.clone())
-                        .post_process()
-                        .plan();
-                    plan.execute().await.unwrap();
-                }
+                let request =
+                    new_heart_beat_request(start_ts.clone(), primary_key.clone(), DEFAULT_LOCK_TTL);
+                let plan = PlanBuilder::new(rpc.clone(), request)
+                    .single_region()
+                    .await?
+                    .resolve_lock(resolve_lock.clone())
+                    .retry_region(retry_region.clone())
+                    .post_process()
+                    .plan();
+                plan.execute().await.unwrap();
             }
             Ok::<(), Error>(())
         };
