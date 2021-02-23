@@ -6,13 +6,13 @@ os:
   # - windows # TODO: https://github.com/pingcap/kvproto/issues/355
   - osx
 rust:
-  # - stable
+  - stable
   - nightly
 
 env:
   global:
     - RUST_BACKTRACE=1
-    - RUSTFLAGS="-D warnings"
+#    - RUSTFLAGS="-D warnings"
     - RUSTDOCFLAGS="-D warnings" 
 
 addons:

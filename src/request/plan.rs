@@ -243,3 +243,61 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::mock::{mock_store, MockPdClient};
+    use futures::stream::BoxStream;
+    use tikv_client_proto::kvrpcpb::BatchGetResponse;
+
+    #[derive(Clone)]
+    struct ErrPlan;
+
+    #[async_trait]
+    impl Plan for ErrPlan {
+        type Result = BatchGetResponse;
+
+        async fn execute(&self) -> Result<Self::Result> {
+            Err(Error::Unimplemented)
+        }
+    }
+
+    impl Shardable for ErrPlan {
+        type Shard = u8;
+
+        fn shards(
+            &self,
+            _: &Arc<impl crate::pd::PdClient>,
+        ) -> BoxStream<'static, crate::Result<(Self::Shard, crate::store::Store)>> {
+            Box::pin(stream::iter(1..=3).map(|_| Err(Error::Unimplemented)))
+                .map_ok(|_: u8| (42, mock_store()))
+                .boxed()
+        }
+
+        fn apply_shard(&mut self, _: Self::Shard, _: &crate::store::Store) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_err() {
+        let plan = RetryRegion {
+            inner: MultiRegion {
+                inner: ResolveLock {
+                    inner: ErrPlan,
+                    backoff: Backoff::no_backoff(),
+                    pd_client: Arc::new(MockPdClient::default()),
+                },
+                pd_client: Arc::new(MockPdClient::default()),
+            },
+            backoff: Backoff::no_backoff(),
+            pd_client: Arc::new(MockPdClient::default()),
+        };
+        plan.execute()
+            .await
+            .unwrap()
+            .iter()
+            .for_each(|r| assert!(r.is_err()));
+    }
+}
