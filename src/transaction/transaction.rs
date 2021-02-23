@@ -520,7 +520,9 @@ impl Transaction {
             && self.spawn_heartbeat
         {
             self.spawn_heartbeat = false;
-            self.spawn_heartbeat().await;
+            if !mutations.is_empty() {
+                self.spawn_heartbeat().await;
+            }
         }
         let res = Committer::new(
             primary_key,
@@ -544,15 +546,20 @@ impl Transaction {
     ///
     /// If it succeeds, all mutations made by this transaciton will not take effect.
     pub async fn rollback(&mut self) -> Result<()> {
-        let status = self.status.read().await;
-        if !matches!(
-            *status,
-            TransactionStatus::StartedRollback | TransactionStatus::Active
-        ) {
-            return Err(Error::OperationAfterCommitError);
+        {
+            let status = self.status.read().await;
+            if !matches!(
+                *status,
+                TransactionStatus::StartedRollback | TransactionStatus::Active
+            ) {
+                return Err(Error::OperationAfterCommitError);
+            }
         }
-        let mut status = self.status.write().await;
-        *status = TransactionStatus::StartedRollback;
+
+        {
+            let mut status = self.status.write().await;
+            *status = TransactionStatus::StartedRollback;
+        }
 
         let primary_key = self.buffer.get_primary_key().await;
         let mutations = self.buffer.to_proto_mutations().await;
@@ -641,11 +648,6 @@ impl Transaction {
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
         );
 
-        if !self.spawn_heartbeat {
-            self.spawn_heartbeat = true;
-            self.spawn_heartbeat().await;
-        }
-
         let keys: Vec<Key> = keys.into_iter().collect();
         let first_key = keys[0].clone();
         let primary_lock = self.buffer.get_primary_key_or(&first_key).await;
@@ -666,6 +668,10 @@ impl Transaction {
             .retry_region(self.options.retry_options.region_backoff.clone())
             .merge(Collect)
             .plan();
+        if self.spawn_heartbeat && self.options.heartbeat {
+            self.spawn_heartbeat = false;
+            self.spawn_heartbeat().await;
+        }
         let values = plan
             .execute()
             .await
@@ -705,8 +711,6 @@ impl Transaction {
         let retry_region = self.options.retry_options.region_backoff.clone();
         let rpc = self.rpc.clone();
 
-        // self.bg_worker.spawn_ok(async move {
-        // tokio::spawn(async move {
         let task = async move {
             loop {
                 tokio::time::sleep(DEFAULT_HEARTBEAT_INTERVAL).await;
@@ -719,8 +723,12 @@ impl Transaction {
                         break;
                     }
                 }
-                let request =
-                    new_heart_beat_request(start_ts.clone(), primary_key.clone(), DEFAULT_LOCK_TTL);
+                let current_ts = rpc.clone().get_timestamp().await?;
+                let request = new_heart_beat_request(
+                    start_ts.clone(),
+                    primary_key.clone(),
+                    (current_ts.physical - start_ts.physical) as u64 + DEFAULT_LOCK_TTL,
+                );
                 let plan = PlanBuilder::new(rpc.clone(), request)
                     .single_region()
                     .await?
