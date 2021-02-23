@@ -12,7 +12,7 @@ use derive_new::new;
 use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
 use std::{iter, ops::RangeBounds, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
-use tokio::sync::RwLock;
+use tokio::{sync::RwLock, time::Duration};
 
 /// An undo-able set of actions on the dataset.
 ///
@@ -704,12 +704,12 @@ impl Transaction {
         let resolve_lock = self.options.retry_options.lock_backoff.clone();
         let retry_region = self.options.retry_options.region_backoff.clone();
         let rpc = self.rpc.clone();
-        self.bg_worker.spawn_ok(async move {
+
+        // self.bg_worker.spawn_ok(async move {
+        // tokio::spawn(async move {
+        let task = async move {
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(
-                    DEFAULT_HEARTBEAT_INTERVAL,
-                ))
-                .await;
+                tokio::time::sleep(DEFAULT_HEARTBEAT_INTERVAL).await;
                 {
                     let status = c_status.read().await;
                     if matches!(
@@ -727,8 +727,7 @@ impl Transaction {
                     );
                     let plan = PlanBuilder::new(rpc.clone(), request)
                         .single_region()
-                        .await
-                        .expect("gg")
+                        .await?
                         .resolve_lock(resolve_lock.clone())
                         .retry_region(retry_region.clone())
                         .post_process()
@@ -736,7 +735,15 @@ impl Transaction {
                     plan.execute().await.unwrap();
                 }
             }
-            ()
+            Ok::<(), Error>(())
+        };
+
+        // self.bg_worker.spawn_ok(async {
+        tokio::spawn(async {
+            match task.await {
+                Ok(_) => (),
+                Err(err) => error!("Error: While sending heartbeat. {}", err),
+            }
         });
     }
 }
@@ -878,12 +885,17 @@ impl TransactionOptions {
             }
         }
     }
+
+    pub fn no_heart_beat(mut self) -> TransactionOptions {
+        self.heartbeat = false;
+        self
+    }
 }
 
 /// The default TTL of a lock in milliseconds
 const DEFAULT_LOCK_TTL: u64 = 3000;
 /// The default heartbeat interval in milliseconds
-const DEFAULT_HEARTBEAT_INTERVAL: u64 = 10000;
+const DEFAULT_HEARTBEAT_INTERVAL: Duration = tokio::time::Duration::from_millis(10000);
 
 /// A struct wrapping the details of two-phase commit protocol (2PC).
 ///
