@@ -20,6 +20,7 @@ name = "tikv_client"
 [dependencies]
 async-trait = "0.1"
 derive-new = "0.5"
+fail = "0.4"
 futures = { version = "0.3.5", features = ["async-await", "thread-pool"] }
 futures-timer = "3.0"
 grpcio = { version = "0.8", features = [ "secure", "prost-codec", "use-bindgen" ], default-features = false }
@@ -57,3 +58,8 @@ members = [
     "tikv-client-store",
     "mock-tikv"
 ]
+
+[[test]]
+name = "pessimistic_heartbeat"
+path = "tests/fail_points.rs"
+required-features = ["fail/failpoints"]

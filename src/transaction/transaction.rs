@@ -9,6 +9,7 @@ use crate::{
     BoundRange, Error, Key, KvPair, Result, Value,
 };
 use derive_new::new;
+use fail::fail_point;
 use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
 use std::{iter, ops::RangeBounds, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
@@ -927,6 +928,7 @@ impl Committer {
         }
 
         let min_commit_ts = self.prewrite().await?;
+        fail_point!(tokio::time::sleep(tokio::time::Duration::from_millis(5000)));
 
         // If we didn't use 1pc, prewrite will set `try_one_pc` to false.
         if self.options.try_one_pc {
