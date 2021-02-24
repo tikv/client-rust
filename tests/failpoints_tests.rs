@@ -1,6 +1,9 @@
 #![cfg(feature = "integration-tests")]
 
-use tikv_client::{Result, Transaction, TransactionClient, TransactionOptions, Value};
+mod common;
+use common::{clear_tikv, pd_addrs};
+use serial_test::serial;
+use tikv_client::{Result, TransactionClient, TransactionOptions};
 
 #[tokio::test]
 #[serial]
@@ -21,11 +24,13 @@ async fn optimistic_heartbeat() -> Result<()> {
         .await?;
     txn_without_heartbeat.put(key2, "fooo").await.unwrap();
 
+    fail::cfg("after-prewrite", "sleep(30000)").unwrap();
+
     tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
 
     // use other txns to check these locks
     let mut t3 = client
-        .begin_with_options(TransactionOptions::new_optimistic().no_resolve_locks())
+        .begin_with_options(TransactionOptions::new_optimistic().no_resolve_locks().no_heart_beat())
         .await?;
     t3.put("key1".to_owned(), "gee").await?;
     assert!(t3.commit().await.is_err());

@@ -928,7 +928,7 @@ impl Committer {
         }
 
         let min_commit_ts = self.prewrite().await?;
-        fail_point!(tokio::time::sleep(tokio::time::Duration::from_millis(5000)));
+        fail_point!("after-prewrite");
 
         // If we didn't use 1pc, prewrite will set `try_one_pc` to false.
         if self.options.try_one_pc {

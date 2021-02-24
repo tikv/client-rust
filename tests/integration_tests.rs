@@ -1,34 +1,23 @@
 #![cfg(feature = "integration-tests")]
 
+mod common;
+use common::{clear_tikv, pd_addrs};
 use futures::prelude::*;
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 use serial_test::serial;
 use std::{
     collections::{HashMap, HashSet},
     convert::TryInto,
-    env, iter,
+    iter,
 };
 use tikv_client::{
-    ColumnFamily, Key, KvPair, RawClient, Result, Transaction, TransactionClient,
+    Key, KvPair, RawClient, Result, Transaction, TransactionClient,
     TransactionOptions, Value,
 };
 
 // Parameters used in test
 const NUM_PEOPLE: u32 = 100;
 const NUM_TRNASFER: u32 = 100;
-
-/// Delete all entris in TiKV to leave a clean space for following tests.
-async fn clear_tikv() {
-    let cfs = vec![
-        ColumnFamily::Default,
-        ColumnFamily::Lock,
-        ColumnFamily::Write,
-    ];
-    for cf in cfs {
-        let raw_client = RawClient::new(pd_addrs()).await.unwrap().with_cf(cf);
-        raw_client.delete_range(vec![]..).await.unwrap();
-    }
-}
 
 #[tokio::test]
 async fn get_timestamp() -> Result<()> {
@@ -681,14 +670,4 @@ fn gen_u32_keys(num: u32, rng: &mut impl Rng) -> HashSet<Vec<u8>> {
         set.insert(rng.gen::<u32>().to_be_bytes().to_vec());
     }
     set
-}
-
-const ENV_PD_ADDRS: &str = "PD_ADDRS";
-
-fn pd_addrs() -> Vec<String> {
-    env::var(ENV_PD_ADDRS)
-        .expect(&format!("Expected {}:", ENV_PD_ADDRS))
-        .split(",")
-        .map(From::from)
-        .collect()
 }

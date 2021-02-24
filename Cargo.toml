@@ -60,6 +60,6 @@ members = [
 ]
 
 [[test]]
-name = "pessimistic_heartbeat"
-path = "tests/fail_points.rs"
+name = "failpoint_tests"
+path = "tests/failpoints.rs"
 required-features = ["fail/failpoints"]
