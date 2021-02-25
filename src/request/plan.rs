@@ -108,8 +108,7 @@ impl<In: Clone + Send + Sync + 'static, P: Plan<Result = Vec<Result<In>>>, M: Me
     type Result = M::Out;
 
     async fn execute(&self) -> Result<Self::Result> {
-        let result = self.inner.execute().await?;
-        self.merge.merge(result)
+        self.merge.merge(self.inner.execute().await?)
     }
 }
 
@@ -131,26 +130,32 @@ impl<T: Send> Merge<T> for CollectError {
 }
 
 /// Process data into another kind of data.
-pub trait Process: Sized + Clone + Send + Sync + 'static {
+pub trait Process<In>: Sized + Clone + Send + Sync + 'static {
     type Out: Send;
 
-    fn process(input: Result<Self>) -> Result<Self::Out>;
+    fn process(&self, input: Result<In>) -> Result<Self::Out>;
 }
 
 #[derive(Clone)]
-pub struct ProcessResponse<P: Plan, Pr: Process> {
+pub struct ProcessResponse<P: Plan, In, Pr: Process<In>> {
     pub inner: P,
-    pub phantom: PhantomData<Pr>,
+    pub processor: Pr,
+    pub phantom: PhantomData<In>,
 }
 
 #[async_trait]
-impl<P: Plan<Result = Pr>, Pr: Process> Plan for ProcessResponse<P, Pr> {
+impl<In: Clone + Sync + Send + 'static, P: Plan<Result = In>, Pr: Process<In>> Plan
+    for ProcessResponse<P, In, Pr>
+{
     type Result = Pr::Out;
 
     async fn execute(&self) -> Result<Self::Result> {
-        Pr::process(self.inner.execute().await)
+        self.processor.process(self.inner.execute().await)
     }
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct DefaultProcessor;
 
 pub struct RetryRegion<P: Plan, PdC: PdClient> {
     pub inner: P,
@@ -217,6 +222,7 @@ where
 
     async fn execute(&self) -> Result<Self::Result> {
         let mut result = self.inner.execute().await?;
+        let mut clone = self.clone();
         loop {
             let locks = result.take_locks();
             if locks.is_empty() {
@@ -231,7 +237,6 @@ where
             if resolve_locks(locks, pd_client.clone()).await? {
                 result = self.inner.execute().await?;
             } else {
-                let mut clone = self.clone();
                 match clone.backoff.next_delay_duration() {
                     None => return Err(Error::ResolveLockError),
                     Some(delay_duration) => {

@@ -4,8 +4,8 @@ use crate::{
     backoff::Backoff,
     pd::PdClient,
     request::{
-        Dispatch, KvRequest, Merge, MergeResponse, MultiRegion, Plan, Process, ProcessResponse,
-        ResolveLock, RetryRegion, Shardable,
+        DefaultProcessor, Dispatch, KvRequest, Merge, MergeResponse, MultiRegion, Plan, Process,
+        ProcessResponse, ResolveLock, RetryRegion, Shardable,
     },
     store::Store,
     transaction::HasLocks,
@@ -103,18 +103,21 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         }
     }
 
-    /// Apply a processing step to a response (usually only needed if the request is sent to a
-    /// single region because post-porcessing can be incorporated in the merge step for multi-region
-    /// requests).
-    pub fn post_process(self) -> PlanBuilder<PdC, ProcessResponse<P, P::Result>, Ph>
+    /// Apply the default processing step to a response (usually only needed if the request is sent
+    /// to a single region because post-porcessing can be incorporated in the merge step for
+    /// multi-region requests).
+    pub fn post_process_default<In: Clone + Sync + Send + 'static>(
+        self,
+    ) -> PlanBuilder<PdC, ProcessResponse<P, In, DefaultProcessor>, Ph>
     where
-        P: Plan,
-        P::Result: Process,
+        P: Plan<Result = In>,
+        DefaultProcessor: Process<In>,
     {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: ProcessResponse {
                 inner: self.plan,
+                processor: DefaultProcessor,
                 phantom: PhantomData,
             },
             phantom: PhantomData,

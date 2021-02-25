@@ -117,7 +117,7 @@ impl Client {
             .await?
             .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_region(DEFAULT_REGION_BACKOFF)
-            .post_process()
+            .post_process_default()
             .plan();
         plan.execute().await
     }
