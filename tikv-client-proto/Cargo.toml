@@ -5,12 +5,12 @@ edition = "2018"
 build = "build.rs"
 
 [build-dependencies]
-protobuf-build = { version = "0.11", default-features = false, features = ["grpcio-prost-codec"] }
+protobuf-build = { version = "0.12", default-features = false, features = ["grpcio-prost-codec"] }
 
 [dependencies]
 protobuf = "=2.8.0"
-prost = { version = "0.6" }
-prost-derive = { version = "0.6" }
+prost = { version = "0.7" }
+prost-derive = { version = "0.7" }
 futures = "0.3.5"
-grpcio = { version = "0.7", default-features = false, features = ["secure", "prost-codec"] }
+grpcio = { version = "0.8", default-features = false, features = ["secure", "prost-codec", "use-bindgen"] }
 lazy_static = { version = "1.3" }

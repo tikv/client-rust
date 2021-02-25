@@ -2,11 +2,12 @@
 
 use tikv_client_common::Error;
 
-use super::requests;
 use crate::{
+    backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     config::Config,
     pd::PdRpcClient,
-    request::{KvRequest, RetryOptions},
+    raw::lowering::*,
+    request::{Collect, Plan},
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
 use std::{sync::Arc, u32};
@@ -110,9 +111,15 @@ impl Client {
     /// # });
     /// ```
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
-        requests::new_raw_get_request(key, self.cf.clone())
-            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
-            .await
+        let request = new_raw_get_request(key.into(), self.cf.clone());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+            .single_region()
+            .await?
+            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .retry_region(DEFAULT_REGION_BACKOFF)
+            .post_process_default()
+            .plan();
+        plan.execute().await
     }
 
     /// Create a new 'batch get' request.
@@ -137,9 +144,16 @@ impl Client {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
-        requests::new_raw_batch_get_request(keys, self.cf.clone())
-            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
+        let request = new_raw_batch_get_request(keys.into_iter().map(Into::into), self.cf.clone());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .multi_region()
+            .retry_region(DEFAULT_REGION_BACKOFF)
+            .merge(Collect)
+            .plan();
+        plan.execute()
             .await
+            .map(|r| r.into_iter().map(Into::into).collect())
     }
 
     /// Create a new 'put' request.
@@ -159,9 +173,15 @@ impl Client {
     /// # });
     /// ```
     pub async fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        requests::new_raw_put_request(key, value, self.cf.clone())
-            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
-            .await
+        let request = new_raw_put_request(key.into(), value.into(), self.cf.clone());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+            .single_region()
+            .await?
+            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .retry_region(DEFAULT_REGION_BACKOFF)
+            .plan();
+        plan.execute().await?;
+        Ok(())
     }
 
     /// Create a new 'batch put' request.
@@ -185,9 +205,14 @@ impl Client {
         &self,
         pairs: impl IntoIterator<Item = impl Into<KvPair>>,
     ) -> Result<()> {
-        requests::new_raw_batch_put_request(pairs, self.cf.clone())
-            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
-            .await
+        let request = new_raw_batch_put_request(pairs.into_iter().map(Into::into), self.cf.clone());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .multi_region()
+            .retry_region(DEFAULT_REGION_BACKOFF)
+            .plan();
+        plan.execute().await?;
+        Ok(())
     }
 
     /// Create a new 'delete' request.
@@ -208,9 +233,15 @@ impl Client {
     /// # });
     /// ```
     pub async fn delete(&self, key: impl Into<Key>) -> Result<()> {
-        requests::new_raw_delete_request(key, self.cf.clone())
-            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
-            .await
+        let request = new_raw_delete_request(key.into(), self.cf.clone());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+            .single_region()
+            .await?
+            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .retry_region(DEFAULT_REGION_BACKOFF)
+            .plan();
+        plan.execute().await?;
+        Ok(())
     }
 
     /// Create a new 'batch delete' request.
@@ -231,9 +262,15 @@ impl Client {
     /// # });
     /// ```
     pub async fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
-        requests::new_raw_batch_delete_request(keys, self.cf.clone())
-            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
-            .await
+        let request =
+            new_raw_batch_delete_request(keys.into_iter().map(Into::into), self.cf.clone());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .multi_region()
+            .retry_region(DEFAULT_REGION_BACKOFF)
+            .plan();
+        plan.execute().await?;
+        Ok(())
     }
 
     /// Create a new 'delete range' request.
@@ -252,9 +289,14 @@ impl Client {
     /// # });
     /// ```
     pub async fn delete_range(&self, range: impl Into<BoundRange>) -> Result<()> {
-        requests::new_raw_delete_range_request(range, self.cf.clone())
-            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
-            .await
+        let request = new_raw_delete_range_request(range.into(), self.cf.clone());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .multi_region()
+            .retry_region(DEFAULT_REGION_BACKOFF)
+            .plan();
+        plan.execute().await?;
+        Ok(())
     }
 
     /// Create a new 'scan' request.
@@ -277,7 +319,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn scan(&self, range: impl Into<BoundRange>, limit: u32) -> Result<Vec<KvPair>> {
-        self.scan_inner(range, limit, false).await
+        self.scan_inner(range.into(), limit, false).await
     }
 
     /// Create a new 'scan' request that only returns the keys.
@@ -388,9 +430,14 @@ impl Client {
             });
         }
 
-        let res = requests::new_raw_scan_request(range, limit, key_only, self.cf.clone())
-            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
-            .await;
+        let request = new_raw_scan_request(range.into(), limit, key_only, self.cf.clone());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .multi_region()
+            .retry_region(DEFAULT_REGION_BACKOFF)
+            .merge(Collect)
+            .plan();
+        let res = plan.execute().await;
         res.map(|mut s| {
             s.truncate(limit as usize);
             s
@@ -410,8 +457,18 @@ impl Client {
             });
         }
 
-        requests::new_raw_batch_scan_request(ranges, each_limit, key_only, self.cf.clone())
-            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
-            .await
+        let request = new_raw_batch_scan_request(
+            ranges.into_iter().map(Into::into),
+            each_limit,
+            key_only,
+            self.cf.clone(),
+        );
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .multi_region()
+            .retry_region(DEFAULT_REGION_BACKOFF)
+            .merge(Collect)
+            .plan();
+        plan.execute().await
     }
 }

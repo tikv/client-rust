@@ -18,17 +18,16 @@ const NUM_PEOPLE: u32 = 100;
 const NUM_TRNASFER: u32 = 100;
 
 /// Delete all entris in TiKV to leave a clean space for following tests.
-async fn clear_tikv() -> Result<()> {
+async fn clear_tikv() {
     let cfs = vec![
         ColumnFamily::Default,
         ColumnFamily::Lock,
         ColumnFamily::Write,
     ];
     for cf in cfs {
-        let raw_client = RawClient::new(pd_addrs()).await?.with_cf(cf);
-        raw_client.delete_range(vec![]..).await?;
+        let raw_client = RawClient::new(pd_addrs()).await.unwrap().with_cf(cf);
+        raw_client.delete_range(vec![]..).await.unwrap();
     }
-    Ok(())
 }
 
 #[tokio::test]
@@ -53,7 +52,7 @@ async fn get_timestamp() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn crud() -> Result<()> {
-    clear_tikv().await?;
+    clear_tikv().await;
 
     let client = TransactionClient::new(pd_addrs()).await?;
     let mut txn = client.begin_optimistic().await?;
@@ -117,7 +116,8 @@ async fn crud() -> Result<()> {
     // Read again from TiKV
     let snapshot = client.snapshot(
         client.current_timestamp().await?,
-        TransactionOptions::default(),
+        // TODO needed because pessimistic does not check locks (#235)
+        TransactionOptions::new_optimistic(),
     );
     let batch_get_res: HashMap<Key, Value> = snapshot
         .batch_get(vec!["foo".to_owned(), "bar".to_owned()])
@@ -136,7 +136,7 @@ async fn crud() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn insert_duplicate_keys() -> Result<()> {
-    clear_tikv().await?;
+    clear_tikv().await;
 
     let client = TransactionClient::new(pd_addrs()).await?;
     // Initialize TiKV store with {foo => bar}
@@ -160,7 +160,7 @@ async fn insert_duplicate_keys() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn pessimistic() -> Result<()> {
-    clear_tikv().await?;
+    clear_tikv().await;
 
     let client = TransactionClient::new(pd_addrs()).await?;
     let mut txn = client.begin_pessimistic().await?;
@@ -178,7 +178,7 @@ async fn pessimistic() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn raw_bank_transfer() -> Result<()> {
-    clear_tikv().await?;
+    clear_tikv().await;
     let client = RawClient::new(pd_addrs()).await?;
     let mut rng = thread_rng();
 
@@ -232,7 +232,7 @@ async fn txn_write_million() -> Result<()> {
     const NUM_BITS_KEY_PER_TXN: u32 = 3;
     let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
 
-    clear_tikv().await?;
+    clear_tikv().await;
     let client = TransactionClient::new(pd_addrs()).await?;
 
     for i in 0..2u32.pow(NUM_BITS_TXN) {
@@ -304,7 +304,7 @@ async fn txn_write_million() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn txn_bank_transfer() -> Result<()> {
-    clear_tikv().await?;
+    clear_tikv().await;
     let client = TransactionClient::new(pd_addrs()).await?;
     let mut rng = thread_rng();
 
@@ -358,7 +358,7 @@ async fn txn_bank_transfer() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn raw_req() -> Result<()> {
-    clear_tikv().await?;
+    clear_tikv().await;
     let client = RawClient::new(pd_addrs()).await?;
 
     // empty; get non-existent key
@@ -488,7 +488,7 @@ async fn raw_req() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_update_safepoint() -> Result<()> {
-    clear_tikv().await?;
+    clear_tikv().await;
     let client = TransactionClient::new(pd_addrs()).await?;
     let res = client.gc(client.current_timestamp().await?).await?;
     assert!(res);
@@ -508,7 +508,7 @@ async fn raw_write_million() -> Result<()> {
     const NUM_BITS_KEY_PER_TXN: u32 = 10;
     let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
 
-    clear_tikv().await?;
+    clear_tikv().await;
     let client = RawClient::new(pd_addrs()).await?;
 
     for i in 0..2u32.pow(NUM_BITS_TXN) {
@@ -554,7 +554,7 @@ async fn raw_write_million() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn pessimistic_rollback() -> Result<()> {
-    clear_tikv().await?;
+    clear_tikv().await;
     let client =
         TransactionClient::new_with_config(vec!["127.0.0.1:2379"], Default::default()).await?;
     let mut preload_txn = client.begin_optimistic().await?;
@@ -586,7 +586,7 @@ async fn pessimistic_rollback() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn lock_keys() -> Result<()> {
-    clear_tikv().await?;
+    clear_tikv().await;
     let client =
         TransactionClient::new_with_config(vec!["127.0.0.1:2379"], Default::default()).await?;
 

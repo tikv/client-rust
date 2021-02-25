@@ -3,9 +3,9 @@
 use crate::{
     backoff::Backoff,
     pd::{PdClient, PdRpcClient},
-    request::{KvRequest, RetryOptions},
+    request::{Collect, CollectError, Plan, PlanBuilder, RetryOptions},
     timestamp::TimestampExt,
-    transaction::{buffer::Buffer, requests::*},
+    transaction::{buffer::Buffer, lowering::*},
     BoundRange, Error, Key, KvPair, Result, Value,
 };
 use derive_new::new;
@@ -95,11 +95,22 @@ impl Transaction {
     /// ```
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
         self.check_allow_operation()?;
+        let timestamp = self.timestamp.clone();
+        let rpc = self.rpc.clone();
         let key = key.into();
+        let retry_options = self.options.retry_options.clone();
+
         self.buffer
-            .get_or_else(key, |key| {
-                new_mvcc_get_request(key, self.timestamp.clone())
-                    .execute(self.rpc.clone(), RetryOptions::default_optimistic())
+            .get_or_else(key, |key| async move {
+                let request = new_get_request(key, timestamp);
+                let plan = PlanBuilder::new(rpc, request)
+                    .single_region()
+                    .await?
+                    .resolve_lock(retry_options.lock_backoff)
+                    .retry_region(retry_options.region_backoff)
+                    .post_process_default()
+                    .plan();
+                plan.execute().await
             })
             .await
     }
@@ -197,10 +208,20 @@ impl Transaction {
         self.check_allow_operation()?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
+        let retry_options = self.options.retry_options.clone();
+
         self.buffer
-            .batch_get_or_else(keys.into_iter().map(|k| k.into()), move |keys| {
-                new_mvcc_get_batch_request(keys, timestamp)
-                    .execute(rpc, RetryOptions::default_optimistic())
+            .batch_get_or_else(keys.into_iter().map(|k| k.into()), move |keys| async move {
+                let request = new_batch_get_request(keys, timestamp);
+                let plan = PlanBuilder::new(rpc, request)
+                    .resolve_lock(retry_options.lock_backoff)
+                    .multi_region()
+                    .retry_region(retry_options.region_backoff)
+                    .merge(Collect)
+                    .plan();
+                plan.execute()
+                    .await
+                    .map(|r| r.into_iter().map(Into::into).collect())
             })
             .await
     }
@@ -455,27 +476,29 @@ impl Transaction {
                 }
             }
             TransactionKind::Pessimistic(_) => {
-                self.pessimistic_lock(keys, false).await?;
+                self.pessimistic_lock(keys.into_iter().map(|k| k.into()), false)
+                    .await?;
             }
         }
         Ok(())
     }
 
-    /// Commits the actions of the transaction. On success, we return the commit timestamp.
+    /// Commits the actions of the transaction. On success, we return the commit timestamp (or None
+    /// if there was nothing to commit).
     ///
     /// # Examples
     /// ```rust,no_run
-    /// # use tikv_client::{Config, TransactionClient};
+    /// # use tikv_client::{Config, Timestamp, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// // ... Do some actions.
     /// let req = txn.commit();
-    /// let result: u64 = req.await.unwrap();
+    /// let result: Timestamp = req.await.unwrap().unwrap();
     /// # });
     /// ```
-    pub async fn commit(&mut self) -> Result<u64> {
+    pub async fn commit(&mut self) -> Result<Option<Timestamp>> {
         if !matches!(
             self.status,
             TransactionStatus::StartedCommit | TransactionStatus::Active
@@ -489,7 +512,7 @@ impl Transaction {
         let res = Committer::new(
             primary_key,
             mutations,
-            self.timestamp.version(),
+            self.timestamp.clone(),
             self.bg_worker.clone(),
             self.rpc.clone(),
             self.options.clone(),
@@ -520,7 +543,7 @@ impl Transaction {
         let res = Committer::new(
             primary_key,
             mutations,
-            self.timestamp.version(),
+            self.timestamp.clone(),
             self.bg_worker.clone(),
             self.rpc.clone(),
             self.options.clone(),
@@ -543,9 +566,15 @@ impl Transaction {
             Some(k) => k,
             None => return Err(Error::NoPrimaryKey),
         };
-        new_heart_beat_request(self.timestamp.clone(), primary_key, DEFAULT_LOCK_TTL)
-            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
-            .await
+        let request = new_heart_beat_request(self.timestamp.clone(), primary_key, DEFAULT_LOCK_TTL);
+        let plan = PlanBuilder::new(self.rpc.clone(), request)
+            .single_region()
+            .await?
+            .resolve_lock(self.options.retry_options.lock_backoff.clone())
+            .retry_region(self.options.retry_options.region_backoff.clone())
+            .post_process_default()
+            .plan();
+        plan.execute().await
     }
 
     async fn scan_inner(
@@ -557,12 +586,25 @@ impl Transaction {
         self.check_allow_operation()?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
+        let retry_options = self.options.retry_options.clone();
 
         self.buffer
-            .scan_and_fetch(range.into(), limit, move |new_range, new_limit| {
-                new_mvcc_scan_request(new_range, timestamp, new_limit, key_only)
-                    .execute(rpc, RetryOptions::default_optimistic())
-            })
+            .scan_and_fetch(
+                range.into(),
+                limit,
+                move |new_range, new_limit| async move {
+                    let request = new_scan_request(new_range, timestamp, new_limit, key_only);
+                    let plan = PlanBuilder::new(rpc, request)
+                        .resolve_lock(retry_options.lock_backoff)
+                        .multi_region()
+                        .retry_region(retry_options.region_backoff)
+                        .merge(Collect)
+                        .plan();
+                    plan.execute()
+                        .await
+                        .map(|r| r.into_iter().map(Into::into).collect())
+                },
+            )
             .await
     }
 
@@ -574,40 +616,44 @@ impl Transaction {
     /// Only valid for pessimistic transactions, panics if called on an optimistic transaction.
     async fn pessimistic_lock(
         &mut self,
-        keys: impl IntoIterator<Item = impl Into<Key>>,
+        keys: impl IntoIterator<Item = Key>,
         need_value: bool,
-    ) -> Result<Vec<Option<Vec<u8>>>> {
+    ) -> Result<Vec<Option<Value>>> {
         assert!(
             matches!(self.options.kind, TransactionKind::Pessimistic(_)),
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
         );
 
-        let keys: Vec<Vec<u8>> = keys
-            .into_iter()
-            .map(|it| it.into())
-            .map(|it: Key| it.into())
-            .collect();
+        let keys: Vec<Key> = keys.into_iter().collect();
         let first_key = keys[0].clone();
-        let primary_lock = self.buffer.get_primary_key_or(&first_key.into()).await;
+        let primary_lock = self.buffer.get_primary_key_or(&first_key).await;
         let lock_ttl = DEFAULT_LOCK_TTL;
-        let for_update_ts = self.rpc.clone().get_timestamp().await.unwrap().version();
-        self.options.push_for_update_ts(for_update_ts);
-        let values = new_pessimistic_lock_request(
-            keys.clone(),
+        let for_update_ts = self.rpc.clone().get_timestamp().await.unwrap();
+        self.options.push_for_update_ts(for_update_ts.clone());
+        let request = new_pessimistic_lock_request(
+            keys.clone().into_iter(),
             primary_lock,
-            self.timestamp.version(),
+            self.timestamp.clone(),
             lock_ttl,
             for_update_ts,
             need_value,
-        )
-        .execute(self.rpc.clone(), RetryOptions::default_pessimistic())
-        .await?;
+        );
+        let plan = PlanBuilder::new(self.rpc.clone(), request)
+            .resolve_lock(self.options.retry_options.lock_backoff.clone())
+            .multi_region()
+            .retry_region(self.options.retry_options.region_backoff.clone())
+            .merge(Collect)
+            .plan();
+        let values = plan
+            .execute()
+            .await
+            .map(|r| r.into_iter().map(Into::into).collect());
 
         for key in keys {
-            self.buffer.lock(key.into()).await;
+            self.buffer.lock(key).await;
         }
 
-        Ok(values)
+        values
     }
 
     /// Checks if the transaction can perform arbitrary operations.
@@ -643,15 +689,15 @@ impl Drop for Transaction {
 }
 
 /// Optimistic or pessimistic transaction.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum TransactionKind {
     Optimistic,
     /// Argument is for_update_ts
-    Pessimistic(u64),
+    Pessimistic(Timestamp),
 }
 
 /// Options for configuring a transaction.
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct TransactionOptions {
     /// Optimistic or pessimistic (default) transaction.
     kind: TransactionKind,
@@ -696,7 +742,7 @@ impl TransactionOptions {
     /// Default options for a pessimistic transaction.
     pub fn new_pessimistic() -> TransactionOptions {
         TransactionOptions {
-            kind: TransactionKind::Pessimistic(0),
+            kind: TransactionKind::Pessimistic(Timestamp::from_version(0)),
             try_one_pc: false,
             async_commit: false,
             read_only: false,
@@ -747,12 +793,14 @@ impl TransactionOptions {
         self
     }
 
-    fn push_for_update_ts(&mut self, for_update_ts: u64) {
+    fn push_for_update_ts(&mut self, for_update_ts: Timestamp) {
         match &mut self.kind {
             TransactionKind::Optimistic => unreachable!(),
             TransactionKind::Pessimistic(old_for_update_ts) => {
-                self.kind =
-                    TransactionKind::Pessimistic(std::cmp::max(*old_for_update_ts, for_update_ts));
+                self.kind = TransactionKind::Pessimistic(Timestamp::from_version(std::cmp::max(
+                    old_for_update_ts.version(),
+                    for_update_ts.version(),
+                )));
             }
         }
     }
@@ -772,7 +820,7 @@ const DEFAULT_LOCK_TTL: u64 = 3000;
 struct Committer {
     primary_key: Option<Key>,
     mutations: Vec<kvrpcpb::Mutation>,
-    start_version: u64,
+    start_version: Timestamp,
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
     options: TransactionOptions,
@@ -781,10 +829,10 @@ struct Committer {
 }
 
 impl Committer {
-    async fn commit(mut self) -> Result<u64> {
+    async fn commit(mut self) -> Result<Option<Timestamp>> {
         if self.mutations.is_empty() {
             assert!(self.primary_key.is_none());
-            return Ok(0);
+            return Ok(None);
         }
 
         let min_commit_ts = self.prewrite().await?;
@@ -795,8 +843,7 @@ impl Committer {
         }
 
         let commit_ts = if self.options.async_commit {
-            assert_ne!(min_commit_ts, 0);
-            min_commit_ts
+            min_commit_ts.unwrap()
         } else {
             match self.commit_primary().await {
                 Ok(commit_ts) => commit_ts,
@@ -811,31 +858,31 @@ impl Committer {
         };
         self.bg_worker
             .clone()
-            .spawn_ok(self.commit_secondary(commit_ts).map(|res| {
+            .spawn_ok(self.commit_secondary(commit_ts.clone()).map(|res| {
                 if let Err(e) = res {
                     warn!("Failed to commit secondary keys: {}", e);
                 }
             }));
-        Ok(commit_ts)
+        Ok(Some(commit_ts))
     }
 
-    async fn prewrite(&mut self) -> Result<u64> {
+    async fn prewrite(&mut self) -> Result<Option<Timestamp>> {
         let primary_lock = self.primary_key.clone().unwrap();
-        // TODO: calculate TTL for big transactions
+        // FIXME: calculate TTL for big transactions
         let lock_ttl = DEFAULT_LOCK_TTL;
-        let mut request = match self.options.kind {
+        let mut request = match &self.options.kind {
             TransactionKind::Optimistic => new_prewrite_request(
                 self.mutations.clone(),
                 primary_lock,
-                self.start_version,
+                self.start_version.clone(),
                 lock_ttl,
             ),
             TransactionKind::Pessimistic(for_update_ts) => new_pessimistic_prewrite_request(
                 self.mutations.clone(),
                 primary_lock,
-                self.start_version,
+                self.start_version.clone(),
                 lock_ttl,
-                for_update_ts,
+                for_update_ts.clone(),
             ),
         };
 
@@ -849,16 +896,20 @@ impl Committer {
             .collect();
         // FIXME set max_commit_ts and min_commit_ts
 
-        let response = request
-            .execute(self.rpc.clone(), self.options.retry_options.clone())
-            .await?;
+        let plan = PlanBuilder::new(self.rpc.clone(), request)
+            .resolve_lock(self.options.retry_options.lock_backoff.clone())
+            .multi_region()
+            .retry_region(self.options.retry_options.region_backoff.clone())
+            .merge(CollectError)
+            .plan();
+        let response = plan.execute().await?;
 
         if self.options.try_one_pc && response.len() == 1 {
             if response[0].one_pc_commit_ts == 0 {
                 return Err(Error::OnePcFailure);
             }
 
-            return Ok(response[0].one_pc_commit_ts);
+            return Ok(Timestamp::try_from_version(response[0].one_pc_commit_ts));
         }
 
         self.options.try_one_pc = false;
@@ -870,17 +921,26 @@ impl Committer {
                 r.min_commit_ts
             })
             .max()
-            .unwrap();
+            .map(|ts| Timestamp::from_version(ts));
 
         Ok(min_commit_ts)
     }
 
     /// Commits the primary key and returns the commit version
-    async fn commit_primary(&mut self) -> Result<u64> {
-        let primary_key = vec![self.primary_key.clone().unwrap()];
-        let commit_version = self.rpc.clone().get_timestamp().await?.version();
-        new_commit_request(primary_key, self.start_version, commit_version)
-            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
+    async fn commit_primary(&mut self) -> Result<Timestamp> {
+        let primary_key = self.primary_key.clone().into_iter();
+        let commit_version = self.rpc.clone().get_timestamp().await?;
+        let req = new_commit_request(
+            primary_key,
+            self.start_version.clone(),
+            commit_version.clone(),
+        );
+        let plan = PlanBuilder::new(self.rpc.clone(), req)
+            .resolve_lock(self.options.retry_options.lock_backoff.clone())
+            .multi_region()
+            .retry_region(self.options.retry_options.region_backoff.clone())
+            .plan();
+        plan.execute()
             .inspect_err(|e| {
                 // We don't know whether the transaction is committed or not if we fail to receive
                 // the response. Then, we mark the transaction as undetermined and propagate the
@@ -894,45 +954,61 @@ impl Committer {
         Ok(commit_version)
     }
 
-    async fn commit_secondary(self, commit_version: u64) -> Result<()> {
-        let primary_only = self.mutations.len() == 1;
+    async fn commit_secondary(self, commit_version: Timestamp) -> Result<()> {
+        let mutations_len = self.mutations.len();
+        let primary_only = mutations_len == 1;
         let mutations = self.mutations.into_iter();
 
-        let keys: Vec<Key> = if self.options.async_commit {
-            mutations.map(|m| m.key.into()).collect()
+        let req = if self.options.async_commit {
+            let keys = mutations.map(|m| m.key.into());
+            new_commit_request(keys, self.start_version, commit_version)
         } else if primary_only {
             return Ok(());
         } else {
             let primary_key = self.primary_key.unwrap();
-            mutations
+            let keys = mutations
                 .map(|m| m.key.into())
-                .filter(|key| &primary_key != key)
-                .collect()
+                .filter(|key| &primary_key != key);
+            new_commit_request(keys, self.start_version, commit_version)
         };
-        new_commit_request(keys, self.start_version, commit_version)
-            .execute(self.rpc.clone(), RetryOptions::default_optimistic())
-            .await
+        let plan = PlanBuilder::new(self.rpc, req)
+            .resolve_lock(self.options.retry_options.lock_backoff)
+            .multi_region()
+            .retry_region(self.options.retry_options.region_backoff)
+            .plan();
+        plan.execute().await?;
+        Ok(())
     }
 
     async fn rollback(self) -> Result<()> {
-        let keys: Vec<_> = self
+        if self.options.kind == TransactionKind::Optimistic && self.mutations.is_empty() {
+            return Ok(());
+        }
+        let keys = self
             .mutations
             .into_iter()
-            .map(|mutation| mutation.key.into())
-            .collect();
+            .map(|mutation| mutation.key.into());
         match self.options.kind {
-            TransactionKind::Optimistic if keys.is_empty() => Ok(()),
             TransactionKind::Optimistic => {
-                new_batch_rollback_request(keys, self.start_version)
-                    .execute(self.rpc, RetryOptions::default_optimistic())
-                    .await
+                let req = new_batch_rollback_request(keys, self.start_version);
+                let plan = PlanBuilder::new(self.rpc, req)
+                    .resolve_lock(self.options.retry_options.lock_backoff)
+                    .multi_region()
+                    .retry_region(self.options.retry_options.region_backoff)
+                    .plan();
+                plan.execute().await?;
             }
             TransactionKind::Pessimistic(for_update_ts) => {
-                new_pessimistic_rollback_request(keys, self.start_version, for_update_ts)
-                    .execute(self.rpc, RetryOptions::default_optimistic())
-                    .await
+                let req = new_pessimistic_rollback_request(keys, self.start_version, for_update_ts);
+                let plan = PlanBuilder::new(self.rpc, req)
+                    .resolve_lock(self.options.retry_options.lock_backoff)
+                    .multi_region()
+                    .retry_region(self.options.retry_options.region_backoff)
+                    .plan();
+                plan.execute().await?;
             }
         }
+        Ok(())
     }
 }
 

@@ -81,7 +81,7 @@ impl Buffer {
         f: F,
     ) -> Result<impl Iterator<Item = KvPair>>
     where
-        F: FnOnce(Vec<Key>) -> Fut,
+        F: FnOnce(Box<dyn Iterator<Item = Key>>) -> Fut,
         Fut: Future<Output = Result<Vec<KvPair>>>,
     {
         let (cached_results, undetermined_keys) = {
@@ -106,11 +106,11 @@ impl Buffer {
                 .into_iter()
                 .filter_map(|(k, v)| v.unwrap().map(|v| KvPair(k, v)));
 
-            let undetermined_keys = undetermined_keys.into_iter().map(|(k, _)| k).collect();
+            let undetermined_keys = undetermined_keys.into_iter().map(|(k, _)| k);
             (cached_results, undetermined_keys)
         };
 
-        let fetched_results = f(undetermined_keys).await?;
+        let fetched_results = f(Box::new(undetermined_keys)).await?;
         let mut mutations = self.mutations.lock().await;
         for kvpair in &fetched_results {
             let key = kvpair.0.clone();

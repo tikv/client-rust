@@ -3,7 +3,7 @@
 mod common;
 
 use crate::common::parse_args;
-use tikv_client::{Config, Key, TransactionClient as Client, Value};
+use tikv_client::{Config, Key, TransactionClient as Client, TransactionOptions, Value};
 
 #[tokio::main]
 async fn main() {
@@ -50,7 +50,7 @@ async fn main() {
     {
         // another txn cannot write to the locked key
         let mut txn2 = client
-            .begin_optimistic()
+            .begin_with_options(TransactionOptions::new_optimistic().no_resolve_locks())
             .await
             .expect("Could not begin a transaction");
         let value2: Value = b"value2".to_vec();

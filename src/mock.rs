@@ -124,7 +124,7 @@ impl PdClient for MockPdClient {
     type KvClient = MockKvClient;
 
     async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store> {
-        Ok(Store::new(region, Box::new(self.client.clone())))
+        Ok(Store::new(region, Arc::new(self.client.clone())))
     }
 
     async fn region_for_key(&self, key: &Key) -> Result<Region> {
@@ -152,5 +152,12 @@ impl PdClient for MockPdClient {
 
     async fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> Result<bool> {
         unimplemented!()
+    }
+}
+
+pub fn mock_store() -> Store {
+    Store {
+        region: Region::default(),
+        client: Arc::new(MockKvClient::new("foo".to_owned(), None)),
     }
 }

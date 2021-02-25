@@ -1,9 +1,12 @@
+// Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
+
 use crate::{
+    backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     pd::PdClient,
-    request::{KvRequest, RetryOptions},
+    request::Plan,
     timestamp::TimestampExt,
     transaction::requests,
-    Error, Key, RegionVerId, Result,
+    Error, RegionVerId, Result,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -39,8 +42,10 @@ pub async fn resolve_locks(
     let mut commit_versions: HashMap<u64, u64> = HashMap::new();
     let mut clean_regions: HashMap<u64, HashSet<RegionVerId>> = HashMap::new();
     for lock in expired_locks {
-        let primary_key: Key = lock.primary_lock.into();
-        let region_ver_id = pd_client.region_for_key(&primary_key).await?.ver_id();
+        let region_ver_id = pd_client
+            .region_for_key(&lock.primary_lock.clone().into())
+            .await?
+            .ver_id();
         // skip if the region is cleaned
         if clean_regions
             .get(&lock.lock_version)
@@ -53,16 +58,22 @@ pub async fn resolve_locks(
         let commit_version = match commit_versions.get(&lock.lock_version) {
             Some(&commit_version) => commit_version,
             None => {
-                let commit_version = requests::new_cleanup_request(primary_key, lock.lock_version)
-                    .execute(pd_client.clone(), RetryOptions::default_optimistic())
-                    .await?;
+                let request = requests::new_cleanup_request(lock.primary_lock, lock.lock_version);
+                let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
+                    .single_region()
+                    .await?
+                    .resolve_lock(OPTIMISTIC_BACKOFF)
+                    .retry_region(DEFAULT_REGION_BACKOFF)
+                    .post_process_default()
+                    .plan();
+                let commit_version = plan.execute().await?;
                 commit_versions.insert(lock.lock_version, commit_version);
                 commit_version
             }
         };
 
         let cleaned_region = resolve_lock_with_retry(
-            lock.key.into(),
+            &lock.key,
             lock.lock_version,
             commit_version,
             pd_client.clone(),
@@ -77,29 +88,26 @@ pub async fn resolve_locks(
 }
 
 async fn resolve_lock_with_retry(
-    key: Key,
+    #[allow(clippy::ptr_arg)] key: &Vec<u8>,
     start_version: u64,
     commit_version: u64,
     pd_client: Arc<impl PdClient>,
 ) -> Result<RegionVerId> {
-    // TODO: Add backoff
+    // FIXME: Add backoff
     let mut error = None;
     for _ in 0..RESOLVE_LOCK_RETRY_LIMIT {
-        let region = pd_client.region_for_key(&key).await?;
-        let context = match region.context() {
-            Ok(context) => context,
-            Err(e) => {
-                // Retry if the region has no leader
-                error = Some(e);
-                continue;
-            }
-        };
-        match requests::new_resolve_lock_request(context, start_version, commit_version)
-            .execute(pd_client.clone(), RetryOptions::default_optimistic())
-            .await
-        {
+        let store = pd_client.clone().store_for_key(key.into()).await?;
+        let ver_id = store.region.ver_id();
+        let request = requests::new_resolve_lock_request(start_version, commit_version);
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
+            .single_region_with_store(store)
+            .await?
+            .resolve_lock(Backoff::no_backoff())
+            .retry_region(Backoff::no_backoff())
+            .plan();
+        match plan.execute().await {
             Ok(_) => {
-                return Ok(region.ver_id());
+                return Ok(ver_id);
             }
             Err(e @ Error::RegionError(_)) => {
                 // Retry on region error
@@ -142,16 +150,16 @@ mod tests {
             },
         )));
 
-        let key: Key = vec![1].into();
+        let key = vec![1];
         let region1 = MockPdClient::region1();
         let resolved_region =
-            executor::block_on(resolve_lock_with_retry(key, 1, 2, client.clone())).unwrap();
+            executor::block_on(resolve_lock_with_retry(&key, 1, 2, client.clone())).unwrap();
         assert_eq!(region1.ver_id(), resolved_region);
 
         // Test resolve lock over retry limit
         fail::cfg("region-error", "10*return").unwrap();
-        let key: Key = vec![100].into();
-        executor::block_on(resolve_lock_with_retry(key, 3, 4, client))
+        let key = vec![100];
+        executor::block_on(resolve_lock_with_retry(&key, 3, 4, client))
             .expect_err("should return error");
     }
 }
