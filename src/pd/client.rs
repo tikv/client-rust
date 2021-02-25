@@ -103,9 +103,7 @@ pub trait PdClient: Send + Sync + 'static {
             let this = self.clone();
             async move {
                 let start_key = match start_key {
-                    None => {
-                        return Ok(None);
-                    }
+                    None => return Ok(None),
                     Some(sk) => sk,
                 };
 

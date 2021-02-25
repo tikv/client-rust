@@ -51,7 +51,7 @@ pub struct Transaction {
     bg_worker: ThreadPool,
     rpc: Arc<PdRpcClient>,
     options: TransactionOptions,
-    spawn_heartbeat: bool,
+    is_heartbeat_started: bool,
 }
 
 impl Transaction {
@@ -73,7 +73,7 @@ impl Transaction {
             bg_worker,
             rpc,
             options,
-            spawn_heartbeat: true,
+            is_heartbeat_started: false,
         }
     }
 
@@ -516,14 +516,17 @@ impl Transaction {
 
         let primary_key = self.buffer.get_primary_key().await;
         let mutations = self.buffer.to_proto_mutations().await;
+        if mutations.is_empty() {
+            assert!(primary_key.is_none());
+            return Ok(None);
+        }
+
         if self.options.kind == TransactionKind::Optimistic
-            && self.options.heartbeat
-            && self.spawn_heartbeat
+            && self.options.auto_heartbeat
+            && !self.is_heartbeat_started
         {
-            self.spawn_heartbeat = false;
-            if !mutations.is_empty() {
-                self.spawn_heartbeat().await;
-            }
+            self.is_heartbeat_started = true;
+            self.start_auto_heartbeat().await;
         }
         let res = Committer::new(
             primary_key,
@@ -669,9 +672,9 @@ impl Transaction {
             .retry_region(self.options.retry_options.region_backoff.clone())
             .merge(Collect)
             .plan();
-        if self.spawn_heartbeat && self.options.heartbeat {
-            self.spawn_heartbeat = false;
-            self.spawn_heartbeat().await;
+        if !self.is_heartbeat_started && self.options.auto_heartbeat {
+            self.is_heartbeat_started = true;
+            self.start_auto_heartbeat().await;
         }
         let values = plan
             .execute()
@@ -693,7 +696,8 @@ impl Transaction {
             TransactionStatus::Committed
             | TransactionStatus::Rolledback
             | TransactionStatus::StartedCommit
-            | TransactionStatus::StartedRollback => Err(Error::OperationAfterCommitError),
+            | TransactionStatus::StartedRollback
+            | TransactionStatus::Dropped => Err(Error::OperationAfterCommitError),
         }
     }
 
@@ -701,25 +705,27 @@ impl Transaction {
         matches!(self.options.kind, TransactionKind::Pessimistic(_))
     }
 
-    async fn spawn_heartbeat(&mut self) {
+    async fn start_auto_heartbeat(&mut self) {
         let c_status = self.status.clone();
-        let primary_key = match self.buffer.get_primary_key().await {
-            Some(k) => k,
-            None => panic!("should have primary key"),
-        };
+        let primary_key = self
+            .buffer
+            .get_primary_key()
+            .await
+            .expect("Primary key should exist");
         let start_ts = self.timestamp.clone();
-        let resolve_lock = self.options.retry_options.lock_backoff.clone();
-        let retry_region = self.options.retry_options.region_backoff.clone();
+        let region_backoff = self.options.retry_options.region_backoff.clone();
         let rpc = self.rpc.clone();
 
-        let task = async move {
+        let heartbeat_task = async move {
             loop {
                 tokio::time::sleep(DEFAULT_HEARTBEAT_INTERVAL).await;
                 {
                     let status = c_status.read().await;
                     if matches!(
                         *status,
-                        TransactionStatus::Rolledback | TransactionStatus::Committed
+                        TransactionStatus::Rolledback
+                            | TransactionStatus::Committed
+                            | TransactionStatus::Dropped
                     ) {
                         break;
                     }
@@ -733,20 +739,16 @@ impl Transaction {
                 let plan = PlanBuilder::new(rpc.clone(), request)
                     .single_region()
                     .await?
-                    .resolve_lock(resolve_lock.clone())
-                    .retry_region(retry_region.clone())
-                    .post_process_default()
+                    .retry_region(region_backoff.clone())
                     .plan();
                 plan.execute().await?;
             }
             Ok::<(), Error>(())
         };
 
-        // self.bg_worker.spawn_ok(async {
         tokio::spawn(async {
-            match task.await {
-                Ok(_) => (),
-                Err(err) => error!("Error: While sending heartbeat. {}", err),
+            if let Err(err) = heartbeat_task.await {
+                error!("Error: While sending heartbeat. {}", err);
             }
         });
     }
@@ -754,18 +756,22 @@ impl Transaction {
 
 impl Drop for Transaction {
     fn drop(&mut self) {
-        let status = futures::executor::block_on(self.status.read());
-        if !std::thread::panicking() && *status == TransactionStatus::Active {
-            match self.options.check_level {
-                CheckLevel::Panic => {
-                    panic!("Dropping an active transaction. Consider commit or rollback it.")
+        {
+            let status = futures::executor::block_on(self.status.read());
+            if !std::thread::panicking() && *status == TransactionStatus::Active {
+                match self.options.check_level {
+                    CheckLevel::Panic => {
+                        panic!("Dropping an active transaction. Consider commit or rollback it.")
+                    }
+                    CheckLevel::Warn => {
+                        warn!("Dropping an active transaction. Consider commit or rollback it.")
+                    }
+                    CheckLevel::None => {}
                 }
-                CheckLevel::Warn => {
-                    warn!("Dropping an active transaction. Consider commit or rollback it.")
-                }
-                CheckLevel::None => {}
             }
         }
+        let mut status = futures::executor::block_on(self.status.write());
+        *status = TransactionStatus::Dropped;
     }
 }
 
@@ -793,7 +799,7 @@ pub struct TransactionOptions {
     /// What to do if the transaction is dropped without an attempt to commit or rollback
     check_level: CheckLevel,
     /// Whether heartbeat will be sent automatically
-    heartbeat: bool,
+    auto_heartbeat: bool,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -819,7 +825,7 @@ impl TransactionOptions {
             read_only: false,
             retry_options: RetryOptions::default_optimistic(),
             check_level: CheckLevel::Panic,
-            heartbeat: true,
+            auto_heartbeat: true,
         }
     }
 
@@ -832,7 +838,7 @@ impl TransactionOptions {
             read_only: false,
             retry_options: RetryOptions::default_pessimistic(),
             check_level: CheckLevel::Panic,
-            heartbeat: true,
+            auto_heartbeat: true,
         }
     }
 
@@ -890,8 +896,8 @@ impl TransactionOptions {
         }
     }
 
-    pub fn no_heart_beat(mut self) -> TransactionOptions {
-        self.heartbeat = false;
+    pub fn stop_heart_beat(mut self) -> TransactionOptions {
+        self.auto_heartbeat = false;
         self
     }
 }
@@ -899,7 +905,7 @@ impl TransactionOptions {
 /// The default TTL of a lock in milliseconds
 const DEFAULT_LOCK_TTL: u64 = 3000;
 /// The default heartbeat interval in milliseconds
-const DEFAULT_HEARTBEAT_INTERVAL: Duration = tokio::time::Duration::from_millis(10000);
+const DEFAULT_HEARTBEAT_INTERVAL: Duration = tokio::time::Duration::from_secs(1);
 
 /// A struct wrapping the details of two-phase commit protocol (2PC).
 ///
@@ -922,11 +928,6 @@ struct Committer {
 
 impl Committer {
     async fn commit(mut self) -> Result<Option<Timestamp>> {
-        if self.mutations.is_empty() {
-            assert!(self.primary_key.is_none());
-            return Ok(None);
-        }
-
         let min_commit_ts = self.prewrite().await?;
         fail_point!("after-prewrite");
 
@@ -1119,4 +1120,6 @@ enum TransactionStatus {
     Rolledback,
     /// The transaction has tried to rollback. Only `rollback` is allowed.
     StartedRollback,
+    /// The transaction has been dropped.
+    Dropped,
 }
