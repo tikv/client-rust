@@ -11,8 +11,7 @@ use std::{
     iter,
 };
 use tikv_client::{
-    Key, KvPair, RawClient, Result, Transaction, TransactionClient,
-    TransactionOptions, Value,
+    Key, KvPair, RawClient, Result, Transaction, TransactionClient, TransactionOptions, Value,
 };
 
 // Parameters used in test
@@ -619,12 +618,15 @@ async fn pessimistic_heartbeat() -> Result<()> {
     let mut heartbeat_txn = client
         .begin_with_options(TransactionOptions::new_pessimistic())
         .await?;
-    heartbeat_txn.put(key1, "foo").await.unwrap();
+    heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
 
     let mut txn_without_heartbeat = client
         .begin_with_options(TransactionOptions::new_pessimistic().no_heart_beat())
         .await?;
-    txn_without_heartbeat.put(key2, "fooo").await.unwrap();
+    txn_without_heartbeat
+        .put(key2.clone(), "fooo")
+        .await
+        .unwrap();
 
     tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
 
@@ -632,10 +634,10 @@ async fn pessimistic_heartbeat() -> Result<()> {
     let mut t3 = client
         .begin_with_options(TransactionOptions::new_optimistic().no_resolve_locks())
         .await?;
-    t3.put("key1".to_owned(), "gee").await?;
+    t3.put(key1.clone(), "gee").await?;
     assert!(t3.commit().await.is_err());
     let mut t4 = client.begin_optimistic().await?;
-    t4.put("key2".to_owned(), "geee").await?;
+    t4.put(key2.clone(), "geee").await?;
     t4.commit().await?;
 
     assert!(heartbeat_txn.commit().await.is_ok());
