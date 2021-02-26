@@ -525,7 +525,6 @@ impl Transaction {
             && self.options.auto_heartbeat
             && !self.is_heartbeat_started
         {
-            self.is_heartbeat_started = true;
             self.start_auto_heartbeat().await;
         }
         let res = Committer::new(
@@ -672,14 +671,14 @@ impl Transaction {
             .retry_region(self.options.retry_options.region_backoff.clone())
             .merge(Collect)
             .plan();
-        if !self.is_heartbeat_started && self.options.auto_heartbeat {
-            self.is_heartbeat_started = true;
-            self.start_auto_heartbeat().await;
-        }
         let values = plan
             .execute()
             .await
             .map(|r| r.into_iter().map(Into::into).collect());
+
+        if !self.is_heartbeat_started && self.options.auto_heartbeat {
+            self.start_auto_heartbeat().await;
+        }
 
         for key in keys {
             self.buffer.lock(key).await;
@@ -706,7 +705,8 @@ impl Transaction {
     }
 
     async fn start_auto_heartbeat(&mut self) {
-        let c_status = self.status.clone();
+        self.is_heartbeat_started = true;
+        let status = self.status.clone();
         let primary_key = self
             .buffer
             .get_primary_key()
@@ -720,7 +720,7 @@ impl Transaction {
             loop {
                 tokio::time::sleep(DEFAULT_HEARTBEAT_INTERVAL).await;
                 {
-                    let status = c_status.read().await;
+                    let status = status.read().await;
                     if matches!(
                         *status,
                         TransactionStatus::Rolledback
@@ -757,8 +757,11 @@ impl Transaction {
 impl Drop for Transaction {
     fn drop(&mut self) {
         {
+            if std::thread::panicking() {
+                return;
+            }
             let status = futures::executor::block_on(self.status.read());
-            if !std::thread::panicking() && *status == TransactionStatus::Active {
+            if *status == TransactionStatus::Active {
                 match self.options.check_level {
                     CheckLevel::Panic => {
                         panic!("Dropping an active transaction. Consider commit or rollback it.")
@@ -896,7 +899,7 @@ impl TransactionOptions {
         }
     }
 
-    pub fn stop_heart_beat(mut self) -> TransactionOptions {
+    pub fn no_auto_hearbeat(mut self) -> TransactionOptions {
         self.auto_heartbeat = false;
         self
     }
@@ -905,7 +908,7 @@ impl TransactionOptions {
 /// The default TTL of a lock in milliseconds
 const DEFAULT_LOCK_TTL: u64 = 3000;
 /// The default heartbeat interval in milliseconds
-const DEFAULT_HEARTBEAT_INTERVAL: Duration = tokio::time::Duration::from_secs(1);
+const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
 
 /// A struct wrapping the details of two-phase commit protocol (2PC).
 ///

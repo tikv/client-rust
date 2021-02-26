@@ -1,7 +1,7 @@
 use std::env;
 use tikv_client::{ColumnFamily, RawClient};
 
-// Delete all entris in TiKV to leave a clean space for following tests.
+// Delete all entries in TiKV to leave a clean space for following tests.
 pub async fn clear_tikv() {
     let cfs = vec![
         ColumnFamily::Default,

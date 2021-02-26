@@ -621,7 +621,7 @@ async fn pessimistic_heartbeat() -> Result<()> {
     heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
 
     let mut txn_without_heartbeat = client
-        .begin_with_options(TransactionOptions::new_pessimistic().stop_heart_beat())
+        .begin_with_options(TransactionOptions::new_pessimistic().no_auto_hearbeat())
         .await?;
     txn_without_heartbeat
         .put(key2.clone(), "fooo")
