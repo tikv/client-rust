@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::Error;
+use std::fmt::Display;
 use tikv_client_proto::kvrpcpb;
 
 pub trait HasRegionError {
@@ -150,9 +151,12 @@ impl HasError for kvrpcpb::PessimisticRollbackResponse {
     }
 }
 
-impl<T: HasError, E> HasError for Result<T, E> {
+impl<T: HasError, E: Display> HasError for Result<T, E> {
     fn error(&mut self) -> Option<Error> {
-        self.as_mut().ok().and_then(|t| t.error())
+        match self {
+            Ok(x) => x.error(),
+            Err(e) => Some(Error::StringError(e.to_string())),
+        }
     }
 }
 
