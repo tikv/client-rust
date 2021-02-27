@@ -521,12 +521,8 @@ impl Transaction {
             return Ok(None);
         }
 
-        if self.options.kind == TransactionKind::Optimistic
-            && self.options.auto_heartbeat
-            && !self.is_heartbeat_started
-        {
-            self.start_auto_heartbeat().await;
-        }
+        self.start_auto_heartbeat().await;
+
         let res = Committer::new(
             primary_key,
             mutations,
@@ -676,9 +672,7 @@ impl Transaction {
             .await
             .map(|r| r.into_iter().map(Into::into).collect());
 
-        if !self.is_heartbeat_started && self.options.auto_heartbeat {
-            self.start_auto_heartbeat().await;
-        }
+        self.start_auto_heartbeat().await;
 
         for key in keys {
             self.buffer.lock(key).await;
@@ -705,7 +699,11 @@ impl Transaction {
     }
 
     async fn start_auto_heartbeat(&mut self) {
+        if !self.options.auto_heartbeat || self.is_heartbeat_started {
+            return;
+        }
         self.is_heartbeat_started = true;
+
         let status = self.status.clone();
         let primary_key = self
             .buffer
