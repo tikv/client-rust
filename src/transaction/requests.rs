@@ -79,10 +79,18 @@ impl Merge<kvrpcpb::BatchGetResponse> for Collect {
 
 impl HasLocks for kvrpcpb::BatchGetResponse {
     fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
-        self.pairs
-            .iter_mut()
-            .filter_map(|pair| pair.error.as_mut().and_then(|error| error.locked.take()))
-            .collect()
+        if self.pairs.is_empty() {
+            self.error
+                .as_mut()
+                .and_then(|error| error.locked.take())
+                .into_iter()
+                .collect()
+        } else {
+            self.pairs
+                .iter_mut()
+                .filter_map(|pair| pair.error.as_mut().and_then(|error| error.locked.take()))
+                .collect()
+        }
     }
 }
 
@@ -121,10 +129,18 @@ impl Merge<kvrpcpb::ScanResponse> for Collect {
 
 impl HasLocks for kvrpcpb::ScanResponse {
     fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
-        self.pairs
-            .iter_mut()
-            .filter_map(|pair| pair.error.as_mut().and_then(|error| error.locked.take()))
-            .collect()
+        if self.pairs.is_empty() {
+            self.error
+                .as_mut()
+                .and_then(|error| error.locked.take())
+                .into_iter()
+                .collect()
+        } else {
+            self.pairs
+                .iter_mut()
+                .filter_map(|pair| pair.error.as_mut().and_then(|error| error.locked.take()))
+                .collect()
+        }
     }
 }
 
@@ -547,13 +563,82 @@ pub struct SecondaryLocksStatus {
     pub commit_ts: Option<Timestamp>,
 }
 
-impl HasLocks for kvrpcpb::CommitResponse {}
+impl HasLocks for kvrpcpb::CommitResponse {
+    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+        self.error
+            .as_mut()
+            .and_then(|error| error.locked.take())
+            .into_iter()
+            .collect()
+    }
+}
+
+impl HasLocks for kvrpcpb::BatchRollbackResponse {
+    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+        self.error
+            .as_mut()
+            .and_then(|error| error.locked.take())
+            .into_iter()
+            .collect()
+    }
+}
+impl HasLocks for kvrpcpb::PessimisticRollbackResponse {
+    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+        self.errors
+            .iter_mut()
+            .filter_map(|error| error.locked.take())
+            .collect()
+    }
+}
+
+impl HasLocks for kvrpcpb::ResolveLockResponse {
+    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+        self.error
+            .as_mut()
+            .and_then(|error| error.locked.take())
+            .into_iter()
+            .collect()
+    }
+}
+
+impl HasLocks for kvrpcpb::PessimisticLockResponse {
+    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+        self.errors
+            .iter_mut()
+            .filter_map(|error| error.locked.take())
+            .collect()
+    }
+}
+
+impl HasLocks for kvrpcpb::TxnHeartBeatResponse {
+    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+        self.error
+            .as_mut()
+            .and_then(|error| error.locked.take())
+            .into_iter()
+            .collect()
+    }
+}
+
+impl HasLocks for kvrpcpb::CheckTxnStatusResponse {
+    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+        self.error
+            .as_mut()
+            .and_then(|error| error.locked.take())
+            .into_iter()
+            .collect()
+    }
+}
+
+impl HasLocks for kvrpcpb::CheckSecondaryLocksResponse {
+    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+        self.error
+            .as_mut()
+            .and_then(|error| error.locked.take())
+            .into_iter()
+            .collect()
+    }
+}
+
 impl HasLocks for kvrpcpb::CleanupResponse {}
-impl HasLocks for kvrpcpb::BatchRollbackResponse {}
-impl HasLocks for kvrpcpb::PessimisticRollbackResponse {}
-impl HasLocks for kvrpcpb::ResolveLockResponse {}
 impl HasLocks for kvrpcpb::ScanLockResponse {}
-impl HasLocks for kvrpcpb::PessimisticLockResponse {}
-impl HasLocks for kvrpcpb::TxnHeartBeatResponse {}
-impl HasLocks for kvrpcpb::CheckTxnStatusResponse {}
-impl HasLocks for kvrpcpb::CheckSecondaryLocksResponse {}
