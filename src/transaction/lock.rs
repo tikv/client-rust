@@ -104,6 +104,7 @@ async fn resolve_lock_with_retry(
             .await?
             .resolve_lock(Backoff::no_backoff())
             .retry_region(Backoff::no_backoff())
+            .propagate_error()
             .plan();
         match plan.execute().await {
             Ok(_) => {

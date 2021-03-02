@@ -167,6 +167,7 @@ mod test {
             .resolve_lock(Backoff::no_jitter_backoff(1, 1, 3))
             .multi_region()
             .retry_region(Backoff::no_jitter_backoff(1, 1, 3))
+            .propagate_error()
             .plan();
         let _ = executor::block_on(async { plan.execute().await });
 

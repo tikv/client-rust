@@ -179,6 +179,7 @@ impl Client {
             .await?
             .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_region(DEFAULT_REGION_BACKOFF)
+            .propagate_error()
             .plan();
         plan.execute().await?;
         Ok(())
@@ -210,6 +211,7 @@ impl Client {
             .resolve_lock(OPTIMISTIC_BACKOFF)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
+            .propagate_error()
             .plan();
         plan.execute().await?;
         Ok(())
@@ -239,6 +241,7 @@ impl Client {
             .await?
             .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_region(DEFAULT_REGION_BACKOFF)
+            .propagate_error()
             .plan();
         plan.execute().await?;
         Ok(())
@@ -268,6 +271,7 @@ impl Client {
             .resolve_lock(OPTIMISTIC_BACKOFF)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
+            .propagate_error()
             .plan();
         plan.execute().await?;
         Ok(())
@@ -294,6 +298,7 @@ impl Client {
             .resolve_lock(OPTIMISTIC_BACKOFF)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
+            .propagate_error()
             .plan();
         plan.execute().await?;
         Ok(())
