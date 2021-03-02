@@ -5,7 +5,7 @@ use crate::{
     pd::PdClient,
     request::{
         DefaultProcessor, Dispatch, KvRequest, Merge, MergeResponse, MultiRegion, Plan, Process,
-        ProcessResponse, ResolveLock, RetryRegion, Shardable,
+        ProcessResponse, PropagateError, ResolveLock, RetryRegion, Shardable,
     },
     store::Store,
     transaction::HasLocks,
@@ -158,6 +158,19 @@ impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
         store: Store,
     ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
         set_single_region_store(self.plan, store, self.pd_client)
+    }
+}
+
+impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted>
+where
+    P::Result: HasError,
+{
+    pub fn propagate_error(self) -> PlanBuilder<PdC, PropagateError<P>, Targetted> {
+        PlanBuilder {
+            pd_client: self.pd_client,
+            plan: PropagateError { inner: self.plan },
+            phantom: self.phantom,
+        }
     }
 }
 

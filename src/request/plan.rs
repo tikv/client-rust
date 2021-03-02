@@ -249,6 +249,35 @@ where
     }
 }
 
+pub struct PropagateError<P: Plan> {
+    pub inner: P,
+}
+
+impl<P: Plan> Clone for PropagateError<P> {
+    fn clone(&self) -> Self {
+        PropagateError {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+#[async_trait]
+impl<P: Plan> Plan for PropagateError<P>
+where
+    P::Result: HasError,
+{
+    type Result = P::Result;
+
+    async fn execute(&self) -> Result<Self::Result> {
+        let mut result = self.inner.execute().await?;
+        if let Some(error) = result.error() {
+            Err(error)
+        } else {
+            Ok(result)
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
