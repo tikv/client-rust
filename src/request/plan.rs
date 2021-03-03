@@ -265,7 +265,7 @@ impl<P: Plan> Clone for ExtractError<P> {
 /// returns an `Err` wrapping the error.
 ///
 /// The errors come from two places: `Err` from inner plans, and `Ok(response)`
-/// where `response` contains unresolved errors.
+/// where `response` contains unresolved errors (`error` and `region_error`).
 #[async_trait]
 impl<P: Plan> Plan for ExtractError<P>
 where
@@ -276,6 +276,8 @@ where
     async fn execute(&self) -> Result<Self::Result> {
         let mut result = self.inner.execute().await?;
         if let Some(error) = result.error() {
+            Err(error)
+        } else if let Some(error) = result.region_error() {
             Err(error)
         } else {
             Ok(result)
