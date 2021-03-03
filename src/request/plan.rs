@@ -261,6 +261,11 @@ impl<P: Plan> Clone for ExtractError<P> {
     }
 }
 
+/// When executed, the plan extracts errors from its inner plan, and
+/// returns an `Err` wrapping the error.
+///
+/// The errors come from two places: `Err` from inner plans, and `Ok(response)`
+/// where `response` contains unresolved errors.
 #[async_trait]
 impl<P: Plan> Plan for ExtractError<P>
 where
