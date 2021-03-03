@@ -901,7 +901,7 @@ impl Committer {
             .multi_region()
             .retry_region(self.options.retry_options.region_backoff.clone())
             .merge(CollectError)
-            .propagate_error()
+            .extract_error()
             .plan();
         let response = plan.execute().await?;
 
@@ -940,7 +940,7 @@ impl Committer {
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .multi_region()
             .retry_region(self.options.retry_options.region_backoff.clone())
-            .propagate_error()
+            .extract_error()
             .plan();
         plan.execute()
             .inspect_err(|e| {
@@ -977,7 +977,7 @@ impl Committer {
             .resolve_lock(self.options.retry_options.lock_backoff)
             .multi_region()
             .retry_region(self.options.retry_options.region_backoff)
-            .propagate_error()
+            .extract_error()
             .plan();
         plan.execute().await?;
         Ok(())
@@ -998,7 +998,7 @@ impl Committer {
                     .resolve_lock(self.options.retry_options.lock_backoff)
                     .multi_region()
                     .retry_region(self.options.retry_options.region_backoff)
-                    .propagate_error()
+                    .extract_error()
                     .plan();
                 plan.execute().await?;
             }
@@ -1008,7 +1008,7 @@ impl Committer {
                     .resolve_lock(self.options.retry_options.lock_backoff)
                     .multi_region()
                     .retry_region(self.options.retry_options.region_backoff)
-                    .propagate_error()
+                    .extract_error()
                     .plan();
                 plan.execute().await?;
             }

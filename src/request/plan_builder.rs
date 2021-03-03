@@ -4,8 +4,8 @@ use crate::{
     backoff::Backoff,
     pd::PdClient,
     request::{
-        DefaultProcessor, Dispatch, KvRequest, Merge, MergeResponse, MultiRegion, Plan, Process,
-        ProcessResponse, PropagateError, ResolveLock, RetryRegion, Shardable,
+        DefaultProcessor, Dispatch, ExtractError, KvRequest, Merge, MergeResponse, MultiRegion,
+        Plan, Process, ProcessResponse, ResolveLock, RetryRegion, Shardable,
     },
     store::Store,
     transaction::HasLocks,
@@ -165,10 +165,10 @@ impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted>
 where
     P::Result: HasError,
 {
-    pub fn propagate_error(self) -> PlanBuilder<PdC, PropagateError<P>, Targetted> {
+    pub fn extract_error(self) -> PlanBuilder<PdC, ExtractError<P>, Targetted> {
         PlanBuilder {
             pd_client: self.pd_client,
-            plan: PropagateError { inner: self.plan },
+            plan: ExtractError { inner: self.plan },
             phantom: self.phantom,
         }
     }

@@ -249,20 +249,20 @@ where
     }
 }
 
-pub struct PropagateError<P: Plan> {
+pub struct ExtractError<P: Plan> {
     pub inner: P,
 }
 
-impl<P: Plan> Clone for PropagateError<P> {
+impl<P: Plan> Clone for ExtractError<P> {
     fn clone(&self) -> Self {
-        PropagateError {
+        ExtractError {
             inner: self.inner.clone(),
         }
     }
 }
 
 #[async_trait]
-impl<P: Plan> Plan for PropagateError<P>
+impl<P: Plan> Plan for ExtractError<P>
 where
     P::Result: HasError,
 {

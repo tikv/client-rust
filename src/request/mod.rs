@@ -10,8 +10,8 @@ use tikv_client_store::{HasError, Request};
 
 pub use self::{
     plan::{
-        Collect, CollectError, DefaultProcessor, Dispatch, Merge, MergeResponse, MultiRegion, Plan,
-        Process, ProcessResponse, PropagateError, ResolveLock, RetryRegion,
+        Collect, CollectError, DefaultProcessor, Dispatch, ExtractError, Merge, MergeResponse,
+        MultiRegion, Plan, Process, ProcessResponse, ResolveLock, RetryRegion,
     },
     plan_builder::{PlanBuilder, SingleKey},
     shard::Shardable,
@@ -167,7 +167,7 @@ mod test {
             .resolve_lock(Backoff::no_jitter_backoff(1, 1, 3))
             .multi_region()
             .retry_region(Backoff::no_jitter_backoff(1, 1, 3))
-            .propagate_error()
+            .extract_error()
             .plan();
         let _ = executor::block_on(async { plan.execute().await });
 
