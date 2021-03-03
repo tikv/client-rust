@@ -66,15 +66,17 @@ mod test {
     use crate::{
         mock::{MockKvClient, MockPdClient},
         store::store_stream_for_keys,
+        transaction::lowering::new_commit_request,
         Error, Key, Result,
     };
     use futures::executor;
     use grpcio::CallOption;
     use std::{
         any::Any,
+        iter,
         sync::{Arc, Mutex},
     };
-    use tikv_client_proto::{kvrpcpb, tikvpb::TikvClient};
+    use tikv_client_proto::{kvrpcpb, pdpb::Timestamp, tikvpb::TikvClient};
     use tikv_client_store::HasRegionError;
 
     #[test]
@@ -173,5 +175,48 @@ mod test {
 
         // Original call plus the 3 retries
         assert_eq!(*invoking_count.lock().unwrap(), 4);
+    }
+
+    #[test]
+    fn test_extract_error() {
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |_: &dyn Any| {
+                Ok(Box::new(kvrpcpb::CommitResponse {
+                    region_error: None,
+                    error: Some(kvrpcpb::KeyError {
+                        locked: None,
+                        retryable: String::new(),
+                        abort: String::new(),
+                        conflict: None,
+                        already_exist: None,
+                        deadlock: None,
+                        commit_ts_expired: None,
+                        txn_not_found: None,
+                        commit_ts_too_large: None,
+                    }),
+                    commit_version: 0,
+                }) as Box<dyn Any>)
+            },
+        )));
+
+        let key: Key = "key".to_owned().into();
+        let req = new_commit_request(iter::once(key), Timestamp::default(), Timestamp::default());
+
+        // does not extract error
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), req.clone())
+            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .multi_region()
+            .retry_region(OPTIMISTIC_BACKOFF)
+            .plan();
+        assert!(executor::block_on(async { plan.execute().await }).is_ok());
+
+        // extract error
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), req)
+            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .multi_region()
+            .retry_region(OPTIMISTIC_BACKOFF)
+            .extract_error()
+            .plan();
+        assert!(executor::block_on(async { plan.execute().await }).is_err());
     }
 }
