@@ -928,10 +928,11 @@ struct Committer<PdC: PdClient = PdRpcClient> {
 impl<PdC: PdClient> Committer<PdC> {
     async fn commit(mut self) -> Result<Option<Timestamp>> {
         let min_commit_ts = self.prewrite().await?;
-        if (|| {
+        let need_sleep = (|| {
             fail_point!("after-prewrite", |_| true);
             false
-        })() {
+        })();
+        if need_sleep {
             tokio::time::sleep(Duration::from_secs(10)).await;
         }
 

@@ -2,6 +2,7 @@
 
 mod common;
 use common::{clear_tikv, pd_addrs};
+use fail::FailScenario;
 use serial_test::serial;
 use tikv_client::{Result, TransactionClient, TransactionOptions};
 
@@ -9,6 +10,7 @@ use tikv_client::{Result, TransactionClient, TransactionOptions};
 #[serial]
 async fn optimistic_heartbeat() -> Result<()> {
     clear_tikv().await;
+    let scenario = FailScenario::setup();
     fail::cfg("after-prewrite", "sleep(10000)").unwrap();
 
     let key1 = "key1".to_owned();
@@ -55,6 +57,8 @@ async fn optimistic_heartbeat() -> Result<()> {
 
     heartbeat_txn_handle.await.unwrap();
     txn_without_heartbeat_handle.await.unwrap();
+
+    scenario.teardown();
 
     Ok(())
 }
