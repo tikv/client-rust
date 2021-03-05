@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::Error;
+use std::fmt::Display;
 use tikv_client_proto::kvrpcpb;
 
 pub trait HasRegionError {
@@ -150,9 +151,12 @@ impl HasError for kvrpcpb::PessimisticRollbackResponse {
     }
 }
 
-impl<T: HasError, E> HasError for Result<T, E> {
+impl<T: HasError, E: Display> HasError for Result<T, E> {
     fn error(&mut self) -> Option<Error> {
-        self.as_mut().ok().and_then(|t| t.error())
+        match self {
+            Ok(x) => x.error(),
+            Err(e) => Some(Error::StringError(e.to_string())),
+        }
     }
 }
 
@@ -194,5 +198,41 @@ fn extract_errors(error_iter: impl Iterator<Item = Option<kvrpcpb::KeyError>>) -
         Some(errors.into_iter().next().unwrap())
     } else {
         Some(Error::MultipleErrors(errors))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::HasError;
+    use tikv_client_common::{internal_err, Error};
+    use tikv_client_proto::kvrpcpb;
+    #[test]
+    fn result_haslocks() {
+        let mut resp: Result<_, Error> = Ok(kvrpcpb::CommitResponse {
+            region_error: None,
+            error: None,
+            commit_version: 0,
+        });
+        assert!(resp.error().is_none());
+
+        let mut resp: Result<_, Error> = Ok(kvrpcpb::CommitResponse {
+            region_error: None,
+            error: Some(kvrpcpb::KeyError {
+                locked: None,
+                retryable: String::new(),
+                abort: String::new(),
+                conflict: None,
+                already_exist: None,
+                deadlock: None,
+                commit_ts_expired: None,
+                txn_not_found: None,
+                commit_ts_too_large: None,
+            }),
+            commit_version: 0,
+        });
+        assert!(resp.error().is_some());
+
+        let mut resp: Result<kvrpcpb::CommitResponse, _> = Err(internal_err!("some error"));
+        assert!(resp.error().is_some());
     }
 }
