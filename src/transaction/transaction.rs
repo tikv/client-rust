@@ -44,23 +44,23 @@ use tokio::{sync::RwLock, time::Duration};
 /// let txn = client.begin_optimistic().await.unwrap();
 /// # });
 /// ```
-pub struct Transaction {
+pub struct Transaction<PdC: PdClient = PdRpcClient> {
     status: Arc<RwLock<TransactionStatus>>,
     timestamp: Timestamp,
     buffer: Buffer,
     bg_worker: ThreadPool,
-    rpc: Arc<PdRpcClient>,
+    rpc: Arc<PdC>,
     options: TransactionOptions,
     is_heartbeat_started: bool,
 }
 
-impl Transaction {
+impl<PdC: PdClient> Transaction<PdC> {
     pub(crate) fn new(
         timestamp: Timestamp,
         bg_worker: ThreadPool,
-        rpc: Arc<PdRpcClient>,
+        rpc: Arc<PdC>,
         options: TransactionOptions,
-    ) -> Transaction {
+    ) -> Transaction<PdC> {
         let status = if options.read_only {
             TransactionStatus::ReadOnly
         } else {
@@ -752,26 +752,24 @@ impl Transaction {
     }
 }
 
-impl Drop for Transaction {
+impl<PdC: PdClient> Drop for Transaction<PdC> {
     fn drop(&mut self) {
-        {
-            if std::thread::panicking() {
-                return;
-            }
-            let status = futures::executor::block_on(self.status.read());
-            if *status == TransactionStatus::Active {
-                match self.options.check_level {
-                    CheckLevel::Panic => {
-                        panic!("Dropping an active transaction. Consider commit or rollback it.")
-                    }
-                    CheckLevel::Warn => {
-                        warn!("Dropping an active transaction. Consider commit or rollback it.")
-                    }
-                    CheckLevel::None => {}
-                }
-            }
+        if std::thread::panicking() {
+            return;
         }
         let mut status = futures::executor::block_on(self.status.write());
+        if *status == TransactionStatus::Active {
+            match self.options.check_level {
+                CheckLevel::Panic => {
+                    panic!("Dropping an active transaction. Consider commit or rollback it.")
+                }
+                CheckLevel::Warn => {
+                    warn!("Dropping an active transaction. Consider commit or rollback it.")
+                }
+
+                CheckLevel::None => {}
+            }
+        }
         *status = TransactionStatus::Dropped;
     }
 }
@@ -916,21 +914,26 @@ const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
 ///
 /// The committer implements `prewrite`, `commit` and `rollback` functions.
 #[derive(new)]
-struct Committer {
+struct Committer<PdC: PdClient = PdRpcClient> {
     primary_key: Option<Key>,
     mutations: Vec<kvrpcpb::Mutation>,
     start_version: Timestamp,
     bg_worker: ThreadPool,
-    rpc: Arc<PdRpcClient>,
+    rpc: Arc<PdC>,
     options: TransactionOptions,
     #[new(default)]
     undetermined: bool,
 }
 
-impl Committer {
+impl<PdC: PdClient> Committer<PdC> {
     async fn commit(mut self) -> Result<Option<Timestamp>> {
         let min_commit_ts = self.prewrite().await?;
-        fail_point!("after-prewrite");
+        if (|| {
+            fail_point!("after-prewrite", |_| true);
+            false
+        })() {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        }
 
         // If we didn't use 1pc, prewrite will set `try_one_pc` to false.
         if self.options.try_one_pc {
@@ -1123,4 +1126,98 @@ enum TransactionStatus {
     StartedRollback,
     /// The transaction has been dropped.
     Dropped,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        mock::{MockKvClient, MockPdClient},
+        Transaction, TransactionOptions,
+    };
+    use fail::FailScenario;
+    use futures::executor::ThreadPool;
+    use std::{
+        any::Any,
+        io,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
+    use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+    async fn test_optimistic_heartbeat() -> Result<(), io::Error> {
+        let scenario = FailScenario::setup();
+        fail::cfg("after-prewrite", "return(true)").unwrap();
+        let heartbeats = Arc::new(AtomicUsize::new(0));
+        let heartbeats_cloned = heartbeats.clone();
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(_heartbeat) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
+                    heartbeats_cloned.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>);
+                } else if let Some(_prewrite) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    return Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>);
+                }
+                Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
+            },
+        )));
+        let key1 = "key1".to_owned();
+        let bg_worker = ThreadPool::new()?;
+        let mut heartbeat_txn = Transaction::new(
+            Timestamp::default(),
+            bg_worker,
+            pd_client,
+            TransactionOptions::new_optimistic(),
+        );
+        heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
+        let heartbeat_txn_handle = tokio::spawn(async move {
+            assert!(heartbeat_txn.commit().await.is_ok());
+        });
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        heartbeat_txn_handle.await.unwrap();
+        assert!(heartbeats.load(Ordering::SeqCst) >= 1);
+        scenario.teardown();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_pessimistic_heartbeat() -> Result<(), io::Error> {
+        let heartbeats = Arc::new(AtomicUsize::new(0));
+        let heartbeats_cloned = heartbeats.clone();
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(_heartbeat) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
+                    heartbeats_cloned.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>);
+                } else if let Some(_prewrite) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    return Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>);
+                } else if let Some(_pessimistic_lock) =
+                    req.downcast_ref::<kvrpcpb::PessimisticLockRequest>()
+                {
+                    return Ok(
+                        Box::new(kvrpcpb::PessimisticLockResponse::default()) as Box<dyn Any>
+                    );
+                }
+                Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
+            },
+        )));
+        let key1 = "key1".to_owned();
+        let bg_worker = ThreadPool::new()?;
+        let mut heartbeat_txn = Transaction::new(
+            Timestamp::default(),
+            bg_worker,
+            pd_client,
+            TransactionOptions::new_pessimistic(),
+        );
+        heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+        let heartbeat_txn_handle = tokio::spawn(async move {
+            assert!(heartbeat_txn.commit().await.is_ok());
+        });
+        heartbeat_txn_handle.await.unwrap();
+        assert!(heartbeats.load(Ordering::SeqCst) > 1);
+        Ok(())
+    }
 }
