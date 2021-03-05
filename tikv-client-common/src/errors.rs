@@ -69,6 +69,8 @@ pub enum Error {
     KvError { message: String },
     #[error("{}", message)]
     InternalError { message: String },
+    #[error("{0}")]
+    StringError(String),
 }
 
 impl From<tikv_client_proto::errorpb::Error> for Error {
