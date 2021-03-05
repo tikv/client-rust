@@ -249,6 +249,42 @@ where
     }
 }
 
+pub struct ExtractError<P: Plan> {
+    pub inner: P,
+}
+
+impl<P: Plan> Clone for ExtractError<P> {
+    fn clone(&self) -> Self {
+        ExtractError {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+/// When executed, the plan extracts errors from its inner plan, and
+/// returns an `Err` wrapping the error.
+///
+/// The errors come from two places: `Err` from inner plans, and `Ok(response)`
+/// where `response` contains unresolved errors (`error` and `region_error`).
+#[async_trait]
+impl<P: Plan> Plan for ExtractError<P>
+where
+    P::Result: HasError,
+{
+    type Result = P::Result;
+
+    async fn execute(&self) -> Result<Self::Result> {
+        let mut result = self.inner.execute().await?;
+        if let Some(error) = result.error() {
+            Err(error)
+        } else if let Some(error) = result.region_error() {
+            Err(error)
+        } else {
+            Ok(result)
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
