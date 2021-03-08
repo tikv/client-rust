@@ -10,7 +10,7 @@ use crate::{
 };
 use derive_new::new;
 use fail::fail_point;
-use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
+use futures::{prelude::*, stream::BoxStream};
 use std::{iter, ops::RangeBounds, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 use tokio::{sync::RwLock, time::Duration};
@@ -48,7 +48,6 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     status: Arc<RwLock<TransactionStatus>>,
     timestamp: Timestamp,
     buffer: Buffer,
-    bg_worker: ThreadPool,
     rpc: Arc<PdC>,
     options: TransactionOptions,
     is_heartbeat_started: bool,
@@ -57,7 +56,6 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
 impl<PdC: PdClient> Transaction<PdC> {
     pub(crate) fn new(
         timestamp: Timestamp,
-        bg_worker: ThreadPool,
         rpc: Arc<PdC>,
         options: TransactionOptions,
     ) -> Transaction<PdC> {
@@ -70,7 +68,6 @@ impl<PdC: PdClient> Transaction<PdC> {
             status: Arc::new(RwLock::new(status)),
             timestamp,
             buffer: Default::default(),
-            bg_worker,
             rpc,
             options,
             is_heartbeat_started: false,
@@ -527,7 +524,6 @@ impl<PdC: PdClient> Transaction<PdC> {
             primary_key,
             mutations,
             self.timestamp.clone(),
-            self.bg_worker.clone(),
             self.rpc.clone(),
             self.options.clone(),
         )
@@ -566,7 +562,6 @@ impl<PdC: PdClient> Transaction<PdC> {
             primary_key,
             mutations,
             self.timestamp.clone(),
-            self.bg_worker.clone(),
             self.rpc.clone(),
             self.options.clone(),
         )
@@ -918,7 +913,6 @@ struct Committer<PdC: PdClient = PdRpcClient> {
     primary_key: Option<Key>,
     mutations: Vec<kvrpcpb::Mutation>,
     start_version: Timestamp,
-    bg_worker: ThreadPool,
     rpc: Arc<PdC>,
     options: TransactionOptions,
     #[new(default)]
@@ -928,13 +922,8 @@ struct Committer<PdC: PdClient = PdRpcClient> {
 impl<PdC: PdClient> Committer<PdC> {
     async fn commit(mut self) -> Result<Option<Timestamp>> {
         let min_commit_ts = self.prewrite().await?;
-        let need_sleep = (|| {
-            fail_point!("after-prewrite", |_| true);
-            false
-        })();
-        if need_sleep {
-            tokio::time::sleep(Duration::from_secs(10)).await;
-        }
+
+        fail_point!("after-prewrite");
 
         // If we didn't use 1pc, prewrite will set `try_one_pc` to false.
         if self.options.try_one_pc {
@@ -955,13 +944,11 @@ impl<PdC: PdClient> Committer<PdC> {
                 }
             }
         };
-        self.bg_worker
-            .clone()
-            .spawn_ok(self.commit_secondary(commit_ts.clone()).map(|res| {
-                if let Err(e) = res {
-                    warn!("Failed to commit secondary keys: {}", e);
-                }
-            }));
+        tokio::spawn(self.commit_secondary(commit_ts.clone()).map(|res| {
+            if let Err(e) = res {
+                warn!("Failed to commit secondary keys: {}", e);
+            }
+        }));
         Ok(Some(commit_ts))
     }
 
@@ -1141,7 +1128,6 @@ mod tests {
         Transaction, TransactionOptions,
     };
     use fail::FailScenario;
-    use futures::executor::ThreadPool;
     use std::{
         any::Any,
         io,
@@ -1152,10 +1138,10 @@ mod tests {
     };
     use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+    #[tokio::test]
     async fn test_optimistic_heartbeat() -> Result<(), io::Error> {
         let scenario = FailScenario::setup();
-        fail::cfg("after-prewrite", "return(true)").unwrap();
+        fail::cfg("after-prewrite", "sleep(10000)").unwrap();
         let heartbeats = Arc::new(AtomicUsize::new(0));
         let heartbeats_cloned = heartbeats.clone();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -1170,20 +1156,17 @@ mod tests {
             },
         )));
         let key1 = "key1".to_owned();
-        let bg_worker = ThreadPool::new()?;
         let mut heartbeat_txn = Transaction::new(
             Timestamp::default(),
-            bg_worker,
             pd_client,
             TransactionOptions::new_optimistic(),
         );
         heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
-        let heartbeat_txn_handle = tokio::spawn(async move {
-            assert!(heartbeat_txn.commit().await.is_ok());
+        let heartbeat_txn_handle = tokio::task::spawn_blocking(move || {
+            assert!(futures::executor::block_on(heartbeat_txn.commit()).is_ok())
         });
-        if heartbeats.load(Ordering::SeqCst) == 0 {
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-        }
+        assert_eq!(heartbeats.load(Ordering::SeqCst), 0);
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         heartbeat_txn_handle.await.unwrap();
         assert!(heartbeats.load(Ordering::SeqCst) >= 1);
         scenario.teardown();
@@ -1212,17 +1195,14 @@ mod tests {
             },
         )));
         let key1 = "key1".to_owned();
-        let bg_worker = ThreadPool::new()?;
         let mut heartbeat_txn = Transaction::new(
             Timestamp::default(),
-            bg_worker,
             pd_client,
             TransactionOptions::new_pessimistic(),
         );
         heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
-        if heartbeats.load(Ordering::SeqCst) == 0 {
-            tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
-        }
+        assert_eq!(heartbeats.load(Ordering::SeqCst), 0);
+        tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
         let heartbeat_txn_handle = tokio::spawn(async move {
             assert!(heartbeat_txn.commit().await.is_ok());
         });

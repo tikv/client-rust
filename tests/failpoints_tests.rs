@@ -6,13 +6,12 @@ use fail::FailScenario;
 use serial_test::serial;
 use tikv_client::{Result, TransactionClient, TransactionOptions};
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+#[tokio::test]
 #[serial]
 async fn optimistic_heartbeat() -> Result<()> {
     clear_tikv().await;
     let scenario = FailScenario::setup();
-    // fail::cfg("after-prewrite", "sleep(10000)").unwrap();
-    fail::cfg("after-prewrite", "return(true)").unwrap();
+    fail::cfg("after-prewrite", "sleep(10000)").unwrap();
 
     let key1 = "key1".to_owned();
     let key2 = "key2".to_owned();
@@ -31,15 +30,15 @@ async fn optimistic_heartbeat() -> Result<()> {
         .await
         .unwrap();
 
-    let heartbeat_txn_handle = tokio::spawn(async move {
-        assert!(heartbeat_txn.commit().await.is_ok());
+    let heartbeat_txn_handle = tokio::task::spawn_blocking(move || {
+        assert!(futures::executor::block_on(heartbeat_txn.commit()).is_ok())
     });
-    let txn_without_heartbeat_handle = tokio::spawn(async move {
-        assert!(txn_without_heartbeat.commit().await.is_err());
+    let txn_without_heartbeat_handle = tokio::task::spawn_blocking(move || {
+        assert!(futures::executor::block_on(txn_without_heartbeat.commit()).is_ok())
     });
 
     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-    fail::cfg("after-prewrite", "return(false)").unwrap();
+    fail::cfg("after-prewrite", "off").unwrap();
 
     // use other txns to check these locks
     let mut t3 = client
