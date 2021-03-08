@@ -11,7 +11,8 @@ use tikv_client::{Result, TransactionClient, TransactionOptions};
 async fn optimistic_heartbeat() -> Result<()> {
     clear_tikv().await;
     let scenario = FailScenario::setup();
-    fail::cfg("after-prewrite", "sleep(10000)").unwrap();
+    // fail::cfg("after-prewrite", "sleep(10000)").unwrap();
+    fail::cfg("after-prewrite", "return(true)").unwrap();
 
     let key1 = "key1".to_owned();
     let key2 = "key2".to_owned();
@@ -38,7 +39,7 @@ async fn optimistic_heartbeat() -> Result<()> {
     });
 
     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-    fail::cfg("after-prewrite", "off").unwrap();
+    fail::cfg("after-prewrite", "return(false)").unwrap();
 
     // use other txns to check these locks
     let mut t3 = client

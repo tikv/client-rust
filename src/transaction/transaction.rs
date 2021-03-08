@@ -1181,7 +1181,9 @@ mod tests {
         let heartbeat_txn_handle = tokio::spawn(async move {
             assert!(heartbeat_txn.commit().await.is_ok());
         });
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        if heartbeats.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        }
         heartbeat_txn_handle.await.unwrap();
         assert!(heartbeats.load(Ordering::SeqCst) >= 1);
         scenario.teardown();
@@ -1218,7 +1220,9 @@ mod tests {
             TransactionOptions::new_pessimistic(),
         );
         heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+        if heartbeats.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+        }
         let heartbeat_txn_handle = tokio::spawn(async move {
             assert!(heartbeat_txn.commit().await.is_ok());
         });
