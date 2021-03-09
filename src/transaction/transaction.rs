@@ -898,7 +898,7 @@ impl TransactionOptions {
 
 /// The default TTL of a lock in milliseconds
 const DEFAULT_LOCK_TTL: u64 = 3000;
-/// The default heartbeat interval in milliseconds
+/// The default heartbeat interval in seconds
 const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
 
 /// A struct wrapping the details of two-phase commit protocol (2PC).

@@ -34,7 +34,7 @@ async fn optimistic_heartbeat() -> Result<()> {
         assert!(futures::executor::block_on(heartbeat_txn.commit()).is_ok())
     });
     let txn_without_heartbeat_handle = tokio::task::spawn_blocking(move || {
-        assert!(futures::executor::block_on(txn_without_heartbeat.commit()).is_ok())
+        assert!(futures::executor::block_on(txn_without_heartbeat.commit()).is_err())
     });
 
     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
