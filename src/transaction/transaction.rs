@@ -9,9 +9,11 @@ use crate::{
     BoundRange, Error, Key, KvPair, Result, Value,
 };
 use derive_new::new;
-use futures::{executor::ThreadPool, prelude::*, stream::BoxStream};
+use fail::fail_point;
+use futures::{prelude::*, stream::BoxStream};
 use std::{iter, ops::RangeBounds, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use tokio::{sync::RwLock, time::Duration};
 
 /// An undo-able set of actions on the dataset.
 ///
@@ -32,7 +34,6 @@ use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 /// For details, the [SIG-Transaction](https://github.com/tikv/sig-transaction)
 /// provides materials explaining designs and implementations of multiple features in TiKV transactions.
 ///
-///
 /// # Examples
 /// ```rust,no_run
 /// use tikv_client::{Config, TransactionClient};
@@ -42,34 +43,33 @@ use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 /// let txn = client.begin_optimistic().await.unwrap();
 /// # });
 /// ```
-pub struct Transaction {
-    status: TransactionStatus,
+pub struct Transaction<PdC: PdClient = PdRpcClient> {
+    status: Arc<RwLock<TransactionStatus>>,
     timestamp: Timestamp,
     buffer: Buffer,
-    bg_worker: ThreadPool,
-    rpc: Arc<PdRpcClient>,
+    rpc: Arc<PdC>,
     options: TransactionOptions,
+    is_heartbeat_started: bool,
 }
 
-impl Transaction {
+impl<PdC: PdClient> Transaction<PdC> {
     pub(crate) fn new(
         timestamp: Timestamp,
-        bg_worker: ThreadPool,
-        rpc: Arc<PdRpcClient>,
+        rpc: Arc<PdC>,
         options: TransactionOptions,
-    ) -> Transaction {
+    ) -> Transaction<PdC> {
         let status = if options.read_only {
             TransactionStatus::ReadOnly
         } else {
             TransactionStatus::Active
         };
         Transaction {
-            status,
+            status: Arc::new(RwLock::new(status)),
             timestamp,
             buffer: Default::default(),
-            bg_worker,
             rpc,
             options,
+            is_heartbeat_started: false,
         }
     }
 
@@ -94,7 +94,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         let key = key.into();
@@ -146,7 +146,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         if !self.is_pessimistic() {
             Err(Error::InvalidTransactionType)
         } else {
@@ -205,7 +205,7 @@ impl Transaction {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         let retry_options = self.options.retry_options.clone();
@@ -268,7 +268,7 @@ impl Transaction {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         if !self.is_pessimistic() {
             Err(Error::InvalidTransactionType)
         } else {
@@ -373,7 +373,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn put(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         let key = key.into();
         if self.is_pessimistic() {
             self.pessimistic_lock(iter::once(key.clone()), false)
@@ -401,7 +401,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn insert(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         let key = key.into();
         if self.buffer.get(&key).await.is_some() {
             return Err(Error::DuplicateKeyInsertion);
@@ -432,7 +432,7 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn delete(&mut self, key: impl Into<Key>) -> Result<()> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         let key = key.into();
         if self.is_pessimistic() {
             self.pessimistic_lock(iter::once(key.clone()), false)
@@ -468,7 +468,7 @@ impl Transaction {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<()> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         match self.options.kind {
             TransactionKind::Optimistic => {
                 for key in keys {
@@ -499,21 +499,30 @@ impl Transaction {
     /// # });
     /// ```
     pub async fn commit(&mut self) -> Result<Option<Timestamp>> {
-        if !matches!(
-            self.status,
-            TransactionStatus::StartedCommit | TransactionStatus::Active
-        ) {
-            return Err(Error::OperationAfterCommitError);
+        {
+            let mut status = self.status.write().await;
+            if !matches!(
+                *status,
+                TransactionStatus::StartedCommit | TransactionStatus::Active
+            ) {
+                return Err(Error::OperationAfterCommitError);
+            }
+            *status = TransactionStatus::StartedCommit;
         }
-        self.status = TransactionStatus::StartedCommit;
 
         let primary_key = self.buffer.get_primary_key().await;
         let mutations = self.buffer.to_proto_mutations().await;
+        if mutations.is_empty() {
+            assert!(primary_key.is_none());
+            return Ok(None);
+        }
+
+        self.start_auto_heartbeat().await;
+
         let res = Committer::new(
             primary_key,
             mutations,
             self.timestamp.clone(),
-            self.bg_worker.clone(),
             self.rpc.clone(),
             self.options.clone(),
         )
@@ -521,7 +530,8 @@ impl Transaction {
         .await;
 
         if res.is_ok() {
-            self.status = TransactionStatus::Committed;
+            let mut status = self.status.write().await;
+            *status = TransactionStatus::Committed;
         }
         res
     }
@@ -530,13 +540,20 @@ impl Transaction {
     ///
     /// If it succeeds, all mutations made by this transaciton will not take effect.
     pub async fn rollback(&mut self) -> Result<()> {
-        if !matches!(
-            self.status,
-            TransactionStatus::StartedRollback | TransactionStatus::Active
-        ) {
-            return Err(Error::OperationAfterCommitError);
+        {
+            let status = self.status.read().await;
+            if !matches!(
+                *status,
+                TransactionStatus::StartedRollback | TransactionStatus::Active
+            ) {
+                return Err(Error::OperationAfterCommitError);
+            }
         }
-        self.status = TransactionStatus::StartedRollback;
+
+        {
+            let mut status = self.status.write().await;
+            *status = TransactionStatus::StartedRollback;
+        }
 
         let primary_key = self.buffer.get_primary_key().await;
         let mutations = self.buffer.to_proto_mutations().await;
@@ -544,7 +561,6 @@ impl Transaction {
             primary_key,
             mutations,
             self.timestamp.clone(),
-            self.bg_worker.clone(),
             self.rpc.clone(),
             self.options.clone(),
         )
@@ -552,7 +568,8 @@ impl Transaction {
         .await;
 
         if res.is_ok() {
-            self.status = TransactionStatus::Rolledback;
+            let mut status = self.status.write().await;
+            *status = TransactionStatus::Rolledback;
         }
         res
     }
@@ -561,7 +578,7 @@ impl Transaction {
     ///
     /// Returns the TTL set on the lock by the server.
     pub async fn send_heart_beat(&mut self) -> Result<u64> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         let primary_key = match self.buffer.get_primary_key().await {
             Some(k) => k,
             None => return Err(Error::NoPrimaryKey),
@@ -583,7 +600,7 @@ impl Transaction {
         limit: u32,
         key_only: bool,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.check_allow_operation()?;
+        self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         let retry_options = self.options.retry_options.clone();
@@ -649,6 +666,8 @@ impl Transaction {
             .await
             .map(|r| r.into_iter().map(Into::into).collect());
 
+        self.start_auto_heartbeat().await;
+
         for key in keys {
             self.buffer.lock(key).await;
         }
@@ -657,24 +676,83 @@ impl Transaction {
     }
 
     /// Checks if the transaction can perform arbitrary operations.
-    fn check_allow_operation(&self) -> Result<()> {
-        match self.status {
+    async fn check_allow_operation(&self) -> Result<()> {
+        let status = self.status.read().await;
+        match *status {
             TransactionStatus::ReadOnly | TransactionStatus::Active => Ok(()),
             TransactionStatus::Committed
             | TransactionStatus::Rolledback
             | TransactionStatus::StartedCommit
-            | TransactionStatus::StartedRollback => Err(Error::OperationAfterCommitError),
+            | TransactionStatus::StartedRollback
+            | TransactionStatus::Dropped => Err(Error::OperationAfterCommitError),
         }
     }
 
     fn is_pessimistic(&self) -> bool {
         matches!(self.options.kind, TransactionKind::Pessimistic(_))
     }
+
+    async fn start_auto_heartbeat(&mut self) {
+        if !self.options.auto_heartbeat || self.is_heartbeat_started {
+            return;
+        }
+        self.is_heartbeat_started = true;
+
+        let status = self.status.clone();
+        let primary_key = self
+            .buffer
+            .get_primary_key()
+            .await
+            .expect("Primary key should exist");
+        let start_ts = self.timestamp.clone();
+        let region_backoff = self.options.retry_options.region_backoff.clone();
+        let rpc = self.rpc.clone();
+
+        let heartbeat_task = async move {
+            loop {
+                tokio::time::sleep(DEFAULT_HEARTBEAT_INTERVAL).await;
+                {
+                    let status = status.read().await;
+                    if matches!(
+                        *status,
+                        TransactionStatus::Rolledback
+                            | TransactionStatus::Committed
+                            | TransactionStatus::Dropped
+                    ) {
+                        break;
+                    }
+                }
+                let current_ts = rpc.clone().get_timestamp().await?;
+                let request = new_heart_beat_request(
+                    start_ts.clone(),
+                    primary_key.clone(),
+                    (current_ts.physical - start_ts.physical) as u64 + DEFAULT_LOCK_TTL,
+                );
+                let plan = PlanBuilder::new(rpc.clone(), request)
+                    .single_region()
+                    .await?
+                    .retry_region(region_backoff.clone())
+                    .plan();
+                plan.execute().await?;
+            }
+            Ok::<(), Error>(())
+        };
+
+        tokio::spawn(async {
+            if let Err(err) = heartbeat_task.await {
+                error!("Error: While sending heartbeat. {}", err);
+            }
+        });
+    }
 }
 
-impl Drop for Transaction {
+impl<PdC: PdClient> Drop for Transaction<PdC> {
     fn drop(&mut self) {
-        if !std::thread::panicking() && self.status == TransactionStatus::Active {
+        if std::thread::panicking() {
+            return;
+        }
+        let mut status = futures::executor::block_on(self.status.write());
+        if *status == TransactionStatus::Active {
             match self.options.check_level {
                 CheckLevel::Panic => {
                     panic!("Dropping an active transaction. Consider commit or rollback it.")
@@ -682,9 +760,11 @@ impl Drop for Transaction {
                 CheckLevel::Warn => {
                     warn!("Dropping an active transaction. Consider commit or rollback it.")
                 }
+
                 CheckLevel::None => {}
             }
         }
+        *status = TransactionStatus::Dropped;
     }
 }
 
@@ -711,6 +791,8 @@ pub struct TransactionOptions {
     retry_options: RetryOptions,
     /// What to do if the transaction is dropped without an attempt to commit or rollback
     check_level: CheckLevel,
+    /// Whether heartbeat will be sent automatically
+    auto_heartbeat: bool,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -736,6 +818,7 @@ impl TransactionOptions {
             read_only: false,
             retry_options: RetryOptions::default_optimistic(),
             check_level: CheckLevel::Panic,
+            auto_heartbeat: true,
         }
     }
 
@@ -748,6 +831,7 @@ impl TransactionOptions {
             read_only: false,
             retry_options: RetryOptions::default_pessimistic(),
             check_level: CheckLevel::Panic,
+            auto_heartbeat: true,
         }
     }
 
@@ -804,10 +888,17 @@ impl TransactionOptions {
             }
         }
     }
+
+    pub fn no_auto_hearbeat(mut self) -> TransactionOptions {
+        self.auto_heartbeat = false;
+        self
+    }
 }
 
-/// The default TTL of a lock in milliseconds
+/// The default TTL of a lock in milliseconds.
 const DEFAULT_LOCK_TTL: u64 = 3000;
+/// The default heartbeat interval.
+const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
 
 /// A struct wrapping the details of two-phase commit protocol (2PC).
 ///
@@ -817,25 +908,21 @@ const DEFAULT_LOCK_TTL: u64 = 3000;
 ///
 /// The committer implements `prewrite`, `commit` and `rollback` functions.
 #[derive(new)]
-struct Committer {
+struct Committer<PdC: PdClient = PdRpcClient> {
     primary_key: Option<Key>,
     mutations: Vec<kvrpcpb::Mutation>,
     start_version: Timestamp,
-    bg_worker: ThreadPool,
-    rpc: Arc<PdRpcClient>,
+    rpc: Arc<PdC>,
     options: TransactionOptions,
     #[new(default)]
     undetermined: bool,
 }
 
-impl Committer {
+impl<PdC: PdClient> Committer<PdC> {
     async fn commit(mut self) -> Result<Option<Timestamp>> {
-        if self.mutations.is_empty() {
-            assert!(self.primary_key.is_none());
-            return Ok(None);
-        }
-
         let min_commit_ts = self.prewrite().await?;
+
+        fail_point!("after-prewrite");
 
         // If we didn't use 1pc, prewrite will set `try_one_pc` to false.
         if self.options.try_one_pc {
@@ -857,13 +944,11 @@ impl Committer {
                 }
             }
         };
-        self.bg_worker
-            .clone()
-            .spawn_ok(self.commit_secondary(commit_ts.clone()).map(|res| {
-                if let Err(e) = res {
-                    warn!("Failed to commit secondary keys: {}", e);
-                }
-            }));
+        tokio::spawn(self.commit_secondary(commit_ts.clone()).map(|res| {
+            if let Err(e) = res {
+                warn!("Failed to commit secondary keys: {}", e);
+            }
+        }));
         Ok(Some(commit_ts))
     }
 
@@ -1032,4 +1117,97 @@ enum TransactionStatus {
     Rolledback,
     /// The transaction has tried to rollback. Only `rollback` is allowed.
     StartedRollback,
+    /// The transaction has been dropped.
+    Dropped,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        mock::{MockKvClient, MockPdClient},
+        Transaction, TransactionOptions,
+    };
+    use fail::FailScenario;
+    use std::{
+        any::Any,
+        io,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
+    use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+
+    #[tokio::test]
+    async fn test_optimistic_heartbeat() -> Result<(), io::Error> {
+        let scenario = FailScenario::setup();
+        fail::cfg("after-prewrite", "sleep(10000)").unwrap();
+        let heartbeats = Arc::new(AtomicUsize::new(0));
+        let heartbeats_cloned = heartbeats.clone();
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(_heartbeat) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
+                    heartbeats_cloned.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>);
+                } else if let Some(_prewrite) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    return Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>);
+                }
+                Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
+            },
+        )));
+        let key1 = "key1".to_owned();
+        let mut heartbeat_txn = Transaction::new(
+            Timestamp::default(),
+            pd_client,
+            TransactionOptions::new_optimistic(),
+        );
+        heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
+        let heartbeat_txn_handle = tokio::task::spawn_blocking(move || {
+            assert!(futures::executor::block_on(heartbeat_txn.commit()).is_ok())
+        });
+        assert_eq!(heartbeats.load(Ordering::SeqCst), 0);
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        heartbeat_txn_handle.await.unwrap();
+        assert!(heartbeats.load(Ordering::SeqCst) >= 1);
+        scenario.teardown();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_pessimistic_heartbeat() -> Result<(), io::Error> {
+        let heartbeats = Arc::new(AtomicUsize::new(0));
+        let heartbeats_cloned = heartbeats.clone();
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(_heartbeat) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
+                    heartbeats_cloned.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>);
+                } else if let Some(_prewrite) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    return Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>);
+                } else if let Some(_pessimistic_lock) =
+                    req.downcast_ref::<kvrpcpb::PessimisticLockRequest>()
+                {
+                    return Ok(
+                        Box::new(kvrpcpb::PessimisticLockResponse::default()) as Box<dyn Any>
+                    );
+                }
+                Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
+            },
+        )));
+        let key1 = "key1".to_owned();
+        let mut heartbeat_txn = Transaction::new(
+            Timestamp::default(),
+            pd_client,
+            TransactionOptions::new_pessimistic(),
+        );
+        heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
+        assert_eq!(heartbeats.load(Ordering::SeqCst), 0);
+        tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+        let heartbeat_txn_handle = tokio::spawn(async move {
+            assert!(heartbeat_txn.commit().await.is_ok());
+        });
+        heartbeat_txn_handle.await.unwrap();
+        assert!(heartbeats.load(Ordering::SeqCst) > 1);
+        Ok(())
+    }
 }

@@ -1,34 +1,22 @@
 #![cfg(feature = "integration-tests")]
 
+mod common;
+use common::{clear_tikv, pd_addrs};
 use futures::prelude::*;
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 use serial_test::serial;
 use std::{
     collections::{HashMap, HashSet},
     convert::TryInto,
-    env, iter,
+    iter,
 };
 use tikv_client::{
-    ColumnFamily, Key, KvPair, RawClient, Result, Transaction, TransactionClient,
-    TransactionOptions, Value,
+    Key, KvPair, RawClient, Result, Transaction, TransactionClient, TransactionOptions, Value,
 };
 
 // Parameters used in test
 const NUM_PEOPLE: u32 = 100;
 const NUM_TRNASFER: u32 = 100;
-
-/// Delete all entris in TiKV to leave a clean space for following tests.
-async fn clear_tikv() {
-    let cfs = vec![
-        ColumnFamily::Default,
-        ColumnFamily::Lock,
-        ColumnFamily::Write,
-    ];
-    for cf in cfs {
-        let raw_client = RawClient::new(pd_addrs()).await.unwrap().with_cf(cf);
-        raw_client.delete_range(vec![]..).await.unwrap();
-    }
-}
 
 #[tokio::test]
 async fn get_timestamp() -> Result<()> {
@@ -617,6 +605,46 @@ async fn lock_keys() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[serial]
+async fn pessimistic_heartbeat() -> Result<()> {
+    clear_tikv().await;
+
+    let key1 = "key1".to_owned();
+    let key2 = "key2".to_owned();
+    let client = TransactionClient::new(pd_addrs()).await?;
+
+    let mut heartbeat_txn = client
+        .begin_with_options(TransactionOptions::new_pessimistic())
+        .await?;
+    heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
+
+    let mut txn_without_heartbeat = client
+        .begin_with_options(TransactionOptions::new_pessimistic().no_auto_hearbeat())
+        .await?;
+    txn_without_heartbeat
+        .put(key2.clone(), "fooo")
+        .await
+        .unwrap();
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+
+    // use other txns to check these locks
+    let mut t3 = client
+        .begin_with_options(TransactionOptions::new_optimistic().no_resolve_locks())
+        .await?;
+    t3.put(key1.clone(), "gee").await?;
+    assert!(t3.commit().await.is_err());
+    let mut t4 = client.begin_optimistic().await?;
+    t4.put(key2.clone(), "geee").await?;
+    t4.commit().await?;
+
+    assert!(heartbeat_txn.commit().await.is_ok());
+    assert!(txn_without_heartbeat.commit().await.is_err());
+
+    Ok(())
+}
 // helper function
 async fn get_u32(client: &RawClient, key: Vec<u8>) -> Result<u32> {
     let x = client.get(key).await?.unwrap();
@@ -644,14 +672,4 @@ fn gen_u32_keys(num: u32, rng: &mut impl Rng) -> HashSet<Vec<u8>> {
         set.insert(rng.gen::<u32>().to_be_bytes().to_vec());
     }
     set
-}
-
-const ENV_PD_ADDRS: &str = "PD_ADDRS";
-
-fn pd_addrs() -> Vec<String> {
-    env::var(ENV_PD_ADDRS)
-        .expect(&format!("Expected {}:", ENV_PD_ADDRS))
-        .split(",")
-        .map(From::from)
-        .collect()
 }

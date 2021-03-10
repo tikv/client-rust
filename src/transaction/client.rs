@@ -10,7 +10,6 @@ use crate::{
     transaction::{Snapshot, Transaction, TransactionOptions},
     Result,
 };
-use futures::executor::ThreadPool;
 use std::{mem, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
@@ -35,9 +34,6 @@ const SCAN_LOCK_BATCH_SIZE: u32 = 1024; // FIXME: cargo-culted value
 /// The returned results of transactional requests are [`Future`](std::future::Future)s that must be awaited to execute.
 pub struct Client {
     pd: Arc<PdRpcClient>,
-    /// The thread pool for background tasks including committing secondary keys and failed
-    /// transaction cleanups.
-    bg_worker: ThreadPool,
 }
 
 impl Client {
@@ -76,9 +72,8 @@ impl Client {
         config: Config,
     ) -> Result<Client> {
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let bg_worker = ThreadPool::new()?;
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, true).await?);
-        Ok(Client { pd, bg_worker })
+        Ok(Client { pd })
     }
 
     /// Creates a new [`Transaction`](Transaction) in optimistic mode.
@@ -223,6 +218,6 @@ impl Client {
     }
 
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
-        Transaction::new(timestamp, self.bg_worker.clone(), self.pd.clone(), options)
+        Transaction::new(timestamp, self.pd.clone(), options)
     }
 }

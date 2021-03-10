@@ -20,6 +20,7 @@ name = "tikv_client"
 [dependencies]
 async-trait = "0.1"
 derive-new = "0.5"
+fail = "0.4"
 futures = { version = "0.3", features = ["async-await", "thread-pool"] }
 futures-timer = "3.0"
 grpcio = { version = "0.8", features = [ "secure", "prost-codec", "use-bindgen" ], default-features = false }
@@ -31,7 +32,7 @@ regex = "1"
 serde = "1.0"
 serde_derive = "1.0"
 thiserror = "1"
-tokio = { version = "1.0", features = [ "sync" ] }
+tokio = { version = "1.0", features = [ "sync", "time" ] }
 
 tikv-client-common = { path = "tikv-client-common" }
 tikv-client-pd = { path = "tikv-client-pd" }
@@ -57,3 +58,8 @@ members = [
     "tikv-client-store",
     "mock-tikv"
 ]
+
+[[test]]
+name = "failpoint_tests"
+path = "tests/failpoint_tests.rs"
+required-features = ["fail/failpoints"]
