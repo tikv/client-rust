@@ -34,7 +34,6 @@ use tokio::{sync::RwLock, time::Duration};
 /// For details, the [SIG-Transaction](https://github.com/tikv/sig-transaction)
 /// provides materials explaining designs and implementations of multiple features in TiKV transactions.
 ///
-///
 /// # Examples
 /// ```rust,no_run
 /// use tikv_client::{Config, TransactionClient};
