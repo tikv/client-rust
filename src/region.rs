@@ -28,11 +28,6 @@ pub struct Region {
 }
 
 impl Region {
-    #[allow(dead_code)]
-    pub fn switch_peer(&mut self, _to: StoreId) -> Result<()> {
-        unimplemented!()
-    }
-
     pub fn contains(&self, key: &Key) -> bool {
         let key: &[u8] = key.into();
         let start_key = self.region.get_start_key();

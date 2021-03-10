@@ -645,7 +645,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let first_key = keys[0].clone();
         let primary_lock = self.buffer.get_primary_key_or(&first_key).await;
         let lock_ttl = DEFAULT_LOCK_TTL;
-        let for_update_ts = self.rpc.clone().get_timestamp().await.unwrap();
+        let for_update_ts = self.rpc.clone().get_timestamp().await?;
         self.options.push_for_update_ts(for_update_ts.clone());
         let request = new_pessimistic_lock_request(
             keys.clone().into_iter(),
@@ -930,6 +930,7 @@ impl<PdC: PdClient> Committer<PdC> {
         }
 
         let commit_ts = if self.options.async_commit {
+            // FIXME: min_commit_ts == 0 => fallback to normal 2PC
             min_commit_ts.unwrap()
         } else {
             match self.commit_primary().await {

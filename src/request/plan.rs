@@ -40,11 +40,18 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
         let result = self
             .kv_client
             .as_ref()
-            .expect("Unreachable: kv_client has not been initialised in Dispatch")
+            .ok_or_else(|| {
+                Error::StringError(
+                    "Unreachable: kv_client has not been initialised in Dispatch".to_owned(),
+                )
+            })?
             .dispatch(&self.request)
             .await;
         let result = stats.done(result);
-        result.map(|r| *r.downcast().expect("Downcast failed"))
+        result.map(|r| {
+            *r.downcast()
+                .expect("Downcast failed: request and response type mismatch")
+        })
     }
 }
 
