@@ -1,6 +1,7 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
+    kv::HasKeys,
     pd::PdClient,
     request::{Dispatch, KvRequest, Plan, ResolveLock, RetryRegion},
     store::Store,
@@ -8,6 +9,8 @@ use crate::{
 };
 use futures::stream::BoxStream;
 use std::sync::Arc;
+
+use super::plan::PreserveKey;
 
 pub trait Shardable {
     type Shard: Send;
@@ -37,6 +40,21 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
 }
 
 impl<P: Plan + Shardable, PdC: PdClient> Shardable for ResolveLock<P, PdC> {
+    type Shard = P::Shard;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
+        self.inner.shards(pd_client)
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
+        self.inner.apply_shard(shard, store)
+    }
+}
+
+impl<P: Plan + HasKeys + Shardable> Shardable for PreserveKey<P> {
     type Shard = P::Shard;
 
     fn shards(

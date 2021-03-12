@@ -2,6 +2,7 @@
 
 use crate::{
     backoff::Backoff,
+    kv::HasKeys,
     pd::PdClient,
     request::{
         DefaultProcessor, Dispatch, ExtractError, KvRequest, Merge, MergeResponse, MultiRegion,
@@ -13,6 +14,8 @@ use crate::{
 };
 use std::{marker::PhantomData, sync::Arc};
 use tikv_client_store::HasError;
+
+use super::plan::PreserveKey;
 
 /// Builder type for plans (see that module for more).
 pub struct PlanBuilder<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> {
@@ -158,6 +161,19 @@ impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
         store: Store,
     ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
         set_single_region_store(self.plan, store, self.pd_client)
+    }
+}
+
+impl<PdC: PdClient, P: Plan + HasKeys> PlanBuilder<PdC, P, NoTarget>
+where
+    P::Result: HasError,
+{
+    pub fn preserve_keys(self) -> PlanBuilder<PdC, PreserveKey<P>, NoTarget> {
+        PlanBuilder {
+            pd_client: self.pd_client.clone(),
+            plan: PreserveKey { inner: self.plan },
+            phantom: PhantomData,
+        }
     }
 }
 

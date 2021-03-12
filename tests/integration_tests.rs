@@ -555,8 +555,7 @@ async fn raw_write_million() -> Result<()> {
 #[serial]
 async fn pessimistic_rollback() -> Result<()> {
     clear_tikv().await;
-    let client =
-        TransactionClient::new_with_config(vec!["127.0.0.1:2379"], Default::default()).await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
     let mut preload_txn = client.begin_optimistic().await?;
     let key1 = vec![1];
     let value = key1.clone();
@@ -587,8 +586,7 @@ async fn pessimistic_rollback() -> Result<()> {
 #[serial]
 async fn lock_keys() -> Result<()> {
     clear_tikv().await;
-    let client =
-        TransactionClient::new_with_config(vec!["127.0.0.1:2379"], Default::default()).await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
 
     let k1 = b"key1".to_vec();
     let k2 = b"key2".to_vec();
@@ -617,6 +615,43 @@ async fn lock_keys() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[serial]
+async fn get_for_update() -> Result<()> {
+    clear_tikv().await;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+    let key1 = "key".to_owned();
+    let key2 = "another key".to_owned();
+    let value1 = b"some value".to_owned();
+    let value2 = b"another value".to_owned();
+    let keys = vec![key1.clone(), key2.clone()];
+
+    let mut t1 = client.begin_pessimistic().await?;
+    let mut t2 = client.begin_pessimistic().await?;
+
+    let mut t0 = client.begin_pessimistic().await?;
+    t0.put(key1.clone(), value1).await?;
+    t0.put(key2.clone(), value2).await?;
+    t0.commit().await?;
+
+    assert!(t1.get(key1.clone()).await?.is_none());
+    assert!(t1.get_for_update(key1.clone()).await?.unwrap() == value1);
+    t1.commit().await?;
+
+    assert!(t2.batch_get(keys.clone()).await?.collect::<Vec<_>>().len() == 0);
+    let res: HashMap<_, _> = t2
+        .batch_get_for_update(keys.clone())
+        .await?
+        .map(From::from)
+        .collect();
+    t2.commit().await?;
+    assert!(res.get(&key1.into()).unwrap() == &value1);
+    assert!(res.get(&key2.into()).unwrap() == &value2);
+
+    Ok(())
+}
+
 // helper function
 async fn get_u32(client: &RawClient, key: Vec<u8>) -> Result<u32> {
     let x = client.get(key).await?.unwrap();

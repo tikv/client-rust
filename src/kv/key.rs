@@ -128,6 +128,10 @@ impl Key {
     }
 }
 
+pub trait HasKeys {
+    fn get_keys(&self) -> Vec<Key>;
+}
+
 impl From<Vec<u8>> for Key {
     fn from(v: Vec<u8>) -> Self {
         Key(v)

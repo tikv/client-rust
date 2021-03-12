@@ -3,7 +3,7 @@
 use crate::{
     backoff::Backoff,
     pd::{PdClient, PdRpcClient},
-    request::{Collect, CollectError, Plan, PlanBuilder, RetryOptions},
+    request::{Collect, CollectAndMatchKey, CollectError, Plan, PlanBuilder, RetryOptions},
     timestamp::TimestampExt,
     transaction::{buffer::Buffer, lowering::*},
     BoundRange, Error, Key, KvPair, Result, Value,
@@ -150,10 +150,12 @@ impl Transaction {
         if !self.is_pessimistic() {
             Err(Error::InvalidTransactionType)
         } else {
-            let key = key.into();
-            let mut values = self.pessimistic_lock(iter::once(key.clone()), true).await?;
-            assert!(values.len() == 1);
-            Ok(values.pop().unwrap())
+            let mut pairs = self.pessimistic_lock(iter::once(key.into()), true).await?;
+            debug_assert!(pairs.len() <= 1);
+            match pairs.pop() {
+                Some(pair) => Ok(Some(pair.1)),
+                None => Ok(None),
+            }
         }
     }
 
@@ -242,7 +244,7 @@ impl Transaction {
     /// It can only be used in pessimistic mode.
     ///
     /// # Examples
-    /// ```rust,no_run,compile_fail
+    /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
@@ -263,19 +265,16 @@ impl Transaction {
     /// ```
     // This is temporarily disabled because we cannot correctly match the keys and values.
     // See `impl KvRequest for kvrpcpb::PessimisticLockRequest` for details.
-    #[allow(dead_code)]
-    async fn batch_get_for_update(
+    pub async fn batch_get_for_update(
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
         self.check_allow_operation()?;
         if !self.is_pessimistic() {
-            Err(Error::InvalidTransactionType)
-        } else {
-            let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
-            self.pessimistic_lock(keys.clone(), false).await?;
-            self.batch_get(keys).await
+            return Err(Error::InvalidTransactionType);
         }
+        let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
+        Ok(self.pessimistic_lock(keys, true).await?.into_iter())
     }
 
     /// Create a new 'scan' request.
@@ -618,42 +617,43 @@ impl Transaction {
         &mut self,
         keys: impl IntoIterator<Item = Key>,
         need_value: bool,
-    ) -> Result<Vec<Option<Value>>> {
+    ) -> Result<Vec<KvPair>> {
         assert!(
             matches!(self.options.kind, TransactionKind::Pessimistic(_)),
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
         );
 
         let keys: Vec<Key> = keys.into_iter().collect();
+        if keys.is_empty() {
+            return Ok(vec![]);
+        }
+
         let first_key = keys[0].clone();
         let primary_lock = self.buffer.get_primary_key_or(&first_key).await;
-        let lock_ttl = DEFAULT_LOCK_TTL;
         let for_update_ts = self.rpc.clone().get_timestamp().await?;
         self.options.push_for_update_ts(for_update_ts.clone());
         let request = new_pessimistic_lock_request(
             keys.clone().into_iter(),
             primary_lock,
             self.timestamp.clone(),
-            lock_ttl,
+            DEFAULT_LOCK_TTL,
             for_update_ts,
             need_value,
         );
         let plan = PlanBuilder::new(self.rpc.clone(), request)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
+            .preserve_keys()
             .multi_region()
             .retry_region(self.options.retry_options.region_backoff.clone())
-            .merge(Collect)
+            .merge(CollectAndMatchKey)
             .plan();
-        let values = plan
-            .execute()
-            .await
-            .map(|r| r.into_iter().map(Into::into).collect());
+        let pairs = plan.execute().await;
 
         for key in keys {
             self.buffer.lock(key).await;
         }
 
-        values
+        pairs
     }
 
     /// Checks if the transaction can perform arbitrary operations.

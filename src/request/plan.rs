@@ -2,15 +2,18 @@
 
 use crate::{
     backoff::Backoff,
+    kv::HasKeys,
     pd::PdClient,
     request::{KvRequest, Shardable},
     stats::tikv_stats,
     transaction::{resolve_locks, HasLocks},
-    Error, Result,
+    util::iter::FlatMapOkIterExt,
+    Error, Key, KvPair, Result, Value,
 };
 use async_trait::async_trait;
 use futures::{prelude::*, stream::StreamExt};
 use std::{marker::PhantomData, sync::Arc};
+use tikv_client_proto::kvrpcpb;
 use tikv_client_store::{HasError, HasRegionError, KvClient};
 
 /// A plan for how to execute a request. A user builds up a plan with various
@@ -52,6 +55,12 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             *r.downcast()
                 .expect("Downcast failed: request and response type mismatch")
         })
+    }
+}
+
+impl<Req: KvRequest + HasKeys> HasKeys for Dispatch<Req> {
+    fn get_keys(&self) -> Vec<Key> {
+        self.request.get_keys()
     }
 }
 
@@ -122,6 +131,9 @@ impl<In: Clone + Send + Sync + 'static, P: Plan<Result = Vec<Result<In>>>, M: Me
 /// A merge strategy which collects data from a response into a single type.
 #[derive(Clone, Copy)]
 pub struct Collect;
+
+#[derive(Clone, Debug)]
+pub struct CollectAndMatchKey;
 
 /// A merge strategy which returns an error if any response is an error and
 /// otherwise returns a Vec of the results.
@@ -256,6 +268,12 @@ where
     }
 }
 
+impl<P: Plan + HasKeys, PdC: PdClient> HasKeys for ResolveLock<P, PdC> {
+    fn get_keys(&self) -> Vec<Key> {
+        self.inner.get_keys()
+    }
+}
+
 pub struct ExtractError<P: Plan> {
     pub inner: P,
 }
@@ -289,6 +307,34 @@ where
         } else {
             Ok(result)
         }
+    }
+}
+
+// Requires: len(inner.keys) == len(inner.result)
+pub struct PreserveKey<P: Plan + HasKeys> {
+    pub inner: P,
+}
+
+impl<P: Plan + HasKeys> Clone for PreserveKey<P> {
+    fn clone(&self) -> Self {
+        PreserveKey {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+#[async_trait]
+impl<P> Plan for PreserveKey<P>
+where
+    P: Plan + HasKeys,
+{
+    type Result = ResponseAndKeys<P::Result>;
+
+    async fn execute(&self) -> Result<Self::Result> {
+        let keys = self.inner.get_keys();
+        let res = self.inner.execute().await?;
+        // TODO: should we check they have the same length?
+        Ok(ResponseAndKeys(res, keys))
     }
 }
 
@@ -347,5 +393,62 @@ mod test {
             .unwrap()
             .iter()
             .for_each(|r| assert!(r.is_err()));
+    }
+}
+
+// contains a response and the corresponding keys
+// currently only used for matching keys and values in pessimistic lock requests
+#[derive(Debug, Clone)]
+pub struct ResponseAndKeys<Resp>(Resp, Vec<Key>);
+
+impl<Resp: HasError> HasError for ResponseAndKeys<Resp> {
+    fn error(&mut self) -> Option<Error> {
+        self.0.error()
+    }
+}
+
+impl<Resp: HasLocks> HasLocks for ResponseAndKeys<Resp> {
+    fn take_locks(&mut self) -> Vec<tikv_client_proto::kvrpcpb::LockInfo> {
+        self.0.take_locks()
+    }
+}
+
+impl<Resp: HasRegionError> HasRegionError for ResponseAndKeys<Resp> {
+    fn region_error(&mut self) -> Option<Error> {
+        self.0.region_error()
+    }
+}
+
+impl Merge<ResponseAndKeys<kvrpcpb::PessimisticLockResponse>> for CollectAndMatchKey {
+    type Out = Vec<KvPair>;
+
+    fn merge(
+        &self,
+        input: Vec<Result<ResponseAndKeys<kvrpcpb::PessimisticLockResponse>>>,
+    ) -> Result<Self::Out> {
+        input
+            .into_iter()
+            .flat_map_ok(|ResponseAndKeys(mut resp, keys)| {
+                let values = resp.take_values();
+                let not_founds = resp.take_not_founds();
+                let v: Vec<_> = if not_founds.is_empty() {
+                    // Legacy TiKV does not distiguish not existing key and existing key
+                    // that with empty value. We assume that key does not exist if value
+                    // is empty.
+                    let values: Vec<Value> = values.into_iter().filter(|v| v.is_empty()).collect();
+                    keys.into_iter().zip(values).map(From::from).collect()
+                } else {
+                    assert_eq!(values.len(), not_founds.len());
+                    let values: Vec<Value> = values
+                        .into_iter()
+                        .zip(not_founds.into_iter())
+                        .filter_map(|(v, not_found)| if not_found { None } else { Some(v) })
+                        .collect();
+                    keys.into_iter().zip(values).map(From::from).collect()
+                };
+                // FIXME sucks to collect and re-iterate, but the iterators have different types
+                v.into_iter()
+            })
+            .collect()
     }
 }

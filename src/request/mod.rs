@@ -10,8 +10,8 @@ use tikv_client_store::{HasError, Request};
 
 pub use self::{
     plan::{
-        Collect, CollectError, DefaultProcessor, Dispatch, ExtractError, Merge, MergeResponse,
-        MultiRegion, Plan, Process, ProcessResponse, ResolveLock, RetryRegion,
+        Collect, CollectAndMatchKey, CollectError, DefaultProcessor, Dispatch, ExtractError, Merge,
+        MergeResponse, MultiRegion, Plan, Process, ProcessResponse, ResolveLock, RetryRegion,
     },
     plan_builder::{PlanBuilder, SingleKey},
     shard::Shardable,

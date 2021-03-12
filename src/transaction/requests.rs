@@ -1,6 +1,7 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
+    kv::HasKeys,
     pd::PdClient,
     request::{Collect, DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey},
     store::{store_stream_for_keys, store_stream_for_range_by_start_key, Store},
@@ -356,6 +357,15 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
         self.set_context(store.region.context()?);
         self.set_mutations(shard);
         Ok(())
+    }
+}
+
+impl HasKeys for kvrpcpb::PessimisticLockRequest {
+    fn get_keys(&self) -> Vec<Key> {
+        self.mutations
+            .iter()
+            .map(|m| m.key.clone().into())
+            .collect()
     }
 }
 
