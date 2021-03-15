@@ -25,7 +25,7 @@ use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 /// and its mutations are readable for transactions with `start_ts` >= its `commit_ts`.
 ///
 /// Mutations, or write operations made in a transaction are buffered locally and sent at the time of commit,
-/// except for pessimisitc locking.
+/// except for pessimistic locking.
 /// In pessimistic mode, all write operations or `xxx_for_update` operations will first acquire pessimistic locks in TiKV.
 /// A lock exists until the transaction is committed (in the first phase of 2PC) or rolled back, or it exceeds its Time To Live (TTL).
 ///
@@ -126,8 +126,6 @@ impl Transaction {
     /// and the value is not cached in the local buffer.
     /// So normal `get`-like commands after `get_for_update` will not be influenced, they still read values at `start_ts`.
     ///
-    /// Different from `get`, this request does not distinguish between empty values and non-existent keys
-    /// , i.e. querying non-existent keys will result in empty values.
     ///
     /// It can only be used in pessimistic mode.
     ///
@@ -238,8 +236,7 @@ impl Transaction {
     /// and the value is not cached in the local buffer.
     /// So normal `get`-like commands after `batch_get_for_update` will not be influenced, they still read values at `start_ts`.
     ///
-    /// Different from `batch_get`, this request does not distinguish between empty values and non-existent keys
-    /// , i.e. querying non-existent keys will result in empty values.
+    /// Non-existent entries will not appear in the result. The order of the keys is not retained in the result.
     ///
     /// It can only be used in pessimistic mode.
     ///
@@ -263,8 +260,6 @@ impl Transaction {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    // This is temporarily disabled because we cannot correctly match the keys and values.
-    // See `impl KvRequest for kvrpcpb::PessimisticLockRequest` for details.
     pub async fn batch_get_for_update(
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
@@ -607,10 +602,13 @@ impl Transaction {
             .await
     }
 
-    /// Pessimistically lock the keys.
+    /// Pessimistically lock the keys, and optionally retrieve corresponding values.
+    /// If a key does not exist, the corresponding pair will not appear in the result.
     ///
-    /// Once resolved it acquires a lock on the key in TiKV.
-    /// The lock prevents other transactions from mutating the entry until it is released.
+    /// Once resolved it acquires locks on the keys in TiKV.
+    /// A lock prevents other transactions from mutating the entry until it is released.
+    ///
+    /// # Panics
     ///
     /// Only valid for pessimistic transactions, panics if called on an optimistic transaction.
     async fn pessimistic_lock(

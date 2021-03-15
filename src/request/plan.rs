@@ -132,6 +132,9 @@ impl<In: Clone + Send + Sync + 'static, P: Plan<Result = Vec<Result<In>>>, M: Me
 #[derive(Clone, Copy)]
 pub struct Collect;
 
+/// A merge strategy to be used with
+/// [`preserve_keys`](super::plan_builder::PlanBuilder::preserve_keys).
+/// It matches the keys preserved before and the values returned in the response.
 #[derive(Clone, Debug)]
 pub struct CollectAndMatchKey;
 
@@ -274,6 +277,11 @@ impl<P: Plan + HasKeys, PdC: PdClient> HasKeys for ResolveLock<P, PdC> {
     }
 }
 
+/// When executed, the plan extracts errors from its inner plan, and
+/// returns an `Err` wrapping the error.
+///
+/// The errors come from two places: `Err` from inner plans, and `Ok(response)`
+/// where `response` contains unresolved errors (`error` and `region_error`).
 pub struct ExtractError<P: Plan> {
     pub inner: P,
 }
@@ -286,11 +294,6 @@ impl<P: Plan> Clone for ExtractError<P> {
     }
 }
 
-/// When executed, the plan extracts errors from its inner plan, and
-/// returns an `Err` wrapping the error.
-///
-/// The errors come from two places: `Err` from inner plans, and `Ok(response)`
-/// where `response` contains unresolved errors (`error` and `region_error`).
 #[async_trait]
 impl<P: Plan> Plan for ExtractError<P>
 where
@@ -310,7 +313,11 @@ where
     }
 }
 
-// Requires: len(inner.keys) == len(inner.result)
+/// When executed, the plan clones the keys and execute its inner plan, then
+/// returns `(keys, response)`.
+///
+/// It's useful when the information of keys are lost in the response but needed
+/// for processing.
 pub struct PreserveKey<P: Plan + HasKeys> {
     pub inner: P,
 }
