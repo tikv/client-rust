@@ -895,10 +895,17 @@ impl TransactionOptions {
     }
 }
 
+/// The default max TTL of a lock in milliseconds
+const MANAGED_TTL: u64 = 20000;
 /// The default TTL of a lock in milliseconds.
 const DEFAULT_LOCK_TTL: u64 = 3000;
-/// The default heartbeat interval.
-const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
+/// The default heartbeat interval
+const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(MANAGED_TTL / 2);
+/// TiKV recommends each RPC packet should be less than ~1MB. We keep each packet's
+/// Key+Value size below 16KB.
+const TXN_COMMIT_BATCH_SIZE: u64 = 16 * 1024;
+const BYTES_PER_MB: u64 = 1024 * 1024;
+const TTL_FACTOR: f64 = 6000_f64;
 
 /// A struct wrapping the details of two-phase commit protocol (2PC).
 ///
