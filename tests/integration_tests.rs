@@ -225,12 +225,15 @@ async fn raw_bank_transfer() -> Result<()> {
 /// Tests transactional API when there are multiple regions.
 /// Write large volumes of data to enforce region splitting.
 /// In order to test `scan`, data is uniformly inserted.
+// FIXME: this test is stupid. We should use pd-ctl or config files to make
+// multiple regions, instead of bulk writing.
 #[tokio::test]
 #[serial]
 async fn txn_write_million() -> Result<()> {
-    const NUM_BITS_TXN: u32 = 7;
-    const NUM_BITS_KEY_PER_TXN: u32 = 3;
+    const NUM_BITS_TXN: u32 = 12;
+    const NUM_BITS_KEY_PER_TXN: u32 = 5;
     let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
+    let value = "large_value".repeat(10);
 
     clear_tikv().await;
     let client = TransactionClient::new(pd_addrs()).await?;
@@ -246,7 +249,7 @@ async fn txn_write_million() -> Result<()> {
         .take(2usize.pow(NUM_BITS_KEY_PER_TXN))
         .collect::<Vec<_>>(); // each txn puts 2 ^ 12 keys. 12 = 25 - 13
         let mut txn = client.begin_optimistic().await?;
-        for (k, v) in keys.iter().zip(iter::repeat(1u32.to_be_bytes().to_vec())) {
+        for (k, v) in keys.iter().zip(iter::repeat(value.clone())) {
             txn.put(k.clone(), v).await?;
         }
         txn.commit().await?;
@@ -298,6 +301,29 @@ async fn txn_write_million() -> Result<()> {
 
     assert_eq!(sum, 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));
 
+    // test batch_get and batch_get_for_update
+    const SKIP_BITS: u32 = 6; // do not retrive all because there's a limit of message size
+    let mut cur = 0u32;
+    let keys = iter::repeat_with(|| {
+        let v = cur;
+        cur = cur.overflowing_add(interval * 2u32.pow(SKIP_BITS)).0;
+        v
+    })
+    .map(|u| u.to_be_bytes().to_vec())
+    .take(2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN - SKIP_BITS))
+    .collect::<Vec<_>>();
+
+    let mut txn = client.begin_pessimistic().await?;
+    let res = txn.batch_get(keys.clone()).await?.collect::<Vec<_>>();
+    assert_eq!(res.len(), keys.len());
+
+    let res = txn
+        .batch_get_for_update(keys.clone())
+        .await?
+        .collect::<Vec<_>>();
+    assert_eq!(res.len(), keys.len());
+
+    txn.commit().await?;
     Ok(())
 }
 
