@@ -275,6 +275,31 @@ impl Buffer {
             }
         }
     }
+
+    pub async fn get_write_size(&self) -> usize {
+        let mutations = self.mutations.lock().await;
+        mutations
+            .entry_map
+            .iter()
+            .filter(|(_, v)| {
+                matches!(
+                    v,
+                    BufferEntry::Put(_) | BufferEntry::Insert(_) | BufferEntry::Del
+                )
+            })
+            .map(|(k, v)| {
+                let mut write_size = 0;
+                if let BufferEntry::Put(val) | BufferEntry::Insert(val) = v {
+                    write_size += val.len();
+                    write_size += k.len();
+                }
+                if let BufferEntry::Del = v {
+                    write_size += k.len();
+                }
+                write_size
+            })
+            .sum()
+    }
 }
 
 // The state of a key-value pair in the buffer.

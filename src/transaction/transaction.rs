@@ -525,6 +525,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.timestamp.clone(),
             self.rpc.clone(),
             self.options.clone(),
+            self.buffer.get_write_size().await as u64,
         )
         .commit()
         .await;
@@ -563,6 +564,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.timestamp.clone(),
             self.rpc.clone(),
             self.options.clone(),
+            self.buffer.get_write_size().await as u64,
         )
         .rollback()
         .await;
@@ -923,6 +925,7 @@ struct Committer<PdC: PdClient = PdRpcClient> {
     options: TransactionOptions,
     #[new(default)]
     undetermined: bool,
+    txn_size: u64,
 }
 
 impl<PdC: PdClient> Committer<PdC> {
@@ -968,7 +971,7 @@ impl<PdC: PdClient> Committer<PdC> {
                 self.mutations.clone(),
                 primary_lock,
                 self.start_version.clone(),
-                lock_ttl,
+                self.calc_txn_lock_ttl(),
             ),
             TransactionKind::Pessimistic(for_update_ts) => new_pessimistic_prewrite_request(
                 self.mutations.clone(),
@@ -1107,6 +1110,16 @@ impl<PdC: PdClient> Committer<PdC> {
             }
         }
         Ok(())
+    }
+
+    fn calc_txn_lock_ttl(&mut self) -> u64 {
+        let mut lock_ttl = DEFAULT_LOCK_TTL;
+        if self.txn_size > TXN_COMMIT_BATCH_SIZE {
+            let size_mb = self.txn_size / BYTES_PER_MB;
+            lock_ttl = ((TTL_FACTOR as f64) * ((size_mb) as f64).sqrt()) as u64;
+            lock_ttl = lock_ttl.min(MANAGED_TTL).max(DEFAULT_LOCK_TTL);
+        }
+        lock_ttl
     }
 }
 
