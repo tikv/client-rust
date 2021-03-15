@@ -147,7 +147,7 @@ impl PdClient for MockPdClient {
     }
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
-        unimplemented!()
+        Ok(Timestamp::default())
     }
 
     async fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> Result<bool> {
