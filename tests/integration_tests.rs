@@ -336,7 +336,7 @@ async fn txn_bank_transfer() -> Result<()> {
 
     let people = gen_u32_keys(NUM_PEOPLE, &mut rng);
     let mut txn = client
-        .begin_with_options(TransactionOptions::new_optimistic().try_one_pc())
+        .begin_with_options(TransactionOptions::new_optimistic())
         .await?;
     let mut sum: u32 = 0;
     for person in &people {

@@ -99,8 +99,8 @@ impl Connection {
         let tso = TimestampOracle::new(id, &client)?;
         let cluster = Cluster {
             id,
-            members,
             client,
+            members,
             tso,
         };
         Ok(cluster)
