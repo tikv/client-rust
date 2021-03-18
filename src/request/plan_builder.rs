@@ -1,12 +1,12 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
+use super::PreserveKey;
 use crate::{
     backoff::Backoff,
-    kv::HasKeys,
     pd::PdClient,
     request::{
-        DefaultProcessor, Dispatch, ExtractError, KvRequest, Merge, MergeResponse, MultiRegion,
-        Plan, Process, ProcessResponse, ResolveLock, RetryRegion, Shardable,
+        DefaultProcessor, Dispatch, ExtractError, HasKeys, KvRequest, Merge, MergeResponse,
+        MultiRegion, Plan, Process, ProcessResponse, ResolveLock, RetryRegion, Shardable,
     },
     store::Store,
     transaction::HasLocks,
@@ -14,8 +14,6 @@ use crate::{
 };
 use std::{marker::PhantomData, sync::Arc};
 use tikv_client_store::HasError;
-
-use super::plan::PreserveKey;
 
 /// Builder type for plans (see that module for more).
 pub struct PlanBuilder<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> {

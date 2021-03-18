@@ -1,9 +1,10 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    kv::HasKeys,
     pd::PdClient,
-    request::{Collect, DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey},
+    request::{
+        Collect, DefaultProcessor, HasKeys, KvRequest, Merge, Process, Shardable, SingleKey,
+    },
     store::{store_stream_for_keys, store_stream_for_range_by_start_key, Store},
     timestamp::TimestampExt,
     transaction::HasLocks,

@@ -2,7 +2,6 @@
 
 use crate::{
     backoff::Backoff,
-    kv::HasKeys,
     pd::PdClient,
     request::{KvRequest, Shardable},
     stats::tikv_stats,
@@ -340,8 +339,68 @@ where
     async fn execute(&self) -> Result<Self::Result> {
         let keys = self.inner.get_keys();
         let res = self.inner.execute().await?;
-        // TODO: should we check they have the same length?
         Ok(ResponseAndKeys(res, keys))
+    }
+}
+
+pub trait HasKeys {
+    fn get_keys(&self) -> Vec<Key>;
+}
+
+// contains a response and the corresponding keys
+// currently only used for matching keys and values in pessimistic lock requests
+#[derive(Debug, Clone)]
+pub struct ResponseAndKeys<Resp>(Resp, Vec<Key>);
+
+impl<Resp: HasError> HasError for ResponseAndKeys<Resp> {
+    fn error(&mut self) -> Option<Error> {
+        self.0.error()
+    }
+}
+
+impl<Resp: HasLocks> HasLocks for ResponseAndKeys<Resp> {
+    fn take_locks(&mut self) -> Vec<tikv_client_proto::kvrpcpb::LockInfo> {
+        self.0.take_locks()
+    }
+}
+
+impl<Resp: HasRegionError> HasRegionError for ResponseAndKeys<Resp> {
+    fn region_error(&mut self) -> Option<Error> {
+        self.0.region_error()
+    }
+}
+
+impl Merge<ResponseAndKeys<kvrpcpb::PessimisticLockResponse>> for CollectAndMatchKey {
+    type Out = Vec<KvPair>;
+
+    fn merge(
+        &self,
+        input: Vec<Result<ResponseAndKeys<kvrpcpb::PessimisticLockResponse>>>,
+    ) -> Result<Self::Out> {
+        input
+            .into_iter()
+            .flat_map_ok(|ResponseAndKeys(mut resp, keys)| {
+                let values = resp.take_values();
+                let not_founds = resp.take_not_founds();
+                let v: Vec<_> = if not_founds.is_empty() {
+                    // Legacy TiKV does not distiguish not existing key and existing key
+                    // that with empty value. We assume that key does not exist if value
+                    // is empty.
+                    let values: Vec<Value> = values.into_iter().filter(|v| v.is_empty()).collect();
+                    keys.into_iter().zip(values).map(From::from).collect()
+                } else {
+                    assert_eq!(values.len(), not_founds.len());
+                    let values: Vec<Value> = values
+                        .into_iter()
+                        .zip(not_founds.into_iter())
+                        .filter_map(|(v, not_found)| if not_found { None } else { Some(v) })
+                        .collect();
+                    keys.into_iter().zip(values).map(From::from).collect()
+                };
+                // FIXME sucks to collect and re-iterate, but the iterators have different types
+                v.into_iter()
+            })
+            .collect()
     }
 }
 
@@ -400,62 +459,5 @@ mod test {
             .unwrap()
             .iter()
             .for_each(|r| assert!(r.is_err()));
-    }
-}
-
-// contains a response and the corresponding keys
-// currently only used for matching keys and values in pessimistic lock requests
-#[derive(Debug, Clone)]
-pub struct ResponseAndKeys<Resp>(Resp, Vec<Key>);
-
-impl<Resp: HasError> HasError for ResponseAndKeys<Resp> {
-    fn error(&mut self) -> Option<Error> {
-        self.0.error()
-    }
-}
-
-impl<Resp: HasLocks> HasLocks for ResponseAndKeys<Resp> {
-    fn take_locks(&mut self) -> Vec<tikv_client_proto::kvrpcpb::LockInfo> {
-        self.0.take_locks()
-    }
-}
-
-impl<Resp: HasRegionError> HasRegionError for ResponseAndKeys<Resp> {
-    fn region_error(&mut self) -> Option<Error> {
-        self.0.region_error()
-    }
-}
-
-impl Merge<ResponseAndKeys<kvrpcpb::PessimisticLockResponse>> for CollectAndMatchKey {
-    type Out = Vec<KvPair>;
-
-    fn merge(
-        &self,
-        input: Vec<Result<ResponseAndKeys<kvrpcpb::PessimisticLockResponse>>>,
-    ) -> Result<Self::Out> {
-        input
-            .into_iter()
-            .flat_map_ok(|ResponseAndKeys(mut resp, keys)| {
-                let values = resp.take_values();
-                let not_founds = resp.take_not_founds();
-                let v: Vec<_> = if not_founds.is_empty() {
-                    // Legacy TiKV does not distiguish not existing key and existing key
-                    // that with empty value. We assume that key does not exist if value
-                    // is empty.
-                    let values: Vec<Value> = values.into_iter().filter(|v| v.is_empty()).collect();
-                    keys.into_iter().zip(values).map(From::from).collect()
-                } else {
-                    assert_eq!(values.len(), not_founds.len());
-                    let values: Vec<Value> = values
-                        .into_iter()
-                        .zip(not_founds.into_iter())
-                        .filter_map(|(v, not_found)| if not_found { None } else { Some(v) })
-                        .collect();
-                    keys.into_iter().zip(values).map(From::from).collect()
-                };
-                // FIXME sucks to collect and re-iterate, but the iterators have different types
-                v.into_iter()
-            })
-            .collect()
     }
 }

@@ -290,7 +290,7 @@ async fn txn_write_million() -> Result<()> {
     assert_eq!(sum, 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));
 
     // test batch_get and batch_get_for_update
-    const SKIP_BITS: u32 = 6; // do not retrive all because there's a limit of message size
+    const SKIP_BITS: u32 = 7; // do not retrive all because there's a limit of message size
     let mut cur = 0u32;
     let keys = iter::repeat_with(|| {
         let v = cur;

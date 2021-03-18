@@ -8,7 +8,7 @@ mod kvpair;
 mod value;
 
 pub use bound_range::{BoundRange, IntoOwnedRange};
-pub use key::{HasKeys, Key};
+pub use key::Key;
 pub use kvpair::KvPair;
 pub use value::Value;
 
