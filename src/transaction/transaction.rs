@@ -965,19 +965,20 @@ impl<PdC: PdClient> Committer<PdC> {
     async fn prewrite(&mut self) -> Result<Option<Timestamp>> {
         let primary_lock = self.primary_key.clone().unwrap();
         // FIXME: calculate TTL for big transactions
-        let lock_ttl = DEFAULT_LOCK_TTL;
+        let current_ts = self.rpc.clone().get_timestamp().await?;
+        let elapsed = (current_ts.physical - self.start_version.physical) as u64;
         let mut request = match &self.options.kind {
             TransactionKind::Optimistic => new_prewrite_request(
                 self.mutations.clone(),
                 primary_lock,
                 self.start_version.clone(),
-                self.calc_txn_lock_ttl(),
+                self.calc_txn_lock_ttl() + elapsed,
             ),
             TransactionKind::Pessimistic(for_update_ts) => new_pessimistic_prewrite_request(
                 self.mutations.clone(),
                 primary_lock,
                 self.start_version.clone(),
-                lock_ttl,
+                MANAGED_TTL + elapsed,
                 for_update_ts.clone(),
             ),
         };
