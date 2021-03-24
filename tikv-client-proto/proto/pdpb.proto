@@ -80,7 +80,7 @@ service PD {
 
     rpc SplitRegions(SplitRegionsRequest) returns (SplitRegionsResponse) {}
 
-    rpc GetDCLocations(GetDCLocationsRequest) returns (GetDCLocationsResponse) {}
+    rpc GetDCLocationInfo(GetDCLocationInfoRequest) returns (GetDCLocationInfoResponse) {}
 }
 
 message RequestHeader {
@@ -121,7 +121,9 @@ message TsoRequest {
 message Timestamp {
     int64 physical = 1;
     int64 logical = 2;
-}
+    // Number of suffix bits used for global distinction,
+    // PD client will use this to compute a TSO's logical part.
+    uint32 suffix_bits = 3;}
 
 message TsoResponse {
     ResponseHeader header = 1;
@@ -286,6 +288,7 @@ message Member {
     string deploy_path = 6;
     string binary_version = 7;
     string git_hash = 8;
+    string dc_location = 9;
 }
 
 message GetMembersRequest {
@@ -652,11 +655,16 @@ message SplitRegionsResponse {
     repeated uint64 regions_id = 3;
 }
 
-message GetDCLocationsRequest {
+message GetDCLocationInfoRequest {
     RequestHeader header = 1;
+    string dc_location = 2;
 }
 
-message GetDCLocationsResponse {
+message GetDCLocationInfoResponse {
     ResponseHeader header = 1;
-    repeated string dc_locations = 2;
+    // suffix sign
+    int32 suffix = 2;
+    // max_ts will be included into this response if PD leader think the receiver needs,
+    // which it's set when the number of the max suffix bits changes.
+    Timestamp max_ts = 3;
 }

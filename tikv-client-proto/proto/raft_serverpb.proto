@@ -38,6 +38,8 @@ message SnapshotCFFile {
 
 message SnapshotMeta {
     repeated SnapshotCFFile cf_files = 1;
+    // true means this snapshot is triggered for load balance
+    bool for_balance = 2; 
 }
 
 message SnapshotChunk {
@@ -102,6 +104,10 @@ enum ExtraMessageType {
     MsgWantRollbackMerge = 1;
     MsgCheckStalePeer = 2;
     MsgCheckStalePeerResponse = 3;
+    // If leader is going to sleep, it will send requests to all its followers
+    // to make sure they all agree to sleep.
+    MsgHibernateRequest = 4;
+    MsgHibernateResponse = 5;
 }
 
 message ExtraMessage {

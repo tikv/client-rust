@@ -1,3 +1,7 @@
+// These encryption protobufs are not sent over the network.
+// Protobufs are used to define a stable backwards compatible persistent storage format.
+// These definitions are used by both PD and TiKV to keep their implementations similar.
+
 syntax = "proto3";
 package encryptionpb;
 

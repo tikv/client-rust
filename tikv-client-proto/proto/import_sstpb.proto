@@ -76,6 +76,11 @@ message SSTMeta {
     uint64 region_id = 6;
     metapb.RegionEpoch region_epoch = 7;
     bool end_key_exclusive = 8;
+
+    // total_kvs and total_bytes is equivalent to PD's approximate_keys and approximate_size
+    // set these values can save time from tikv upload keys and size to PD through Heartbeat.
+    uint64 total_kvs = 9;
+    uint64 total_bytes = 10;
 }
 
 // A rewrite rule is applied on the *encoded* keys (the internal storage
