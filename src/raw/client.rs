@@ -173,16 +173,15 @@ impl Client {
     /// # });
     /// ```
     pub async fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        let request = new_raw_put_request(key.into(), value.into(), self.cf.clone());
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .single_region()
-            .await?
-            .resolve_lock(OPTIMISTIC_BACKOFF)
-            .retry_region(DEFAULT_REGION_BACKOFF)
-            .extract_error()
-            .plan();
-        plan.execute().await?;
-        Ok(())
+        self.put_inner(key, value, false).await
+    }
+
+    /// Create a new *atomic* 'put' request.
+    /// Atomic operations can block each other on the same key.
+    ///
+    /// Once resolved this request will result in the setting of the value associated with the given key.
+    pub async fn atomic_put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
+        self.put_inner(key, value, true).await
     }
 
     /// Create a new 'batch put' request.
@@ -206,15 +205,19 @@ impl Client {
         &self,
         pairs: impl IntoIterator<Item = impl Into<KvPair>>,
     ) -> Result<()> {
-        let request = new_raw_batch_put_request(pairs.into_iter().map(Into::into), self.cf.clone());
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
-            .multi_region()
-            .retry_region(DEFAULT_REGION_BACKOFF)
-            .extract_error()
-            .plan();
-        plan.execute().await?;
-        Ok(())
+        self.batch_put_inner(pairs, false).await
+    }
+
+    /// Create a new *atomic* 'batch put' request.
+    /// Atomic operations can block each other on the same key.
+    ///
+    /// Once resolved this request will result in the setting of the values
+    /// associated with the given keys.
+    pub async fn atomic_batch_put(
+        &self,
+        pairs: impl IntoIterator<Item = impl Into<KvPair>>,
+    ) -> Result<()> {
+        self.batch_put_inner(pairs, true).await
     }
 
     /// Create a new 'delete' request.
@@ -235,16 +238,29 @@ impl Client {
     /// # });
     /// ```
     pub async fn delete(&self, key: impl Into<Key>) -> Result<()> {
-        let request = new_raw_delete_request(key.into(), self.cf.clone());
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .single_region()
-            .await?
-            .resolve_lock(OPTIMISTIC_BACKOFF)
-            .retry_region(DEFAULT_REGION_BACKOFF)
-            .extract_error()
-            .plan();
-        plan.execute().await?;
-        Ok(())
+        self.delete_inner(key, false).await
+    }
+
+    /// Create a new *atomic* 'delete' request.
+    /// Atomic operations can block each other on the same key.
+    ///
+    /// Once resolved this request will result in the deletion of the given key.
+    ///
+    /// It does not return an error if the key does not exist in TiKV.
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Config, RawClient};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let key = "TiKV".to_owned();
+    /// let req = client.delete(key);
+    /// let result: () = req.await.unwrap();
+    /// # });
+    /// ```
+    pub async fn atomic_delete(&self, key: impl Into<Key>) -> Result<()> {
+        self.delete_inner(key, true).await
     }
 
     /// Create a new 'batch delete' request.
@@ -422,6 +438,30 @@ impl Client {
             .collect())
     }
 
+    /// Create a new *atomic* 'compare and set' request.
+    ///
+    /// Once resolved this request will result in an atomic `compare and set' operation for the given key.
+    ///
+    /// If the value retrived is equal to `current_value`, `new_value` is written.
+    ///
+    /// # Return Value
+    /// A tuple is returned if successful: the previous value and whether the value is swapped
+    pub async fn atomic_compare_and_swap(
+        &self,
+        key: impl Into<Key>,
+        previous_value: Option<Value>,
+        new_value: Value,
+    ) -> Result<(Option<Value>, bool)> {
+        let req = new_cas_request(key.into(), new_value, previous_value, self.cf.clone());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), req)
+            .single_region()
+            .await?
+            .retry_region(DEFAULT_REGION_BACKOFF)
+            .post_process_default()
+            .plan();
+        plan.execute().await
+    }
+
     async fn scan_inner(
         &self,
         range: impl Into<BoundRange>,
@@ -475,5 +515,53 @@ impl Client {
             .merge(Collect)
             .plan();
         plan.execute().await
+    }
+
+    async fn put_inner(
+        &self,
+        key: impl Into<Key>,
+        value: impl Into<Value>,
+        atomic: bool,
+    ) -> Result<()> {
+        let request = new_raw_put_request(key.into(), value.into(), self.cf.clone(), atomic);
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+            .single_region()
+            .await?
+            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .retry_region(DEFAULT_REGION_BACKOFF)
+            .extract_error()
+            .plan();
+        plan.execute().await?;
+        Ok(())
+    }
+
+    async fn batch_put_inner(
+        &self,
+        pairs: impl IntoIterator<Item = impl Into<KvPair>>,
+        atomic: bool,
+    ) -> Result<()> {
+        let request =
+            new_raw_batch_put_request(pairs.into_iter().map(Into::into), self.cf.clone(), atomic);
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .multi_region()
+            .retry_region(DEFAULT_REGION_BACKOFF)
+            .extract_error()
+            .plan();
+        plan.execute().await?;
+        Ok(())
+    }
+
+    async fn delete_inner(&self, key: impl Into<Key>, atomic: bool) -> Result<()> {
+        let request = new_raw_delete_request(key.into(), self.cf.clone(), atomic);
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+            .single_region()
+            .await?
+            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .retry_region(DEFAULT_REGION_BACKOFF)
+            .extract_error()
+            .plan();
+        plan.execute().await?;
+        Ok(())
     }
 }

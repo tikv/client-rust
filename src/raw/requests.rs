@@ -76,11 +76,13 @@ pub fn new_raw_put_request(
     key: Vec<u8>,
     value: Vec<u8>,
     cf: Option<ColumnFamily>,
+    atomic: bool,
 ) -> kvrpcpb::RawPutRequest {
     let mut req = kvrpcpb::RawPutRequest::default();
     req.set_key(key);
     req.set_value(value);
     req.maybe_set_cf(cf);
+    req.set_for_cas(atomic);
 
     req
 }
@@ -98,10 +100,12 @@ impl SingleKey for kvrpcpb::RawPutRequest {
 pub fn new_raw_batch_put_request(
     pairs: Vec<kvrpcpb::KvPair>,
     cf: Option<ColumnFamily>,
+    atomic: bool,
 ) -> kvrpcpb::RawBatchPutRequest {
     let mut req = kvrpcpb::RawBatchPutRequest::default();
     req.set_pairs(pairs);
     req.maybe_set_cf(cf);
+    req.set_for_cas(atomic);
 
     req
 }
@@ -132,10 +136,15 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
     }
 }
 
-pub fn new_raw_delete_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::RawDeleteRequest {
+pub fn new_raw_delete_request(
+    key: Vec<u8>,
+    cf: Option<ColumnFamily>,
+    atomic: bool,
+) -> kvrpcpb::RawDeleteRequest {
     let mut req = kvrpcpb::RawDeleteRequest::default();
     req.set_key(key);
     req.maybe_set_cf(cf);
+    req.set_for_cas(atomic);
 
     req
 }
@@ -267,6 +276,46 @@ impl Merge<kvrpcpb::RawBatchScanResponse> for Collect {
     }
 }
 
+pub fn new_cas_request(
+    key: Vec<u8>,
+    value: Vec<u8>,
+    previous_value: Option<Vec<u8>>,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawCasRequest {
+    let mut req = kvrpcpb::RawCasRequest::default();
+    req.set_key(key);
+    req.set_value(value);
+    match previous_value {
+        Some(v) => req.set_previous_value(v),
+        None => req.set_previous_not_exist(true),
+    }
+    req.maybe_set_cf(cf);
+    req
+}
+
+impl KvRequest for kvrpcpb::RawCasRequest {
+    type Response = kvrpcpb::RawCasResponse;
+}
+
+impl SingleKey for kvrpcpb::RawCasRequest {
+    fn key(&self) -> &Vec<u8> {
+        &self.key
+    }
+}
+
+impl Process<kvrpcpb::RawCasResponse> for DefaultProcessor {
+    type Out = (Option<Value>, bool); // (previous_value, swapped)
+
+    fn process(&self, input: Result<kvrpcpb::RawCasResponse>) -> Result<Self::Out> {
+        let input = input?;
+        if input.previous_not_exist {
+            Ok((None, input.succeed))
+        } else {
+            Ok((Some(input.previous_value), input.succeed))
+        }
+    }
+}
+
 macro_rules! impl_raw_rpc_request {
     ($name: ident) => {
         impl RawRpcRequest for kvrpcpb::$name {
@@ -286,6 +335,7 @@ impl_raw_rpc_request!(RawBatchDeleteRequest);
 impl_raw_rpc_request!(RawScanRequest);
 impl_raw_rpc_request!(RawBatchScanRequest);
 impl_raw_rpc_request!(RawDeleteRangeRequest);
+impl_raw_rpc_request!(RawCasRequest);
 
 impl HasLocks for kvrpcpb::RawGetResponse {}
 impl HasLocks for kvrpcpb::RawBatchGetResponse {}
@@ -296,6 +346,7 @@ impl HasLocks for kvrpcpb::RawBatchDeleteResponse {}
 impl HasLocks for kvrpcpb::RawScanResponse {}
 impl HasLocks for kvrpcpb::RawBatchScanResponse {}
 impl HasLocks for kvrpcpb::RawDeleteRangeResponse {}
+impl HasLocks for kvrpcpb::RawCasResponse {}
 
 #[cfg(test)]
 mod test {

@@ -35,7 +35,7 @@ impl TimestampExt for Timestamp {
         Self {
             physical: version >> PHYSICAL_SHIFT_BITS,
             logical: version & LOGICAL_MASK,
-            // We only support global transactions
+            // Now we only support global transactions
             suffix_bits: 0,
         }
     }

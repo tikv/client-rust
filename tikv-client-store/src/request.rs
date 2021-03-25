@@ -66,6 +66,12 @@ impl_request!(
     raw_delete_range_async_opt,
     "raw_delete_range"
 );
+impl_request!(
+    RawCasRequest,
+    raw_compare_and_swap_async_opt,
+    "raw_compare_and_swap"
+);
+
 impl_request!(GetRequest, kv_get_async_opt, "kv_get");
 impl_request!(ScanRequest, kv_scan_async_opt, "kv_scan");
 impl_request!(PrewriteRequest, kv_prewrite_async_opt, "kv_prewrite");
