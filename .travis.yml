@@ -12,8 +12,8 @@ rust:
 env:
   global:
     - RUST_BACKTRACE=1
-#    - RUSTFLAGS="-D warnings"
-#    - RUSTDOCFLAGS="-D warnings" 
+    - RUSTFLAGS="-D warnings"
+    - RUSTDOCFLAGS="-D warnings" 
 
 addons:
   apt:
