@@ -3,7 +3,7 @@
 use crate::{
     backoff::Backoff,
     pd::{PdClient, PdRpcClient},
-    request::{Collect, CollectError, Plan, PlanBuilder, RetryOptions},
+    request::{Collect, CollectAndMatchKey, CollectError, Plan, PlanBuilder, RetryOptions},
     timestamp::TimestampExt,
     transaction::{buffer::Buffer, lowering::*},
     BoundRange, Error, Key, KvPair, Result, Value,
@@ -27,7 +27,7 @@ use tokio::{sync::RwLock, time::Duration};
 /// and its mutations are readable for transactions with `start_ts` >= its `commit_ts`.
 ///
 /// Mutations, or write operations made in a transaction are buffered locally and sent at the time of commit,
-/// except for pessimisitc locking.
+/// except for pessimistic locking.
 /// In pessimistic mode, all write operations or `xxx_for_update` operations will first acquire pessimistic locks in TiKV.
 /// A lock exists until the transaction is committed (in the first phase of 2PC) or rolled back, or it exceeds its Time To Live (TTL).
 ///
@@ -126,8 +126,6 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// and the value is not cached in the local buffer.
     /// So normal `get`-like commands after `get_for_update` will not be influenced, they still read values at `start_ts`.
     ///
-    /// Different from `get`, this request does not distinguish between empty values and non-existent keys
-    /// , i.e. querying non-existent keys will result in empty values.
     ///
     /// It can only be used in pessimistic mode.
     ///
@@ -150,10 +148,12 @@ impl<PdC: PdClient> Transaction<PdC> {
         if !self.is_pessimistic() {
             Err(Error::InvalidTransactionType)
         } else {
-            let key = key.into();
-            let mut values = self.pessimistic_lock(iter::once(key.clone()), true).await?;
-            assert!(values.len() == 1);
-            Ok(values.pop().unwrap())
+            let mut pairs = self.pessimistic_lock(iter::once(key.into()), true).await?;
+            debug_assert!(pairs.len() <= 1);
+            match pairs.pop() {
+                Some(pair) => Ok(Some(pair.1)),
+                None => Ok(None),
+            }
         }
     }
 
@@ -236,13 +236,12 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// and the value is not cached in the local buffer.
     /// So normal `get`-like commands after `batch_get_for_update` will not be influenced, they still read values at `start_ts`.
     ///
-    /// Different from `batch_get`, this request does not distinguish between empty values and non-existent keys
-    /// , i.e. querying non-existent keys will result in empty values.
+    /// Non-existent entries will not appear in the result. The order of the keys is not retained in the result.
     ///
     /// It can only be used in pessimistic mode.
     ///
     /// # Examples
-    /// ```rust,no_run,compile_fail
+    /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
@@ -261,21 +260,16 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    // This is temporarily disabled because we cannot correctly match the keys and values.
-    // See `impl KvRequest for kvrpcpb::PessimisticLockRequest` for details.
-    #[allow(dead_code)]
-    async fn batch_get_for_update(
+    pub async fn batch_get_for_update(
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
         self.check_allow_operation().await?;
         if !self.is_pessimistic() {
-            Err(Error::InvalidTransactionType)
-        } else {
-            let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
-            self.pessimistic_lock(keys.clone(), false).await?;
-            self.batch_get(keys).await
+            return Err(Error::InvalidTransactionType);
         }
+        let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
+        Ok(self.pessimistic_lock(keys, true).await?.into_iter())
     }
 
     /// Create a new 'scan' request.
@@ -625,46 +619,50 @@ impl<PdC: PdClient> Transaction<PdC> {
             .await
     }
 
-    /// Pessimistically lock the keys.
+    /// Pessimistically lock the keys, and optionally retrieve corresponding values.
+    /// If a key does not exist, the corresponding pair will not appear in the result.
     ///
-    /// Once resolved it acquires a lock on the key in TiKV.
-    /// The lock prevents other transactions from mutating the entry until it is released.
+    /// Once resolved it acquires locks on the keys in TiKV.
+    /// A lock prevents other transactions from mutating the entry until it is released.
+    ///
+    /// # Panics
     ///
     /// Only valid for pessimistic transactions, panics if called on an optimistic transaction.
     async fn pessimistic_lock(
         &mut self,
         keys: impl IntoIterator<Item = Key>,
         need_value: bool,
-    ) -> Result<Vec<Option<Value>>> {
+    ) -> Result<Vec<KvPair>> {
         assert!(
             matches!(self.options.kind, TransactionKind::Pessimistic(_)),
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
         );
 
         let keys: Vec<Key> = keys.into_iter().collect();
+        if keys.is_empty() {
+            return Ok(vec![]);
+        }
+
         let first_key = keys[0].clone();
         let primary_lock = self.buffer.get_primary_key_or(&first_key).await;
-        let lock_ttl = DEFAULT_LOCK_TTL;
         let for_update_ts = self.rpc.clone().get_timestamp().await?;
         self.options.push_for_update_ts(for_update_ts.clone());
         let request = new_pessimistic_lock_request(
             keys.clone().into_iter(),
             primary_lock,
             self.timestamp.clone(),
-            lock_ttl,
+            DEFAULT_LOCK_TTL,
             for_update_ts,
             need_value,
         );
         let plan = PlanBuilder::new(self.rpc.clone(), request)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
+            .preserve_keys()
             .multi_region()
             .retry_region(self.options.retry_options.region_backoff.clone())
-            .merge(Collect)
+            .merge(CollectAndMatchKey)
             .plan();
-        let values = plan
-            .execute()
-            .await
-            .map(|r| r.into_iter().map(Into::into).collect());
+        let pairs = plan.execute().await;
 
         self.start_auto_heartbeat().await;
 
@@ -672,7 +670,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.buffer.lock(key).await;
         }
 
-        values
+        pairs
     }
 
     /// Checks if the transaction can perform arbitrary operations.

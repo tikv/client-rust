@@ -2,7 +2,9 @@
 
 use crate::{
     pd::PdClient,
-    request::{Collect, DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey},
+    request::{
+        Collect, DefaultProcessor, HasKeys, KvRequest, Merge, Process, Shardable, SingleKey,
+    },
     store::{store_stream_for_keys, store_stream_for_range_by_start_key, Store},
     timestamp::TimestampExt,
     transaction::HasLocks,
@@ -356,6 +358,15 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
         self.set_context(store.region.context()?);
         self.set_mutations(shard);
         Ok(())
+    }
+}
+
+impl HasKeys for kvrpcpb::PessimisticLockRequest {
+    fn get_keys(&self) -> Vec<Key> {
+        self.mutations
+            .iter()
+            .map(|m| m.key.clone().into())
+            .collect()
     }
 }
 
