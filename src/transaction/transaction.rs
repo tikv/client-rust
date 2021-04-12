@@ -116,6 +116,17 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     /// Create a `get for udpate` request.
+    /// It has different behaviors in optimistic and pessimistic transactions.
+    ///
+    /// # Optimistic transaction
+    /// Once resolved this request will retrieve the value just like a normal `get` request,
+    /// and "locks" the key. This lock will not affect other (concurrent) transactions, but will
+    /// prevent the current transaction from successfully committing if there is another write
+    /// containing the "locked" key which is committed between the start and commit of the current transaction.
+    ///
+    /// The value is read from the `start timestamp`, thus it is cached in the local buffer.
+    ///
+    /// # Pessimistic transaction
     /// Once resolved this request will pessimistically lock and fetch the latest
     /// value associated with the given key at **current timestamp**.
     ///
@@ -126,8 +137,6 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// and the value is not cached in the local buffer.
     /// So normal `get`-like commands after `get_for_update` will not be influenced, they still read values at `start_ts`.
     ///
-    ///
-    /// It can only be used in pessimistic mode.
     ///
     /// # Examples
     /// ```rust,no_run
@@ -146,7 +155,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         self.check_allow_operation().await?;
         if !self.is_pessimistic() {
-            Err(Error::InvalidTransactionType)
+            let key = key.into();
+            self.lock_keys(iter::once(key.clone())).await?;
+            self.get(key).await
         } else {
             let mut pairs = self.pessimistic_lock(iter::once(key.into()), true).await?;
             debug_assert!(pairs.len() <= 1);
@@ -227,7 +238,17 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     /// Create a new 'batch get for update' request.
+    /// It has different behaviors in optimistic and pessimistic transactions.
     ///
+    /// # Optimistic transaction
+    /// Once resolved this request will retrieve the values just like a normal `batch_get` request,
+    /// and "locks" the keys. The locks will not affect other (concurrent) transactions, but will
+    /// prevent the current transaction from successfully committing if there is any other write
+    /// containing a "locked" key which is committed between the start and commit of the current transaction.
+    ///
+    /// The values are read from the `start timestamp`, thus they are cached in the local buffer.
+    ///
+    /// # Pessimistic transaction
     /// Once resolved this request will pessimistically lock the keys and
     /// fetch the values associated with the given keys.
     ///
@@ -238,23 +259,20 @@ impl<PdC: PdClient> Transaction<PdC> {
     ///
     /// Non-existent entries will not appear in the result. The order of the keys is not retained in the result.
     ///
-    /// It can only be used in pessimistic mode.
     ///
     /// # Examples
     /// ```rust,no_run
-    /// # use tikv_client::{Key, Value, Config, TransactionClient};
+    /// # use tikv_client::{Key, Value, Config, TransactionClient, KvPair};
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
-    /// let result: HashMap<Key, Value> = txn
+    /// let result: Vec<KvPair> = txn
     ///     .batch_get_for_update(keys)
     ///     .await
-    ///     .unwrap()
-    ///     .map(|pair| (pair.0, pair.1))
-    ///     .collect();
+    ///     .unwrap();
     /// // now "TiKV" and "TiDB" are both locked
     /// // Finish the transaction...
     /// txn.commit().await.unwrap();
@@ -263,13 +281,15 @@ impl<PdC: PdClient> Transaction<PdC> {
     pub async fn batch_get_for_update(
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
-    ) -> Result<impl Iterator<Item = KvPair>> {
+    ) -> Result<Vec<KvPair>> {
         self.check_allow_operation().await?;
+        let keys: Vec<Key> = keys.into_iter().map(|k| k.into()).collect();
         if !self.is_pessimistic() {
-            return Err(Error::InvalidTransactionType);
+            self.lock_keys(keys.clone()).await?;
+            Ok(self.batch_get(keys).await?.collect())
+        } else {
+            self.pessimistic_lock(keys, true).await
         }
-        let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
-        Ok(self.pessimistic_lock(keys, true).await?.into_iter())
     }
 
     /// Create a new 'scan' request.
@@ -470,8 +490,8 @@ impl<PdC: PdClient> Transaction<PdC> {
                 }
             }
             TransactionKind::Pessimistic(_) => {
-                self.pessimistic_lock(keys.into_iter().map(|k| k.into()), false)
-                    .await?;
+                let keys: Vec<Key> = keys.into_iter().map(|k| k.into()).collect();
+                self.pessimistic_lock(keys.into_iter(), false).await?;
             }
         }
         Ok(())

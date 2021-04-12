@@ -305,10 +305,7 @@ async fn txn_write_million() -> Result<()> {
     let res = txn.batch_get(keys.clone()).await?.collect::<Vec<_>>();
     assert_eq!(res.len(), keys.len());
 
-    let res = txn
-        .batch_get_for_update(keys.clone())
-        .await?
-        .collect::<Vec<_>>();
+    let res = txn.batch_get_for_update(keys.clone()).await?;
     assert_eq!(res.len(), keys.len());
 
     txn.commit().await?;
@@ -643,7 +640,8 @@ async fn get_for_update() -> Result<()> {
 
     let mut t1 = client.begin_pessimistic().await?;
     let mut t2 = client.begin_pessimistic().await?;
-
+    let mut t3 = client.begin_optimistic().await?;
+    let mut t4 = client.begin_optimistic().await?;
     let mut t0 = client.begin_pessimistic().await?;
     t0.put(key1.clone(), value1).await?;
     t0.put(key2.clone(), value2).await?;
@@ -657,11 +655,18 @@ async fn get_for_update() -> Result<()> {
     let res: HashMap<_, _> = t2
         .batch_get_for_update(keys.clone())
         .await?
+        .into_iter()
         .map(From::from)
         .collect();
     t2.commit().await?;
-    assert!(res.get(&key1.into()).unwrap() == &value1);
+    assert!(res.get(&key1.clone().into()).unwrap() == &value1);
     assert!(res.get(&key2.into()).unwrap() == &value2);
+
+    assert!(t3.get_for_update(key1).await?.is_none());
+    assert!(t3.commit().await.is_err());
+
+    assert!(t4.batch_get_for_update(keys).await?.len() == 0);
+    assert!(t4.commit().await.is_err());
 
     Ok(())
 }
