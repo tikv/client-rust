@@ -748,6 +748,52 @@ async fn pessimistic_heartbeat() -> Result<()> {
 
     Ok(())
 }
+
+// It tests very basic functionality of atomic operations (put, cas, delete).
+#[tokio::test]
+#[serial]
+async fn raw_cas() -> Result<()> {
+    clear_tikv().await;
+    let client = RawClient::new(pd_addrs()).await?;
+    let key = "key".to_owned();
+    let value = "value".to_owned();
+    let new_value = "new value".to_owned();
+
+    client.atomic_put(key.clone(), value.clone()).await?;
+    assert_eq!(
+        client.get(key.clone()).await?.unwrap(),
+        value.clone().as_bytes()
+    );
+
+    client
+        .atomic_compare_and_swap(
+            key.clone(),
+            Some("another_value".to_owned()).map(|v| v.into()),
+            new_value.clone(),
+        )
+        .await?;
+    assert_ne!(
+        client.get(key.clone()).await?.unwrap(),
+        new_value.clone().as_bytes()
+    );
+
+    client
+        .atomic_compare_and_swap(
+            key.clone(),
+            Some(value.to_owned()).map(|v| v.into()),
+            new_value.clone(),
+        )
+        .await?;
+    assert_eq!(
+        client.get(key.clone()).await?.unwrap(),
+        new_value.clone().as_bytes()
+    );
+
+    client.atomic_delete(key.clone()).await?;
+    assert!(client.get(key.clone()).await?.is_none());
+    Ok(())
+}
+
 // helper function
 async fn get_u32(client: &RawClient, key: Vec<u8>) -> Result<u32> {
     let x = client.get(key).await?.unwrap();

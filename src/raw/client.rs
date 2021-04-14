@@ -449,10 +449,15 @@ impl Client {
     pub async fn atomic_compare_and_swap(
         &self,
         key: impl Into<Key>,
-        previous_value: Option<Value>,
-        new_value: Value,
+        previous_value: impl Into<Option<Value>>,
+        new_value: impl Into<Value>,
     ) -> Result<(Option<Value>, bool)> {
-        let req = new_cas_request(key.into(), new_value, previous_value, self.cf.clone());
+        let req = new_cas_request(
+            key.into(),
+            new_value.into(),
+            previous_value.into(),
+            self.cf.clone(),
+        );
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), req)
             .single_region()
             .await?
