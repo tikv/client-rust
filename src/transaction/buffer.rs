@@ -27,7 +27,7 @@ impl InnerBuffer {
         self.entry_map.insert(key, entry);
     }
 
-    pub fn get_primary_key_or(&mut self, key: &Key) -> &Key {
+    pub fn get_primary_key_or_insert(&mut self, key: &Key) -> &Key {
         self.primary_key.get_or_insert(key.clone())
     }
 }
@@ -50,8 +50,12 @@ impl Buffer {
     }
 
     /// Get the primary key of the buffer, if not exists, use `key` as the primary key.
-    pub async fn get_primary_key_or(&self, key: &Key) -> Key {
-        self.inner.lock().await.get_primary_key_or(key).clone()
+    pub async fn get_primary_key_or_insert(&self, key: &Key) -> Key {
+        self.inner
+            .lock()
+            .await
+            .get_primary_key_or_insert(key)
+            .clone()
     }
 
     /// Get a value from the buffer.
