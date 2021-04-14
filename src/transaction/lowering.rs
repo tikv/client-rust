@@ -106,8 +106,34 @@ pub fn new_pessimistic_rollback_request(
     )
 }
 
+pub trait PessimisticLock: Clone {
+    fn key(self) -> Key;
+
+    fn assertion(&self) -> kvrpcpb::Assertion;
+}
+
+impl PessimisticLock for Key {
+    fn key(self) -> Key {
+        self
+    }
+
+    fn assertion(&self) -> kvrpcpb::Assertion {
+        kvrpcpb::Assertion::None
+    }
+}
+
+impl PessimisticLock for (Key, kvrpcpb::Assertion) {
+    fn key(self) -> Key {
+        self.0
+    }
+
+    fn assertion(&self) -> kvrpcpb::Assertion {
+        self.1
+    }
+}
+
 pub fn new_pessimistic_lock_request(
-    keys: impl Iterator<Item = Key>,
+    locks: impl Iterator<Item = impl PessimisticLock>,
     primary_lock: Key,
     start_version: Timestamp,
     lock_ttl: u64,
@@ -115,13 +141,15 @@ pub fn new_pessimistic_lock_request(
     need_value: bool,
 ) -> kvrpcpb::PessimisticLockRequest {
     requests::new_pessimistic_lock_request(
-        keys.map(|key| {
-            let mut mutation = kvrpcpb::Mutation::default();
-            mutation.set_op(kvrpcpb::Op::PessimisticLock);
-            mutation.set_key(key.into());
-            mutation
-        })
-        .collect(),
+        locks
+            .map(|pl| {
+                let mut mutation = kvrpcpb::Mutation::default();
+                mutation.set_op(kvrpcpb::Op::PessimisticLock);
+                mutation.set_assertion(pl.assertion());
+                mutation.set_key(pl.key().into());
+                mutation
+            })
+            .collect(),
         primary_lock.into(),
         start_version.version(),
         lock_ttl,

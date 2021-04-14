@@ -595,6 +595,49 @@ async fn pessimistic_rollback() -> Result<()> {
 
 #[tokio::test]
 #[serial]
+async fn pessimistic_delete() -> Result<()> {
+    clear_tikv().await;
+    let client =
+        TransactionClient::new_with_config(vec!["127.0.0.1:2379"], Default::default()).await?;
+
+    // The transaction will lock the keys and must release the locks on commit, even when values are
+    // not written to the DB.
+    let mut txn = client.begin_pessimistic().await?;
+    txn.put(vec![1], vec![42]).await?;
+    txn.delete(vec![1]).await?;
+    txn.insert(vec![2], vec![42]).await?;
+    txn.delete(vec![2]).await?;
+    txn.put(vec![3], vec![42]).await?;
+    txn.commit().await?;
+
+    // Check that the keys are not locked.
+    let mut txn2 = client.begin_optimistic().await?;
+    txn2.put(vec![1], vec![42]).await?;
+    txn2.put(vec![2], vec![42]).await?;
+    txn2.put(vec![3], vec![42]).await?;
+    txn2.commit().await?;
+
+    // As before, but rollback instead of commit.
+    let mut txn = client.begin_pessimistic().await?;
+    txn.put(vec![1], vec![42]).await?;
+    txn.delete(vec![1]).await?;
+    txn.delete(vec![2]).await?;
+    txn.insert(vec![2], vec![42]).await?;
+    txn.delete(vec![2]).await?;
+    txn.put(vec![3], vec![42]).await?;
+    txn.rollback().await?;
+
+    let mut txn2 = client.begin_optimistic().await?;
+    txn2.put(vec![1], vec![42]).await?;
+    txn2.put(vec![2], vec![42]).await?;
+    txn2.put(vec![3], vec![42]).await?;
+    txn2.commit().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
 async fn lock_keys() -> Result<()> {
     clear_tikv().await;
     let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;

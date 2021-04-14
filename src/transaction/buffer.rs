@@ -1,17 +1,21 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{BoundRange, Key, KvPair, Result, Value};
+use derive_new::new;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{btree_map::Entry, BTreeMap, HashMap},
     future::Future,
 };
 use tikv_client_proto::kvrpcpb;
 use tokio::sync::{Mutex, MutexGuard};
 
-#[derive(Default)]
+#[derive(new)]
 struct InnerBuffer {
+    #[new(default)]
     primary_key: Option<Key>,
+    #[new(default)]
     entry_map: BTreeMap<Key, BufferEntry>,
+    is_pessimistic: bool,
 }
 
 impl InnerBuffer {
@@ -29,16 +33,22 @@ impl InnerBuffer {
 }
 
 /// A caching layer which buffers reads and writes in a transaction.
-#[derive(Default)]
 pub struct Buffer {
     mutations: Mutex<InnerBuffer>,
 }
 
 impl Buffer {
+    pub fn new(is_pessimistic: bool) -> Buffer {
+        Buffer {
+            mutations: Mutex::new(InnerBuffer::new(is_pessimistic)),
+        }
+    }
+
     /// Get the primary key of the buffer.
     pub async fn get_primary_key(&self) -> Option<Key> {
         self.mutations.lock().await.primary_key.clone()
     }
+
     /// Get the primary key of the buffer, if not exists, use `key` as the primary key.
     pub async fn get_primary_key_or(&self, key: &Key) -> Key {
         self.mutations.lock().await.get_primary_key_or(key).clone()
@@ -203,28 +213,30 @@ impl Buffer {
 
     /// Mark a value as Insert mutation into the buffer (does not write through).
     pub async fn insert(&self, key: Key, value: Value) {
-        self.mutations
-            .lock()
-            .await
-            .insert(key, BufferEntry::Insert(value));
+        let mut mutations = self.mutations.lock().await;
+        let mut entry = mutations.entry_map.entry(key.clone());
+        match entry {
+            Entry::Occupied(ref mut o) if matches!(o.get(), BufferEntry::Del) => {
+                o.insert(BufferEntry::Put(value));
+            }
+            _ => mutations.insert(key, BufferEntry::Insert(value)),
+        }
     }
 
     /// Mark a value as deleted.
     pub async fn delete(&self, key: Key) {
         let mut mutations = self.mutations.lock().await;
-        let value = mutations
-            .entry_map
-            .entry(key.clone())
-            .or_insert(BufferEntry::Del);
+        let is_pessimistic = mutations.is_pessimistic;
+        let mut entry = mutations.entry_map.entry(key.clone());
 
-        let new_value: BufferEntry;
-        if let BufferEntry::Insert(_) = value {
-            new_value = BufferEntry::CheckNotExist
-        } else {
-            new_value = BufferEntry::Del
+        match entry {
+            Entry::Occupied(ref mut o)
+                if matches!(o.get(), BufferEntry::Insert(_)) && !is_pessimistic =>
+            {
+                o.insert(BufferEntry::CheckNotExist);
+            }
+            _ => mutations.insert(key, BufferEntry::Del),
         }
-
-        mutations.insert(key, new_value);
     }
 
     /// Converts the buffered mutations to the proto buffer version
@@ -378,7 +390,7 @@ mod tests {
     #[tokio::test]
     #[allow(unreachable_code)]
     async fn set_and_get_from_buffer() {
-        let buffer = Buffer::default();
+        let buffer = Buffer::new(false);
         buffer
             .put(b"key1".to_vec().into(), b"value1".to_vec())
             .await;
@@ -411,7 +423,7 @@ mod tests {
     #[tokio::test]
     #[allow(unreachable_code)]
     async fn insert_and_get_from_buffer() {
-        let buffer = Buffer::default();
+        let buffer = Buffer::new(false);
         buffer
             .insert(b"key1".to_vec().into(), b"value1".to_vec())
             .await;
@@ -453,13 +465,13 @@ mod tests {
         let v2: Value = b"value2".to_vec();
         let v2_ = v2.clone();
 
-        let buffer = Buffer::default();
+        let buffer = Buffer::new(false);
         let r1 = block_on(buffer.get_or_else(k1.clone(), move |_| ready(Ok(Some(v1_)))));
         let r2 = block_on(buffer.get_or_else(k1.clone(), move |_| ready(panic!())));
         assert_eq!(r1.unwrap().unwrap(), v1);
         assert_eq!(r2.unwrap().unwrap(), v1);
 
-        let buffer = Buffer::default();
+        let buffer = Buffer::new(false);
         let r1 = block_on(
             buffer.batch_get_or_else(vec![k1.clone(), k2.clone()].into_iter(), move |_| {
                 ready(Ok(vec![(k1_, v1__).into(), (k2_, v2_).into()]))
