@@ -2,6 +2,7 @@ syntax = "proto3";
 package tikvpb;
 
 import "coprocessor.proto";
+import "coprocessor_v2.proto";
 import "kvrpcpb.proto";
 import "mpp.proto";
 import "raft_serverpb.proto";
@@ -68,6 +69,9 @@ service Tikv {
     rpc Coprocessor(coprocessor.Request) returns (coprocessor.Response) {}
     rpc CoprocessorStream(coprocessor.Request)  returns (stream coprocessor.Response) {}
     rpc BatchCoprocessor(coprocessor.BatchRequest) returns (stream coprocessor.BatchResponse) {}
+
+    // Command for executing custom user requests in TiKV coprocessor_v2.
+    rpc CoprocessorV2(coprocessor_v2.RawCoprocessorRequest) returns (coprocessor_v2.RawCoprocessorResponse) {}
 
     // Raft commands (sent between TiKV nodes).
     rpc Raft(stream raft_serverpb.RaftMessage) returns (raft_serverpb.Done) {}
@@ -144,6 +148,8 @@ message BatchCommandsRequest {
 
             kvrpcpb.CheckSecondaryLocksRequest CheckSecondaryLocks = 33;
 
+            coprocessor_v2.RawCoprocessorRequest CoprocessorV2 = 34;
+
             // For some test cases.
             BatchCommandsEmptyRequest Empty = 255;
         }
@@ -196,6 +202,8 @@ message BatchCommandsResponse {
             kvrpcpb.VerDeleteRangeResponse VerDeleteRange = 32;
 
             kvrpcpb.CheckSecondaryLocksResponse CheckSecondaryLocks = 33;
+
+            coprocessor_v2.RawCoprocessorResponse CoprocessorV2 = 34;
 
             // For some test cases.
             BatchCommandsEmptyResponse Empty = 255;
