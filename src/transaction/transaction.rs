@@ -66,7 +66,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         Transaction {
             status: Arc::new(RwLock::new(status)),
             timestamp,
-            buffer: Default::default(),
+            buffer: Buffer::new(options.is_pessimistic()),
             rpc,
             options,
             is_heartbeat_started: false,
@@ -401,8 +401,11 @@ impl<PdC: PdClient> Transaction<PdC> {
             return Err(Error::DuplicateKeyInsertion);
         }
         if self.is_pessimistic() {
-            self.pessimistic_lock(iter::once(key.clone()), false)
-                .await?;
+            self.pessimistic_lock(
+                iter::once((key.clone(), kvrpcpb::Assertion::NotExist)),
+                false,
+            )
+            .await?;
         }
         self.buffer.insert(key, value.into()).await;
         Ok(())
@@ -630,7 +633,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Only valid for pessimistic transactions, panics if called on an optimistic transaction.
     async fn pessimistic_lock(
         &mut self,
-        keys: impl IntoIterator<Item = Key>,
+        keys: impl IntoIterator<Item = impl PessimisticLock>,
         need_value: bool,
     ) -> Result<Vec<KvPair>> {
         assert!(
@@ -638,12 +641,12 @@ impl<PdC: PdClient> Transaction<PdC> {
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
         );
 
-        let keys: Vec<Key> = keys.into_iter().collect();
+        let keys: Vec<_> = keys.into_iter().collect();
         if keys.is_empty() {
             return Ok(vec![]);
         }
 
-        let first_key = keys[0].clone();
+        let first_key = keys[0].clone().key();
         // we do not set the primary key here, because pessimistic lock request
         // can fail, in which case the keys may not be part of the transaction.
         let primary_lock = self
@@ -676,7 +679,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.start_auto_heartbeat().await;
 
         for key in keys {
-            self.buffer.lock(key).await;
+            self.buffer.lock(key.key()).await;
         }
 
         pairs
@@ -899,6 +902,13 @@ impl TransactionOptions {
     pub fn no_auto_hearbeat(mut self) -> TransactionOptions {
         self.auto_heartbeat = false;
         self
+    }
+
+    pub fn is_pessimistic(&self) -> bool {
+        match self.kind {
+            TransactionKind::Pessimistic(_) => true,
+            TransactionKind::Optimistic => false,
+        }
     }
 }
 
