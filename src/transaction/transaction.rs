@@ -541,7 +541,9 @@ impl<PdC: PdClient> Transaction<PdC> {
             let status = self.status.read().await;
             if !matches!(
                 *status,
-                TransactionStatus::StartedRollback | TransactionStatus::Active
+                TransactionStatus::StartedRollback
+                    | TransactionStatus::Active
+                    | TransactionStatus::StartedCommit
             ) {
                 return Err(Error::OperationAfterCommitError);
             }
