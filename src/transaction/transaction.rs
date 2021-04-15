@@ -674,7 +674,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let pairs = plan.execute().await;
 
         // primary key will be set here if needed
-        self.buffer.get_primary_key_or_insert(&first_key).await;
+        self.buffer.primary_key_or(&first_key).await;
 
         self.start_auto_heartbeat().await;
 
