@@ -2,6 +2,7 @@ syntax = "proto3";
 package tikvpb;
 
 import "coprocessor.proto";
+import "coprocessor_v2.proto";
 import "kvrpcpb.proto";
 import "mpp.proto";
 import "raft_serverpb.proto";
@@ -69,6 +70,9 @@ service Tikv {
     rpc CoprocessorStream(coprocessor.Request)  returns (stream coprocessor.Response) {}
     rpc BatchCoprocessor(coprocessor.BatchRequest) returns (stream coprocessor.BatchResponse) {}
 
+    // Command for executing custom user requests in TiKV coprocessor_v2.
+    rpc CoprocessorV2(coprocessor_v2.RawCoprocessorRequest) returns (coprocessor_v2.RawCoprocessorResponse) {}
+
     // Raft commands (sent between TiKV nodes).
     rpc Raft(stream raft_serverpb.RaftMessage) returns (raft_serverpb.Done) {}
     rpc BatchRaft(stream BatchRaftMessage) returns (raft_serverpb.Done) {}
@@ -92,7 +96,7 @@ service Tikv {
     rpc EstablishMPPConnection(mpp.EstablishMPPConnectionRequest) returns (stream mpp.MPPDataPacket) {}
 
     /// CheckLeader sends all information (includes region term and epoch) to other stores.
-    /// Once a store receives a request, it checks term and epoch for each region, and sends the regions whose 
+    /// Once a store receives a request, it checks term and epoch for each region, and sends the regions whose
     /// term and epoch match with local information in the store.
     /// After the client collected all responses from all stores, it checks if got a quorum of responses from
     /// other stores for every region, and decides to advance resolved ts from these regions.
@@ -143,6 +147,8 @@ message BatchCommandsRequest {
             kvrpcpb.VerDeleteRangeRequest VerDeleteRange = 32;
 
             kvrpcpb.CheckSecondaryLocksRequest CheckSecondaryLocks = 33;
+
+            coprocessor_v2.RawCoprocessorRequest CoprocessorV2 = 34;
 
             // For some test cases.
             BatchCommandsEmptyRequest Empty = 255;
@@ -196,6 +202,8 @@ message BatchCommandsResponse {
             kvrpcpb.VerDeleteRangeResponse VerDeleteRange = 32;
 
             kvrpcpb.CheckSecondaryLocksResponse CheckSecondaryLocks = 33;
+
+            coprocessor_v2.RawCoprocessorResponse CoprocessorV2 = 34;
 
             // For some test cases.
             BatchCommandsEmptyResponse Empty = 255;
