@@ -116,27 +116,30 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     /// Create a `get for udpate` request.
-    /// It has different behaviors in optimistic and pessimistic transactions.
+    ///
+    /// The request reads and "locks" a key. It is similar to `SELECT ... FOR
+    /// UPDATE` in TiDB, and has different behavior in optimistic and
+    /// pessimistic transactions.
     ///
     /// # Optimistic transaction
-    /// Once resolved this request will retrieve the value just like a normal `get` request,
-    /// and "locks" the key. This lock will not affect other (concurrent) transactions, but will
-    /// prevent the current transaction from successfully committing if there is another write
-    /// containing the "locked" key which is committed between the start and commit of the current transaction.
     ///
-    /// The value is read from the `start timestamp`, thus it is cached in the local buffer.
+    /// It reads at the "start timestamp" and caches the value, just like normal
+    /// get requests. The lock is written in prewrite and commit, so it cannot
+    /// prevent concurrent transactions from writing the same key, but can only
+    /// prevent itself from committing.
     ///
     /// # Pessimistic transaction
-    /// Once resolved this request will pessimistically lock and fetch the latest
-    /// value associated with the given key at **current timestamp**.
     ///
-    /// The "current timestamp" (also called `for_update_ts` of the request) is fetched immediately from PD.
+    /// It reads at the "current timestamp" and thus does not cache the value.
+    /// So following read requests won't be affected by the `get_for_udpate`.
+    /// A lock will be acquired immediately with this request, which prevents
+    /// concurrent transactions from mutating the keys.
     ///
-    /// Note: The behavior of this command does not follow snapshot isolation. It is similar to `select for update` in TiDB,
-    /// which is similar to that in MySQL. It reads the latest value (using current timestamp),
-    /// and the value is not cached in the local buffer.
-    /// So normal `get`-like commands after `get_for_update` will not be influenced, they still read values at `start_ts`.
+    /// The "current timestamp" (also called `for_update_ts` of the request) is
+    /// fetched immediately from the timestamp oracle.
     ///
+    /// Note: The behavior of the request under pessimistic transaction does not
+    /// follow snapshot isolation.
     ///
     /// # Examples
     /// ```rust,no_run
@@ -238,27 +241,12 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     /// Create a new 'batch get for update' request.
-    /// It has different behaviors in optimistic and pessimistic transactions.
     ///
-    /// # Optimistic transaction
-    /// Once resolved this request will retrieve the values just like a normal `batch_get` request,
-    /// and "locks" the keys. The locks will not affect other (concurrent) transactions, but will
-    /// prevent the current transaction from successfully committing if there is any other write
-    /// containing a "locked" key which is committed between the start and commit of the current transaction.
+    /// Similar [`get_for_update`](Transaction::get_for_update), but it works
+    /// for a batch of keys.
     ///
-    /// The values are read from the `start timestamp`, thus they are cached in the local buffer.
-    ///
-    /// # Pessimistic transaction
-    /// Once resolved this request will pessimistically lock the keys and
-    /// fetch the values associated with the given keys.
-    ///
-    /// Note: The behavior of this command does not follow snapshot isolation. It is similar to `select for update` in TiDB,
-    /// which is similar to that in MySQL. It reads the latest value (using current timestamp),
-    /// and the value is not cached in the local buffer.
-    /// So normal `get`-like commands after `batch_get_for_update` will not be influenced, they still read values at `start_ts`.
-    ///
-    /// Non-existent entries will not appear in the result. The order of the keys is not retained in the result.
-    ///
+    /// Non-existent entries will not appear in the result. The order of the
+    /// keys is not retained in the result.
     ///
     /// # Examples
     /// ```rust,no_run
