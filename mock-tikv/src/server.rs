@@ -513,4 +513,13 @@ impl Tikv for MockTikv {
     ) {
         todo!()
     }
+
+    fn coprocessor_v2(
+        &mut self,
+        _: grpcio::RpcContext,
+        _: tikv_client_proto::coprocessor_v2::RawCoprocessorRequest,
+        _: grpcio::UnarySink<tikv_client_proto::coprocessor_v2::RawCoprocessorResponse>,
+    ) {
+        todo!()
+    }
 }

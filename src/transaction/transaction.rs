@@ -549,7 +549,9 @@ impl<PdC: PdClient> Transaction<PdC> {
             let status = self.status.read().await;
             if !matches!(
                 *status,
-                TransactionStatus::StartedRollback | TransactionStatus::Active
+                TransactionStatus::StartedRollback
+                    | TransactionStatus::Active
+                    | TransactionStatus::StartedCommit
             ) {
                 return Err(Error::OperationAfterCommitError);
             }
@@ -655,7 +657,13 @@ impl<PdC: PdClient> Transaction<PdC> {
         }
 
         let first_key = keys[0].clone().key();
-        let primary_lock = self.buffer.get_primary_key_or(&first_key).await;
+        // we do not set the primary key here, because pessimistic lock request
+        // can fail, in which case the keys may not be part of the transaction.
+        let primary_lock = self
+            .buffer
+            .get_primary_key()
+            .await
+            .unwrap_or_else(|| first_key.clone());
         let for_update_ts = self.rpc.clone().get_timestamp().await?;
         self.options.push_for_update_ts(for_update_ts.clone());
         let request = new_pessimistic_lock_request(
@@ -674,6 +682,9 @@ impl<PdC: PdClient> Transaction<PdC> {
             .merge(CollectAndMatchKey)
             .plan();
         let pairs = plan.execute().await;
+
+        // primary key will be set here if needed
+        self.buffer.primary_key_or(&first_key).await;
 
         self.start_auto_heartbeat().await;
 
