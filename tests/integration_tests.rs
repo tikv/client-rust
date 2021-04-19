@@ -1,7 +1,21 @@
 #![cfg(feature = "integration-tests")]
 
+//! # Naming convention
+//!
+//! Test names should begin with one of the following:
+//! 1. txn_
+//! 2. raw_
+//! 3. misc_
+//!
+//! If in the future Rust supports filter test by regex, we can remove the misc_ category.
+//!
+//! We make use of the convention to control the order of tests in CI, to force
+//! some intialization (e.g. region split), and to allow transactional and raw
+//! tests to coexist, since transactional requests have requirements on the
+//! region boundaries.
+
 mod common;
-use common::{clear_tikv, pd_addrs};
+use common::{init, pd_addrs};
 use futures::prelude::*;
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 use serial_test::serial;
@@ -19,7 +33,8 @@ const NUM_PEOPLE: u32 = 100;
 const NUM_TRNASFER: u32 = 100;
 
 #[tokio::test]
-async fn get_timestamp() -> Result<()> {
+#[serial]
+async fn txn_get_timestamp() -> Result<()> {
     const COUNT: usize = 1 << 8; // use a small number to make test fast
     let client = TransactionClient::new(pd_addrs()).await?;
 
@@ -39,8 +54,8 @@ async fn get_timestamp() -> Result<()> {
 // Tests transactional get, put, delete, batch_get
 #[tokio::test]
 #[serial]
-async fn crud() -> Result<()> {
-    clear_tikv().await;
+async fn txn_crud() -> Result<()> {
+    init().await?;
 
     let client = TransactionClient::new(pd_addrs()).await?;
     let mut txn = client.begin_optimistic().await?;
@@ -123,8 +138,8 @@ async fn crud() -> Result<()> {
 // Tests transactional insert and delete-your-writes cases
 #[tokio::test]
 #[serial]
-async fn insert_duplicate_keys() -> Result<()> {
-    clear_tikv().await;
+async fn txn_insert_duplicate_keys() -> Result<()> {
+    init().await?;
 
     let client = TransactionClient::new(pd_addrs()).await?;
     // Initialize TiKV store with {foo => bar}
@@ -147,8 +162,8 @@ async fn insert_duplicate_keys() -> Result<()> {
 
 #[tokio::test]
 #[serial]
-async fn pessimistic() -> Result<()> {
-    clear_tikv().await;
+async fn txn_pessimistic() -> Result<()> {
+    init().await?;
 
     let client = TransactionClient::new(pd_addrs()).await?;
     let mut txn = client.begin_pessimistic().await?;
@@ -166,7 +181,7 @@ async fn pessimistic() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn raw_bank_transfer() -> Result<()> {
-    clear_tikv().await;
+    init().await?;
     let client = RawClient::new(pd_addrs()).await?;
     let mut rng = thread_rng();
 
@@ -211,19 +226,15 @@ async fn raw_bank_transfer() -> Result<()> {
 }
 
 /// Tests transactional API when there are multiple regions.
-/// Write large volumes of data to enforce region splitting.
-/// In order to test `scan`, data is uniformly inserted.
-// FIXME: this test is stupid. We should use pd-ctl or config files to make
-// multiple regions, instead of bulk writing.
 #[tokio::test]
 #[serial]
 async fn txn_write_million() -> Result<()> {
-    const NUM_BITS_TXN: u32 = 13;
+    const NUM_BITS_TXN: u32 = 4;
     const NUM_BITS_KEY_PER_TXN: u32 = 4;
     let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
     let value = "large_value".repeat(10);
 
-    clear_tikv().await;
+    init().await?;
     let client = TransactionClient::new(pd_addrs()).await?;
 
     for i in 0..2u32.pow(NUM_BITS_TXN) {
@@ -247,50 +258,49 @@ async fn txn_write_million() -> Result<()> {
         assert_eq!(res.count(), 2usize.pow(NUM_BITS_KEY_PER_TXN));
         txn.commit().await?;
     }
-    /* FIXME: scan all keys will make the message size exceed its limit
-       // test scan
-       let limit = 2u32.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN + 2); // large enough
-       let snapshot = client.snapshot(
-           client.current_timestamp().await?,
-           TransactionOptions::default(),
-       );
-       let res = snapshot.scan(vec![].., limit).await?;
-       assert_eq!(res.count(), 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));
+    // test scan
+    let limit = 2u32.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN + 2); // large enough
+    let mut snapshot = client.snapshot(
+        client.current_timestamp().await?,
+        TransactionOptions::default(),
+    );
+    let res = snapshot.scan(vec![].., limit).await?;
+    assert_eq!(res.count(), 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));
 
-       // scan by small range and combine them
-       let mut rng = thread_rng();
-       let mut keys = gen_u32_keys(200, &mut rng)
-           .iter()
-           .cloned()
-           .collect::<Vec<_>>();
-       keys.sort();
+    // scan by small range and combine them
+    let mut rng = thread_rng();
+    let mut keys = gen_u32_keys(200, &mut rng)
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    keys.sort();
 
-       let mut sum = 0;
+    let mut sum = 0;
 
-       // empty key to key[0]
-       let snapshot = client.snapshot(
-           client.current_timestamp().await?,
-           TransactionOptions::default(),
-       );
-       let res = snapshot.scan(vec![]..keys[0].clone(), limit).await?;
-       sum += res.count();
+    // empty key to key[0]
+    let mut snapshot = client.snapshot(
+        client.current_timestamp().await?,
+        TransactionOptions::default(),
+    );
+    let res = snapshot.scan(vec![]..keys[0].clone(), limit).await?;
+    sum += res.count();
 
-       // key[i] .. key[i+1]
-       for i in 0..keys.len() - 1 {
-           let res = snapshot
-               .scan(keys[i].clone()..keys[i + 1].clone(), limit)
-               .await?;
-           sum += res.count();
-       }
+    // key[i] .. key[i+1]
+    for i in 0..keys.len() - 1 {
+        let res = snapshot
+            .scan(keys[i].clone()..keys[i + 1].clone(), limit)
+            .await?;
+        sum += res.count();
+    }
 
-       // keys[last] to unbounded
-       let res = snapshot.scan(keys[keys.len() - 1].clone().., limit).await?;
-       sum += res.count();
+    // keys[last] to unbounded
+    let res = snapshot.scan(keys[keys.len() - 1].clone().., limit).await?;
+    sum += res.count();
 
-       assert_eq!(sum, 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));
-    */
+    assert_eq!(sum, 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));
+
     // test batch_get and batch_get_for_update
-    const SKIP_BITS: u32 = 12; // do not retrieve all because there's a limit of message size
+    const SKIP_BITS: u32 = 0; // do not retrieve all because there's a limit of message size
     let mut cur = 0u32;
     let keys = iter::repeat_with(|| {
         let v = cur;
@@ -315,7 +325,7 @@ async fn txn_write_million() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn txn_bank_transfer() -> Result<()> {
-    clear_tikv().await;
+    init().await?;
     let client = TransactionClient::new(pd_addrs()).await?;
     let mut rng = thread_rng();
 
@@ -369,7 +379,7 @@ async fn txn_bank_transfer() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn raw_req() -> Result<()> {
-    clear_tikv().await;
+    init().await?;
     let client = RawClient::new(pd_addrs()).await?;
 
     // empty; get non-existent key
@@ -498,8 +508,8 @@ async fn raw_req() -> Result<()> {
 /// Only checks if we successfully update safepoint to PD.
 #[tokio::test]
 #[serial]
-async fn test_update_safepoint() -> Result<()> {
-    clear_tikv().await;
+async fn txn_update_safepoint() -> Result<()> {
+    init().await?;
     let client = TransactionClient::new(pd_addrs()).await?;
     let res = client.gc(client.current_timestamp().await?).await?;
     assert!(res);
@@ -515,11 +525,11 @@ async fn test_update_safepoint() -> Result<()> {
 #[serial]
 #[ignore]
 async fn raw_write_million() -> Result<()> {
-    const NUM_BITS_TXN: u32 = 9;
-    const NUM_BITS_KEY_PER_TXN: u32 = 10;
+    const NUM_BITS_TXN: u32 = 13;
+    const NUM_BITS_KEY_PER_TXN: u32 = 4;
     let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
 
-    clear_tikv().await;
+    init().await?;
     let client = RawClient::new(pd_addrs()).await?;
 
     for i in 0..2u32.pow(NUM_BITS_TXN) {
@@ -564,8 +574,8 @@ async fn raw_write_million() -> Result<()> {
 
 #[tokio::test]
 #[serial]
-async fn pessimistic_rollback() -> Result<()> {
-    clear_tikv().await;
+async fn txn_pessimistic_rollback() -> Result<()> {
+    init().await?;
     let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
     let mut preload_txn = client.begin_optimistic().await?;
     let key1 = vec![1];
@@ -595,8 +605,8 @@ async fn pessimistic_rollback() -> Result<()> {
 
 #[tokio::test]
 #[serial]
-async fn pessimistic_delete() -> Result<()> {
-    clear_tikv().await;
+async fn txn_pessimistic_delete() -> Result<()> {
+    init().await?;
     let client =
         TransactionClient::new_with_config(vec!["127.0.0.1:2379"], Default::default()).await?;
 
@@ -638,8 +648,8 @@ async fn pessimistic_delete() -> Result<()> {
 
 #[tokio::test]
 #[serial]
-async fn lock_keys() -> Result<()> {
-    clear_tikv().await;
+async fn txn_lock_keys() -> Result<()> {
+    init().await?;
     let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
 
     let k1 = b"key1".to_vec();
@@ -672,8 +682,8 @@ async fn lock_keys() -> Result<()> {
 
 #[tokio::test]
 #[serial]
-async fn get_for_update() -> Result<()> {
-    clear_tikv().await;
+async fn txn_get_for_update() -> Result<()> {
+    init().await?;
     let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
     let key1 = "key".to_owned();
     let key2 = "another key".to_owned();
@@ -716,8 +726,8 @@ async fn get_for_update() -> Result<()> {
 
 #[tokio::test]
 #[serial]
-async fn pessimistic_heartbeat() -> Result<()> {
-    clear_tikv().await;
+async fn txn_pessimistic_heartbeat() -> Result<()> {
+    init().await?;
 
     let key1 = "key1".to_owned();
     let key2 = "key2".to_owned();

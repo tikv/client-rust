@@ -1,0 +1,6 @@
+[coprocessor]
+region-max-keys = 5
+region-split-keys = 3
+
+[raftstore]
+region-split-check-diff = "0KB"
