@@ -7,8 +7,9 @@
 
 use crate::{
     pd::{PdClient, PdRpcClient, RetryClient},
+    region::{Region, RegionId},
     store::Store,
-    Config, Error, Key, Region, RegionId, Result, Timestamp,
+    Config, Error, Key, Result, Timestamp,
 };
 use async_trait::async_trait;
 use derive_new::new;
