@@ -62,24 +62,32 @@
 //!
 //! Raw mode:
 //!
-//! ```rust
-//! use tikv_client::RawClient;
-//!
+//! ```rust,no_run
+//! # use tikv_client::{RawClient, Result};
+//! # use futures::prelude::*;
+//! # fn main() -> Result<()> {
+//! # futures::executor::block_on(async {
 //! let client = RawClient::new(vec!["127.0.0.1:2379"]).await?;
 //! client.put("key".to_owned(), "value".to_owned()).await?;
 //! let value = client.get("key".to_owned()).await?;
+//! # Ok(())
+//! # })}
 //! ```
 //!
 //! Transactional mode:
 //!
-//! ```rust
-//! use tikv_client::TransactionClient;
-//!
+//! ```rust,no_run
+//! # use tikv_client::{TransactionClient, Result};
+//! # use futures::prelude::*;
+//! # fn main() -> Result<()> {
+//! # futures::executor::block_on(async {
 //! let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"]).await?;
 //! let mut txn = txn_client.begin_optimistic().await?;
 //! txn.put("key".to_owned(), "value".to_owned()).await?;
 //! let value = txn.get("key".to_owned()).await?;
 //! txn.commit().await?;
+//! # Ok(())
+//! # })}
 //! ```
 
 #[macro_use]
