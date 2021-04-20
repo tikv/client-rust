@@ -1,58 +1,36 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{BoundRange, Key, KvPair, Result, Value};
-use derive_new::new;
 use std::{
     collections::{btree_map::Entry, BTreeMap, HashMap},
     future::Future,
 };
 use tikv_client_proto::kvrpcpb;
-use tokio::sync::{Mutex, MutexGuard};
-
-#[derive(new)]
-struct InnerBuffer {
-    #[new(default)]
-    primary_key: Option<Key>,
-    #[new(default)]
-    entry_map: BTreeMap<Key, BufferEntry>,
-    is_pessimistic: bool,
-}
-
-impl InnerBuffer {
-    fn insert(&mut self, key: impl Into<Key>, entry: BufferEntry) {
-        let key = key.into();
-        if !matches!(entry, BufferEntry::Cached(_) | BufferEntry::CheckNotExist) {
-            self.primary_key.get_or_insert_with(|| key.clone());
-        }
-        self.entry_map.insert(key, entry);
-    }
-
-    /// Set the primary key if it is not set
-    pub fn primary_key_or(&mut self, key: &Key) {
-        self.primary_key.get_or_insert(key.clone());
-    }
-}
 
 /// A caching layer which buffers reads and writes in a transaction.
 pub struct Buffer {
-    inner: Mutex<InnerBuffer>,
+    primary_key: Option<Key>,
+    entry_map: BTreeMap<Key, BufferEntry>,
+    is_pessimistic: bool,
 }
 
 impl Buffer {
     pub fn new(is_pessimistic: bool) -> Buffer {
         Buffer {
-            inner: Mutex::new(InnerBuffer::new(is_pessimistic)),
+            primary_key: None,
+            entry_map: BTreeMap::new(),
+            is_pessimistic,
         }
     }
 
     /// Get the primary key of the buffer.
     pub async fn get_primary_key(&self) -> Option<Key> {
-        self.inner.lock().await.primary_key.clone()
+        self.primary_key.clone()
     }
 
     /// Set the primary key if it is not set
-    pub async fn primary_key_or(&self, key: &Key) {
-        self.inner.lock().await.primary_key_or(key);
+    pub async fn primary_key_or(&mut self, key: &Key) {
+        self.primary_key.get_or_insert_with(|| key.clone());
     }
 
     /// Get a value from the buffer.
@@ -66,7 +44,7 @@ impl Buffer {
 
     /// Get a value from the buffer. If the value is not present, run `f` to get
     /// the value.
-    pub async fn get_or_else<F, Fut>(&self, key: Key, f: F) -> Result<Option<Value>>
+    pub async fn get_or_else<F, Fut>(&mut self, key: Key, f: F) -> Result<Option<Value>>
     where
         F: FnOnce(Key) -> Fut,
         Fut: Future<Output = Result<Option<Value>>>,
@@ -75,8 +53,7 @@ impl Buffer {
             MutationValue::Determined(value) => Ok(value),
             MutationValue::Undetermined => {
                 let value = f(key.clone()).await?;
-                let mut mutations = self.inner.lock().await;
-                Self::update_cache(&mut mutations, key, value.clone());
+                self.update_cache(key, value.clone());
                 Ok(value)
             }
         }
@@ -87,7 +64,7 @@ impl Buffer {
     ///
     /// only used for snapshot read (i.e. not for `batch_get_for_update`)
     pub async fn batch_get_or_else<F, Fut>(
-        &self,
+        &mut self,
         keys: impl Iterator<Item = Key>,
         f: F,
     ) -> Result<impl Iterator<Item = KvPair>>
@@ -96,7 +73,6 @@ impl Buffer {
         Fut: Future<Output = Result<Vec<KvPair>>>,
     {
         let (cached_results, undetermined_keys) = {
-            let mutations = self.inner.lock().await;
             // Partition the keys into those we have buffered and those we have to
             // get from the store.
             let (undetermined_keys, cached_results): (
@@ -104,7 +80,7 @@ impl Buffer {
                 Vec<(Key, MutationValue)>,
             ) = keys
                 .map(|key| {
-                    let value = mutations
+                    let value = self
                         .entry_map
                         .get(&key)
                         .map(BufferEntry::get_value)
@@ -122,11 +98,10 @@ impl Buffer {
         };
 
         let fetched_results = f(Box::new(undetermined_keys)).await?;
-        let mut mutations = self.inner.lock().await;
         for kvpair in &fetched_results {
             let key = kvpair.0.clone();
             let value = Some(kvpair.1.clone());
-            Self::update_cache(&mut mutations, key, value);
+            self.update_cache(key, value);
         }
 
         let results = cached_results.chain(fetched_results.into_iter());
@@ -135,7 +110,7 @@ impl Buffer {
 
     /// Run `f` to fetch entries in `range` from TiKV. Combine them with mutations in local buffer. Returns the results.
     pub async fn scan_and_fetch<F, Fut>(
-        &self,
+        &mut self,
         range: BoundRange,
         limit: u32,
         f: F,
@@ -145,8 +120,7 @@ impl Buffer {
         Fut: Future<Output = Result<Vec<KvPair>>>,
     {
         // read from local buffer
-        let mut mutations = self.inner.lock().await;
-        let mutation_range = mutations.entry_map.range(range.clone());
+        let mutation_range = self.entry_map.range(range.clone());
 
         // fetch from TiKV
         // fetch more entries because some of them may be deleted.
@@ -177,7 +151,7 @@ impl Buffer {
 
         // update local buffer
         for (k, v) in &results {
-            Self::update_cache(&mut mutations, k.clone(), Some(v.clone()));
+            self.update_cache(k.clone(), Some(v.clone()));
         }
 
         let mut res = results
@@ -190,10 +164,9 @@ impl Buffer {
     }
 
     /// Lock the given key if necessary.
-    pub async fn lock(&self, key: Key) {
-        let mutations = &mut self.inner.lock().await;
-        mutations.primary_key.get_or_insert_with(|| key.clone());
-        let value = mutations
+    pub async fn lock(&mut self, key: Key) {
+        self.primary_key.get_or_insert_with(|| key.clone());
+        let value = self
             .entry_map
             .entry(key)
             // Mutated keys don't need a lock.
@@ -205,27 +178,25 @@ impl Buffer {
     }
 
     /// Insert a value into the buffer (does not write through).
-    pub async fn put(&self, key: Key, value: Value) {
-        self.inner.lock().await.insert(key, BufferEntry::Put(value));
+    pub async fn put(&mut self, key: Key, value: Value) {
+        self.insert_entry(key, BufferEntry::Put(value));
     }
 
     /// Mark a value as Insert mutation into the buffer (does not write through).
-    pub async fn insert(&self, key: Key, value: Value) {
-        let mut mutations = self.inner.lock().await;
-        let mut entry = mutations.entry_map.entry(key.clone());
+    pub async fn insert(&mut self, key: Key, value: Value) {
+        let mut entry = self.entry_map.entry(key.clone());
         match entry {
             Entry::Occupied(ref mut o) if matches!(o.get(), BufferEntry::Del) => {
                 o.insert(BufferEntry::Put(value));
             }
-            _ => mutations.insert(key, BufferEntry::Insert(value)),
+            _ => self.insert_entry(key, BufferEntry::Insert(value)),
         }
     }
 
     /// Mark a value as deleted.
-    pub async fn delete(&self, key: Key) {
-        let mut mutations = self.inner.lock().await;
-        let is_pessimistic = mutations.is_pessimistic;
-        let mut entry = mutations.entry_map.entry(key.clone());
+    pub async fn delete(&mut self, key: Key) {
+        let is_pessimistic = self.is_pessimistic;
+        let mut entry = self.entry_map.entry(key.clone());
 
         match entry {
             Entry::Occupied(ref mut o)
@@ -233,40 +204,32 @@ impl Buffer {
             {
                 o.insert(BufferEntry::CheckNotExist);
             }
-            _ => mutations.insert(key, BufferEntry::Del),
+            _ => self.insert_entry(key, BufferEntry::Del),
         }
     }
 
     /// Converts the buffered mutations to the proto buffer version
     pub async fn to_proto_mutations(&self) -> Vec<kvrpcpb::Mutation> {
-        self.inner
-            .lock()
-            .await
-            .entry_map
+        self.entry_map
             .iter()
             .filter_map(|(key, mutation)| mutation.to_proto_with_key(key))
             .collect()
     }
 
     async fn get_from_mutations(&self, key: &Key) -> MutationValue {
-        self.inner
-            .lock()
-            .await
-            .entry_map
+        self.entry_map
             .get(&key)
             .map(BufferEntry::get_value)
             .unwrap_or(MutationValue::Undetermined)
     }
 
-    fn update_cache(buffer: &mut MutexGuard<InnerBuffer>, key: Key, value: Option<Value>) {
-        match buffer.entry_map.get(&key) {
+    fn update_cache(&mut self, key: Key, value: Option<Value>) {
+        match self.entry_map.get(&key) {
             Some(BufferEntry::Locked(None)) => {
-                buffer
-                    .entry_map
-                    .insert(key, BufferEntry::Locked(Some(value)));
+                self.entry_map.insert(key, BufferEntry::Locked(Some(value)));
             }
             None => {
-                buffer.entry_map.insert(key, BufferEntry::Cached(value));
+                self.entry_map.insert(key, BufferEntry::Cached(value));
             }
             Some(BufferEntry::Cached(v)) | Some(BufferEntry::Locked(Some(v))) => {
                 assert!(&value == v);
@@ -284,6 +247,14 @@ impl Buffer {
                 assert!(value.is_none());
             }
         }
+    }
+
+    fn insert_entry(&mut self, key: impl Into<Key>, entry: BufferEntry) {
+        let key = key.into();
+        if !matches!(entry, BufferEntry::Cached(_) | BufferEntry::CheckNotExist) {
+            self.primary_key.get_or_insert_with(|| key.clone());
+        }
+        self.entry_map.insert(key, entry);
     }
 }
 
@@ -388,7 +359,7 @@ mod tests {
     #[tokio::test]
     #[allow(unreachable_code)]
     async fn set_and_get_from_buffer() {
-        let buffer = Buffer::new(false);
+        let mut buffer = Buffer::new(false);
         buffer
             .put(b"key1".to_vec().into(), b"value1".to_vec())
             .await;
@@ -421,7 +392,7 @@ mod tests {
     #[tokio::test]
     #[allow(unreachable_code)]
     async fn insert_and_get_from_buffer() {
-        let buffer = Buffer::new(false);
+        let mut buffer = Buffer::new(false);
         buffer
             .insert(b"key1".to_vec().into(), b"value1".to_vec())
             .await;
@@ -463,13 +434,13 @@ mod tests {
         let v2: Value = b"value2".to_vec();
         let v2_ = v2.clone();
 
-        let buffer = Buffer::new(false);
+        let mut buffer = Buffer::new(false);
         let r1 = block_on(buffer.get_or_else(k1.clone(), move |_| ready(Ok(Some(v1_)))));
         let r2 = block_on(buffer.get_or_else(k1.clone(), move |_| ready(panic!())));
         assert_eq!(r1.unwrap().unwrap(), v1);
         assert_eq!(r2.unwrap().unwrap(), v1);
 
-        let buffer = Buffer::new(false);
+        let mut buffer = Buffer::new(false);
         let r1 = block_on(
             buffer.batch_get_or_else(vec![k1.clone(), k2.clone()].into_iter(), move |_| {
                 ready(Ok(vec![(k1_, v1__).into(), (k2_, v2_).into()]))
