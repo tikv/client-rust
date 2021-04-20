@@ -20,14 +20,15 @@ struct InnerBuffer {
 impl InnerBuffer {
     fn insert(&mut self, key: impl Into<Key>, entry: BufferEntry) {
         let key = key.into();
-        if !matches!(entry, BufferEntry::Cached(_)) {
+        if !matches!(entry, BufferEntry::Cached(_) | BufferEntry::CheckNotExist) {
             self.primary_key.get_or_insert_with(|| key.clone());
         }
         self.entry_map.insert(key, entry);
     }
 
-    pub fn get_primary_key_or(&mut self, key: &Key) -> &Key {
-        self.primary_key.get_or_insert(key.clone())
+    /// Set the primary key if it is not set
+    pub fn primary_key_or(&mut self, key: &Key) {
+        self.primary_key.get_or_insert(key.clone());
     }
 }
 
@@ -48,9 +49,9 @@ impl Buffer {
         self.inner.primary_key.clone()
     }
 
-    /// Get the primary key of the buffer, if not exists, use `key` as the primary key.
-    pub async fn get_primary_key_or(&mut self, key: &Key) -> Key {
-        self.inner.get_primary_key_or(key).clone()
+    /// Set the primary key if it is not set
+    pub async fn primary_key_or(&mut self, key: &Key) {
+        self.inner.primary_key_or(key);
     }
 
     /// Get a value from the buffer.
@@ -186,7 +187,7 @@ impl Buffer {
 
     /// Lock the given key if necessary.
     pub async fn lock(&mut self, key: Key) {
-        self.inner.primary_key.get_or_insert(key.clone());
+        self.inner.primary_key.get_or_insert_with(|| key.clone());
         let value = self
             .inner
             .entry_map
