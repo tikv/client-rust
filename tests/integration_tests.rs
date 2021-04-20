@@ -102,7 +102,7 @@ async fn crud() -> Result<()> {
     txn.commit().await?;
 
     // Read again from TiKV
-    let snapshot = client.snapshot(
+    let mut snapshot = client.snapshot(
         client.current_timestamp().await?,
         // TODO needed because pessimistic does not check locks (#235)
         TransactionOptions::new_optimistic(),
@@ -338,9 +338,9 @@ async fn txn_bank_transfer() -> Result<()> {
             .await?;
         let chosen_people = people.iter().choose_multiple(&mut rng, 2);
         let alice = chosen_people[0];
-        let mut alice_balance = get_txn_u32(&txn, alice.clone()).await?;
+        let mut alice_balance = get_txn_u32(&mut txn, alice.clone()).await?;
         let bob = chosen_people[1];
-        let mut bob_balance = get_txn_u32(&txn, bob.clone()).await?;
+        let mut bob_balance = get_txn_u32(&mut txn, bob.clone()).await?;
         if alice_balance == 0 {
             txn.rollback().await?;
             continue;
@@ -359,7 +359,7 @@ async fn txn_bank_transfer() -> Result<()> {
     let mut new_sum = 0;
     let mut txn = client.begin_optimistic().await?;
     for person in people.iter() {
-        new_sum += get_txn_u32(&txn, person.clone()).await?;
+        new_sum += get_txn_u32(&mut txn, person.clone()).await?;
     }
     assert_eq!(sum, new_sum);
     txn.commit().await?;
@@ -764,7 +764,7 @@ async fn get_u32(client: &RawClient, key: Vec<u8>) -> Result<u32> {
 }
 
 // helper function
-async fn get_txn_u32(txn: &Transaction, key: Vec<u8>) -> Result<u32> {
+async fn get_txn_u32(txn: &mut Transaction, key: Vec<u8>) -> Result<u32> {
     let x = txn.get(key).await?.unwrap();
     let boxed_slice = x.into_boxed_slice();
     let array: Box<[u8; 4]> = boxed_slice

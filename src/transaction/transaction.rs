@@ -93,7 +93,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
+    pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
@@ -184,7 +184,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn key_exists(&self, key: impl Into<Key>) -> Result<bool> {
+    pub async fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
         let key = key.into();
         Ok(self.scan_keys(key.clone()..=key, 1).await?.next().is_some())
     }
@@ -216,7 +216,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn batch_get(
-        &self,
+        &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
         self.check_allow_operation().await?;
@@ -307,7 +307,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn scan(
-        &self,
+        &mut self,
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
@@ -341,7 +341,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn scan_keys(
-        &self,
+        &mut self,
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
@@ -602,7 +602,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     async fn scan_inner(
-        &self,
+        &mut self,
         range: impl Into<BoundRange>,
         limit: u32,
         key_only: bool,
