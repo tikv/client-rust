@@ -3,10 +3,11 @@
 use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     pd::PdClient,
+    region::RegionVerId,
     request::Plan,
     timestamp::TimestampExt,
     transaction::requests,
-    Error, RegionVerId, Result,
+    Error, Result,
 };
 use std::{
     collections::{HashMap, HashSet},

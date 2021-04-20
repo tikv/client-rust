@@ -1035,7 +1035,7 @@ impl<PdC: PdClient> Committer<PdC> {
                 r.min_commit_ts
             })
             .max()
-            .map(|ts| Timestamp::from_version(ts));
+            .map(Timestamp::from_version);
 
         Ok(min_commit_ts)
     }
