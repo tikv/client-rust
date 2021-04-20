@@ -760,7 +760,7 @@ async fn pessimistic_heartbeat() -> Result<()> {
 #[serial]
 async fn raw_cas() -> Result<()> {
     clear_tikv().await;
-    let client = RawClient::new(pd_addrs()).await?.with_atomic();
+    let client = RawClient::new(pd_addrs()).await?.with_atomic_for_cas();
     let key = "key".to_owned();
     let value = "value".to_owned();
     let new_value = "new value".to_owned();
@@ -801,7 +801,7 @@ async fn raw_cas() -> Result<()> {
     // check unsupported operations
     assert!(matches!(
         client.batch_delete(vec![key.clone()]).await.err().unwrap(),
-        Error::UnsupportedInAtomicMode
+        Error::UnsupportedMode
     ));
     let client = RawClient::new(pd_addrs()).await?;
     assert!(matches!(
@@ -810,7 +810,7 @@ async fn raw_cas() -> Result<()> {
             .await
             .err()
             .unwrap(),
-        Error::UnsupportedInNonAtomicMode
+        Error::UnsupportedMode
     ));
 
     Ok(())

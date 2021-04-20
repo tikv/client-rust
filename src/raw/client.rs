@@ -106,7 +106,7 @@ impl Client {
     /// the atomicity of CAS, write operations like [`put`](Client::put) or
     /// [`delete`](Client::delete) in atomic mode are more expensive. Some
     /// operations are not supported in the mode.
-    pub fn with_atomic(&self) -> Client {
+    pub fn with_atomic_for_cas(&self) -> Client {
         Client {
             rpc: self.rpc.clone(),
             cf: self.cf.clone(),
@@ -533,12 +533,12 @@ impl Client {
     fn assert_non_atomic(&self) -> Result<()> {
         (!self.atomic)
             .then(|| ())
-            .ok_or(Error::UnsupportedInAtomicMode)
+            .ok_or(Error::UnsupportedMode)
     }
 
     fn assert_atomic(&self) -> Result<()> {
         self.atomic
             .then(|| ())
-            .ok_or(Error::UnsupportedInNonAtomicMode)
+            .ok_or(Error::UnsupportedMode)
     }
 }

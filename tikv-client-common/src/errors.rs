@@ -28,12 +28,11 @@ pub enum Error {
     /// An operation requires a primary key, but the transaction was empty.
     #[error("transaction has no primary key")]
     NoPrimaryKey,
+    /// For raw client, operation is not supported in atomic/non-atomic mode.
     #[error(
-        "The operation does is not supported in raw-atomic mode, please consider using an atomic client"
+        "The operation is not supported in current mode, please consider using RawClient with or without atomic mode"
     )]
-    UnsupportedInAtomicMode,
-    #[error("The operation is only supported in raw-atomic mode, please consider using a non-atomic raw client")]
-    UnsupportedInNonAtomicMode,
+    UnsupportedMode,
     /// Wraps a `std::io::Error`.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
