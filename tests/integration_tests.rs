@@ -11,7 +11,8 @@ use std::{
     iter,
 };
 use tikv_client::{
-    Key, KvPair, RawClient, Result, Transaction, TransactionClient, TransactionOptions, Value,
+    Error, Key, KvPair, RawClient, Result, Transaction, TransactionClient, TransactionOptions,
+    Value,
 };
 
 // Parameters used in test
@@ -759,19 +760,19 @@ async fn pessimistic_heartbeat() -> Result<()> {
 #[serial]
 async fn raw_cas() -> Result<()> {
     clear_tikv().await;
-    let client = RawClient::new(pd_addrs()).await?;
+    let client = RawClient::new(pd_addrs()).await?.with_atomic();
     let key = "key".to_owned();
     let value = "value".to_owned();
     let new_value = "new value".to_owned();
 
-    client.atomic_put(key.clone(), value.clone()).await?;
+    client.put(key.clone(), value.clone()).await?;
     assert_eq!(
         client.get(key.clone()).await?.unwrap(),
         value.clone().as_bytes()
     );
 
     client
-        .atomic_compare_and_swap(
+        .compare_and_swap(
             key.clone(),
             Some("another_value".to_owned()).map(|v| v.into()),
             new_value.clone(),
@@ -783,7 +784,7 @@ async fn raw_cas() -> Result<()> {
     );
 
     client
-        .atomic_compare_and_swap(
+        .compare_and_swap(
             key.clone(),
             Some(value.to_owned()).map(|v| v.into()),
             new_value.clone(),
@@ -794,8 +795,24 @@ async fn raw_cas() -> Result<()> {
         new_value.clone().as_bytes()
     );
 
-    client.atomic_delete(key.clone()).await?;
+    client.delete(key.clone()).await?;
     assert!(client.get(key.clone()).await?.is_none());
+
+    // check unsupported operations
+    assert!(matches!(
+        client.batch_delete(vec![key.clone()]).await.err().unwrap(),
+        Error::UnsupportedInAtomicMode
+    ));
+    let client = RawClient::new(pd_addrs()).await?;
+    assert!(matches!(
+        client
+            .compare_and_swap(key.clone(), None, vec![])
+            .await
+            .err()
+            .unwrap(),
+        Error::UnsupportedInNonAtomicMode
+    ));
+
     Ok(())
 }
 
