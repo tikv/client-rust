@@ -3,7 +3,7 @@
 use tikv_client_common::Error;
 
 use crate::{
-    backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
+    backoff::DEFAULT_REGION_BACKOFF,
     config::Config,
     pd::PdRpcClient,
     raw::lowering::*,
@@ -115,7 +115,6 @@ impl Client {
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .single_region()
             .await?
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_region(DEFAULT_REGION_BACKOFF)
             .post_process_default()
             .plan();
@@ -146,7 +145,6 @@ impl Client {
     ) -> Result<Vec<KvPair>> {
         let request = new_raw_batch_get_request(keys.into_iter().map(Into::into), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
@@ -284,7 +282,6 @@ impl Client {
         let request =
             new_raw_batch_delete_request(keys.into_iter().map(Into::into), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
@@ -311,7 +308,6 @@ impl Client {
     pub async fn delete_range(&self, range: impl Into<BoundRange>) -> Result<()> {
         let request = new_raw_delete_range_request(range.into(), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
@@ -482,7 +478,6 @@ impl Client {
 
         let request = new_raw_scan_request(range.into(), limit, key_only, self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
@@ -514,7 +509,6 @@ impl Client {
             self.cf.clone(),
         );
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
@@ -532,7 +526,6 @@ impl Client {
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .single_region()
             .await?
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
@@ -548,7 +541,6 @@ impl Client {
         let request =
             new_raw_batch_put_request(pairs.into_iter().map(Into::into), self.cf.clone(), atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
@@ -562,7 +554,6 @@ impl Client {
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .single_region()
             .await?
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
