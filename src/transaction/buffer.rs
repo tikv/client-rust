@@ -1,57 +1,36 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{BoundRange, Key, KvPair, Result, Value};
-use derive_new::new;
 use std::{
     collections::{btree_map::Entry, BTreeMap, HashMap},
     future::Future,
 };
 use tikv_client_proto::kvrpcpb;
 
-#[derive(new)]
-struct InnerBuffer {
-    #[new(default)]
-    primary_key: Option<Key>,
-    #[new(default)]
-    entry_map: BTreeMap<Key, BufferEntry>,
-    is_pessimistic: bool,
-}
-
-impl InnerBuffer {
-    fn insert(&mut self, key: impl Into<Key>, entry: BufferEntry) {
-        let key = key.into();
-        if !matches!(entry, BufferEntry::Cached(_) | BufferEntry::CheckNotExist) {
-            self.primary_key.get_or_insert_with(|| key.clone());
-        }
-        self.entry_map.insert(key, entry);
-    }
-
-    /// Set the primary key if it is not set
-    pub fn primary_key_or(&mut self, key: &Key) {
-        self.primary_key.get_or_insert(key.clone());
-    }
-}
-
 /// A caching layer which buffers reads and writes in a transaction.
 pub struct Buffer {
-    inner: InnerBuffer,
+    primary_key: Option<Key>,
+    entry_map: BTreeMap<Key, BufferEntry>,
+    is_pessimistic: bool,
 }
 
 impl Buffer {
     pub fn new(is_pessimistic: bool) -> Buffer {
         Buffer {
-            inner: InnerBuffer::new(is_pessimistic),
+            primary_key: None,
+            entry_map: BTreeMap::new(),
+            is_pessimistic,
         }
     }
 
     /// Get the primary key of the buffer.
     pub async fn get_primary_key(&self) -> Option<Key> {
-        self.inner.primary_key.clone()
+        self.primary_key.clone()
     }
 
     /// Set the primary key if it is not set
     pub async fn primary_key_or(&mut self, key: &Key) {
-        self.inner.primary_key_or(key);
+        self.primary_key.get_or_insert_with(|| key.clone());
     }
 
     /// Get a value from the buffer.
@@ -74,7 +53,7 @@ impl Buffer {
             MutationValue::Determined(value) => Ok(value),
             MutationValue::Undetermined => {
                 let value = f(key.clone()).await?;
-                Self::update_cache(&mut self.inner, key, value.clone());
+                self.update_cache(key, value.clone());
                 Ok(value)
             }
         }
@@ -102,7 +81,6 @@ impl Buffer {
             ) = keys
                 .map(|key| {
                     let value = self
-                        .inner
                         .entry_map
                         .get(&key)
                         .map(BufferEntry::get_value)
@@ -123,7 +101,7 @@ impl Buffer {
         for kvpair in &fetched_results {
             let key = kvpair.0.clone();
             let value = Some(kvpair.1.clone());
-            Self::update_cache(&mut self.inner, key, value);
+            self.update_cache(key, value);
         }
 
         let results = cached_results.chain(fetched_results.into_iter());
@@ -142,7 +120,7 @@ impl Buffer {
         Fut: Future<Output = Result<Vec<KvPair>>>,
     {
         // read from local buffer
-        let mutation_range = self.inner.entry_map.range(range.clone());
+        let mutation_range = self.entry_map.range(range.clone());
 
         // fetch from TiKV
         // fetch more entries because some of them may be deleted.
@@ -173,7 +151,7 @@ impl Buffer {
 
         // update local buffer
         for (k, v) in &results {
-            Self::update_cache(&mut self.inner, k.clone(), Some(v.clone()));
+            self.update_cache(k.clone(), Some(v.clone()));
         }
 
         let mut res = results
@@ -187,9 +165,8 @@ impl Buffer {
 
     /// Lock the given key if necessary.
     pub async fn lock(&mut self, key: Key) {
-        self.inner.primary_key.get_or_insert_with(|| key.clone());
+        self.primary_key.get_or_insert_with(|| key.clone());
         let value = self
-            .inner
             .entry_map
             .entry(key)
             // Mutated keys don't need a lock.
@@ -202,24 +179,24 @@ impl Buffer {
 
     /// Insert a value into the buffer (does not write through).
     pub async fn put(&mut self, key: Key, value: Value) {
-        self.inner.insert(key, BufferEntry::Put(value));
+        self.insert_entry(key, BufferEntry::Put(value));
     }
 
     /// Mark a value as Insert mutation into the buffer (does not write through).
     pub async fn insert(&mut self, key: Key, value: Value) {
-        let mut entry = self.inner.entry_map.entry(key.clone());
+        let mut entry = self.entry_map.entry(key.clone());
         match entry {
             Entry::Occupied(ref mut o) if matches!(o.get(), BufferEntry::Del) => {
                 o.insert(BufferEntry::Put(value));
             }
-            _ => self.inner.insert(key, BufferEntry::Insert(value)),
+            _ => self.insert_entry(key, BufferEntry::Insert(value)),
         }
     }
 
     /// Mark a value as deleted.
     pub async fn delete(&mut self, key: Key) {
-        let is_pessimistic = self.inner.is_pessimistic;
-        let mut entry = self.inner.entry_map.entry(key.clone());
+        let is_pessimistic = self.is_pessimistic;
+        let mut entry = self.entry_map.entry(key.clone());
 
         match entry {
             Entry::Occupied(ref mut o)
@@ -227,36 +204,32 @@ impl Buffer {
             {
                 o.insert(BufferEntry::CheckNotExist);
             }
-            _ => self.inner.insert(key, BufferEntry::Del),
+            _ => self.insert_entry(key, BufferEntry::Del),
         }
     }
 
     /// Converts the buffered mutations to the proto buffer version
     pub async fn to_proto_mutations(&self) -> Vec<kvrpcpb::Mutation> {
-        self.inner
-            .entry_map
+        self.entry_map
             .iter()
             .filter_map(|(key, mutation)| mutation.to_proto_with_key(key))
             .collect()
     }
 
     async fn get_from_mutations(&self, key: &Key) -> MutationValue {
-        self.inner
-            .entry_map
+        self.entry_map
             .get(&key)
             .map(BufferEntry::get_value)
             .unwrap_or(MutationValue::Undetermined)
     }
 
-    fn update_cache(buffer: &mut InnerBuffer, key: Key, value: Option<Value>) {
-        match buffer.entry_map.get(&key) {
+    fn update_cache(&mut self, key: Key, value: Option<Value>) {
+        match self.entry_map.get(&key) {
             Some(BufferEntry::Locked(None)) => {
-                buffer
-                    .entry_map
-                    .insert(key, BufferEntry::Locked(Some(value)));
+                self.entry_map.insert(key, BufferEntry::Locked(Some(value)));
             }
             None => {
-                buffer.entry_map.insert(key, BufferEntry::Cached(value));
+                self.entry_map.insert(key, BufferEntry::Cached(value));
             }
             Some(BufferEntry::Cached(v)) | Some(BufferEntry::Locked(Some(v))) => {
                 assert!(&value == v);
@@ -274,6 +247,14 @@ impl Buffer {
                 assert!(value.is_none());
             }
         }
+    }
+
+    fn insert_entry(&mut self, key: impl Into<Key>, entry: BufferEntry) {
+        let key = key.into();
+        if !matches!(entry, BufferEntry::Cached(_) | BufferEntry::CheckNotExist) {
+            self.primary_key.get_or_insert_with(|| key.clone());
+        }
+        self.entry_map.insert(key, entry);
     }
 }
 
