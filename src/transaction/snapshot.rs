@@ -19,18 +19,18 @@ pub struct Snapshot {
 
 impl Snapshot {
     /// Get the value associated with the given key.
-    pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
+    pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         self.transaction.get(key).await
     }
 
     /// Check whether the key exists.
-    pub async fn key_exists(&self, key: impl Into<Key>) -> Result<bool> {
+    pub async fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
         self.transaction.key_exists(key).await
     }
 
     /// Get the values associated with the given keys.
     pub async fn batch_get(
-        &self,
+        &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
         self.transaction.batch_get(keys).await
@@ -38,7 +38,7 @@ impl Snapshot {
 
     /// Scan a range, return at most `limit` key-value pairs that lying in the range.
     pub async fn scan(
-        &self,
+        &mut self,
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
@@ -47,7 +47,7 @@ impl Snapshot {
 
     /// Scan a range, return at most `limit` keys that lying in the range.
     pub async fn scan_keys(
-        &self,
+        &mut self,
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
@@ -56,7 +56,7 @@ impl Snapshot {
 
     /// Unimplemented. Similar to scan, but in the reverse direction.
     #[allow(dead_code)]
-    fn scan_reverse(&self, range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
+    fn scan_reverse(&mut self, range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
         self.transaction.scan_reverse(range)
     }
 }
