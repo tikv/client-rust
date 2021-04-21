@@ -7,12 +7,9 @@
 //! 2. raw_
 //! 3. misc_
 //!
-//! If in the future Rust supports filter test by regex, we can remove the misc_ category.
-//!
-//! We make use of the convention to control the order of tests in CI, to force
-//! some intialization (e.g. region split), and to allow transactional and raw
-//! tests to coexist, since transactional requests have requirements on the
-//! region boundaries.
+//! We make use of the convention to control the order of tests in CI, to allow
+//! transactional and raw tests to coexist, since transactional requests have
+//! requirements on the region boundaries.
 
 mod common;
 use common::{init, pd_addrs};
@@ -225,10 +222,9 @@ async fn raw_bank_transfer() -> Result<()> {
     Ok(())
 }
 
-/// Tests transactional API when there are multiple regions.
 #[tokio::test]
 #[serial]
-async fn txn_write_million() -> Result<()> {
+async fn txn_read() -> Result<()> {
     const NUM_BITS_TXN: u32 = 4;
     const NUM_BITS_KEY_PER_TXN: u32 = 4;
     let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
@@ -517,15 +513,10 @@ async fn txn_update_safepoint() -> Result<()> {
 }
 
 /// Tests raw API when there are multiple regions.
-/// Write large volumes of data to enforce region splitting.
-/// In order to test `scan`, data is uniformly inserted.
-///
-/// Ignoring this because we don't want to mess up transactional tests.
 #[tokio::test]
 #[serial]
-#[ignore]
 async fn raw_write_million() -> Result<()> {
-    const NUM_BITS_TXN: u32 = 13;
+    const NUM_BITS_TXN: u32 = 4;
     const NUM_BITS_KEY_PER_TXN: u32 = 4;
     let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
 
@@ -564,8 +555,8 @@ async fn raw_write_million() -> Result<()> {
         let _ = client
             .batch_scan(iter::repeat(vec![]..).take(batch_num), limit)
             .await?;
-        // FIXME: `each_limit` parameter does no work as expected.
-        // It limits the entries on each region of each rangqe, instead of each range.
+        // FIXME: `each_limit` parameter does no work as expected. It limits the
+        // entries on each region of each rangqe, instead of each range.
         // assert_eq!(res.len(), limit as usize * batch_num);
     }
 
@@ -579,6 +570,7 @@ async fn txn_pessimistic_rollback() -> Result<()> {
     let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
     let mut preload_txn = client.begin_optimistic().await?;
     let key1 = vec![1];
+    let key2 = vec![2];
     let value = key1.clone();
 
     preload_txn.put(key1.clone(), value).await?;
@@ -591,14 +583,14 @@ async fn txn_pessimistic_rollback() -> Result<()> {
         result?;
     }
 
-    // for _ in 0..100 {
-    //     let mut txn = client.begin_pessimistic().await?;
-    //     let result = txn
-    //         .batch_get_for_update(vec![key1.clone(), key2.clone()])
-    //         .await;
-    //     txn.rollback().await?;
-    //     let _ = result?;
-    // }
+    for _ in 0..100 {
+        let mut txn = client.begin_pessimistic().await?;
+        let result = txn
+            .batch_get_for_update(vec![key1.clone(), key2.clone()])
+            .await;
+        txn.rollback().await?;
+        let _ = result?;
+    }
 
     Ok(())
 }
@@ -610,8 +602,8 @@ async fn txn_pessimistic_delete() -> Result<()> {
     let client =
         TransactionClient::new_with_config(vec!["127.0.0.1:2379"], Default::default()).await?;
 
-    // The transaction will lock the keys and must release the locks on commit, even when values are
-    // not written to the DB.
+    // The transaction will lock the keys and must release the locks on commit,
+    // even when values are not written to the DB.
     let mut txn = client.begin_pessimistic().await?;
     txn.put(vec![1], vec![42]).await?;
     txn.delete(vec![1]).await?;
