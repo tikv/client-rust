@@ -24,6 +24,8 @@ const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 pub struct Client {
     rpc: Arc<PdRpcClient>,
     cf: Option<ColumnFamily>,
+    /// Whether to use the [`atomic mode`](Client::with_atomic_for_cas).
+    atomic: bool,
 }
 
 impl Client {
@@ -63,7 +65,11 @@ impl Client {
     ) -> Result<Client> {
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let rpc = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, false).await?);
-        Ok(Client { rpc, cf: None })
+        Ok(Client {
+            rpc,
+            cf: None,
+            atomic: false,
+        })
     }
 
     /// Set the column family of requests.
@@ -89,6 +95,22 @@ impl Client {
         Client {
             rpc: self.rpc.clone(),
             cf: Some(cf),
+            atomic: self.atomic,
+        }
+    }
+
+    /// Set to use the atomic mode.
+    ///
+    /// The only reason of using atomic mode is the
+    /// [`compare_and_swap`](Client::compare_and_swap) operation. To guarantee
+    /// the atomicity of CAS, write operations like [`put`](Client::put) or
+    /// [`delete`](Client::delete) in atomic mode are more expensive. Some
+    /// operations are not supported in the mode.
+    pub fn with_atomic_for_cas(&self) -> Client {
+        Client {
+            rpc: self.rpc.clone(),
+            cf: self.cf.clone(),
+            atomic: true,
         }
     }
 
@@ -171,7 +193,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        let request = new_raw_put_request(key.into(), value.into(), self.cf.clone());
+        let request = new_raw_put_request(key.into(), value.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .single_region()
             .await?
@@ -203,7 +225,11 @@ impl Client {
         &self,
         pairs: impl IntoIterator<Item = impl Into<KvPair>>,
     ) -> Result<()> {
-        let request = new_raw_batch_put_request(pairs.into_iter().map(Into::into), self.cf.clone());
+        let request = new_raw_batch_put_request(
+            pairs.into_iter().map(Into::into),
+            self.cf.clone(),
+            self.atomic,
+        );
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
@@ -231,7 +257,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn delete(&self, key: impl Into<Key>) -> Result<()> {
-        let request = new_raw_delete_request(key.into(), self.cf.clone());
+        let request = new_raw_delete_request(key.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .single_region()
             .await?
@@ -260,6 +286,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
+        self.assert_non_atomic()?;
         let request =
             new_raw_batch_delete_request(keys.into_iter().map(Into::into), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
@@ -287,6 +314,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn delete_range(&self, range: impl Into<BoundRange>) -> Result<()> {
+        self.assert_non_atomic()?;
         let request = new_raw_delete_range_request(range.into(), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .multi_region()
@@ -415,6 +443,40 @@ impl Client {
             .collect())
     }
 
+    /// Create a new *atomic* 'compare and set' request.
+    ///
+    /// Once resolved this request will result in an atomic `compare and set'
+    /// operation for the given key.
+    ///
+    /// If the value retrived is equal to `current_value`, `new_value` is
+    /// written.
+    ///
+    /// # Return Value
+    ///
+    /// A tuple is returned if successful: the previous value and whether the
+    /// value is swapped
+    pub async fn compare_and_swap(
+        &self,
+        key: impl Into<Key>,
+        previous_value: impl Into<Option<Value>>,
+        new_value: impl Into<Value>,
+    ) -> Result<(Option<Value>, bool)> {
+        self.assert_atomic()?;
+        let req = new_cas_request(
+            key.into(),
+            new_value.into(),
+            previous_value.into(),
+            self.cf.clone(),
+        );
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), req)
+            .single_region()
+            .await?
+            .retry_region(DEFAULT_REGION_BACKOFF)
+            .post_process_default()
+            .plan();
+        plan.execute().await
+    }
+
     async fn scan_inner(
         &self,
         range: impl Into<BoundRange>,
@@ -466,5 +528,13 @@ impl Client {
             .merge(Collect)
             .plan();
         plan.execute().await
+    }
+
+    fn assert_non_atomic(&self) -> Result<()> {
+        (!self.atomic).then(|| ()).ok_or(Error::UnsupportedMode)
+    }
+
+    fn assert_atomic(&self) -> Result<()> {
+        self.atomic.then(|| ()).ok_or(Error::UnsupportedMode)
     }
 }

@@ -43,6 +43,9 @@ message BackupMeta {
 
     // In incremental backup, DDLs which are completed in (lastBackupTS, backupTS] will be stored here.
     bytes ddls = 10;
+
+    // Save the version of BR running backup jobs.
+    string br_version = 11;
 }
 
 message File {
@@ -140,6 +143,7 @@ message StorageBackend {
         Local local = 2;
         S3 s3 = 3;
         GCS gcs = 4;
+        CloudDynamic cloud_dynamic = 5;
     }
 }
 
@@ -183,6 +187,22 @@ message GCS {
     // copy the content, set it as string here.
     string credentials_blob = 6;
 }
+
+message Bucket {
+    string endpoint = 1;
+    string region = 3;
+    string bucket = 4;
+    string prefix = 5;
+    string storage_class = 6;
+}
+
+// CloudDynamic allows testing new cloud providers and new fields without changing protobuf definitions
+message CloudDynamic {
+    Bucket bucket = 1;
+    string provider_name = 2; // s3 and gcs are supported
+    map<string, string> attrs = 3;
+}
+
 
 message BackupResponse {
     Error error = 1;

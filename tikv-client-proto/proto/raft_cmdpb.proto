@@ -313,6 +313,9 @@ message RaftRequestHeader {
 
     // Read requests can be responsed directly after the Raft applys to `applied_index`.
     uint64 applied_index = 9;
+
+    // Custom flags for this raft request.
+    uint64 flags = 10;
 }
 
 message RaftResponseHeader {

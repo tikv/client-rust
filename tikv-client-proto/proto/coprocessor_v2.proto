@@ -26,7 +26,6 @@ message RawCoprocessorResponse {
     bytes data = 1;
 
     errorpb.Error region_error = 2;
-
     // Error message for cases like if no coprocessor with a matching name is found
     // or on a version mismatch between plugin_api and the coprocessor.
     string other_error = 4;
