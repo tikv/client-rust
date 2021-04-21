@@ -531,14 +531,10 @@ impl Client {
     }
 
     fn assert_non_atomic(&self) -> Result<()> {
-        (!self.atomic)
-            .then(|| ())
-            .ok_or(Error::UnsupportedMode)
+        (!self.atomic).then(|| ()).ok_or(Error::UnsupportedMode)
     }
 
     fn assert_atomic(&self) -> Result<()> {
-        self.atomic
-            .then(|| ())
-            .ok_or(Error::UnsupportedMode)
+        self.atomic.then(|| ()).ok_or(Error::UnsupportedMode)
     }
 }
