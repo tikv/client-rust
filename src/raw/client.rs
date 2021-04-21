@@ -24,7 +24,7 @@ const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 pub struct Client {
     rpc: Arc<PdRpcClient>,
     cf: Option<ColumnFamily>,
-    /// Whether to use the [`atomic mode`](Client::with_atomic).
+    /// Whether to use the [`atomic mode`](Client::with_atomic_for_cas).
     atomic: bool,
 }
 
