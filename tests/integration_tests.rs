@@ -761,7 +761,7 @@ async fn txn_pessimistic_heartbeat() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn raw_cas() -> Result<()> {
-    clear_tikv().await;
+    init().await?;
     let client = RawClient::new(pd_addrs()).await?.with_atomic_for_cas();
     let key = "key".to_owned();
     let value = "value".to_owned();
