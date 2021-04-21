@@ -276,8 +276,11 @@ impl<P: Plan + HasKeys, PdC: PdClient> HasKeys for ResolveLock<P, PdC> {
     }
 }
 
-/// When executed, the plan extracts errors from its inner plan, and
-/// returns an `Err` wrapping the error.
+/// When executed, the plan extracts errors from its inner plan, and returns an
+/// `Err` wrapping the error.
+///
+/// We usually need to apply this plan if (and only if) the output of the inner
+/// plan is of a response type.
 ///
 /// The errors come from two places: `Err` from inner plans, and `Ok(response)`
 /// where `response` contains unresolved errors (`error` and `region_error`).

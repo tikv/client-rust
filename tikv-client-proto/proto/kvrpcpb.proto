@@ -216,6 +216,14 @@ message CheckTxnStatusRequest {
     // If true, then TiKV will leave a rollback tombstone in the write CF for `primary_key`, even if
     // that key is not locked.
     bool rollback_if_not_exist = 6;
+    // This field is set to true only if the transaction is known to fall back from async commit.
+    // Then, CheckTxnStatus treats the transaction as non-async-commit even if the use_async_commit
+    // field in the primary lock is true.
+    bool force_sync_commit = 7;
+    // If the check request is used to resolve or decide the transaction status for a input pessimistic
+    // lock, the transaction status could not be decided if the primary lock is pessimistic too and
+    // it's still uncertain.
+    bool resolving_pessimistic_lock = 8;
 }
 
 message CheckTxnStatusResponse {
@@ -349,6 +357,8 @@ message ScanLockRequest {
     bytes start_key = 3;
     // The maximum number of locks to return.
     uint32 limit = 4;
+    // The exclusive upperbound for scanning.
+    bytes end_key = 5;
 }
 
 message ScanLockResponse {
@@ -435,6 +445,8 @@ message RawPutRequest {
     bytes key = 2;
     bytes value = 3;
     string cf = 4;
+    uint64 ttl = 5;
+    bool for_cas = 6;
 }
 
 message RawPutResponse {
@@ -446,6 +458,8 @@ message RawBatchPutRequest {
     Context context = 1;
     repeated KvPair pairs = 2;
     string cf = 3;
+    uint64 ttl = 4;
+    bool for_cas = 5;
 }
 
 message RawBatchPutResponse {
@@ -457,6 +471,7 @@ message RawDeleteRequest {
     Context context = 1;
     bytes key = 2;
     string cf = 3;
+    bool for_cas = 4;
 }
 
 message RawDeleteResponse {
@@ -468,6 +483,7 @@ message RawBatchDeleteRequest {
     Context context = 1;
     repeated bytes keys = 2;
     string cf = 3;
+    bool for_cas = 4;
 }
 
 message RawBatchDeleteResponse {
@@ -759,6 +775,10 @@ message Context {
     // A hint for TiKV to schedule tasks more fairly. Query with same task ID
     // may share same priority and resource quota.
     uint64 task_id = 16;
+
+    // Not required to read the most up-to-date data, replicas with `safe_ts` >= `start_ts`
+    // can handle read request directly
+    bool stale_read = 17;
 }
 
 message LockInfo {
@@ -843,11 +863,14 @@ message TimeDetail {
     // cannot be excluded for now, like Mutex wait time, which is included in this field, so that
     // this field is called wall time instead of CPU time.
     int64 process_wall_time_ms = 2;
+    // KV read wall Time means the time used in key/value scan and get.
+    int64 kv_read_wall_time_ms = 3;
 }
 
 message ScanInfo {
     int64 total = 1;
     int64 processed = 2;
+    int64 read_bytes = 3;
 }
 
 // Only reserved for compatibility.
@@ -974,6 +997,8 @@ enum Action {
     TTLExpireRollback = 1;
     LockNotExistRollback = 2;
     MinCommitTSPushed = 3;
+    TTLExpirePessimisticRollback = 4;
+    LockNotExistDoNothing = 5;
 }
 
 message KeyRange {
@@ -1003,3 +1028,46 @@ message CheckLeaderResponse {
     repeated uint64 regions = 1;
     uint64 ts = 2;
 }
+
+message StoreSafeTSRequest {
+    // Get the minimal `safe_ts` from regions that overlap with the key range [`start_key`, `end_key`)
+    // An empty key range means all regions in the store
+    KeyRange key_range = 1;
+}
+
+message StoreSafeTSResponse {
+    uint64 safe_ts = 1;
+}
+
+message RawGetKeyTTLRequest {
+    Context context = 1;
+    bytes key = 2;
+    string cf = 3;
+}
+
+message RawGetKeyTTLResponse {
+    errorpb.Error region_error = 1;
+    string error = 2;
+    uint64 ttl = 3;
+    bool not_found = 4;
+}
+
+message RawCASRequest {
+    Context context = 1;
+    bytes key = 2;
+    bytes value = 3;
+    bool previous_not_exist = 4;
+    bytes previous_value = 5;
+    string cf = 6;
+    uint64 ttl = 7;
+}
+
+message RawCASResponse {
+    errorpb.Error region_error = 1;
+    string error = 2;
+    bool succeed = 3;
+    // The previous value regardless of whether the comparison is succeed.
+    bool previous_not_exist = 4;
+    bytes previous_value = 5;
+}
+

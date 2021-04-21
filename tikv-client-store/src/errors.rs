@@ -52,6 +52,7 @@ has_region_error!(kvrpcpb::RawBatchDeleteResponse);
 has_region_error!(kvrpcpb::RawDeleteRangeResponse);
 has_region_error!(kvrpcpb::RawScanResponse);
 has_region_error!(kvrpcpb::RawBatchScanResponse);
+has_region_error!(kvrpcpb::RawCasResponse);
 
 macro_rules! has_key_error {
     ($type:ty) => {
@@ -100,6 +101,7 @@ has_str_error!(kvrpcpb::RawBatchPutResponse);
 has_str_error!(kvrpcpb::RawDeleteResponse);
 has_str_error!(kvrpcpb::RawBatchDeleteResponse);
 has_str_error!(kvrpcpb::RawDeleteRangeResponse);
+has_str_error!(kvrpcpb::RawCasResponse);
 has_str_error!(kvrpcpb::ImportResponse);
 has_str_error!(kvrpcpb::DeleteRangeResponse);
 
