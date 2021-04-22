@@ -174,7 +174,7 @@ impl Client {
         self.pd.clone().get_timestamp().await
     }
 
-    /// Trigger garbage collection (GC) of the TiKV cluster.
+    /// Request garbage collection (GC) of the TiKV cluster.
     ///
     /// GC deletes MVCC records whose timestamp is lower than the given `safepoint`.
     ///

@@ -28,7 +28,7 @@ use tokio::{sync::RwLock, time::Duration};
 /// of the transaction (at the start timestamp, `start_ts`). Once a transaction is commited, a
 /// its writes atomically become visible to other transactions at (logically) the commit timestamp.
 ///
-/// In other words, a transaction can read data that was committed at `commit_ts` <= its `start_ts`,
+/// In other words, a transaction can read data that was committed at `commit_ts` < its `start_ts`,
 /// and its writes are readable by transactions with `start_ts` >= its `commit_ts`.
 ///
 /// Mutations are buffered locally and sent to the TiKV cluster at the time of commit.

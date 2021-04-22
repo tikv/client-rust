@@ -21,7 +21,7 @@ tikv-client = 0.1
 
 Note, that you will need `tikv-client = { git = "https://github.com/tikv/client-rust.git" }` until we publish the crate (should be any day now).
 
-The minimum supported version of Rust is 1.40.
+The minimum supported version of Rust is 1.40. The minimum supported version of TiKV is 5.0.
 
 The general flow of using the client crate is to create either a raw or transaction client object (which can be configured) then send commands using the client object, or use it to create transactions objects. In the latter case, the transaction is built up using various commands and then committed (or rolled back).
 
@@ -73,32 +73,36 @@ Important note: It is **not recommended or supported** to use both the raw and t
 
 ### Raw requests
 
-| Request        | Main parameter type | Result type      | Noteworthy Behavior                            |
-| -------------- | ------------------- | ---------------- | ---------------------------------------------- |
-| `put`          | `KvPair`            |                  |                                                |
-| `get`          | `Key`               | `Option<Value>`  |                                                |
-| `delete`       | `Key`               |                  |                                                |
-| `delete_range` | `BoundRange`        |                  |                                                |
-| `scan`         | `BoundRange`        | `Vec<KvPair>`    |                                                |
-| `batch_put`    | `Iter<KvPair>`      |                  |                                                |
-| `batch_get`    | `Iter<Key>`         | `Vec<KvPair>`    | Skips non-existent keys; does not retain order |
-| `batch_delete` | `Iter<Key>`         |                  |                                                |
-| `batch_scan`   | `Iter<BoundRange>`  | `Vec<KvPair>`    | See docs for `each_limit` parameter behavior. The order of ranges is retained. |
+| Request            | Main parameter type | Result type      | Noteworthy Behavior                            |
+| ------------------ | ------------------- | ---------------- | ---------------------------------------------- |
+| `put`              | `KvPair`            |                  |                                                |
+| `get`              | `Key`               | `Option<Value>`  |                                                |
+| `delete`           | `Key`               |                  |                                                |
+| `delete_range`     | `BoundRange`        |                  |                                                |
+| `scan`             | `BoundRange`        | `Vec<KvPair>`    |                                                |
+| `batch_put`        | `Iter<KvPair>`      |                  |                                                |
+| `batch_get`        | `Iter<Key>`         | `Vec<KvPair>`    | Skips non-existent keys; does not retain order |
+| `batch_delete`     | `Iter<Key>`         |                  |                                                |
+| `batch_scan`       | `Iter<BoundRange>`  | `Vec<KvPair>`    | See docs for `each_limit` parameter behavior. The order of ranges is retained. |
+| `batch_scan_keys`  | `Iter<BoundRange>`  | `Vec<Key>`       | See docs for `each_limit` parameter behavior. The order of ranges is retained. |
+| `compare_and_swap` | `Key` + 2x `Value`  | `(Option<Value>, bool)` |                                         | 
 
 ### Transactional requests
 
-| Request      | Main parameter type | Result type     | Noteworthy Behavior                                                |
-| -------------| ------------------- | --------------- | ------------------------------------------------------------------ |
-| `put`        | `KvPair`            |                 |                                                                    |
-| `get`        | `Key`               | `Option<value>` |                                                                    |
-| `key_exists` | `Key`               | `bool`          |                                                                    |
-| `delete`     | `Key`               |                 |                                                                    |
-| `scan`       | `BoundRange`        | `Iter<KvPair>`  |                                                                    |
-| `scan_keys`  | `BoundRange`        | `Iter<Key>`     |                                                                    |
-| `batch_get`  | `Iter<Key>`         | `Iter<KvPair>`  | Skips non-existent keys; does not retain order                     |
-| `lock_keys`  | `Iter<Key>`         |                 |                                                                    |
-| `gc`         | `Timestamp`         | `bool`          | Returns true if the latest safepoint in PD equals the parameter    |
-
+| Request                | Main parameter type | Result type     | Noteworthy Behavior                                                |
+| ---------------------- | ------------------- | --------------- | ------------------------------------------------------------------ |
+| `put`                  | `KvPair`            |                 |                                                                    |
+| `get`                  | `Key`               | `Option<value>` |                                                                    |
+| `get_for_update`       | `Key`               | `Option<value>` |                                                                    |
+| `key_exists`           | `Key`               | `bool`          |                                                                    |
+| `delete`               | `Key`               |                 |                                                                    |
+| `scan`                 | `BoundRange`        | `Iter<KvPair>`  |                                                                    |
+| `scan_keys`            | `BoundRange`        | `Iter<Key>`     |                                                                    |
+| `batch_get`            | `Iter<Key>`         | `Iter<KvPair>`  | Skips non-existent keys; does not retain order                     |
+| `batch_get_for_update` | `Iter<Key>`         | `Iter<KvPair>`  | Skips non-existent keys; does not retain order                     |
+| `lock_keys`            | `Iter<Key>`         |                 |                                                                    |
+| `send_heart_beat`      |                     | `u64` (TTL)     |                                                                    |
+| `gc`                   | `Timestamp`         | `bool`          | Returns true if the latest safepoint in PD equals the parameter    |
 
 # Development and contributing
 
