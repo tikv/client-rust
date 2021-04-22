@@ -75,10 +75,7 @@ impl Buffer {
         let (cached_results, undetermined_keys) = {
             // Partition the keys into those we have buffered and those we have to
             // get from the store.
-            let (undetermined_keys, cached_results): (
-                Vec<(Key, MutationValue)>,
-                Vec<(Key, MutationValue)>,
-            ) = keys
+            let (undetermined_keys, cached_results): (Vec<_>, Vec<_>) = keys
                 .map(|key| {
                     let value = self
                         .entry_map

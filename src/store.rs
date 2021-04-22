@@ -1,6 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{pd::PdClient, BoundRange, Key, Region, Result};
+use crate::{pd::PdClient, region::Region, BoundRange, Key, Result};
 use derive_new::new;
 use futures::{prelude::*, stream::BoxStream};
 use std::{
@@ -48,6 +48,7 @@ where
         .boxed()
 }
 
+#[allow(clippy::type_complexity)]
 pub fn store_stream_for_range<PdC: PdClient>(
     range: (Vec<u8>, Vec<u8>),
     pd_client: Arc<PdC>,
@@ -67,16 +68,16 @@ pub fn store_stream_for_range<PdC: PdClient>(
 }
 
 pub fn store_stream_for_range_by_start_key<PdC: PdClient>(
-    start_key: Vec<u8>,
+    start_key: Key,
     pd_client: Arc<PdC>,
 ) -> BoxStream<'static, Result<(Vec<u8>, Store)>> {
-    let bnd_range = BoundRange::range_from(start_key.clone().into());
+    let bnd_range = BoundRange::range_from(start_key.clone());
     pd_client
         .stores_for_range(bnd_range)
         .map_ok(move |store| {
             let region_range = store.region.range();
             (
-                range_intersection(region_range, (start_key.clone().into(), vec![].into()))
+                range_intersection(region_range, (start_key.clone(), vec![].into()))
                     .0
                     .into(),
                 store,

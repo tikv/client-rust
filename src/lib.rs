@@ -1,91 +1,108 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-// Long and nested future chains can quickly result in large generic types.
-#![type_length_limit = "16777216"]
-#![allow(clippy::redundant_closure)]
-#![allow(clippy::type_complexity)]
-#![allow(incomplete_features)]
-
-//! This crate provides a clean, ready to use client for [TiKV](https://github.com/tikv/tikv), a
-//! distributed transactional Key-Value database written in Rust.
+//! This crate provides an easy-to-use client for [TiKV](https://github.com/tikv/tikv), a
+//! distributed, transactional key-value database written in Rust.
 //!
-//! With this crate you can easily connect to any TiKV deployment, interact with it, and mutate the
-//! data it contains.
+//! This crate lets you connect to a TiKV cluster and use either a transactional or raw (simple
+//! get/put style without transactional consistency guarantees) API to access and update your data.
+//!
+//! The TiKV Rust client supports several levels of abstraction. The most convenient way to use the
+//! client is via [`RawClient`] and [`TransactionClient`]. This gives a very high-level API which
+//! mostly abstracts over the distributed nature of the store and has sensible defaults for all
+//! protocols. This interface can be configured, primarily when creating the client or transaction
+//! objects via the [`Config`] and [`TransactionOptions`] structs. Using some options, you can take
+//! over parts of the protocols (such as retrying failed messages) yourself.
+//!
+//! The lowest level of abstraction is to create and send gRPC messages directly to TiKV (and PD)
+//! nodes. The `tikv-client-store` and `tikv-client-pd` crates make this easier than using the
+//! protobuf definitions and a gRPC library directly, but give you the same level of control.
+//!
+//! In between these levels of abstraction, you can send and receive individual messages to the TiKV
+//! cluster, but take advantage of library code for common operations such as resolving data to
+//! regions and thus nodes in the cluster, or retrying failed messages. This can be useful for
+//! testing a TiKV cluster or for some advanced use cases. See the [`request`] module for
+//! this API, and [`raw::lowering`] and [`transaction::lowering`] for
+//! convenience methods for creating request objects.
 //!
 //! ## Choosing an API
 //!
-//! This crate offers both [**raw**](raw/index.html) and
-//! [**transactional**](transaction/index.html) APIs. You should choose just one for your system.
+//! This crate offers both [raw](RawClient) and
+//! [transactional](Transaction) APIs. You should choose just one for your system.
 //!
-//! The *consequence* of supporting transactions is increased overhead of coordination with the
-//! placement driver for timestamp acquisition. This is approximately 1 RTT.
+//! The consequence of supporting transactions is increased overhead of coordination with the
+//! placement driver and TiKV, and additional code complexity.
 //!
 //! *While it is possible to use both APIs at the same time, doing so is unsafe and unsupported.*
 //!
-//! Choose the one that suites your needs as described below, then add the import statement to your
-//! file where you need to use the library.
-//!
 //! ### Transactional
 //!
-//! The [transactional](transaction/index.html) API supports **transactions** via Multi-Version
-//! Concurrency Control (MVCC).
+//! The [transactional](Transaction) API supports **transactions** via multi-version
+//! concurrency control (MVCC).
 //!
-//! **Best when you mostly do** complex sets of actions, actions which may require a rollback,
-//! operations affecting multiple keys or values, or operations that depend on strong ordering.
+//! Best when you mostly do complex sets of actions, actions which may require a rollback,
+//! operations affecting multiple keys or values, or operations that depend on strong consistency.
 //!
-//! ```rust
-//! use tikv_client::*;
-//! ```
 //!
 //! ### Raw
 //!
-//! The [raw](raw/index.html) API has **reduced coordination overhead**, but lacks any
+//! The [raw](RawClient) API has reduced coordination overhead, but lacks any
 //! transactional abilities.
 //!
-//! **Best when you mostly do** single row changes, and have very limited cross-row (eg. foreign
-//! key) requirements. You will not be able to use transactions with this API.
+//! Best when you mostly do single value changes, and have very limited cross-value
+//! requirements. You will not be able to use transactions with this API.
 //!
-//! ```rust
-//! use tikv_client::*;
-//! ```
+//! ## Usage
 //!
-//! ## Connect
+//! The general flow of using the client crate is to create either a raw or transaction client
+//! object (which can be configured) then send commands using the client object, or use it to create
+//! transactions objects. In the latter case, the transaction is built up using various commands and
+//! then committed (or rolled back).
 //!
-//! Regardless of which API you choose, you'll need to connect your client
-//! ([raw](raw::Client), [transactional](transaction::Client)).
+//! ### Examples
+//!
+//! Raw mode:
 //!
 //! ```rust,no_run
-//! # use tikv_client::*;
+//! # use tikv_client::{RawClient, Result};
 //! # use futures::prelude::*;
-//!
+//! # fn main() -> Result<()> {
 //! # futures::executor::block_on(async {
-//! // Configure endpoints and optional TLS.
-//! let config = Config::default().with_security("root.ca", "internal.cert", "internal.key");
-//!
-//! // Get a transactional client.
-//! let client = TransactionClient::new_with_config(
-//!     vec![
-//!         // A list of PD endpoints.
-//!         "192.168.0.100:2379",
-//!         "192.168.0.101:2379",
-//!     ], config).await.unwrap();
-//! # });
+//! let client = RawClient::new(vec!["127.0.0.1:2379"]).await?;
+//! client.put("key".to_owned(), "value".to_owned()).await?;
+//! let value = client.get("key".to_owned()).await?;
+//! # Ok(())
+//! # })}
 //! ```
 //!
-//! At this point, you should seek the documentation in the related API modules.
+//! Transactional mode:
+//!
+//! ```rust,no_run
+//! # use tikv_client::{TransactionClient, Result};
+//! # use futures::prelude::*;
+//! # fn main() -> Result<()> {
+//! # futures::executor::block_on(async {
+//! let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"]).await?;
+//! let mut txn = txn_client.begin_optimistic().await?;
+//! txn.put("key".to_owned(), "value".to_owned()).await?;
+//! let value = txn.get("key".to_owned()).await?;
+//! txn.commit().await?;
+//! # Ok(())
+//! # })}
+//! ```
 
 #[macro_use]
-mod request;
-
+pub mod request;
 #[macro_use]
-mod transaction;
+#[doc(hidden)]
+pub mod transaction;
 
 mod backoff;
 mod compat;
 mod config;
 mod kv;
 mod pd;
-mod raw;
+#[doc(hidden)]
+pub mod raw;
 mod region;
 mod stats;
 mod store;
@@ -105,18 +122,17 @@ pub use crate::backoff::Backoff;
 #[doc(inline)]
 pub use crate::kv::{BoundRange, IntoOwnedRange, Key, KvPair, Value};
 #[doc(inline)]
-pub use crate::raw::{lowering::*, Client as RawClient, ColumnFamily};
+pub use crate::raw::{lowering as raw_lowering, Client as RawClient, ColumnFamily};
 #[doc(inline)]
 pub use crate::request::RetryOptions;
 #[doc(inline)]
 pub use crate::timestamp::{Timestamp, TimestampExt};
 #[doc(inline)]
 pub use crate::transaction::{
-    lowering::*, CheckLevel, Client as TransactionClient, Snapshot, Transaction, TransactionOptions,
+    lowering as transaction_lowering, CheckLevel, Client as TransactionClient, Snapshot,
+    Transaction, TransactionOptions,
 };
 #[doc(inline)]
 pub use config::Config;
-#[doc(inline)]
-pub use region::{Region, RegionId, RegionVerId, StoreId};
 #[doc(inline)]
 pub use tikv_client_common::{security::SecurityManager, Error, Result};

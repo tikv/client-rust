@@ -19,7 +19,8 @@ const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 /// Raw requests don't need a wrapping transaction.
 /// Each request is immediately processed once executed.
 ///
-/// The returned results of raw requests are [`Future`](std::future::Future)s that must be awaited to execute.
+/// The returned results of raw request methods are [`Future`](std::future::Future)s that must be
+/// awaited to execute.
 #[derive(Clone)]
 pub struct Client {
     rpc: Arc<PdRpcClient>,
@@ -29,14 +30,16 @@ pub struct Client {
 }
 
 impl Client {
-    /// Create a raw [`Client`](Client).
+    /// Create a raw [`Client`] and connect to the TiKV cluster.
     ///
-    /// It's important to **include more than one PD endpoint** (include all, if possible!)
-    /// This helps avoid having a *single point of failure*.
+    /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for
+    /// PD must be provided, not the TiKV nodes. It's important to include more than one PD endpoint
+    /// (include all endpoints, if possible), this helps avoid having a single point of failure.
     ///
     /// # Examples
+    ///
     /// ```rust,no_run
-    /// # use tikv_client::{Config, RawClient};
+    /// # use tikv_client::RawClient;
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
@@ -46,17 +49,23 @@ impl Client {
         Self::new_with_config(pd_endpoints, Config::default()).await
     }
 
-    /// Create a raw [`Client`](Client).
+    /// Create a raw [`Client`] with a custom configuration, and connect to the TiKV cluster.
     ///
-    /// It's important to **include more than one PD endpoint** (include all, if possible!)
-    /// This helps avoid having a *single point of failure*.
+    /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for
+    /// PD must be provided, not the TiKV nodes. It's important to include more than one PD endpoint
+    /// (include all endpoints, if possible), this helps avoid having a single point of failure.
     ///
     /// # Examples
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
+    /// # use std::time::Duration;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let client = RawClient::new_with_config(
+    ///     vec!["192.168.0.100"],
+    ///     Config::default().with_timeout(Duration::from_secs(60)),
+    /// ).await.unwrap();
     /// # });
     /// ```
     pub async fn new_with_config<S: Into<String>>(
@@ -72,22 +81,27 @@ impl Client {
         })
     }
 
-    /// Set the column family of requests.
+    /// Create a new client which is a clone of `self`, but which uses an explicit column family for
+    /// all requests.
     ///
-    /// This function returns a new `Client`, requests created with it will have the
-    /// supplied column family constraint. The original `Client` can still be used.
+    /// This function returns a new `Client`; requests created with the new client will use the
+    /// supplied column family. The original `Client` can still be used (without the new
+    /// column family).
     ///
-    /// By default, raw client uses the `Default` column family.
-    ///
-    /// For normal users of the raw API, you don't need to use other column families.
+    /// By default, raw clients use the `Default` column family.
     ///
     /// # Examples
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Config, RawClient, ColumnFamily};
     /// # use futures::prelude::*;
     /// # use std::convert::TryInto;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap().with_cf(ColumnFamily::Write);
+    /// let client = RawClient::new(vec!["192.168.0.100"])
+    ///     .await
+    ///     .unwrap()
+    ///     .with_cf(ColumnFamily::Write);
+    /// // Fetch a value at "foo" from the Write CF.
     /// let get_request = client.get("foo".to_owned());
     /// # });
     /// ```
@@ -411,11 +425,11 @@ impl Client {
     ///
     /// Once resolved this request will result in a set of scanners over the given keys.
     ///
-    /// **Warning**: This method is experimental. The `each_limit` parameter does not work as expected.
-    /// It does not limit the number of results returned of each range,
+    /// **Warning**: This method is experimental.
+    /// The `each_limit` parameter does not limit the number of results returned of each range,
     /// instead it limits the number of results in each region of each range.
-    /// As a result, you may get **more than** `each_limit` key-value pairs for each range.
-    /// But you should not miss any entries.
+    /// As a result, you may get **more than** `each_limit` key-value pairs for each range,
+    /// but you should not miss any entries.
     ///
     /// # Examples
     /// ```rust,no_run
