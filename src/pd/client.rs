@@ -1,8 +1,12 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    compat::stream_fn, kv::codec, pd::RetryClient, store::Store, BoundRange, Config, Key, Region,
-    RegionId, Result, SecurityManager, Timestamp,
+    compat::stream_fn,
+    kv::codec,
+    pd::RetryClient,
+    region::{Region, RegionId},
+    store::Store,
+    BoundRange, Config, Key, Result, SecurityManager, Timestamp,
 };
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};

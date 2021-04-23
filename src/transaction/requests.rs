@@ -278,11 +278,11 @@ impl KvRequest for kvrpcpb::CommitRequest {
 shardable_keys!(kvrpcpb::CommitRequest);
 
 pub fn new_batch_rollback_request(
-    keys: Vec<Key>,
+    keys: Vec<Vec<u8>>,
     start_version: u64,
 ) -> kvrpcpb::BatchRollbackRequest {
     let mut req = kvrpcpb::BatchRollbackRequest::default();
-    req.set_keys(keys.into_iter().map(Into::into).collect());
+    req.set_keys(keys);
     req.set_start_version(start_version);
 
     req
@@ -429,7 +429,7 @@ impl Shardable for kvrpcpb::ScanLockRequest {
         &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
-        store_stream_for_range_by_start_key(self.start_key.clone(), pd_client.clone())
+        store_stream_for_range_by_start_key(self.start_key.clone().into(), pd_client.clone())
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {

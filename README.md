@@ -2,127 +2,138 @@
 
 [![Build Status](https://travis-ci.org/tikv/client-rust.svg?branch=master)](https://travis-ci.org/tikv/client-rust)
 
-> Currently this crate is experimental and some portions (e.g. the Transactional API) are still in active development. You're encouraged to use this library for testing and to help us find problems!
-
 [Docs](https://www.tikv.dev/doc/rust-client/tikv_client/)
 
-This crate provides a clean, ready to use client for [TiKV](https://github.com/tikv/tikv), a
-distributed transactional Key-Value database written in Rust.
+This crate provides an easy-to-use client for [TiKV](https://github.com/tikv/tikv), a distributed, transactional key-value database written in Rust.
 
-With this crate you can easily connect to any TiKV deployment, interact with it, and mutate the data it contains. It uses async/await internally and exposes some `async fn` APIs as well.
+This crate lets you connect to a TiKV cluster and use either a transactional or raw (simple get/put style without transactional consistency guarantees) API to access and update your data.
 
-This is an open source (Apache 2) project hosted by the Cloud Native Computing Foundation (CNCF) and maintained by the TiKV Authors. *We'd love it if you joined us in improving this project.*
+This is an open source (Apache 2) project maintained by the TiKV Authors. We welcome community contributions, see below for more info.
 
 ## Getting started
 
-The TiKV client is a Rust library (crate). To use this crate in your project, add following dependencies in your `Cargo.toml`:
+The TiKV client is a Rust library (crate). To use this crate in your project, add the following dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-tikv-client = { git = "https://github.com/tikv/client-rust.git" }
+tikv-client = 0.1
 ```
 
-The client requires a Git dependency until we can [publish it](https://github.com/tikv/client-rust/issues/32).
+Note, that you will need `tikv-client = { git = "https://github.com/tikv/client-rust.git" }` until we publish the crate (should be any day now).
 
-The client provides two modes to interact with TiKV: raw and transactional. 
-In the current version (0.0.0), the transactional API supports optimistic transactions. Pessimistic transactions are implemented but not well tested.
+The minimum supported version of Rust is 1.40. The minimum supported version of TiKV is 5.0.
 
-Important note: It is **not recommended or supported** to use both the raw and transactional APIs on the same database.
+The general flow of using the client crate is to create either a raw or transaction client object (which can be configured) then send commands using the client object, or use it to create transactions objects. In the latter case, the transaction is built up using various commands and then committed (or rolled back).
 
-### Code examples
+### Examples
 
 Raw mode:
 
 ```rust
-let config = Config::new(vec!["127.0.0.1:2379"]);
-let client = RawClient::new(config).await?;
-client.put("key".to_owned(), "value".to_owned()).await;
-let value = client.get("key".to_owned()).await;
+use tikv_client::RawClient;
+
+let client = RawClient::new(vec!["127.0.0.1:2379"]).await?;
+client.put("key".to_owned(), "value".to_owned()).await?;
+let value = client.get("key".to_owned()).await?;
 ```
 
 Transactional mode:
 
 ```rust
-let config = Config::new(vec!["127.0.0.1:2379"]);
-let txn_client = TransactionClient::new(config).await?;
-let mut txn = txn_client.begin().await?;
+use tikv_client::TransactionClient;
+
+let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"]).await?;
+let mut txn = txn_client.begin_optimistic().await?;
 txn.put("key".to_owned(), "value".to_owned()).await?;
-let value = txn.get("key".to_owned()).await;
+let value = txn.get("key".to_owned()).await?;
 txn.commit().await?;
 ```
 
-There are some [examples](examples) which show how to use the client in a Rust program.
+## API summary
 
-### API
+The TiKV Rust client supports several levels of abstraction. The most convenient way to use the client is via `RawClient` and `TransactionClient`. This gives a very high-level API which mostly abstracts over the distributed nature of the store and has sensible defaults for all protocols. This interface can be configured, primarily when creating the client or transaction objects via the `Config` and `TransactionOptions` structs. Using some options, you can take over parts of the protocols (such as retrying failed messages) yourself.
 
-#### Raw requests
+The lowest level of abstraction is to create and send gRPC messages directly to TiKV (and PD) nodes. The `tikv-client-store` and `tikv-client-pd` crates make this easier than using the protobuf definitions and a gRPC library directly, but give you the same level of control.
 
-| Request        | Main parameter type | Successful result type | Noteworthy Behavior                           |
-| -------------- | ------------------- | ---------------------- | --------------------------------------------- |
-| `put`          | `KvPair`            | `()`                   |                                               |
-| `get`          | `Key`               | `Option<Value>`        |                                               |
-| `delete`       | `Key`               | `()`                   |                                               |
-| `scan`         | `BoundRange`        | `Vec<KvPair>`          |                                               |
-| `batch_put`    | `Iter<KvPair>`      | `()`                   |                                               |
-| `batch_get`    | `Iter<Key>`         | `Vec<KvPair>`          | Skip non-existent keys; Does not retain order |
-| `batch_delete` | `Iter<Key>`         | `()`                   |                                               |
-| `delete_range` | `BoundRange`        | `()`                   |                                               |
+In between these levels of abstraction, you can send and receive individual messages to the TiKV cluster, but take advantage of library code for common operations such as resolving data to regions and thus nodes in the cluster, or retrying failed messages. This can be useful for testing a TiKV cluster or for some advanced use cases. See the `client_rust::request` module for this API, and `client_rust::raw::lowering` and `client_rust::transaction::lowering` for convenience methods for creating request objects.
 
-#### Transactional requests
+The rest of this document describes only the `RawClient`/`TransactionClient` APIs.
 
-| Request     | Main parameter type | Successful result type | Noteworthy Behavior                                                |
-| ----------- | ------------------- | ---------------------- | ------------------------------------------------------------------ |
-| `put`       | `KvPair`            | `()`                   |                                                                    |
-| `get`       | `Key`               | `Option<value>`        |                                                                    |
-| `key_exists` | `Key`               | `bool`                 |                                                                    |
-| `delete`    | `Key`               | `()`                   |                                                                    |
-| `scan`      | `BoundRange`        | `Iter<KvPair>`         |                                                                    |
-| `scan_keys` | `BoundRange`        | `Iter<Key>`            |                                                                    |
-| `batch_get` | `Iter<Key>`         | `Iter<KvPair>`         | Skip non-existent keys; Does not retain order                      |
-| `lock_keys` | `Iter<Key>`         | `()`                   |                                                                    |
-| `gc`        | `Timestamp`         | `bool`                 | It returns whether the latest safepoint in PD equals the parameter |
+Important note: It is **not recommended or supported** to use both the raw and transactional APIs on the same database.
 
-For detailed behavior of each request, please refer to the [doc](#Access-the-documentation).
+### Types
 
-#### Experimental raw requests
+`Key`: a key in the store. `String` and `Vec<u8>` implement `Into<Key>`, so you can pass them directly into client functions.
 
-You must be careful if you want to use the following request(s). Read the description for reasons.
+`Value`: a value in the store; just an alias of `Vec<u8>`.
 
-| Request      | Main parameter type | Successful result type |
-| ------------ | ------------------- | ---------------------- |
-| `batch_scan` | `Iter<BoundRange>`  | `Vec<KvPair>`          |
+`KvPair`: a pair of a `Key` and a `Value`. It provides convenience methods for conversion to and from other types.
 
-The `each_limit` parameter does not work as expected. It does not limit the number of results returned of each range, instead it limits the number of results in each region of each range. As a result, you may get **more than** `each_limit` key-value pairs for each range. But you should not miss any entries.
+`BoundRange`: used for range related requests like `scan`. It implements `From` for Rust ranges so you can pass a Rust range of keys to the request, e.g., `client.delete_range(vec![]..)`.
 
-The results of `batch_scan` are flattened. The order of ranges is retained.
+### Raw requests
 
-### Useful types
+| Request            | Main parameter type | Result type      | Noteworthy Behavior                            |
+| ------------------ | ------------------- | ---------------- | ---------------------------------------------- |
+| `put`              | `KvPair`            |                  |                                                |
+| `get`              | `Key`               | `Option<Value>`  |                                                |
+| `delete`           | `Key`               |                  |                                                |
+| `delete_range`     | `BoundRange`        |                  |                                                |
+| `scan`             | `BoundRange`        | `Vec<KvPair>`    |                                                |
+| `batch_put`        | `Iter<KvPair>`      |                  |                                                |
+| `batch_get`        | `Iter<Key>`         | `Vec<KvPair>`    | Skips non-existent keys; does not retain order |
+| `batch_delete`     | `Iter<Key>`         |                  |                                                |
+| `batch_scan`       | `Iter<BoundRange>`  | `Vec<KvPair>`    | See docs for `each_limit` parameter behavior. The order of ranges is retained. |
+| `batch_scan_keys`  | `Iter<BoundRange>`  | `Vec<Key>`       | See docs for `each_limit` parameter behavior. The order of ranges is retained. |
+| `compare_and_swap` | `Key` + 2x `Value`  | `(Option<Value>, bool)` |                                         | 
 
-To use the client, there are 4 types you will need. 
+### Transactional requests
 
-`Key` is simply a vector of bytes(`Vec<u8>`). `String` and `Vec<u8>` implements `Into<Key>`, so you can directly pass them to clients.
+| Request                | Main parameter type | Result type     | Noteworthy Behavior                                                |
+| ---------------------- | ------------------- | --------------- | ------------------------------------------------------------------ |
+| `put`                  | `KvPair`            |                 |                                                                    |
+| `get`                  | `Key`               | `Option<value>` |                                                                    |
+| `get_for_update`       | `Key`               | `Option<value>` |                                                                    |
+| `key_exists`           | `Key`               | `bool`          |                                                                    |
+| `delete`               | `Key`               |                 |                                                                    |
+| `scan`                 | `BoundRange`        | `Iter<KvPair>`  |                                                                    |
+| `scan_keys`            | `BoundRange`        | `Iter<Key>`     |                                                                    |
+| `batch_get`            | `Iter<Key>`         | `Iter<KvPair>`  | Skips non-existent keys; does not retain order                     |
+| `batch_get_for_update` | `Iter<Key>`         | `Iter<KvPair>`  | Skips non-existent keys; does not retain order                     |
+| `lock_keys`            | `Iter<Key>`         |                 |                                                                    |
+| `send_heart_beat`      |                     | `u64` (TTL)     |                                                                    |
+| `gc`                   | `Timestamp`         | `bool`          | Returns true if the latest safepoint in PD equals the parameter    |
 
-`Value` is just an alias of `Vec<u8>`.
+# Development and contributing
 
-`KvPair` is a tuple consisting of a `Key` and a `Value`. It also provides some convenience methods for conversion to and from other types.
+We welcome your contributions! Contributing code is great, we also appreciate filing [issues](https://github.com/tikv/client-rust/issues/new) to identify bugs and provide feedback, adding tests or examples, and improvements to documentation.
 
-`BoundRange` is used for range related requests like `scan`. It implements `From` for usual ranges so you can just create a range and pass them to the request.For instance, `client.scan("k2".to_owned()..="k5".to_owned(), 5)` or `client.delete_range(vec![]..)`.
+## Building and testing
 
-## Access the documentation
+We use the standard Cargo workflows, e.g., `cargo build` to build and `cargo test` to run unit tests. You will need to use a nightly Rust toolchain to build and run tests.
 
-We've done our best to include ample, tested, and understandable examples.
+Running integration tests or manually testing the client with a TiKV cluster is a little bit more involved. The easiest way is to use [TiUp](https://github.com/pingcap/tiup) to initialise a cluster on your local machine:
 
-We recommend using the officially maintained documentation [here](https://www.tikv.dev/doc/rust-client/tikv_client/).
-
-You can also access the documentation on your machine by running the following in any project that depends on `tikv-client`.
-
-```bash
-cargo doc --package tikv-client --open
-# If it didn't work, browse file URL it tried to open with your browser.
+```
+tiup playground nightly --db 0 --tiflash 0 --monitor false
 ```
 
-## Minimal Rust version
+Then if you want to run integration tests:
 
-This crate supports Rust 1.40 and above.
+```
+PD_ADDRS="127.0.0.1:2379" cargo test --package tikv-client --test integration_tests --features integration-tests
+```
 
-For development, a nightly Rust compiler is needed to compile the tests.
+## Creating a PR
+
+We use a standard GitHub PR workflow. We run CI on every PR and require all PRs to build without warnings (including clippy and Rustfmt warnings), pass tests, have a DCO sign-off (use `-s` when you commit, the DCO bot will guide you through completing the DCO agreement for your first PR), and have at least one review. If any of this is difficult for you, don't worry about it and ask on the PR.
+
+To run CI-like tests locally, we recommend you run `cargo clippy`, `cargo test`, and `cargo fmt` before submitting your PR. See above for running integration tests, but you probably won't need to worry about this for your first few PRs.
+
+Please follow PingCAP's  [Rust style guide](https://pingcap.github.io/style-guide/rust/). All code PRs should include new tests or test cases.
+
+## Getting help
+
+If you need help, either to find something to work on, or with any technical problem, the easiest way to get it is via Slack. We monitor the client-rust (better for general client questions) and sig-transaction (better for technical questions about TiKV's transaction protocol) channels on the [tikv-wg slack](https://tikv.org/chat).
+
+You can also get help on GitHub issues or PRs directly. You can just ask a question; if you don't get a response, you should ping @nrc or @ekexium.
