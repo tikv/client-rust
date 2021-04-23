@@ -1,4 +1,4 @@
-.PHONY: default check unit-test integration-tests test doc all
+.PHONY: default check unit-test integration-tests test doc docker-pd docker-kv docker all
 
 default: check
 
@@ -20,5 +20,13 @@ test: unit-test integration-test
 
 doc: 
 	cargo doc --workspace --exclude tikv-client-proto --document-private-items --no-deps
+
+docker-pd:
+	docker run -d -v $(pwd)/config:/config --net=host --name pd --rm pingcap/pd:nightly --name "pd" --data-dir "pd" --client-urls "http://127.0.0.1:2379" --advertise-client-urls "http://127.0.0.1:2379" --config /config/pd.toml
+
+docker-kv:
+	docker run -d -v $(pwd)/config:/config --net=host --name kv --rm --ulimit nofile=90000:90000 pingcap/tikv:nightly --pd-endpoints "127.0.0.1:2379" --addr "127.0.0.1:2378" --data-dir "kv" --config /config/tikv.toml
+
+docker: docker-pd docker-kv
 
 all: check doc test
