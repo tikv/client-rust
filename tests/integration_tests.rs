@@ -325,11 +325,12 @@ async fn txn_bank_transfer() -> Result<()> {
     init().await?;
     let client = TransactionClient::new(pd_addrs()).await?;
     let mut rng = thread_rng();
+    let options = TransactionOptions::new_optimistic()
+        .use_async_commit()
+        .drop_check(tikv_client::CheckLevel::Warn);
 
     let people = gen_u32_keys(NUM_PEOPLE, &mut rng);
-    let mut txn = client
-        .begin_with_options(TransactionOptions::new_optimistic())
-        .await?;
+    let mut txn = client.begin_with_options(options.clone()).await?;
     let mut sum: u32 = 0;
     for person in &people {
         let init = rng.gen::<u8>() as u32;
@@ -340,9 +341,7 @@ async fn txn_bank_transfer() -> Result<()> {
 
     // transfer
     for _ in 0..NUM_TRNASFER {
-        let mut txn = client
-            .begin_with_options(TransactionOptions::new_optimistic().use_async_commit())
-            .await?;
+        let mut txn = client.begin_with_options(options.clone()).await?;
         let chosen_people = people.iter().choose_multiple(&mut rng, 2);
         let alice = chosen_people[0];
         let mut alice_balance = get_txn_u32(&mut txn, alice.clone()).await?;

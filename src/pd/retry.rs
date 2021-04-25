@@ -25,7 +25,7 @@ use tokio::sync::RwLock;
 // FIXME: these numbers and how they are used are all just cargo-culted in, there
 // may be more optimal values.
 const RECONNECT_INTERVAL_SEC: u64 = 1;
-const MAX_REQUEST_COUNT: usize = 3;
+const MAX_REQUEST_COUNT: usize = 5;
 const LEADER_CHANGE_RETRY: usize = 10;
 
 /// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
