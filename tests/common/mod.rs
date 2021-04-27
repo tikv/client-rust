@@ -30,7 +30,7 @@ pub async fn init() -> Result<()> {
         .with_level(log::LevelFilter::Warn)
         .init();
 
-    if enable_multi_region() {
+    if env::var(ENV_ENABLE_MULIT_REGION).is_ok() {
         // 1000 keys: 0..1000
         let keys_1 = std::iter::successors(Some(0u32), |x| Some(x + 1))
             .take(1000)
@@ -92,11 +92,4 @@ pub fn pd_addrs() -> Vec<String> {
         .split(",")
         .map(From::from)
         .collect()
-}
-
-fn enable_multi_region() -> bool {
-    match env::var(ENV_ENABLE_MULIT_REGION) {
-        Ok(s) => s == "1" || s.to_lowercase() == "true",
-        Err(_) => false,
-    }
 }
