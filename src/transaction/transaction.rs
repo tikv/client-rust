@@ -14,6 +14,7 @@ use futures::{prelude::*, stream::BoxStream};
 use std::{iter, ops::RangeBounds, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 use tokio::{sync::RwLock, time::Duration};
+use crate::transaction::transaction::HeartbeatOption::FixedTime;
 
 /// An undo-able set of actions on the dataset.
 ///
@@ -709,10 +710,15 @@ impl<PdC: PdClient> Transaction<PdC> {
         let start_ts = self.timestamp.clone();
         let region_backoff = self.options.retry_options.region_backoff.clone();
         let rpc = self.rpc.clone();
+        let mut heartbeat_interval = DEFAULT_HEARTBEAT_INTERVAL;
+        match self.options.heartbeat_option {
+            HeartbeatOption::NoHeartbeat => {}
+            FixedTime(d) => {heartbeat_interval = d}
+        }
 
         let heartbeat_task = async move {
             loop {
-                tokio::time::sleep(DEFAULT_HEARTBEAT_INTERVAL).await;
+                tokio::time::sleep(heartbeat_interval).await;
                 {
                     let status = status.read().await;
                     if matches!(
@@ -795,6 +801,15 @@ pub struct TransactionOptions {
     check_level: CheckLevel,
     /// Whether heartbeat will be sent automatically
     auto_heartbeat: bool,
+    #[cfg(test)]
+    heartbeat_option: HeartbeatOption,
+}
+
+#[cfg(test)]
+#[derive(Clone, PartialEq, Debug)]
+pub enum HeartbeatOption {
+    NoHeartbeat,
+    FixedTime(Duration),
 }
 
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -821,10 +836,13 @@ impl TransactionOptions {
             retry_options: RetryOptions::default_optimistic(),
             check_level: CheckLevel::Panic,
             auto_heartbeat: true,
+            #[cfg(test)]
+            heartbeat_option
         }
     }
 
     /// Default options for a pessimistic transaction.
+    #[cfg(test)]
     pub fn new_pessimistic() -> TransactionOptions {
         TransactionOptions {
             kind: TransactionKind::Pessimistic(Timestamp::from_version(0)),
@@ -834,6 +852,8 @@ impl TransactionOptions {
             retry_options: RetryOptions::default_pessimistic(),
             check_level: CheckLevel::Panic,
             auto_heartbeat: true,
+            #[cfg(test)]
+            heartbeat_option
         }
     }
 
@@ -893,6 +913,12 @@ impl TransactionOptions {
 
     pub fn no_auto_hearbeat(mut self) -> TransactionOptions {
         self.auto_heartbeat = false;
+        self
+    }
+
+    #[cfg(test)]
+    pub fn heartbeat_options(mut self, heartbeat_option: HeartbeatOption) -> TransactionOptions {
+        self.heartbeat_options = heartbeat_option;
         self
     }
 }
@@ -1158,6 +1184,9 @@ mod tests {
         },
     };
     use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+    use crate::transaction::transaction::HeartbeatOption;
+    use std::time::Duration;
+    use crate::transaction::transaction::HeartbeatOption::FixedTime;
 
     #[tokio::test]
     async fn test_optimistic_heartbeat() -> Result<(), io::Error> {
@@ -1198,6 +1227,7 @@ mod tests {
     async fn test_pessimistic_heartbeat() -> Result<(), io::Error> {
         let heartbeats = Arc::new(AtomicUsize::new(0));
         let heartbeats_cloned = heartbeats.clone();
+        let heartbeat_option = HeartbeatOption::FixedTime(Duration::from_secs(1));
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |req: &dyn Any| {
                 if let Some(_heartbeat) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
@@ -1219,7 +1249,7 @@ mod tests {
         let mut heartbeat_txn = Transaction::new(
             Timestamp::default(),
             pd_client,
-            TransactionOptions::new_pessimistic(),
+            TransactionOptions::new_pessimistic().heartbeat_options(FixedTime(Duration::from_secs(1))),
         );
         heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
         assert_eq!(heartbeats.load(Ordering::SeqCst), 0);
