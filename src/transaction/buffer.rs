@@ -24,19 +24,19 @@ impl Buffer {
     }
 
     /// Get the primary key of the buffer.
-    pub async fn get_primary_key(&self) -> Option<Key> {
+    pub fn get_primary_key(&self) -> Option<Key> {
         self.primary_key.clone()
     }
 
     /// Set the primary key if it is not set
-    pub async fn primary_key_or(&mut self, key: &Key) {
+    pub fn primary_key_or(&mut self, key: &Key) {
         self.primary_key.get_or_insert_with(|| key.clone());
     }
 
     /// Get a value from the buffer.
     /// If the returned value is None, it means the key doesn't exist in buffer yet.
-    pub async fn get(&self, key: &Key) -> Option<Value> {
-        match self.get_from_mutations(key).await {
+    pub fn get(&self, key: &Key) -> Option<Value> {
+        match self.get_from_mutations(key) {
             MutationValue::Determined(value) => value,
             MutationValue::Undetermined => None,
         }
@@ -49,7 +49,7 @@ impl Buffer {
         F: FnOnce(Key) -> Fut,
         Fut: Future<Output = Result<Option<Value>>>,
     {
-        match self.get_from_mutations(&key).await {
+        match self.get_from_mutations(&key) {
             MutationValue::Determined(value) => Ok(value),
             MutationValue::Undetermined => {
                 let value = f(key.clone()).await?;
@@ -161,7 +161,7 @@ impl Buffer {
     }
 
     /// Lock the given key if necessary.
-    pub async fn lock(&mut self, key: Key) {
+    pub fn lock(&mut self, key: Key) {
         self.primary_key.get_or_insert_with(|| key.clone());
         let value = self
             .entry_map
@@ -174,13 +174,22 @@ impl Buffer {
         }
     }
 
-    /// Insert a value into the buffer (does not write through).
-    pub async fn put(&mut self, key: Key, value: Value) {
-        self.insert_entry(key, BufferEntry::Put(value));
+    /// Put a value into the buffer (does not write through).
+    pub fn put(&mut self, key: Key, value: Value) {
+        let mut entry = self.entry_map.entry(key.clone());
+        match entry {
+            Entry::Occupied(ref mut o)
+                if matches!(o.get(), BufferEntry::Insert(_))
+                    || matches!(o.get(), BufferEntry::CheckNotExist) =>
+            {
+                o.insert(BufferEntry::Insert(value));
+            }
+            _ => self.insert_entry(key, BufferEntry::Put(value)),
+        }
     }
 
     /// Mark a value as Insert mutation into the buffer (does not write through).
-    pub async fn insert(&mut self, key: Key, value: Value) {
+    pub fn insert(&mut self, key: Key, value: Value) {
         let mut entry = self.entry_map.entry(key.clone());
         match entry {
             Entry::Occupied(ref mut o) if matches!(o.get(), BufferEntry::Del) => {
@@ -191,13 +200,15 @@ impl Buffer {
     }
 
     /// Mark a value as deleted.
-    pub async fn delete(&mut self, key: Key) {
+    pub fn delete(&mut self, key: Key) {
         let is_pessimistic = self.is_pessimistic;
         let mut entry = self.entry_map.entry(key.clone());
 
         match entry {
             Entry::Occupied(ref mut o)
-                if matches!(o.get(), BufferEntry::Insert(_)) && !is_pessimistic =>
+                if !is_pessimistic
+                    && (matches!(o.get(), BufferEntry::Insert(_))
+                        || matches!(o.get(), BufferEntry::CheckNotExist)) =>
             {
                 o.insert(BufferEntry::CheckNotExist);
             }
@@ -206,14 +217,14 @@ impl Buffer {
     }
 
     /// Converts the buffered mutations to the proto buffer version
-    pub async fn to_proto_mutations(&self) -> Vec<kvrpcpb::Mutation> {
+    pub fn to_proto_mutations(&self) -> Vec<kvrpcpb::Mutation> {
         self.entry_map
             .iter()
             .filter_map(|(key, mutation)| mutation.to_proto_with_key(key))
             .collect()
     }
 
-    async fn get_from_mutations(&self, key: &Key) -> MutationValue {
+    fn get_from_mutations(&self, key: &Key) -> MutationValue {
         self.entry_map
             .get(&key)
             .map(BufferEntry::get_value)
@@ -352,26 +363,26 @@ impl MutationValue {
 mod tests {
     use super::*;
     use futures::{executor::block_on, future::ready};
+    use tikv_client_common::internal_err;
 
-    #[tokio::test]
-    #[allow(unreachable_code)]
-    async fn set_and_get_from_buffer() {
+    #[test]
+    fn set_and_get_from_buffer() {
         let mut buffer = Buffer::new(false);
-        buffer
-            .put(b"key1".to_vec().into(), b"value1".to_vec())
-            .await;
-        buffer
-            .put(b"key2".to_vec().into(), b"value2".to_vec())
-            .await;
+        buffer.put(b"key1".to_vec().into(), b"value1".to_vec());
+        buffer.put(b"key2".to_vec().into(), b"value2".to_vec());
         assert_eq!(
-            block_on(buffer.get_or_else(b"key1".to_vec().into(), move |_| ready(panic!())))
-                .unwrap()
-                .unwrap(),
+            block_on(
+                buffer.get_or_else(b"key1".to_vec().into(), move |_| ready(Err(internal_err!(
+                    ""
+                ))))
+            )
+            .unwrap()
+            .unwrap(),
             b"value1".to_vec()
         );
 
-        buffer.delete(b"key2".to_vec().into()).await;
-        buffer.put(b"key1".to_vec().into(), b"value".to_vec()).await;
+        buffer.delete(b"key2".to_vec().into());
+        buffer.put(b"key1".to_vec().into(), b"value".to_vec());
         assert_eq!(
             block_on(buffer.batch_get_or_else(
                 vec![b"key2".to_vec().into(), b"key1".to_vec().into()].into_iter(),
@@ -386,27 +397,24 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    #[allow(unreachable_code)]
-    async fn insert_and_get_from_buffer() {
+    #[test]
+    fn insert_and_get_from_buffer() {
         let mut buffer = Buffer::new(false);
-        buffer
-            .insert(b"key1".to_vec().into(), b"value1".to_vec())
-            .await;
-        buffer
-            .insert(b"key2".to_vec().into(), b"value2".to_vec())
-            .await;
+        buffer.insert(b"key1".to_vec().into(), b"value1".to_vec());
+        buffer.insert(b"key2".to_vec().into(), b"value2".to_vec());
         assert_eq!(
-            block_on(buffer.get_or_else(b"key1".to_vec().into(), move |_| ready(panic!())))
-                .unwrap()
-                .unwrap(),
+            block_on(
+                buffer.get_or_else(b"key1".to_vec().into(), move |_| ready(Err(internal_err!(
+                    ""
+                ))))
+            )
+            .unwrap()
+            .unwrap(),
             b"value1".to_vec()
         );
 
-        buffer.delete(b"key2".to_vec().into()).await;
-        buffer
-            .insert(b"key1".to_vec().into(), b"value".to_vec())
-            .await;
+        buffer.delete(b"key2".to_vec().into());
+        buffer.insert(b"key1".to_vec().into(), b"value".to_vec());
         assert_eq!(
             block_on(buffer.batch_get_or_else(
                 vec![b"key2".to_vec().into(), b"key1".to_vec().into()].into_iter(),
@@ -419,7 +427,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unreachable_code)]
     fn repeat_reads_are_cached() {
         let k1: Key = b"key1".to_vec().into();
         let k1_ = k1.clone();
@@ -433,7 +440,7 @@ mod tests {
 
         let mut buffer = Buffer::new(false);
         let r1 = block_on(buffer.get_or_else(k1.clone(), move |_| ready(Ok(Some(v1_)))));
-        let r2 = block_on(buffer.get_or_else(k1.clone(), move |_| ready(panic!())));
+        let r2 = block_on(buffer.get_or_else(k1.clone(), move |_| ready(Err(internal_err!("")))));
         assert_eq!(r1.unwrap().unwrap(), v1);
         assert_eq!(r2.unwrap().unwrap(), v1);
 
@@ -443,7 +450,7 @@ mod tests {
                 ready(Ok(vec![(k1_, v1__).into(), (k2_, v2_).into()]))
             }),
         );
-        let r2 = block_on(buffer.get_or_else(k2.clone(), move |_| ready(panic!())));
+        let r2 = block_on(buffer.get_or_else(k2.clone(), move |_| ready(Err(internal_err!("")))));
         let r3 = block_on(
             buffer.batch_get_or_else(vec![k1.clone(), k2.clone()].into_iter(), move |_| {
                 ready(Ok(vec![]))
@@ -461,5 +468,43 @@ mod tests {
             r3.unwrap().collect::<Vec<_>>(),
             vec![KvPair(k1, v1), KvPair(k2, v2)]
         );
+    }
+
+    // Check that multiple writes to the same key combine in the correct way.
+    #[test]
+    fn state_machine() {
+        let mut buffer = Buffer::new(false);
+
+        macro_rules! assert_entry {
+            ($key: ident, $p: pat) => {
+                assert!(matches!(buffer.entry_map.get(&$key), Some(&$p),))
+            };
+        }
+
+        // Insert + Delete = CheckNotExists
+        let key: Key = b"key1".to_vec().into();
+        buffer.insert(key.clone(), b"value1".to_vec());
+        buffer.delete(key.clone());
+        assert_entry!(key, BufferEntry::CheckNotExist);
+
+        // CheckNotExists + Delete = CheckNotExists
+        buffer.delete(key.clone());
+        assert_entry!(key, BufferEntry::CheckNotExist);
+
+        // CheckNotExists + Put = Insert
+        buffer.put(key.clone(), b"value2".to_vec());
+        assert_entry!(key, BufferEntry::Insert(_));
+
+        // Insert + Put = Insert
+        let key: Key = b"key2".to_vec().into();
+        buffer.insert(key.clone(), b"value1".to_vec());
+        buffer.put(key.clone(), b"value2".to_vec());
+        assert_entry!(key, BufferEntry::Insert(_));
+
+        // Delete + Insert = Put
+        let key: Key = b"key3".to_vec().into();
+        buffer.delete(key.clone());
+        buffer.insert(key.clone(), b"value1".to_vec());
+        assert_entry!(key, BufferEntry::Put(_));
     }
 }
