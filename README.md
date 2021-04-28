@@ -8,7 +8,7 @@ This crate provides an easy-to-use client for [TiKV](https://github.com/tikv/tik
 
 This crate lets you connect to a TiKV cluster and use either a transactional or raw (simple get/put style without transactional consistency guarantees) API to access and update your data.
 
-This is an open source (Apache 2) project maintained by the TiKV Authors. We welcome community contributions, see below for more info.
+The TiKV Rust client is an open source (Apache 2) project maintained by the TiKV Authors. We welcome contributions, see below for more info.
 
 ## Getting started
 
@@ -19,7 +19,7 @@ The TiKV client is a Rust library (crate). To use this crate in your project, ad
 tikv-client = 0.1
 ```
 
-Note, that you will need `tikv-client = { git = "https://github.com/tikv/client-rust.git" }` until we publish the crate (should be any day now).
+Note, you will need `tikv-client = { git = "https://github.com/tikv/client-rust.git" }` until we publish the crate (should be any day now).
 
 The minimum supported version of Rust is 1.40. The minimum supported version of TiKV is 5.0.
 

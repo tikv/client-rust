@@ -398,7 +398,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.pessimistic_lock(iter::once(key.clone()), false)
                 .await?;
         }
-        self.buffer.put(key, value.into()).await;
+        self.buffer.put(key, value.into());
         Ok(())
     }
 
@@ -424,7 +424,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     pub async fn insert(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
         self.check_allow_operation().await?;
         let key = key.into();
-        if self.buffer.get(&key).await.is_some() {
+        if self.buffer.get(&key).is_some() {
             return Err(Error::DuplicateKeyInsertion);
         }
         if self.is_pessimistic() {
@@ -434,7 +434,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             )
             .await?;
         }
-        self.buffer.insert(key, value.into()).await;
+        self.buffer.insert(key, value.into());
         Ok(())
     }
 
@@ -462,7 +462,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.pessimistic_lock(iter::once(key.clone()), false)
                 .await?;
         }
-        self.buffer.delete(key).await;
+        self.buffer.delete(key);
         Ok(())
     }
 
@@ -497,7 +497,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         match self.options.kind {
             TransactionKind::Optimistic => {
                 for key in keys {
-                    self.buffer.lock(key.into()).await;
+                    self.buffer.lock(key.into());
                 }
             }
             TransactionKind::Pessimistic(_) => {
@@ -535,8 +535,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             *status = TransactionStatus::StartedCommit;
         }
 
-        let primary_key = self.buffer.get_primary_key().await;
-        let mutations = self.buffer.to_proto_mutations().await;
+        let primary_key = self.buffer.get_primary_key();
+        let mutations = self.buffer.to_proto_mutations();
         if mutations.is_empty() {
             assert!(primary_key.is_none());
             return Ok(None);
@@ -595,8 +595,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             *status = TransactionStatus::StartedRollback;
         }
 
-        let primary_key = self.buffer.get_primary_key().await;
-        let mutations = self.buffer.to_proto_mutations().await;
+        let primary_key = self.buffer.get_primary_key();
+        let mutations = self.buffer.to_proto_mutations();
         let res = Committer::new(
             primary_key,
             mutations,
@@ -619,7 +619,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Returns the TTL set on the transaction's locks by TiKV.
     pub async fn send_heart_beat(&mut self) -> Result<u64> {
         self.check_allow_operation().await?;
-        let primary_key = match self.buffer.get_primary_key().await {
+        let primary_key = match self.buffer.get_primary_key() {
             Some(k) => k,
             None => return Err(Error::NoPrimaryKey),
         };
@@ -695,7 +695,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         let primary_lock = self
             .buffer
             .get_primary_key()
-            .await
             .unwrap_or_else(|| first_key.clone());
         let for_update_ts = self.rpc.clone().get_timestamp().await?;
         self.options.push_for_update_ts(for_update_ts.clone());
@@ -717,12 +716,12 @@ impl<PdC: PdClient> Transaction<PdC> {
         let pairs = plan.execute().await;
 
         // primary key will be set here if needed
-        self.buffer.primary_key_or(&first_key).await;
+        self.buffer.primary_key_or(&first_key);
 
         self.start_auto_heartbeat().await;
 
         for key in keys {
-            self.buffer.lock(key.key()).await;
+            self.buffer.lock(key.key());
         }
 
         pairs
@@ -755,7 +754,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         let primary_key = self
             .buffer
             .get_primary_key()
-            .await
             .expect("Primary key should exist");
         let start_ts = self.timestamp.clone();
         let region_backoff = self.options.retry_options.region_backoff.clone();
