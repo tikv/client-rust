@@ -240,7 +240,7 @@ impl Shardable for kvrpcpb::PrewriteRequest {
         }
 
         // Only if there is only one request to send
-        if self.try_one_pc && self.mutations.len() != self.secondaries.len() + 1 {
+        if self.try_one_pc && shard.len() != self.secondaries.len() + 1 {
             self.set_try_one_pc(false);
         }
 
