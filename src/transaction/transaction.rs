@@ -550,7 +550,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.timestamp.clone(),
             self.rpc.clone(),
             self.options.clone(),
-            self.buffer.get_write_size().await as u64,
+            self.buffer.get_write_size() as u64,
         )
         .commit()
         .await;
@@ -604,7 +604,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.timestamp.clone(),
             self.rpc.clone(),
             self.options.clone(),
-            self.buffer.get_write_size().await as u64,
+            self.buffer.get_write_size() as u64,
         )
         .rollback()
         .await;
@@ -619,6 +619,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Send a heart beat message to keep the transaction alive on the server and update its TTL.
     ///
     /// Returns the TTL set on the transaction's locks by TiKV.
+    #[doc(hidden)]
     pub async fn send_heart_beat(&mut self) -> Result<u64> {
         self.check_allow_operation().await?;
         let primary_key = match self.buffer.get_primary_key() {
@@ -1231,7 +1232,7 @@ enum TransactionStatus {
 mod tests {
     use crate::{
         mock::{MockKvClient, MockPdClient},
-        transaction::transaction::HeartbeatOption::FixedTime,
+        transaction::HeartbeatOption,
         Transaction, TransactionOptions,
     };
     use fail::FailScenario;
@@ -1249,34 +1250,36 @@ mod tests {
     #[tokio::test]
     async fn test_optimistic_heartbeat() -> Result<(), io::Error> {
         let scenario = FailScenario::setup();
-        fail::cfg("after-prewrite", "sleep(10000)").unwrap();
+        fail::cfg("after-prewrite", "sleep(2000)").unwrap();
         let heartbeats = Arc::new(AtomicUsize::new(0));
         let heartbeats_cloned = heartbeats.clone();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |req: &dyn Any| {
-                if let Some(_heartbeat) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
+                if let Some(_) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
                     heartbeats_cloned.fetch_add(1, Ordering::SeqCst);
-                    return Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>);
-                } else if let Some(_prewrite) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
-                    return Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>);
+                    Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>)
+                } else if let Some(_) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
+                } else {
+                    Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
                 }
-                Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
             },
         )));
         let key1 = "key1".to_owned();
         let mut heartbeat_txn = Transaction::new(
             Timestamp::default(),
             pd_client,
-            TransactionOptions::new_optimistic(),
+            TransactionOptions::new_optimistic()
+                .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_secs(1))),
         );
         heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
         let heartbeat_txn_handle = tokio::task::spawn_blocking(move || {
             assert!(futures::executor::block_on(heartbeat_txn.commit()).is_ok())
         });
         assert_eq!(heartbeats.load(Ordering::SeqCst), 0);
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
         heartbeat_txn_handle.await.unwrap();
-        assert!(heartbeats.load(Ordering::SeqCst) >= 1);
+        assert_eq!(heartbeats.load(Ordering::SeqCst), 1);
         scenario.teardown();
         Ok(())
     }
@@ -1287,19 +1290,16 @@ mod tests {
         let heartbeats_cloned = heartbeats.clone();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |req: &dyn Any| {
-                if let Some(_heartbeat) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
+                if let Some(_) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
                     heartbeats_cloned.fetch_add(1, Ordering::SeqCst);
-                    return Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>);
-                } else if let Some(_prewrite) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
-                    return Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>);
-                } else if let Some(_pessimistic_lock) =
-                    req.downcast_ref::<kvrpcpb::PessimisticLockRequest>()
-                {
-                    return Ok(
-                        Box::new(kvrpcpb::PessimisticLockResponse::default()) as Box<dyn Any>
-                    );
+                    Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>)
+                } else if let Some(_) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
+                } else if let Some(_) = req.downcast_ref::<kvrpcpb::PessimisticLockRequest>() {
+                    Ok(Box::new(kvrpcpb::PessimisticLockResponse::default()) as Box<dyn Any>)
+                } else {
+                    Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
                 }
-                Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
             },
         )));
         let key1 = "key1".to_owned();
@@ -1307,16 +1307,16 @@ mod tests {
             Timestamp::default(),
             pd_client,
             TransactionOptions::new_pessimistic()
-                .heartbeat_option(FixedTime(Duration::from_secs(1))),
+                .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_secs(1))),
         );
         heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
         assert_eq!(heartbeats.load(Ordering::SeqCst), 0);
-        tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
         let heartbeat_txn_handle = tokio::spawn(async move {
             assert!(heartbeat_txn.commit().await.is_ok());
         });
         heartbeat_txn_handle.await.unwrap();
-        assert!(heartbeats.load(Ordering::SeqCst) > 1);
+        assert_eq!(heartbeats.load(Ordering::SeqCst), 1);
         Ok(())
     }
 }

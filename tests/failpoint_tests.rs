@@ -4,26 +4,32 @@ mod common;
 use common::{clear_tikv, pd_addrs};
 use fail::FailScenario;
 use serial_test::serial;
-use tikv_client::{Result, TransactionClient, TransactionOptions};
+use std::time::Duration;
+use tikv_client::{transaction::HeartbeatOption, Result, TransactionClient, TransactionOptions};
 
 #[tokio::test]
 #[serial]
 async fn optimistic_heartbeat() -> Result<()> {
     clear_tikv().await;
     let scenario = FailScenario::setup();
-    fail::cfg("after-prewrite", "sleep(10000)").unwrap();
+    fail::cfg("after-prewrite", "sleep(6000)").unwrap();
 
     let key1 = "key1".to_owned();
     let key2 = "key2".to_owned();
     let client = TransactionClient::new(pd_addrs()).await?;
 
     let mut heartbeat_txn = client
-        .begin_with_options(TransactionOptions::new_optimistic())
+        .begin_with_options(
+            TransactionOptions::new_optimistic()
+                .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_secs(1))),
+        )
         .await?;
     heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
 
     let mut txn_without_heartbeat = client
-        .begin_with_options(TransactionOptions::new_optimistic().no_auto_hearbeat())
+        .begin_with_options(
+            TransactionOptions::new_optimistic().heartbeat_option(HeartbeatOption::NoHeartbeat),
+        )
         .await?;
     txn_without_heartbeat
         .put(key2.clone(), "fooo")
@@ -37,6 +43,7 @@ async fn optimistic_heartbeat() -> Result<()> {
         assert!(futures::executor::block_on(txn_without_heartbeat.commit()).is_err())
     });
 
+    // inital TTL is 3 seconds, before which TTL is valid regardless of heartbeat.
     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
     fail::cfg("after-prewrite", "off").unwrap();
 
@@ -45,7 +52,7 @@ async fn optimistic_heartbeat() -> Result<()> {
         .begin_with_options(
             TransactionOptions::new_optimistic()
                 .no_resolve_locks()
-                .no_auto_hearbeat(),
+                .heartbeat_option(HeartbeatOption::NoHeartbeat),
         )
         .await?;
     t3.put(key1.clone(), "gee").await?;

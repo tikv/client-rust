@@ -11,7 +11,7 @@ edition = "2018"
 [features]
 default = []
 # Enable integration tests with a running TiKV and PD instance.
-# Use $PD_ADDRS, comma separated, to set the addresses the tests use. 
+# Use $PD_ADDRS, comma separated, to set the addresses the tests use.
 integration-tests = []
 
 [lib]
