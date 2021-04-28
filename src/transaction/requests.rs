@@ -2,7 +2,9 @@
 
 use crate::{
     pd::PdClient,
-    request::{Collect, DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey},
+    request::{
+        Collect, DefaultProcessor, HasKeys, KvRequest, Merge, Process, Shardable, SingleKey,
+    },
     store::{store_stream_for_keys, store_stream_for_range_by_start_key, Store},
     timestamp::TimestampExt,
     transaction::HasLocks,
@@ -238,7 +240,7 @@ impl Shardable for kvrpcpb::PrewriteRequest {
         }
 
         // Only if there is only one request to send
-        if self.try_one_pc && self.mutations.len() != self.secondaries.len() + 1 {
+        if self.try_one_pc && shard.len() != self.secondaries.len() + 1 {
             self.set_try_one_pc(false);
         }
 
@@ -276,11 +278,11 @@ impl KvRequest for kvrpcpb::CommitRequest {
 shardable_keys!(kvrpcpb::CommitRequest);
 
 pub fn new_batch_rollback_request(
-    keys: Vec<Key>,
+    keys: Vec<Vec<u8>>,
     start_version: u64,
 ) -> kvrpcpb::BatchRollbackRequest {
     let mut req = kvrpcpb::BatchRollbackRequest::default();
-    req.set_keys(keys.into_iter().map(Into::into).collect());
+    req.set_keys(keys);
     req.set_start_version(start_version);
 
     req
@@ -359,6 +361,15 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
     }
 }
 
+impl HasKeys for kvrpcpb::PessimisticLockRequest {
+    fn get_keys(&self) -> Vec<Key> {
+        self.mutations
+            .iter()
+            .map(|m| m.key.clone().into())
+            .collect()
+    }
+}
+
 impl Merge<kvrpcpb::PessimisticLockResponse> for Collect {
     // FIXME: PessimisticLockResponse only contains values.
     // We need to pair keys and values returned somewhere.
@@ -418,7 +429,7 @@ impl Shardable for kvrpcpb::ScanLockRequest {
         &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
-        store_stream_for_range_by_start_key(self.start_key.clone(), pd_client.clone())
+        store_stream_for_range_by_start_key(self.start_key.clone().into(), pd_client.clone())
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {

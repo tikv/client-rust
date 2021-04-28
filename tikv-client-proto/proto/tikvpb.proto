@@ -2,6 +2,7 @@ syntax = "proto3";
 package tikvpb;
 
 import "coprocessor.proto";
+import "coprocessor_v2.proto";
 import "kvrpcpb.proto";
 import "mpp.proto";
 import "raft_serverpb.proto";
@@ -47,6 +48,10 @@ service Tikv {
     rpc RawScan(kvrpcpb.RawScanRequest) returns (kvrpcpb.RawScanResponse) {}
     rpc RawDeleteRange(kvrpcpb.RawDeleteRangeRequest) returns (kvrpcpb.RawDeleteRangeResponse) {}
     rpc RawBatchScan(kvrpcpb.RawBatchScanRequest) returns (kvrpcpb.RawBatchScanResponse) {}
+    // Get TTL of the key. Returns 0 if TTL is not set for the key.
+    rpc RawGetKeyTTL(kvrpcpb.RawGetKeyTTLRequest) returns (kvrpcpb.RawGetKeyTTLResponse) {}
+    // Compare if the value in database equals to `RawCASRequest.previous_value` before putting the new value. If not, this request will have no effect and the value in the database will be returned.
+    rpc RawCompareAndSwap(kvrpcpb.RawCASRequest) returns (kvrpcpb.RawCASResponse) {}
 
     // VerKV commands.
     rpc VerGet(kvrpcpb.VerGetRequest) returns (kvrpcpb.VerGetResponse) {}
@@ -66,8 +71,11 @@ service Tikv {
     // Commands for executing SQL in the TiKV coprocessor (i.e., 'pushed down' to TiKV rather than
     // executed in TiDB).
     rpc Coprocessor(coprocessor.Request) returns (coprocessor.Response) {}
-    rpc CoprocessorStream(coprocessor.Request)  returns (stream coprocessor.Response) {}
+    rpc CoprocessorStream(coprocessor.Request) returns (stream coprocessor.Response) {}
     rpc BatchCoprocessor(coprocessor.BatchRequest) returns (stream coprocessor.BatchResponse) {}
+
+    // Command for executing custom user requests in TiKV coprocessor_v2.
+    rpc CoprocessorV2(coprocessor_v2.RawCoprocessorRequest) returns (coprocessor_v2.RawCoprocessorResponse) {}
 
     // Raft commands (sent between TiKV nodes).
     rpc Raft(stream raft_serverpb.RaftMessage) returns (raft_serverpb.Done) {}
@@ -92,11 +100,14 @@ service Tikv {
     rpc EstablishMPPConnection(mpp.EstablishMPPConnectionRequest) returns (stream mpp.MPPDataPacket) {}
 
     /// CheckLeader sends all information (includes region term and epoch) to other stores.
-    /// Once a store receives a request, it checks term and epoch for each region, and sends the regions whose 
+    /// Once a store receives a request, it checks term and epoch for each region, and sends the regions whose
     /// term and epoch match with local information in the store.
     /// After the client collected all responses from all stores, it checks if got a quorum of responses from
     /// other stores for every region, and decides to advance resolved ts from these regions.
-    rpc CheckLeader(kvrpcpb.CheckLeaderRequest) returns(kvrpcpb.CheckLeaderResponse);
+    rpc CheckLeader(kvrpcpb.CheckLeaderRequest) returns (kvrpcpb.CheckLeaderResponse);
+
+    /// Get the minimal `safe_ts` from regions at the store
+    rpc GetStoreSafeTS(kvrpcpb.StoreSafeTSRequest) returns (kvrpcpb.StoreSafeTSResponse);
 }
 
 message BatchCommandsRequest {
@@ -143,6 +154,8 @@ message BatchCommandsRequest {
             kvrpcpb.VerDeleteRangeRequest VerDeleteRange = 32;
 
             kvrpcpb.CheckSecondaryLocksRequest CheckSecondaryLocks = 33;
+
+            coprocessor_v2.RawCoprocessorRequest CoprocessorV2 = 34;
 
             // For some test cases.
             BatchCommandsEmptyRequest Empty = 255;
@@ -196,6 +209,8 @@ message BatchCommandsResponse {
             kvrpcpb.VerDeleteRangeResponse VerDeleteRange = 32;
 
             kvrpcpb.CheckSecondaryLocksResponse CheckSecondaryLocks = 33;
+
+            coprocessor_v2.RawCoprocessorResponse CoprocessorV2 = 34;
 
             // For some test cases.
             BatchCommandsEmptyResponse Empty = 255;

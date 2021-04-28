@@ -3,7 +3,7 @@
 use crate::{
     backoff::Backoff,
     pd::{PdClient, PdRpcClient},
-    request::{Collect, CollectError, Plan, PlanBuilder, RetryOptions},
+    request::{Collect, CollectAndMatchKey, CollectError, Plan, PlanBuilder, RetryOptions},
     timestamp::TimestampExt,
     transaction::{buffer::Buffer, lowering::*},
     BoundRange, Error, Key, KvPair, Result, Value,
@@ -17,30 +17,40 @@ use tokio::{sync::RwLock, time::Duration};
 
 /// An undo-able set of actions on the dataset.
 ///
-/// Using a transaction you can prepare a set of actions (such as `get`, or `put`) on data at a
-/// particular timestamp called `start_ts` obtained from the placement driver.
-/// Once a transaction is commited, a new timestamp called `commit_ts` is obtained from the placement driver.
+/// Create a transaction using a [`TransactionClient`](crate::TransactionClient), then run actions
+/// (such as `get`, or `put`) on the transaction. Reads are executed immediately, writes are
+/// buffered locally. Once complete, `commit` the transaction. Behind the scenes, the client will
+/// perform a two phase commit and return success as soon as the writes are guaranteed to be
+/// committed (some finalisation may continue in the background after the return, but no data can be
+/// lost).
 ///
-/// The snapshot isolation in TiKV ensures that a transaction behaves as if it operates on the snapshot taken at
-/// `start_ts` and its mutations take effect at `commit_ts`.
-/// In other words, the transaction can read mutations with `commit_ts` <= its `start_ts`,
-/// and its mutations are readable for transactions with `start_ts` >= its `commit_ts`.
+/// TiKV transactions use multi-version concurrency control. All reads logically happen at the start
+/// of the transaction (at the start timestamp, `start_ts`). Once a transaction is commited, a
+/// its writes atomically become visible to other transactions at (logically) the commit timestamp.
 ///
-/// Mutations, or write operations made in a transaction are buffered locally and sent at the time of commit,
-/// except for pessimisitc locking.
-/// In pessimistic mode, all write operations or `xxx_for_update` operations will first acquire pessimistic locks in TiKV.
-/// A lock exists until the transaction is committed (in the first phase of 2PC) or rolled back, or it exceeds its Time To Live (TTL).
+/// In other words, a transaction can read data that was committed at `commit_ts` < its `start_ts`,
+/// and its writes are readable by transactions with `start_ts` >= its `commit_ts`.
+///
+/// Mutations are buffered locally and sent to the TiKV cluster at the time of commit.
+/// In a pessimistic transaction, all write operations and `xxx_for_update` operations will immediately
+/// acquire locks from TiKV. Such a lock blocks other transactions from writing to that key.
+/// A lock exists until the transaction is committed or rolled back, or the lock reaches its time to
+/// live (TTL).
 ///
 /// For details, the [SIG-Transaction](https://github.com/tikv/sig-transaction)
-/// provides materials explaining designs and implementations of multiple features in TiKV transactions.
+/// provides materials explaining designs and implementations of TiKV transactions.
 ///
 /// # Examples
+///
 /// ```rust,no_run
-/// use tikv_client::{Config, TransactionClient};
-/// use futures::prelude::*;
+/// # use tikv_client::{Config, TransactionClient};
+/// # use futures::prelude::*;
 /// # futures::executor::block_on(async {
 /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
-/// let txn = client.begin_optimistic().await.unwrap();
+/// let mut txn = client.begin_optimistic().await.unwrap();
+/// let foo = txn.get("foo".to_owned()).await.unwrap().unwrap();
+/// txn.put("bar".to_owned(), foo).await.unwrap();
+/// txn.commit().await.unwrap();
 /// # });
 /// ```
 pub struct Transaction<PdC: PdClient = PdRpcClient> {
@@ -66,7 +76,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         Transaction {
             status: Arc::new(RwLock::new(status)),
             timestamp,
-            buffer: Default::default(),
+            buffer: Buffer::new(options.is_pessimistic()),
             rpc,
             options,
             is_heartbeat_started: false,
@@ -89,11 +99,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let result: Option<Value> = txn.get(key).await.unwrap();
-    /// // Finish the transaction...
-    /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
+    pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
@@ -115,23 +123,35 @@ impl<PdC: PdClient> Transaction<PdC> {
             .await
     }
 
-    /// Create a `get for udpate` request.
-    /// Once resolved this request will pessimistically lock and fetch the latest
-    /// value associated with the given key at **current timestamp**.
+    /// Create a `get for update` request.
     ///
-    /// The "current timestamp" (also called `for_update_ts` of the request) is fetched immediately from PD.
+    /// The request reads and "locks" a key. It is similar to `SELECT ... FOR
+    /// UPDATE` in TiDB, and has different behavior in optimistic and
+    /// pessimistic transactions.
     ///
-    /// Note: The behavior of this command does not follow snapshot isolation. It is similar to `select for update` in TiDB,
-    /// which is similar to that in MySQL. It reads the latest value (using current timestamp),
-    /// and the value is not cached in the local buffer.
-    /// So normal `get`-like commands after `get_for_update` will not be influenced, they still read values at `start_ts`.
+    /// # Optimistic transaction
     ///
-    /// Different from `get`, this request does not distinguish between empty values and non-existent keys
-    /// , i.e. querying non-existent keys will result in empty values.
+    /// It reads at the "start timestamp" and caches the value, just like normal
+    /// get requests. The lock is written in prewrite and commit, so it cannot
+    /// prevent concurrent transactions from writing the same key, but can only
+    /// prevent itself from committing.
     ///
-    /// It can only be used in pessimistic mode.
+    /// # Pessimistic transaction
+    ///
+    /// It reads at the "current timestamp" and thus does not cache the value.
+    /// So following read requests won't be affected by the `get_for_udpate`.
+    /// A lock will be acquired immediately with this request, which prevents
+    /// concurrent transactions from mutating the keys.
+    ///
+    /// The "current timestamp" (also called `for_update_ts` of the request) is fetched from PD.
+    ///
+    /// Note: The behavior of this command under pessimistic transaction does not follow snapshot.
+    /// It reads the latest value (using current timestamp), and the value is not cached in the
+    /// local buffer. So normal `get`-like commands after `get_for_update` will not be influenced,
+    /// they still read values at the transaction's `start_ts`.
     ///
     /// # Examples
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -148,18 +168,23 @@ impl<PdC: PdClient> Transaction<PdC> {
     pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         self.check_allow_operation().await?;
         if !self.is_pessimistic() {
-            Err(Error::InvalidTransactionType)
-        } else {
             let key = key.into();
-            let mut values = self.pessimistic_lock(iter::once(key.clone()), true).await?;
-            assert!(values.len() == 1);
-            Ok(values.pop().unwrap())
+            self.lock_keys(iter::once(key.clone())).await?;
+            self.get(key).await
+        } else {
+            let mut pairs = self.pessimistic_lock(iter::once(key.into()), true).await?;
+            debug_assert!(pairs.len() <= 1);
+            match pairs.pop() {
+                Some(pair) => Ok(Some(pair.1)),
+                None => Ok(None),
+            }
         }
     }
 
-    /// Check whether the key exists.
+    /// Check whether a key exists.
     ///
     /// # Examples
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -170,7 +195,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn key_exists(&self, key: impl Into<Key>) -> Result<bool> {
+    pub async fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
         let key = key.into();
         Ok(self.scan_keys(key.clone()..=key, 1).await?.next().is_some())
     }
@@ -180,9 +205,11 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Once resolved this request will result in the fetching of the values associated with the
     /// given keys.
     ///
-    /// Non-existent entries will not appear in the result. The order of the keys is not retained in the result.
+    /// Non-existent entries will not appear in the result. The order of the keys is not retained in
+    /// the result.
     ///
     /// # Examples
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -202,7 +229,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn batch_get(
-        &self,
+        &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
         self.check_allow_operation().await?;
@@ -228,64 +255,55 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     /// Create a new 'batch get for update' request.
     ///
-    /// Once resolved this request will pessimistically lock the keys and
-    /// fetch the values associated with the given keys.
+    /// Similar to [`get_for_update`](Transaction::get_for_update), but it works
+    /// for a batch of keys.
     ///
-    /// Note: The behavior of this command does not follow snapshot isolation. It is similar to `select for update` in TiDB,
-    /// which is similar to that in MySQL. It reads the latest value (using current timestamp),
-    /// and the value is not cached in the local buffer.
-    /// So normal `get`-like commands after `batch_get_for_update` will not be influenced, they still read values at `start_ts`.
-    ///
-    /// Different from `batch_get`, this request does not distinguish between empty values and non-existent keys
-    /// , i.e. querying non-existent keys will result in empty values.
-    ///
-    /// It can only be used in pessimistic mode.
+    /// Non-existent entries will not appear in the result. The order of the
+    /// keys is not retained in the result.
     ///
     /// # Examples
-    /// ```rust,no_run,compile_fail
-    /// # use tikv_client::{Key, Value, Config, TransactionClient};
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Value, Config, TransactionClient, KvPair};
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
-    /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
-    /// let result: HashMap<Key, Value> = txn
+    /// let keys = vec!["foo".to_owned(), "bar".to_owned()];
+    /// let result: Vec<KvPair> = txn
     ///     .batch_get_for_update(keys)
     ///     .await
-    ///     .unwrap()
-    ///     .map(|pair| (pair.0, pair.1))
-    ///     .collect();
-    /// // now "TiKV" and "TiDB" are both locked
+    ///     .unwrap();
+    /// // now "foo" and "bar" are both locked
     /// // Finish the transaction...
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    // This is temporarily disabled because we cannot correctly match the keys and values.
-    // See `impl KvRequest for kvrpcpb::PessimisticLockRequest` for details.
-    #[allow(dead_code)]
-    async fn batch_get_for_update(
+    pub async fn batch_get_for_update(
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
-    ) -> Result<impl Iterator<Item = KvPair>> {
+    ) -> Result<Vec<KvPair>> {
         self.check_allow_operation().await?;
+        let keys: Vec<Key> = keys.into_iter().map(|k| k.into()).collect();
         if !self.is_pessimistic() {
-            Err(Error::InvalidTransactionType)
+            self.lock_keys(keys.clone()).await?;
+            Ok(self.batch_get(keys).await?.collect())
         } else {
-            let keys: Vec<Key> = keys.into_iter().map(|it| it.into()).collect();
-            self.pessimistic_lock(keys.clone(), false).await?;
-            self.batch_get(keys).await
+            self.pessimistic_lock(keys, true).await
         }
     }
 
     /// Create a new 'scan' request.
     ///
-    /// Once resolved this request will result in a `Vec` of key-value pairs that lies in the specified range.
+    /// Once resolved this request will result in a `Vec` of all key-value pairs that lie in the
+    /// specified range.
     ///
     /// If the number of eligible key-value pairs are greater than `limit`,
-    /// only the first `limit` pairs are returned, ordered by the key.
+    /// only the first `limit` pairs are returned, ordered by key.
     ///
     /// # Examples
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Key, KvPair, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -293,8 +311,8 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
-    /// let key1: Key = b"TiKV".to_vec().into();
-    /// let key2: Key = b"TiDB".to_vec().into();
+    /// let key1: Key = b"foo".to_vec().into();
+    /// let key2: Key = b"bar".to_vec().into();
     /// let result: Vec<KvPair> = txn
     ///     .scan(key1..key2, 10)
     ///     .await
@@ -305,7 +323,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn scan(
-        &self,
+        &mut self,
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
@@ -317,9 +335,10 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Once resolved this request will result in a `Vec` of keys that lies in the specified range.
     ///
     /// If the number of eligible keys are greater than `limit`,
-    /// only the first `limit` keys are returned, ordered by the key.
+    /// only the first `limit` keys are returned, ordered by key.
     ///
     /// # Examples
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Key, KvPair, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -327,8 +346,8 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
-    /// let key1: Key = b"TiKV".to_vec().into();
-    /// let key2: Key = b"TiDB".to_vec().into();
+    /// let key1: Key = b"foo".to_vec().into();
+    /// let key2: Key = b"bar".to_vec().into();
     /// let result: Vec<Key> = txn
     ///     .scan_keys(key1..key2, 10)
     ///     .await
@@ -339,7 +358,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn scan_keys(
-        &self,
+        &mut self,
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
@@ -351,7 +370,7 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     /// Create a 'scan_reverse' request.
     ///
-    /// Similar to [`scan`](Transaction::scan), but in the reverse direction.
+    /// Similar to [`scan`](Transaction::scan), but scans in the reverse direction.
     pub(crate) fn scan_reverse(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
         unimplemented!()
     }
@@ -359,16 +378,16 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Sets the value associated with the given key.
     ///
     /// # Examples
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
-    /// let key = "TiKV".to_owned();
-    /// let val = "TiKV".to_owned();
+    /// let key = "foo".to_owned();
+    /// let val = "FOO".to_owned();
     /// txn.put(key, val);
-    /// // Finish the transaction...
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
@@ -379,55 +398,60 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.pessimistic_lock(iter::once(key.clone()), false)
                 .await?;
         }
-        self.buffer.put(key, value.into()).await;
+        self.buffer.put(key, value.into());
         Ok(())
     }
 
     /// Inserts the value associated with the given key.
-    /// It has a constraint that key should not exist before.
+    ///
+    /// Similar to [`put'], but it has an additional constraint that the key should not exist
+    /// before this operation.
     ///
     /// # Examples
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
-    /// let key = "TiKV".to_owned();
-    /// let val = "TiKV".to_owned();
+    /// let key = "foo".to_owned();
+    /// let val = "FOO".to_owned();
     /// txn.insert(key, val);
-    /// // Finish the transaction...
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
     pub async fn insert(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
         self.check_allow_operation().await?;
         let key = key.into();
-        if self.buffer.get(&key).await.is_some() {
+        if self.buffer.get(&key).is_some() {
             return Err(Error::DuplicateKeyInsertion);
         }
         if self.is_pessimistic() {
-            self.pessimistic_lock(iter::once(key.clone()), false)
-                .await?;
+            self.pessimistic_lock(
+                iter::once((key.clone(), kvrpcpb::Assertion::NotExist)),
+                false,
+            )
+            .await?;
         }
-        self.buffer.insert(key, value.into()).await;
+        self.buffer.insert(key, value.into());
         Ok(())
     }
 
-    /// Deletes the given key.
+    /// Deletes the given key and its value from the database.
     ///
     /// Deleting a non-existent key will not result in an error.
     ///
     /// # Examples
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
-    /// let key = "TiKV".to_owned();
+    /// let key = "foo".to_owned();
     /// txn.delete(key);
-    /// // Finish the transaction...
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
@@ -438,21 +462,22 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.pessimistic_lock(iter::once(key.clone()), false)
                 .await?;
         }
-        self.buffer.delete(key).await;
+        self.buffer.delete(key);
         Ok(())
     }
 
-    /// Lock the given keys without mutating value (at the time of commit).
+    /// Lock the given keys without mutating their values.
     ///
     /// In optimistic mode, write conflicts are not checked until commit.
     /// So use this command to indicate that
     /// "I do not want to commit if the value associated with this key has been modified".
-    /// It's useful to avoid *write skew* anomaly.
+    /// It's useful to avoid the *write skew* anomaly.
     ///
     /// In pessimistic mode, it is similar to [`batch_get_for_update`](Transaction::batch_get_for_update),
     /// except that it does not read values.
     ///
     /// # Examples
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
@@ -472,21 +497,22 @@ impl<PdC: PdClient> Transaction<PdC> {
         match self.options.kind {
             TransactionKind::Optimistic => {
                 for key in keys {
-                    self.buffer.lock(key.into()).await;
+                    self.buffer.lock(key.into());
                 }
             }
             TransactionKind::Pessimistic(_) => {
-                self.pessimistic_lock(keys.into_iter().map(|k| k.into()), false)
-                    .await?;
+                let keys: Vec<Key> = keys.into_iter().map(|k| k.into()).collect();
+                self.pessimistic_lock(keys.into_iter(), false).await?;
             }
         }
         Ok(())
     }
 
-    /// Commits the actions of the transaction. On success, we return the commit timestamp (or None
-    /// if there was nothing to commit).
+    /// Commits the actions of the transaction. On success, we return the commit timestamp (or
+    /// `None` if there was nothing to commit).
     ///
     /// # Examples
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Config, Timestamp, TransactionClient};
     /// # use futures::prelude::*;
@@ -494,8 +520,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// // ... Do some actions.
-    /// let req = txn.commit();
-    /// let result: Timestamp = req.await.unwrap().unwrap();
+    /// let result: Timestamp = txn.commit().await.unwrap().unwrap();
     /// # });
     /// ```
     pub async fn commit(&mut self) -> Result<Option<Timestamp>> {
@@ -510,8 +535,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             *status = TransactionStatus::StartedCommit;
         }
 
-        let primary_key = self.buffer.get_primary_key().await;
-        let mutations = self.buffer.to_proto_mutations().await;
+        let primary_key = self.buffer.get_primary_key();
+        let mutations = self.buffer.to_proto_mutations();
         if mutations.is_empty() {
             assert!(primary_key.is_none());
             return Ok(None);
@@ -539,13 +564,28 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     /// Rollback the transaction.
     ///
-    /// If it succeeds, all mutations made by this transaciton will not take effect.
+    /// If it succeeds, all mutations made by this transaction will be discarded.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Config, Timestamp, TransactionClient};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
+    /// // ... Do some actions.
+    /// txn.rollback().await.unwrap();
+    /// # });
+    /// ```
     pub async fn rollback(&mut self) -> Result<()> {
         {
             let status = self.status.read().await;
             if !matches!(
                 *status,
-                TransactionStatus::StartedRollback | TransactionStatus::Active
+                TransactionStatus::StartedRollback
+                    | TransactionStatus::Active
+                    | TransactionStatus::StartedCommit
             ) {
                 return Err(Error::OperationAfterCommitError);
             }
@@ -556,8 +596,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             *status = TransactionStatus::StartedRollback;
         }
 
-        let primary_key = self.buffer.get_primary_key().await;
-        let mutations = self.buffer.to_proto_mutations().await;
+        let primary_key = self.buffer.get_primary_key();
+        let mutations = self.buffer.to_proto_mutations();
         let res = Committer::new(
             primary_key,
             mutations,
@@ -578,10 +618,10 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     /// Send a heart beat message to keep the transaction alive on the server and update its TTL.
     ///
-    /// Returns the TTL set on the lock by the server.
+    /// Returns the TTL set on the transaction's locks by TiKV.
     pub async fn send_heart_beat(&mut self) -> Result<u64> {
         self.check_allow_operation().await?;
-        let primary_key = match self.buffer.get_primary_key().await {
+        let primary_key = match self.buffer.get_primary_key() {
             Some(k) => k,
             None => return Err(Error::NoPrimaryKey),
         };
@@ -597,7 +637,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     async fn scan_inner(
-        &self,
+        &mut self,
         range: impl Into<BoundRange>,
         limit: u32,
         key_only: bool,
@@ -627,54 +667,66 @@ impl<PdC: PdClient> Transaction<PdC> {
             .await
     }
 
-    /// Pessimistically lock the keys.
+    /// Pessimistically lock the keys, and optionally retrieve corresponding values.
+    /// If a key does not exist, the corresponding pair will not appear in the result.
     ///
-    /// Once resolved it acquires a lock on the key in TiKV.
-    /// The lock prevents other transactions from mutating the entry until it is released.
+    /// Once resolved it acquires locks on the keys in TiKV.
+    /// A lock prevents other transactions from mutating the entry until it is released.
+    ///
+    /// # Panics
     ///
     /// Only valid for pessimistic transactions, panics if called on an optimistic transaction.
     async fn pessimistic_lock(
         &mut self,
-        keys: impl IntoIterator<Item = Key>,
+        keys: impl IntoIterator<Item = impl PessimisticLock>,
         need_value: bool,
-    ) -> Result<Vec<Option<Value>>> {
+    ) -> Result<Vec<KvPair>> {
         assert!(
             matches!(self.options.kind, TransactionKind::Pessimistic(_)),
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
         );
 
-        let keys: Vec<Key> = keys.into_iter().collect();
-        let first_key = keys[0].clone();
-        let primary_lock = self.buffer.get_primary_key_or(&first_key).await;
-        let lock_ttl = DEFAULT_LOCK_TTL;
+        let keys: Vec<_> = keys.into_iter().collect();
+        if keys.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let first_key = keys[0].clone().key();
+        // we do not set the primary key here, because pessimistic lock request
+        // can fail, in which case the keys may not be part of the transaction.
+        let primary_lock = self
+            .buffer
+            .get_primary_key()
+            .unwrap_or_else(|| first_key.clone());
         let for_update_ts = self.rpc.clone().get_timestamp().await?;
         self.options.push_for_update_ts(for_update_ts.clone());
         let request = new_pessimistic_lock_request(
             keys.clone().into_iter(),
             primary_lock,
             self.timestamp.clone(),
-            lock_ttl,
+            DEFAULT_LOCK_TTL,
             for_update_ts,
             need_value,
         );
         let plan = PlanBuilder::new(self.rpc.clone(), request)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
+            .preserve_keys()
             .multi_region()
             .retry_region(self.options.retry_options.region_backoff.clone())
-            .merge(Collect)
+            .merge(CollectAndMatchKey)
             .plan();
-        let values = plan
-            .execute()
-            .await
-            .map(|r| r.into_iter().map(Into::into).collect());
+        let pairs = plan.execute().await;
+
+        // primary key will be set here if needed
+        self.buffer.primary_key_or(&first_key);
 
         self.start_auto_heartbeat().await;
 
         for key in keys {
-            self.buffer.lock(key).await;
+            self.buffer.lock(key.key());
         }
 
-        values
+        pairs
     }
 
     /// Checks if the transaction can perform arbitrary operations.
@@ -704,7 +756,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         let primary_key = self
             .buffer
             .get_primary_key()
-            .await
             .expect("Primary key should exist");
         let start_ts = self.timestamp.clone();
         let region_backoff = self.options.retry_options.region_backoff.clone();
@@ -789,11 +840,13 @@ const TTL_FACTOR: f64 = 6000.0;
 #[derive(Clone, PartialEq, Debug)]
 pub enum TransactionKind {
     Optimistic,
-    /// Argument is for_update_ts
+    /// Argument is the transaction's for_update_ts
     Pessimistic(Timestamp),
 }
 
 /// Options for configuring a transaction.
+///
+/// `TransactionOptions` has a builder-style API.
 #[derive(Clone, PartialEq, Debug)]
 pub struct TransactionOptions {
     /// Optimistic or pessimistic (default) transaction.
@@ -816,13 +869,6 @@ pub struct TransactionOptions {
 pub enum HeartbeatOption {
     NoHeartbeat,
     FixedTime(Duration),
-}
-
-#[derive(Clone, Eq, PartialEq, Debug)]
-pub enum CheckLevel {
-    Panic,
-    Warn,
-    None,
 }
 
 impl Default for TransactionOptions {
@@ -916,6 +962,30 @@ impl TransactionOptions {
         self.heartbeat_option = heartbeat_option;
         self
     }
+
+    // Returns true if these options describe a pessimistic transaction.
+    pub fn is_pessimistic(&self) -> bool {
+        match self.kind {
+            TransactionKind::Pessimistic(_) => true,
+            TransactionKind::Optimistic => false,
+        }
+    }
+}
+
+/// Determines what happens when a transaction is dropped without being rolled back or committed.
+///
+/// The default is to panic.
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub enum CheckLevel {
+    /// The program will panic.
+    ///
+    /// Note that if the thread is already panicking, then we will not double-panic and abort, but
+    /// just ignore the issue.
+    Panic,
+    /// Log a warning.
+    Warn,
+    /// Do nothing
+    None,
 }
 
 impl HeartbeatOption {
@@ -1034,7 +1104,7 @@ impl<PdC: PdClient> Committer<PdC> {
                 r.min_commit_ts
             })
             .max()
-            .map(|ts| Timestamp::from_version(ts));
+            .map(Timestamp::from_version);
 
         Ok(min_commit_ts)
     }

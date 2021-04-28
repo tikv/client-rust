@@ -336,11 +336,11 @@ impl Pd for MockPd {
         todo!()
     }
 
-    fn get_dc_locations(
+    fn get_dc_location_info(
         &mut self,
-        _: ::grpcio::RpcContext<'_>,
-        _: GetDcLocationsRequest,
-        _: ::grpcio::UnarySink<GetDcLocationsResponse>,
+        _: grpcio::RpcContext,
+        _: GetDcLocationInfoRequest,
+        _: grpcio::UnarySink<GetDcLocationInfoResponse>,
     ) {
         todo!()
     }

@@ -207,6 +207,7 @@ fn allocate_timestamps(
             let ts = Timestamp {
                 physical: tail_ts.physical,
                 logical: tail_ts.logical - offset as i64,
+                suffix_bits: tail_ts.get_suffix_bits(),
             };
             let _ = request.send(ts);
         }

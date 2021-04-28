@@ -3,7 +3,7 @@
 use tikv_client_common::Error;
 
 use crate::{
-    backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
+    backoff::DEFAULT_REGION_BACKOFF,
     config::Config,
     pd::PdRpcClient,
     raw::lowering::*,
@@ -19,22 +19,27 @@ const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 /// Raw requests don't need a wrapping transaction.
 /// Each request is immediately processed once executed.
 ///
-/// The returned results of raw requests are [`Future`](std::future::Future)s that must be awaited to execute.
+/// The returned results of raw request methods are [`Future`](std::future::Future)s that must be
+/// awaited to execute.
 #[derive(Clone)]
 pub struct Client {
     rpc: Arc<PdRpcClient>,
     cf: Option<ColumnFamily>,
+    /// Whether to use the [`atomic mode`](Client::with_atomic_for_cas).
+    atomic: bool,
 }
 
 impl Client {
-    /// Create a raw [`Client`](Client).
+    /// Create a raw [`Client`] and connect to the TiKV cluster.
     ///
-    /// It's important to **include more than one PD endpoint** (include all, if possible!)
-    /// This helps avoid having a *single point of failure*.
+    /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for
+    /// PD must be provided, not the TiKV nodes. It's important to include more than one PD endpoint
+    /// (include all endpoints, if possible), this helps avoid having a single point of failure.
     ///
     /// # Examples
+    ///
     /// ```rust,no_run
-    /// # use tikv_client::{Config, RawClient};
+    /// # use tikv_client::RawClient;
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
@@ -44,17 +49,23 @@ impl Client {
         Self::new_with_config(pd_endpoints, Config::default()).await
     }
 
-    /// Create a raw [`Client`](Client).
+    /// Create a raw [`Client`] with a custom configuration, and connect to the TiKV cluster.
     ///
-    /// It's important to **include more than one PD endpoint** (include all, if possible!)
-    /// This helps avoid having a *single point of failure*.
+    /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for
+    /// PD must be provided, not the TiKV nodes. It's important to include more than one PD endpoint
+    /// (include all endpoints, if possible), this helps avoid having a single point of failure.
     ///
     /// # Examples
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
+    /// # use std::time::Duration;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let client = RawClient::new_with_config(
+    ///     vec!["192.168.0.100"],
+    ///     Config::default().with_timeout(Duration::from_secs(60)),
+    /// ).await.unwrap();
     /// # });
     /// ```
     pub async fn new_with_config<S: Into<String>>(
@@ -63,25 +74,34 @@ impl Client {
     ) -> Result<Client> {
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let rpc = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, false).await?);
-        Ok(Client { rpc, cf: None })
+        Ok(Client {
+            rpc,
+            cf: None,
+            atomic: false,
+        })
     }
 
-    /// Set the column family of requests.
+    /// Create a new client which is a clone of `self`, but which uses an explicit column family for
+    /// all requests.
     ///
-    /// This function returns a new `Client`, requests created with it will have the
-    /// supplied column family constraint. The original `Client` can still be used.
+    /// This function returns a new `Client`; requests created with the new client will use the
+    /// supplied column family. The original `Client` can still be used (without the new
+    /// column family).
     ///
-    /// By default, raw client uses the `Default` column family.
-    ///
-    /// For normal users of the raw API, you don't need to use other column families.
+    /// By default, raw clients use the `Default` column family.
     ///
     /// # Examples
+    ///
     /// ```rust,no_run
     /// # use tikv_client::{Config, RawClient, ColumnFamily};
     /// # use futures::prelude::*;
     /// # use std::convert::TryInto;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap().with_cf(ColumnFamily::Write);
+    /// let client = RawClient::new(vec!["192.168.0.100"])
+    ///     .await
+    ///     .unwrap()
+    ///     .with_cf(ColumnFamily::Write);
+    /// // Fetch a value at "foo" from the Write CF.
     /// let get_request = client.get("foo".to_owned());
     /// # });
     /// ```
@@ -89,6 +109,22 @@ impl Client {
         Client {
             rpc: self.rpc.clone(),
             cf: Some(cf),
+            atomic: self.atomic,
+        }
+    }
+
+    /// Set to use the atomic mode.
+    ///
+    /// The only reason of using atomic mode is the
+    /// [`compare_and_swap`](Client::compare_and_swap) operation. To guarantee
+    /// the atomicity of CAS, write operations like [`put`](Client::put) or
+    /// [`delete`](Client::delete) in atomic mode are more expensive. Some
+    /// operations are not supported in the mode.
+    pub fn with_atomic_for_cas(&self) -> Client {
+        Client {
+            rpc: self.rpc.clone(),
+            cf: self.cf.clone(),
+            atomic: true,
         }
     }
 
@@ -115,7 +151,6 @@ impl Client {
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .single_region()
             .await?
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_region(DEFAULT_REGION_BACKOFF)
             .post_process_default()
             .plan();
@@ -146,7 +181,6 @@ impl Client {
     ) -> Result<Vec<KvPair>> {
         let request = new_raw_batch_get_request(keys.into_iter().map(Into::into), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
@@ -173,11 +207,10 @@ impl Client {
     /// # });
     /// ```
     pub async fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        let request = new_raw_put_request(key.into(), value.into(), self.cf.clone());
+        let request = new_raw_put_request(key.into(), value.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .single_region()
             .await?
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
@@ -206,9 +239,12 @@ impl Client {
         &self,
         pairs: impl IntoIterator<Item = impl Into<KvPair>>,
     ) -> Result<()> {
-        let request = new_raw_batch_put_request(pairs.into_iter().map(Into::into), self.cf.clone());
+        let request = new_raw_batch_put_request(
+            pairs.into_iter().map(Into::into),
+            self.cf.clone(),
+            self.atomic,
+        );
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
@@ -235,11 +271,10 @@ impl Client {
     /// # });
     /// ```
     pub async fn delete(&self, key: impl Into<Key>) -> Result<()> {
-        let request = new_raw_delete_request(key.into(), self.cf.clone());
+        let request = new_raw_delete_request(key.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .single_region()
             .await?
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
@@ -265,10 +300,10 @@ impl Client {
     /// # });
     /// ```
     pub async fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
+        self.assert_non_atomic()?;
         let request =
             new_raw_batch_delete_request(keys.into_iter().map(Into::into), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
@@ -293,9 +328,9 @@ impl Client {
     /// # });
     /// ```
     pub async fn delete_range(&self, range: impl Into<BoundRange>) -> Result<()> {
+        self.assert_non_atomic()?;
         let request = new_raw_delete_range_request(range.into(), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
@@ -390,11 +425,11 @@ impl Client {
     ///
     /// Once resolved this request will result in a set of scanners over the given keys.
     ///
-    /// **Warning**: This method is experimental. The `each_limit` parameter does not work as expected.
-    /// It does not limit the number of results returned of each range,
+    /// **Warning**: This method is experimental.
+    /// The `each_limit` parameter does not limit the number of results returned of each range,
     /// instead it limits the number of results in each region of each range.
-    /// As a result, you may get **more than** `each_limit` key-value pairs for each range.
-    /// But you should not miss any entries.
+    /// As a result, you may get **more than** `each_limit` key-value pairs for each range,
+    /// but you should not miss any entries.
     ///
     /// # Examples
     /// ```rust,no_run
@@ -422,6 +457,40 @@ impl Client {
             .collect())
     }
 
+    /// Create a new *atomic* 'compare and set' request.
+    ///
+    /// Once resolved this request will result in an atomic `compare and set'
+    /// operation for the given key.
+    ///
+    /// If the value retrived is equal to `current_value`, `new_value` is
+    /// written.
+    ///
+    /// # Return Value
+    ///
+    /// A tuple is returned if successful: the previous value and whether the
+    /// value is swapped
+    pub async fn compare_and_swap(
+        &self,
+        key: impl Into<Key>,
+        previous_value: impl Into<Option<Value>>,
+        new_value: impl Into<Value>,
+    ) -> Result<(Option<Value>, bool)> {
+        self.assert_atomic()?;
+        let req = new_cas_request(
+            key.into(),
+            new_value.into(),
+            previous_value.into(),
+            self.cf.clone(),
+        );
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), req)
+            .single_region()
+            .await?
+            .retry_region(DEFAULT_REGION_BACKOFF)
+            .post_process_default()
+            .plan();
+        plan.execute().await
+    }
+
     async fn scan_inner(
         &self,
         range: impl Into<BoundRange>,
@@ -437,7 +506,6 @@ impl Client {
 
         let request = new_raw_scan_request(range.into(), limit, key_only, self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
@@ -469,11 +537,18 @@ impl Client {
             self.cf.clone(),
         );
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
         plan.execute().await
+    }
+
+    fn assert_non_atomic(&self) -> Result<()> {
+        (!self.atomic).then(|| ()).ok_or(Error::UnsupportedMode)
+    }
+
+    fn assert_atomic(&self) -> Result<()> {
+        self.atomic.then(|| ()).ok_or(Error::UnsupportedMode)
     }
 }

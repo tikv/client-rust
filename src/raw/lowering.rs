@@ -22,19 +22,25 @@ pub fn new_raw_put_request(
     key: Key,
     value: Value,
     cf: Option<ColumnFamily>,
+    atomic: bool,
 ) -> kvrpcpb::RawPutRequest {
-    requests::new_raw_put_request(key.into(), value, cf)
+    requests::new_raw_put_request(key.into(), value, cf, atomic)
 }
 
 pub fn new_raw_batch_put_request(
     pairs: impl Iterator<Item = KvPair>,
     cf: Option<ColumnFamily>,
+    atomic: bool,
 ) -> kvrpcpb::RawBatchPutRequest {
-    requests::new_raw_batch_put_request(pairs.map(Into::into).collect(), cf)
+    requests::new_raw_batch_put_request(pairs.map(Into::into).collect(), cf, atomic)
 }
 
-pub fn new_raw_delete_request(key: Key, cf: Option<ColumnFamily>) -> kvrpcpb::RawDeleteRequest {
-    requests::new_raw_delete_request(key.into(), cf)
+pub fn new_raw_delete_request(
+    key: Key,
+    cf: Option<ColumnFamily>,
+    atomic: bool,
+) -> kvrpcpb::RawDeleteRequest {
+    requests::new_raw_delete_request(key.into(), cf, atomic)
 }
 
 pub fn new_raw_batch_delete_request(
@@ -75,4 +81,13 @@ pub fn new_raw_batch_scan_request(
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawBatchScanRequest {
     requests::new_raw_batch_scan_request(ranges.map(Into::into).collect(), each_limit, key_only, cf)
+}
+
+pub fn new_cas_request(
+    key: Key,
+    value: Value,
+    previous_value: Option<Value>,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawCasRequest {
+    requests::new_cas_request(key.into(), value, previous_value, cf)
 }

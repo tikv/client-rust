@@ -3,22 +3,11 @@
 use serde_derive::{Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
 
-/// The configuration for either a `raw::Client` or a `transaction::Client`.
+/// The configuration for either a [`RawClient`](crate::RawClient) or a
+/// [`TransactionClient`](crate::TransactionClient).
 ///
-/// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for PD
-/// must be provided, **not** the TiKV nodes.
-///
-/// It's important to **include more than one PD endpoint** (include all, if possible!)
-/// This helps avoid having a *single point of failure*.
-///
-/// By default, this client will use an insecure connection over instead of one protected by
-/// Transport Layer Security (TLS). Your deployment may have chosen to rely on security measures
-/// such as a private network, or a VPN layer to provide secure transmission.
-///
-/// To use a TLS secured connection, use the `with_security` function to set the required
-/// parameters.
-///
-/// TiKV does not currently offer encrypted storage (or encryption-at-rest).
+/// See also [`TransactionOptions`](crate::TransactionOptions) which provides more ways to configure
+/// requests.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 #[serde(rename_all = "kebab-case")]
@@ -43,11 +32,16 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Set the certificate authority, certificate, and key locations for the
-    /// [`Config`](Config).
+    /// Set the certificate authority, certificate, and key locations for clients.
     ///
-    /// By default, TiKV connections do not utilize transport layer security. Enable it by setting
-    /// these values.
+    /// By default, this client will use an insecure connection over instead of one protected by
+    /// Transport Layer Security (TLS). Your deployment may have chosen to rely on security measures
+    /// such as a private network, or a VPN layer to provide secure transmission.
+    ///
+    /// To use a TLS secured connection, use the `with_security` function to set the required
+    /// parameters.
+    ///
+    /// TiKV does not currently offer encrypted storage (or encryption-at-rest).
     ///
     /// # Examples
     /// ```rust
@@ -66,16 +60,21 @@ impl Config {
         self
     }
 
-    /// Set the timeout for the [`Config`](Config).
+    /// Set the timeout for clients.
     ///
+    /// The timeout is used for all requests when using or connecting to a TiKV cluster (including
+    /// PD nodes). If the request does not complete within timeout, the request is cancelled and
+    /// an error returned to the user.
+    ///
+    /// The default timeout is two seconds.
     ///
     /// # Examples
     /// ```rust
     /// # use tikv_client::Config;
     /// # use std::time::Duration;
-    /// let config = Config::default().timeout(Duration::from_secs(10));
+    /// let config = Config::default().with_timeout(Duration::from_secs(10));
     /// ```
-    pub fn timeout(mut self, timeout: Duration) -> Self {
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }

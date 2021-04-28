@@ -11,7 +11,8 @@ use std::{
     iter,
 };
 use tikv_client::{
-    Key, KvPair, RawClient, Result, Transaction, TransactionClient, TransactionOptions, Value,
+    Error, Key, KvPair, RawClient, Result, Transaction, TransactionClient, TransactionOptions,
+    Value,
 };
 
 // Parameters used in test
@@ -102,7 +103,7 @@ async fn crud() -> Result<()> {
     txn.commit().await?;
 
     // Read again from TiKV
-    let snapshot = client.snapshot(
+    let mut snapshot = client.snapshot(
         client.current_timestamp().await?,
         // TODO needed because pessimistic does not check locks (#235)
         TransactionOptions::new_optimistic(),
@@ -213,12 +214,15 @@ async fn raw_bank_transfer() -> Result<()> {
 /// Tests transactional API when there are multiple regions.
 /// Write large volumes of data to enforce region splitting.
 /// In order to test `scan`, data is uniformly inserted.
+// FIXME: this test is stupid. We should use pd-ctl or config files to make
+// multiple regions, instead of bulk writing.
 #[tokio::test]
 #[serial]
 async fn txn_write_million() -> Result<()> {
-    const NUM_BITS_TXN: u32 = 7;
-    const NUM_BITS_KEY_PER_TXN: u32 = 3;
+    const NUM_BITS_TXN: u32 = 13;
+    const NUM_BITS_KEY_PER_TXN: u32 = 4;
     let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
+    let value = "large_value".repeat(10);
 
     clear_tikv().await;
     let client = TransactionClient::new(pd_addrs()).await?;
@@ -232,9 +236,9 @@ async fn txn_write_million() -> Result<()> {
         })
         .map(|u| u.to_be_bytes().to_vec())
         .take(2usize.pow(NUM_BITS_KEY_PER_TXN))
-        .collect::<Vec<_>>(); // each txn puts 2 ^ 12 keys. 12 = 25 - 13
+        .collect::<Vec<_>>();
         let mut txn = client.begin_optimistic().await?;
-        for (k, v) in keys.iter().zip(iter::repeat(1u32.to_be_bytes().to_vec())) {
+        for (k, v) in keys.iter().zip(iter::repeat(value.clone())) {
             txn.put(k.clone(), v).await?;
         }
         txn.commit().await?;
@@ -244,48 +248,68 @@ async fn txn_write_million() -> Result<()> {
         assert_eq!(res.count(), 2usize.pow(NUM_BITS_KEY_PER_TXN));
         txn.commit().await?;
     }
+    /* FIXME: scan all keys will make the message size exceed its limit
+       // test scan
+       let limit = 2u32.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN + 2); // large enough
+       let snapshot = client.snapshot(
+           client.current_timestamp().await?,
+           TransactionOptions::default(),
+       );
+       let res = snapshot.scan(vec![].., limit).await?;
+       assert_eq!(res.count(), 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));
 
-    // test scan
-    let limit = 2u32.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN + 2); // large enough
-    let snapshot = client.snapshot(
-        client.current_timestamp().await?,
-        TransactionOptions::default(),
-    );
-    let res = snapshot.scan(vec![].., limit).await?;
-    assert_eq!(res.count(), 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));
+       // scan by small range and combine them
+       let mut rng = thread_rng();
+       let mut keys = gen_u32_keys(200, &mut rng)
+           .iter()
+           .cloned()
+           .collect::<Vec<_>>();
+       keys.sort();
 
-    // scan by small range and combine them
-    let mut rng = thread_rng();
-    let mut keys = gen_u32_keys(10, &mut rng)
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>();
-    keys.sort();
+       let mut sum = 0;
 
-    let mut sum = 0;
+       // empty key to key[0]
+       let snapshot = client.snapshot(
+           client.current_timestamp().await?,
+           TransactionOptions::default(),
+       );
+       let res = snapshot.scan(vec![]..keys[0].clone(), limit).await?;
+       sum += res.count();
 
-    // empty key to key[0]
-    let snapshot = client.snapshot(
-        client.current_timestamp().await?,
-        TransactionOptions::default(),
-    );
-    let res = snapshot.scan(vec![]..keys[0].clone(), limit).await?;
-    sum += res.count();
+       // key[i] .. key[i+1]
+       for i in 0..keys.len() - 1 {
+           let res = snapshot
+               .scan(keys[i].clone()..keys[i + 1].clone(), limit)
+               .await?;
+           sum += res.count();
+       }
 
-    // key[i] .. key[i+1]
-    for i in 0..keys.len() - 1 {
-        let res = snapshot
-            .scan(keys[i].clone()..keys[i + 1].clone(), limit)
-            .await?;
-        sum += res.count();
-    }
+       // keys[last] to unbounded
+       let res = snapshot.scan(keys[keys.len() - 1].clone().., limit).await?;
+       sum += res.count();
 
-    // keys[last] to unbounded
-    let res = snapshot.scan(keys[keys.len() - 1].clone().., limit).await?;
-    sum += res.count();
+       assert_eq!(sum, 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));
+    */
+    // test batch_get and batch_get_for_update
+    const SKIP_BITS: u32 = 12; // do not retrieve all because there's a limit of message size
+    let mut cur = 0u32;
+    let keys = iter::repeat_with(|| {
+        let v = cur;
+        cur = cur.overflowing_add(interval * 2u32.pow(SKIP_BITS)).0;
+        v
+    })
+    .map(|u| u.to_be_bytes().to_vec())
+    .take(2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN - SKIP_BITS))
+    .collect::<Vec<_>>();
 
-    assert_eq!(sum, 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));
+    let mut txn = client.begin_pessimistic().await?;
+    let res = txn.batch_get(keys.clone()).await?.collect::<Vec<_>>();
+    assert_eq!(res.len(), keys.len());
 
+    let res = txn.batch_get_for_update(keys.clone()).await?;
+    assert_eq!(res.len(), keys.len());
+
+    txn.commit().await?;
     Ok(())
 }
 
@@ -298,7 +322,7 @@ async fn txn_bank_transfer() -> Result<()> {
 
     let people = gen_u32_keys(NUM_PEOPLE, &mut rng);
     let mut txn = client
-        .begin_with_options(TransactionOptions::new_optimistic().try_one_pc())
+        .begin_with_options(TransactionOptions::new_optimistic())
         .await?;
     let mut sum: u32 = 0;
     for person in &people {
@@ -315,9 +339,9 @@ async fn txn_bank_transfer() -> Result<()> {
             .await?;
         let chosen_people = people.iter().choose_multiple(&mut rng, 2);
         let alice = chosen_people[0];
-        let mut alice_balance = get_txn_u32(&txn, alice.clone()).await?;
+        let mut alice_balance = get_txn_u32(&mut txn, alice.clone()).await?;
         let bob = chosen_people[1];
-        let mut bob_balance = get_txn_u32(&txn, bob.clone()).await?;
+        let mut bob_balance = get_txn_u32(&mut txn, bob.clone()).await?;
         if alice_balance == 0 {
             txn.rollback().await?;
             continue;
@@ -336,7 +360,7 @@ async fn txn_bank_transfer() -> Result<()> {
     let mut new_sum = 0;
     let mut txn = client.begin_optimistic().await?;
     for person in people.iter() {
-        new_sum += get_txn_u32(&txn, person.clone()).await?;
+        new_sum += get_txn_u32(&mut txn, person.clone()).await?;
     }
     assert_eq!(sum, new_sum);
     txn.commit().await?;
@@ -543,8 +567,7 @@ async fn raw_write_million() -> Result<()> {
 #[serial]
 async fn pessimistic_rollback() -> Result<()> {
     clear_tikv().await;
-    let client =
-        TransactionClient::new_with_config(vec!["127.0.0.1:2379"], Default::default()).await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
     let mut preload_txn = client.begin_optimistic().await?;
     let key1 = vec![1];
     let value = key1.clone();
@@ -573,10 +596,52 @@ async fn pessimistic_rollback() -> Result<()> {
 
 #[tokio::test]
 #[serial]
-async fn lock_keys() -> Result<()> {
+async fn pessimistic_delete() -> Result<()> {
     clear_tikv().await;
     let client =
         TransactionClient::new_with_config(vec!["127.0.0.1:2379"], Default::default()).await?;
+
+    // The transaction will lock the keys and must release the locks on commit, even when values are
+    // not written to the DB.
+    let mut txn = client.begin_pessimistic().await?;
+    txn.put(vec![1], vec![42]).await?;
+    txn.delete(vec![1]).await?;
+    txn.insert(vec![2], vec![42]).await?;
+    txn.delete(vec![2]).await?;
+    txn.put(vec![3], vec![42]).await?;
+    txn.commit().await?;
+
+    // Check that the keys are not locked.
+    let mut txn2 = client.begin_optimistic().await?;
+    txn2.put(vec![1], vec![42]).await?;
+    txn2.put(vec![2], vec![42]).await?;
+    txn2.put(vec![3], vec![42]).await?;
+    txn2.commit().await?;
+
+    // As before, but rollback instead of commit.
+    let mut txn = client.begin_pessimistic().await?;
+    txn.put(vec![1], vec![42]).await?;
+    txn.delete(vec![1]).await?;
+    txn.delete(vec![2]).await?;
+    txn.insert(vec![2], vec![42]).await?;
+    txn.delete(vec![2]).await?;
+    txn.put(vec![3], vec![42]).await?;
+    txn.rollback().await?;
+
+    let mut txn2 = client.begin_optimistic().await?;
+    txn2.put(vec![1], vec![42]).await?;
+    txn2.put(vec![2], vec![42]).await?;
+    txn2.put(vec![3], vec![42]).await?;
+    txn2.commit().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn lock_keys() -> Result<()> {
+    clear_tikv().await;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
 
     let k1 = b"key1".to_vec();
     let k2 = b"key2".to_vec();
@@ -602,6 +667,50 @@ async fn lock_keys() -> Result<()> {
     t3.rollback().await?;
     t4.lock_keys(vec![k3.clone(), k4.clone()]).await?;
     t4.commit().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn get_for_update() -> Result<()> {
+    clear_tikv().await;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+    let key1 = "key".to_owned();
+    let key2 = "another key".to_owned();
+    let value1 = b"some value".to_owned();
+    let value2 = b"another value".to_owned();
+    let keys = vec![key1.clone(), key2.clone()];
+
+    let mut t1 = client.begin_pessimistic().await?;
+    let mut t2 = client.begin_pessimistic().await?;
+    let mut t3 = client.begin_optimistic().await?;
+    let mut t4 = client.begin_optimistic().await?;
+    let mut t0 = client.begin_pessimistic().await?;
+    t0.put(key1.clone(), value1).await?;
+    t0.put(key2.clone(), value2).await?;
+    t0.commit().await?;
+
+    assert!(t1.get(key1.clone()).await?.is_none());
+    assert!(t1.get_for_update(key1.clone()).await?.unwrap() == value1);
+    t1.commit().await?;
+
+    assert!(t2.batch_get(keys.clone()).await?.collect::<Vec<_>>().len() == 0);
+    let res: HashMap<_, _> = t2
+        .batch_get_for_update(keys.clone())
+        .await?
+        .into_iter()
+        .map(From::from)
+        .collect();
+    t2.commit().await?;
+    assert!(res.get(&key1.clone().into()).unwrap() == &value1);
+    assert!(res.get(&key2.into()).unwrap() == &value2);
+
+    assert!(t3.get_for_update(key1).await?.is_none());
+    assert!(t3.commit().await.is_err());
+
+    assert!(t4.batch_get_for_update(keys).await?.len() == 0);
+    assert!(t4.commit().await.is_err());
 
     Ok(())
 }
@@ -645,6 +754,68 @@ async fn pessimistic_heartbeat() -> Result<()> {
 
     Ok(())
 }
+
+// It tests very basic functionality of atomic operations (put, cas, delete).
+#[tokio::test]
+#[serial]
+async fn raw_cas() -> Result<()> {
+    clear_tikv().await;
+    let client = RawClient::new(pd_addrs()).await?.with_atomic_for_cas();
+    let key = "key".to_owned();
+    let value = "value".to_owned();
+    let new_value = "new value".to_owned();
+
+    client.put(key.clone(), value.clone()).await?;
+    assert_eq!(
+        client.get(key.clone()).await?.unwrap(),
+        value.clone().as_bytes()
+    );
+
+    client
+        .compare_and_swap(
+            key.clone(),
+            Some("another_value".to_owned()).map(|v| v.into()),
+            new_value.clone(),
+        )
+        .await?;
+    assert_ne!(
+        client.get(key.clone()).await?.unwrap(),
+        new_value.clone().as_bytes()
+    );
+
+    client
+        .compare_and_swap(
+            key.clone(),
+            Some(value.to_owned()).map(|v| v.into()),
+            new_value.clone(),
+        )
+        .await?;
+    assert_eq!(
+        client.get(key.clone()).await?.unwrap(),
+        new_value.clone().as_bytes()
+    );
+
+    client.delete(key.clone()).await?;
+    assert!(client.get(key.clone()).await?.is_none());
+
+    // check unsupported operations
+    assert!(matches!(
+        client.batch_delete(vec![key.clone()]).await.err().unwrap(),
+        Error::UnsupportedMode
+    ));
+    let client = RawClient::new(pd_addrs()).await?;
+    assert!(matches!(
+        client
+            .compare_and_swap(key.clone(), None, vec![])
+            .await
+            .err()
+            .unwrap(),
+        Error::UnsupportedMode
+    ));
+
+    Ok(())
+}
+
 // helper function
 async fn get_u32(client: &RawClient, key: Vec<u8>) -> Result<u32> {
     let x = client.get(key).await?.unwrap();
@@ -656,7 +827,7 @@ async fn get_u32(client: &RawClient, key: Vec<u8>) -> Result<u32> {
 }
 
 // helper function
-async fn get_txn_u32(txn: &Transaction, key: Vec<u8>) -> Result<u32> {
+async fn get_txn_u32(txn: &mut Transaction, key: Vec<u8>) -> Result<u32> {
     let x = txn.get(key).await?.unwrap();
     let boxed_slice = x.into_boxed_slice();
     let array: Box<[u8; 4]> = boxed_slice

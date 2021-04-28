@@ -50,6 +50,8 @@ message Store {
     string deploy_path = 10;
     // The last heartbeat timestamp of the store.
     int64 last_heartbeat = 11;
+    // If the store is physically destroyed, which means it can never up again.
+    bool physically_destroyed = 12;
 }
 
 message RegionEpoch {

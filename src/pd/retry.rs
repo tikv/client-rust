@@ -2,7 +2,11 @@
 
 //! A utility module for managing and retrying PD requests.
 
-use crate::{stats::pd_stats, Error, Region, RegionId, Result, SecurityManager, StoreId};
+use crate::{
+    region::{Region, RegionId, StoreId},
+    stats::pd_stats,
+    Error, Result, SecurityManager,
+};
 use async_trait::async_trait;
 use futures_timer::Delay;
 use grpcio::Environment;

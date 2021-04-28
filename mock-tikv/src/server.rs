@@ -5,7 +5,7 @@ use derive_new::new;
 use futures::{FutureExt, TryFutureExt};
 use grpcio::{Environment, Server, ServerBuilder};
 use std::sync::Arc;
-use tikv_client_proto::{kvrpcpb::*, tikvpb::*};
+use tikv_client_proto::{coprocessor_v2::*, kvrpcpb::*, tikvpb::*};
 
 pub const MOCK_TIKV_PORT: u16 = 50019;
 
@@ -510,6 +510,42 @@ impl Tikv for MockTikv {
         _: grpcio::RpcContext<'_>,
         _: tikv_client_proto::kvrpcpb::CheckLeaderRequest,
         _: grpcio::UnarySink<tikv_client_proto::kvrpcpb::CheckLeaderResponse>,
+    ) {
+        todo!()
+    }
+
+    fn raw_get_key_ttl(
+        &mut self,
+        _: grpcio::RpcContext,
+        _: RawGetKeyTtlRequest,
+        _: grpcio::UnarySink<RawGetKeyTtlResponse>,
+    ) {
+        todo!()
+    }
+
+    fn raw_compare_and_swap(
+        &mut self,
+        _: grpcio::RpcContext,
+        _: RawCasRequest,
+        _: grpcio::UnarySink<RawCasResponse>,
+    ) {
+        todo!()
+    }
+
+    fn coprocessor_v2(
+        &mut self,
+        _: grpcio::RpcContext,
+        _: RawCoprocessorRequest,
+        _: grpcio::UnarySink<RawCoprocessorResponse>,
+    ) {
+        todo!()
+    }
+
+    fn get_store_safe_ts(
+        &mut self,
+        _: grpcio::RpcContext,
+        _: StoreSafeTsRequest,
+        _: grpcio::UnarySink<StoreSafeTsResponse>,
     ) {
         todo!()
     }
