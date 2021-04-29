@@ -1279,7 +1279,7 @@ mod tests {
         assert_eq!(heartbeats.load(Ordering::SeqCst), 0);
         tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
         heartbeat_txn_handle.await.unwrap();
-        assert_eq!(heartbeats.load(Ordering::SeqCst), 1);
+        assert!(heartbeats.load(Ordering::SeqCst) >= 1);
         scenario.teardown();
         Ok(())
     }
