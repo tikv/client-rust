@@ -227,7 +227,7 @@ impl Buffer {
     pub fn get_write_size(&self) -> usize {
         self.entry_map
             .iter()
-            .filter_map(|(k, v)| {
+            .map(|(k, v)| {
                 let mut write_size = 0;
                 if let BufferEntry::Put(val) | BufferEntry::Insert(val) = v {
                     write_size += val.len();
@@ -236,7 +236,7 @@ impl Buffer {
                 if let BufferEntry::Del = v {
                     write_size += k.len();
                 }
-                Some(write_size)
+                write_size
             })
             .sum()
     }
