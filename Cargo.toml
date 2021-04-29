@@ -1,11 +1,11 @@
 [package]
 name = "tikv-client"
-version = "0.0.0"
+version = "0.0.99"
 keywords = ["TiKV", "KV", "distributed-systems"]
 license = "Apache-2.0"
 authors = ["The TiKV Project Authors"]
 repository = "https://github.com/tikv/client-rust"
-description = "The rust language implementation of TiKV client."
+description = "The Rust language implementation of TiKV client."
 edition = "2018"
 
 [features]
@@ -34,10 +34,10 @@ serde_derive = "1.0"
 thiserror = "1"
 tokio = { version = "1.0", features = [ "sync", "time" ] }
 
-tikv-client-common = { path = "tikv-client-common" }
-tikv-client-pd = { path = "tikv-client-pd" }
-tikv-client-proto = { path = "tikv-client-proto" }
-tikv-client-store = { path = "tikv-client-store" }
+tikv-client-common = { version = "0.0.99", path = "tikv-client-common" }
+tikv-client-pd = { version = "0.0.99", path = "tikv-client-pd" }
+tikv-client-proto = { version = "0.0.99", path = "tikv-client-proto" }
+tikv-client-store = { version = "0.0.99", path = "tikv-client-store" }
 
 
 [dev-dependencies]
