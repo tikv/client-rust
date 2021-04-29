@@ -1,15 +1,15 @@
 #![cfg(feature = "integration-tests")]
 
 mod common;
-use common::{clear_tikv, pd_addrs};
+use common::{init, pd_addrs};
 use fail::FailScenario;
 use serial_test::serial;
 use tikv_client::{Result, TransactionClient, TransactionOptions};
 
 #[tokio::test]
 #[serial]
-async fn optimistic_heartbeat() -> Result<()> {
-    clear_tikv().await;
+async fn txn_optimistic_heartbeat() -> Result<()> {
+    init().await?;
     let scenario = FailScenario::setup();
     fail::cfg("after-prewrite", "sleep(10000)").unwrap();
 
