@@ -228,16 +228,13 @@ impl Buffer {
         self.entry_map
             .iter()
             .map(|(k, v)| {
-                let mut write_size = 0;
                 match v {
                     BufferEntry::Put(val) | BufferEntry::Insert(val) => {
-                        write_size += val.len();
-                        write_size += k.len();
+                        val.len() + k.len()
                     }
-                    BufferEntry::Del => write_size += k.len(),
-                    _ => (),
+                    BufferEntry::Del => k.len(),
+                    _ => 0,
                 }
-                write_size
             })
             .sum()
     }
