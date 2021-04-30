@@ -229,12 +229,13 @@ impl Buffer {
             .iter()
             .map(|(k, v)| {
                 let mut write_size = 0;
-                if let BufferEntry::Put(val) | BufferEntry::Insert(val) = v {
-                    write_size += val.len();
-                    write_size += k.len();
-                }
-                if let BufferEntry::Del = v {
-                    write_size += k.len();
+                match v {
+                    BufferEntry::Put(val) | BufferEntry::Insert(val) => {
+                        write_size += val.len();
+                        write_size += k.len();
+                    }
+                    BufferEntry::Del => write_size += k.len(),
+                    _ => (),
                 }
                 write_size
             })

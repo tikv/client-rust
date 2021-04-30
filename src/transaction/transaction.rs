@@ -826,7 +826,7 @@ impl<PdC: PdClient> Drop for Transaction<PdC> {
     }
 }
 
-/// The default max TTL of a lock in milliseconds. Also called `MANGED_TTL` in TiDB.
+/// The default max TTL of a lock in milliseconds. Also called `ManagedLockTTL` in TiDB.
 const MAX_TTL: u64 = 20000;
 /// The default TTL of a lock in milliseconds.
 const DEFAULT_LOCK_TTL: u64 = 3000;
@@ -1050,21 +1050,21 @@ impl<PdC: PdClient> Committer<PdC> {
 
     async fn prewrite(&mut self) -> Result<Option<Timestamp>> {
         let primary_lock = self.primary_key.clone().unwrap();
-        // FIXME: calculate TTL for big transactions
         let current_ts = self.rpc.clone().get_timestamp().await?;
         let elapsed = (current_ts.physical - self.start_version.physical) as u64;
+        let lock_ttl = self.calc_txn_lock_ttl();
         let mut request = match &self.options.kind {
             TransactionKind::Optimistic => new_prewrite_request(
                 self.mutations.clone(),
                 primary_lock,
                 self.start_version.clone(),
-                self.calc_txn_lock_ttl() + elapsed,
+                lock_ttl + elapsed,
             ),
             TransactionKind::Pessimistic(for_update_ts) => new_pessimistic_prewrite_request(
                 self.mutations.clone(),
                 primary_lock,
                 self.start_version.clone(),
-                MAX_TTL + elapsed,
+                lock_ttl + elapsed,
                 for_update_ts.clone(),
             ),
         };
@@ -1202,8 +1202,8 @@ impl<PdC: PdClient> Committer<PdC> {
     fn calc_txn_lock_ttl(&mut self) -> u64 {
         let mut lock_ttl = DEFAULT_LOCK_TTL;
         if self.txn_size > TXN_COMMIT_BATCH_SIZE {
-            let size_mb = self.txn_size / 1024 / 1024;
-            lock_ttl = ((TTL_FACTOR as f64) * ((size_mb) as f64).sqrt()) as u64;
+            let size_mb = self.txn_size as f64 / 1024.0 / 1024.0;
+            lock_ttl = (TTL_FACTOR * size_mb.sqrt()) as u64;
             lock_ttl = lock_ttl.min(MAX_TTL).max(DEFAULT_LOCK_TTL);
         }
         lock_ttl
@@ -1312,11 +1312,11 @@ mod tests {
         heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
         assert_eq!(heartbeats.load(Ordering::SeqCst), 0);
         tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+        assert_eq!(heartbeats.load(Ordering::SeqCst), 1);
         let heartbeat_txn_handle = tokio::spawn(async move {
             assert!(heartbeat_txn.commit().await.is_ok());
         });
         heartbeat_txn_handle.await.unwrap();
-        assert_eq!(heartbeats.load(Ordering::SeqCst), 1);
         Ok(())
     }
 }
