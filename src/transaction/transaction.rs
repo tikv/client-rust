@@ -1312,11 +1312,11 @@ mod tests {
         heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
         assert_eq!(heartbeats.load(Ordering::SeqCst), 0);
         tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
-        assert_eq!(heartbeats.load(Ordering::SeqCst), 1);
         let heartbeat_txn_handle = tokio::spawn(async move {
             assert!(heartbeat_txn.commit().await.is_ok());
         });
         heartbeat_txn_handle.await.unwrap();
+        assert_eq!(heartbeats.load(Ordering::SeqCst), 1);
         Ok(())
     }
 }
