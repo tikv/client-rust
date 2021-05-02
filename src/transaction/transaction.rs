@@ -11,7 +11,7 @@ use crate::{
 use derive_new::new;
 use fail::fail_point;
 use futures::{prelude::*, stream::BoxStream};
-use std::{iter, ops::RangeBounds, sync::Arc};
+use std::{iter, ops::RangeBounds, sync::Arc, time::Instant};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 use tokio::{sync::RwLock, time::Duration};
 
@@ -60,6 +60,7 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     rpc: Arc<PdC>,
     options: TransactionOptions,
     is_heartbeat_started: bool,
+    start_instant: Instant,
 }
 
 impl<PdC: PdClient> Transaction<PdC> {
@@ -80,6 +81,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             rpc,
             options,
             is_heartbeat_started: false,
+            start_instant: std::time::Instant::now(),
         }
     }
 
@@ -551,6 +553,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.rpc.clone(),
             self.options.clone(),
             self.buffer.get_write_size() as u64,
+            self.start_instant,
         )
         .commit()
         .await;
@@ -605,6 +608,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.rpc.clone(),
             self.options.clone(),
             self.buffer.get_write_size() as u64,
+            self.start_instant,
         )
         .rollback()
         .await;
@@ -1012,6 +1016,7 @@ struct Committer<PdC: PdClient = PdRpcClient> {
     #[new(default)]
     undetermined: bool,
     txn_size: u64,
+    start_instant: Instant,
 }
 
 impl<PdC: PdClient> Committer<PdC> {
@@ -1050,8 +1055,7 @@ impl<PdC: PdClient> Committer<PdC> {
 
     async fn prewrite(&mut self) -> Result<Option<Timestamp>> {
         let primary_lock = self.primary_key.clone().unwrap();
-        let current_ts = self.rpc.clone().get_timestamp().await?;
-        let elapsed = (current_ts.physical - self.start_version.physical) as u64;
+        let elapsed = self.start_instant.elapsed().as_millis() as u64;
         let lock_ttl = self.calc_txn_lock_ttl();
         let mut request = match &self.options.kind {
             TransactionKind::Optimistic => new_prewrite_request(
