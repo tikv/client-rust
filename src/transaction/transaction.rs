@@ -1015,7 +1015,7 @@ struct Committer<PdC: PdClient = PdRpcClient> {
     options: TransactionOptions,
     #[new(default)]
     undetermined: bool,
-    txn_size: u64,
+    write_size: u64,
     start_instant: Instant,
 }
 
@@ -1205,8 +1205,8 @@ impl<PdC: PdClient> Committer<PdC> {
 
     fn calc_txn_lock_ttl(&mut self) -> u64 {
         let mut lock_ttl = DEFAULT_LOCK_TTL;
-        if self.txn_size > TXN_COMMIT_BATCH_SIZE {
-            let size_mb = self.txn_size as f64 / 1024.0 / 1024.0;
+        if self.write_size > TXN_COMMIT_BATCH_SIZE {
+            let size_mb = self.write_size as f64 / 1024.0 / 1024.0;
             lock_ttl = (TTL_FACTOR * size_mb.sqrt()) as u64;
             lock_ttl = lock_ttl.min(MAX_TTL).max(DEFAULT_LOCK_TTL);
         }
