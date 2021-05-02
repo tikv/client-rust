@@ -1254,7 +1254,7 @@ mod tests {
     #[tokio::test]
     async fn test_optimistic_heartbeat() -> Result<(), io::Error> {
         let scenario = FailScenario::setup();
-        fail::cfg("after-prewrite", "sleep(2000)").unwrap();
+        fail::cfg("after-prewrite", "sleep(1500)").unwrap();
         let heartbeats = Arc::new(AtomicUsize::new(0));
         let heartbeats_cloned = heartbeats.clone();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -1281,7 +1281,6 @@ mod tests {
             assert!(futures::executor::block_on(heartbeat_txn.commit()).is_ok())
         });
         assert_eq!(heartbeats.load(Ordering::SeqCst), 0);
-        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
         heartbeat_txn_handle.await.unwrap();
         assert_eq!(heartbeats.load(Ordering::SeqCst), 1);
         scenario.teardown();
