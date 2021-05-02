@@ -74,7 +74,7 @@ mod test {
             .into_iter()
             .flat_map_ok(|i| Some(i).into_iter())
             .collect();
-        assert_eq!(result.unwrap(), vec![]);
+        assert_eq!(result.unwrap(), Vec::<i32>::new());
 
         let result: Result<Vec<i32>, ()> = vec![Result::<i32, ()>::Ok(0), Ok(1), Ok(2)]
             .into_iter()

@@ -1,0 +1,10 @@
+[coprocessor]
+region-max-keys = 5
+region-split-keys = 3
+batch-split-limit = 100
+
+[raftstore]
+region-split-check-diff = "0KB"
+pd-heartbeat-tick-interval = "2s"
+pd-store-heartbeat-tick-interval = "5s"
+split-region-check-tick-interval = "1s"

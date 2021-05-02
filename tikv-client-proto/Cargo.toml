@@ -1,7 +1,11 @@
 [package]
 name = "tikv-client-proto"
-version = "0.0.0"
+version = "0.0.99"
 edition = "2018"
+license = "Apache-2.0"
+authors = ["The TiKV Project Authors"]
+repository = "https://github.com/tikv/client-rust"
+description = "Protobuf specs for the TiKV Rust client"
 build = "build.rs"
 
 [build-dependencies]

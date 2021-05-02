@@ -1,11 +1,11 @@
 [package]
 name = "tikv-client"
-version = "0.0.0"
+version = "0.0.99"
 keywords = ["TiKV", "KV", "distributed-systems"]
 license = "Apache-2.0"
 authors = ["The TiKV Project Authors"]
 repository = "https://github.com/tikv/client-rust"
-description = "The rust language implementation of TiKV client."
+description = "The Rust language implementation of TiKV client."
 edition = "2018"
 
 [features]
@@ -23,7 +23,7 @@ derive-new = "0.5"
 fail = "0.4"
 futures = { version = "0.3", features = ["async-await", "thread-pool"] }
 futures-timer = "3.0"
-grpcio = { version = "0.8", features = [ "secure", "prost-codec", "use-bindgen" ], default-features = false }
+grpcio = { version = "0.8", features = [ "secure", "prost-codec", "use-bindgen", "openssl-vendored" ], default-features = false }
 lazy_static = "1"
 log = "0.4"
 prometheus = { version = "0.12", features = [ "push", "process" ], default-features = false } 
@@ -34,10 +34,10 @@ serde_derive = "1.0"
 thiserror = "1"
 tokio = { version = "1.0", features = [ "sync", "time" ] }
 
-tikv-client-common = { path = "tikv-client-common" }
-tikv-client-pd = { path = "tikv-client-pd" }
-tikv-client-proto = { path = "tikv-client-proto" }
-tikv-client-store = { path = "tikv-client-store" }
+tikv-client-common = { version = "0.0.99", path = "tikv-client-common" }
+tikv-client-pd = { version = "0.0.99", path = "tikv-client-pd" }
+tikv-client-proto = { version = "0.0.99", path = "tikv-client-proto" }
+tikv-client-store = { version = "0.0.99", path = "tikv-client-store" }
 
 
 [dev-dependencies]
@@ -49,6 +49,8 @@ proptest-derive = "0.3"
 serial_test = "0.5.0"
 simple_logger = "1"
 tokio = { version = "1.0", features = [ "sync", "rt-multi-thread", "macros" ] }
+reqwest = {version = "0.11", default-features = false, features = ["native-tls-vendored"]}
+serde_json = "1"
 
 [workspace]
 members = [
