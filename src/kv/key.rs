@@ -126,6 +126,10 @@ impl Key {
         encoded.encode_bytes(&self.0, false).unwrap();
         Key(encoded)
     }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 impl From<Vec<u8>> for Key {

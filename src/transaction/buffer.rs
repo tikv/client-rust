@@ -224,6 +224,17 @@ impl Buffer {
             .collect()
     }
 
+    pub fn get_write_size(&self) -> usize {
+        self.entry_map
+            .iter()
+            .map(|(k, v)| match v {
+                BufferEntry::Put(val) | BufferEntry::Insert(val) => val.len() + k.len(),
+                BufferEntry::Del => k.len(),
+                _ => 0,
+            })
+            .sum()
+    }
+
     fn get_from_mutations(&self, key: &Key) -> MutationValue {
         self.entry_map
             .get(&key)

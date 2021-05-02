@@ -22,8 +22,8 @@ use std::{
     iter,
 };
 use tikv_client::{
-    Error, Key, KvPair, RawClient, Result, Transaction, TransactionClient, TransactionOptions,
-    Value,
+    transaction::HeartbeatOption, Error, Key, KvPair, RawClient, Result, Transaction,
+    TransactionClient, TransactionOptions, Value,
 };
 
 // Parameters used in test
@@ -731,7 +731,9 @@ async fn txn_pessimistic_heartbeat() -> Result<()> {
     heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
 
     let mut txn_without_heartbeat = client
-        .begin_with_options(TransactionOptions::new_pessimistic().no_auto_hearbeat())
+        .begin_with_options(
+            TransactionOptions::new_pessimistic().heartbeat_option(HeartbeatOption::NoHeartbeat),
+        )
         .await?;
     txn_without_heartbeat
         .put(key2.clone(), "fooo")

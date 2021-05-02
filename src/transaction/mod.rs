@@ -11,6 +11,8 @@
 pub use client::Client;
 pub(crate) use lock::{resolve_locks, HasLocks};
 pub use snapshot::Snapshot;
+#[doc(hidden)]
+pub use transaction::HeartbeatOption;
 pub use transaction::{CheckLevel, Transaction, TransactionOptions};
 
 mod buffer;

@@ -11,7 +11,7 @@ use crate::{
 use derive_new::new;
 use fail::fail_point;
 use futures::{prelude::*, stream::BoxStream};
-use std::{iter, ops::RangeBounds, sync::Arc};
+use std::{iter, ops::RangeBounds, sync::Arc, time::Instant};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 use tokio::{sync::RwLock, time::Duration};
 
@@ -60,6 +60,7 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     rpc: Arc<PdC>,
     options: TransactionOptions,
     is_heartbeat_started: bool,
+    start_instant: Instant,
 }
 
 impl<PdC: PdClient> Transaction<PdC> {
@@ -80,6 +81,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             rpc,
             options,
             is_heartbeat_started: false,
+            start_instant: std::time::Instant::now(),
         }
     }
 
@@ -550,6 +552,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.timestamp.clone(),
             self.rpc.clone(),
             self.options.clone(),
+            self.buffer.get_write_size() as u64,
+            self.start_instant,
         )
         .commit()
         .await;
@@ -603,6 +607,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.timestamp.clone(),
             self.rpc.clone(),
             self.options.clone(),
+            self.buffer.get_write_size() as u64,
+            self.start_instant,
         )
         .rollback()
         .await;
@@ -617,6 +623,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Send a heart beat message to keep the transaction alive on the server and update its TTL.
     ///
     /// Returns the TTL set on the transaction's locks by TiKV.
+    #[doc(hidden)]
     pub async fn send_heart_beat(&mut self) -> Result<u64> {
         self.check_allow_operation().await?;
         let primary_key = match self.buffer.get_primary_key() {
@@ -745,7 +752,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     async fn start_auto_heartbeat(&mut self) {
-        if !self.options.auto_heartbeat || self.is_heartbeat_started {
+        if !self.options.heartbeat_option.is_auto_heartbeat() || self.is_heartbeat_started {
             return;
         }
         self.is_heartbeat_started = true;
@@ -758,10 +765,14 @@ impl<PdC: PdClient> Transaction<PdC> {
         let start_ts = self.timestamp.clone();
         let region_backoff = self.options.retry_options.region_backoff.clone();
         let rpc = self.rpc.clone();
+        let heartbeat_interval = match self.options.heartbeat_option {
+            HeartbeatOption::NoHeartbeat => DEFAULT_HEARTBEAT_INTERVAL,
+            HeartbeatOption::FixedTime(heartbeat_interval) => heartbeat_interval,
+        };
 
         let heartbeat_task = async move {
             loop {
-                tokio::time::sleep(DEFAULT_HEARTBEAT_INTERVAL).await;
+                tokio::time::sleep(heartbeat_interval).await;
                 {
                     let status = status.read().await;
                     if matches!(
@@ -819,6 +830,17 @@ impl<PdC: PdClient> Drop for Transaction<PdC> {
     }
 }
 
+/// The default max TTL of a lock in milliseconds. Also called `ManagedLockTTL` in TiDB.
+const MAX_TTL: u64 = 20000;
+/// The default TTL of a lock in milliseconds.
+const DEFAULT_LOCK_TTL: u64 = 3000;
+/// The default heartbeat interval
+const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(MAX_TTL / 2);
+/// TiKV recommends each RPC packet should be less than around 1MB. We keep KV size of
+/// each request below 16KB.
+const TXN_COMMIT_BATCH_SIZE: u64 = 16 * 1024;
+const TTL_FACTOR: f64 = 6000.0;
+
 /// Optimistic or pessimistic transaction.
 #[derive(Clone, PartialEq, Debug)]
 pub enum TransactionKind {
@@ -844,8 +866,14 @@ pub struct TransactionOptions {
     retry_options: RetryOptions,
     /// What to do if the transaction is dropped without an attempt to commit or rollback
     check_level: CheckLevel,
-    /// Whether heartbeat will be sent automatically
-    auto_heartbeat: bool,
+    #[doc(hidden)]
+    heartbeat_option: HeartbeatOption,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum HeartbeatOption {
+    NoHeartbeat,
+    FixedTime(Duration),
 }
 
 impl Default for TransactionOptions {
@@ -864,7 +892,7 @@ impl TransactionOptions {
             read_only: false,
             retry_options: RetryOptions::default_optimistic(),
             check_level: CheckLevel::Panic,
-            auto_heartbeat: true,
+            heartbeat_option: HeartbeatOption::FixedTime(DEFAULT_HEARTBEAT_INTERVAL),
         }
     }
 
@@ -877,7 +905,7 @@ impl TransactionOptions {
             read_only: false,
             retry_options: RetryOptions::default_pessimistic(),
             check_level: CheckLevel::Panic,
-            auto_heartbeat: true,
+            heartbeat_option: HeartbeatOption::FixedTime(DEFAULT_HEARTBEAT_INTERVAL),
         }
     }
 
@@ -935,10 +963,8 @@ impl TransactionOptions {
         }
     }
 
-    /// The transaction should not automatically send heartbeat messages to TiKV to keep itself
-    // alive.
-    pub fn no_auto_hearbeat(mut self) -> TransactionOptions {
-        self.auto_heartbeat = false;
+    pub fn heartbeat_option(mut self, heartbeat_option: HeartbeatOption) -> TransactionOptions {
+        self.heartbeat_option = heartbeat_option;
         self
     }
 
@@ -967,10 +993,11 @@ pub enum CheckLevel {
     None,
 }
 
-/// The default TTL of a lock in milliseconds.
-const DEFAULT_LOCK_TTL: u64 = 3000;
-/// The default heartbeat interval.
-const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
+impl HeartbeatOption {
+    pub fn is_auto_heartbeat(&self) -> bool {
+        !matches!(self, HeartbeatOption::NoHeartbeat)
+    }
+}
 
 /// A struct wrapping the details of two-phase commit protocol (2PC).
 ///
@@ -988,6 +1015,8 @@ struct Committer<PdC: PdClient = PdRpcClient> {
     options: TransactionOptions,
     #[new(default)]
     undetermined: bool,
+    write_size: u64,
+    start_instant: Instant,
 }
 
 impl<PdC: PdClient> Committer<PdC> {
@@ -1026,20 +1055,20 @@ impl<PdC: PdClient> Committer<PdC> {
 
     async fn prewrite(&mut self) -> Result<Option<Timestamp>> {
         let primary_lock = self.primary_key.clone().unwrap();
-        // FIXME: calculate TTL for big transactions
-        let lock_ttl = DEFAULT_LOCK_TTL;
+        let elapsed = self.start_instant.elapsed().as_millis() as u64;
+        let lock_ttl = self.calc_txn_lock_ttl();
         let mut request = match &self.options.kind {
             TransactionKind::Optimistic => new_prewrite_request(
                 self.mutations.clone(),
                 primary_lock,
                 self.start_version.clone(),
-                lock_ttl,
+                lock_ttl + elapsed,
             ),
             TransactionKind::Pessimistic(for_update_ts) => new_pessimistic_prewrite_request(
                 self.mutations.clone(),
                 primary_lock,
                 self.start_version.clone(),
-                lock_ttl,
+                lock_ttl + elapsed,
                 for_update_ts.clone(),
             ),
         };
@@ -1173,6 +1202,16 @@ impl<PdC: PdClient> Committer<PdC> {
         }
         Ok(())
     }
+
+    fn calc_txn_lock_ttl(&mut self) -> u64 {
+        let mut lock_ttl = DEFAULT_LOCK_TTL;
+        if self.write_size > TXN_COMMIT_BATCH_SIZE {
+            let size_mb = self.write_size as f64 / 1024.0 / 1024.0;
+            lock_ttl = (TTL_FACTOR * size_mb.sqrt()) as u64;
+            lock_ttl = lock_ttl.min(MAX_TTL).max(DEFAULT_LOCK_TTL);
+        }
+        lock_ttl
+    }
 }
 
 #[derive(PartialEq)]
@@ -1197,6 +1236,7 @@ enum TransactionStatus {
 mod tests {
     use crate::{
         mock::{MockKvClient, MockPdClient},
+        transaction::HeartbeatOption,
         Transaction, TransactionOptions,
     };
     use fail::FailScenario;
@@ -1207,40 +1247,42 @@ mod tests {
             atomic::{AtomicUsize, Ordering},
             Arc,
         },
+        time::Duration,
     };
     use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
     #[tokio::test]
     async fn test_optimistic_heartbeat() -> Result<(), io::Error> {
         let scenario = FailScenario::setup();
-        fail::cfg("after-prewrite", "sleep(10000)").unwrap();
+        fail::cfg("after-prewrite", "sleep(1500)").unwrap();
         let heartbeats = Arc::new(AtomicUsize::new(0));
         let heartbeats_cloned = heartbeats.clone();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |req: &dyn Any| {
-                if let Some(_heartbeat) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
+                if let Some(_) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
                     heartbeats_cloned.fetch_add(1, Ordering::SeqCst);
-                    return Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>);
-                } else if let Some(_prewrite) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
-                    return Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>);
+                    Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>)
+                } else if let Some(_) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
+                } else {
+                    Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
                 }
-                Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
             },
         )));
         let key1 = "key1".to_owned();
         let mut heartbeat_txn = Transaction::new(
             Timestamp::default(),
             pd_client,
-            TransactionOptions::new_optimistic(),
+            TransactionOptions::new_optimistic()
+                .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_secs(1))),
         );
         heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
         let heartbeat_txn_handle = tokio::task::spawn_blocking(move || {
             assert!(futures::executor::block_on(heartbeat_txn.commit()).is_ok())
         });
         assert_eq!(heartbeats.load(Ordering::SeqCst), 0);
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         heartbeat_txn_handle.await.unwrap();
-        assert!(heartbeats.load(Ordering::SeqCst) >= 1);
+        assert_eq!(heartbeats.load(Ordering::SeqCst), 1);
         scenario.teardown();
         Ok(())
     }
@@ -1251,35 +1293,33 @@ mod tests {
         let heartbeats_cloned = heartbeats.clone();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |req: &dyn Any| {
-                if let Some(_heartbeat) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
+                if let Some(_) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
                     heartbeats_cloned.fetch_add(1, Ordering::SeqCst);
-                    return Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>);
-                } else if let Some(_prewrite) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
-                    return Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>);
-                } else if let Some(_pessimistic_lock) =
-                    req.downcast_ref::<kvrpcpb::PessimisticLockRequest>()
-                {
-                    return Ok(
-                        Box::new(kvrpcpb::PessimisticLockResponse::default()) as Box<dyn Any>
-                    );
+                    Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>)
+                } else if let Some(_) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
+                } else if let Some(_) = req.downcast_ref::<kvrpcpb::PessimisticLockRequest>() {
+                    Ok(Box::new(kvrpcpb::PessimisticLockResponse::default()) as Box<dyn Any>)
+                } else {
+                    Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
                 }
-                Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
             },
         )));
         let key1 = "key1".to_owned();
         let mut heartbeat_txn = Transaction::new(
             Timestamp::default(),
             pd_client,
-            TransactionOptions::new_pessimistic(),
+            TransactionOptions::new_pessimistic()
+                .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_secs(1))),
         );
         heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
         assert_eq!(heartbeats.load(Ordering::SeqCst), 0);
-        tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+        assert_eq!(heartbeats.load(Ordering::SeqCst), 1);
         let heartbeat_txn_handle = tokio::spawn(async move {
             assert!(heartbeat_txn.commit().await.is_ok());
         });
         heartbeat_txn_handle.await.unwrap();
-        assert!(heartbeats.load(Ordering::SeqCst) > 1);
         Ok(())
     }
 }
