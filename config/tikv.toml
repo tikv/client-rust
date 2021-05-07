@@ -1,6 +1,6 @@
 [coprocessor]
-region-max-keys = 5
-region-split-keys = 3
+region-max-keys = 10
+region-split-keys = 7
 batch-split-limit = 100
 
 [raftstore]
