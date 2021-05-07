@@ -47,6 +47,8 @@ let value = txn.get("key".to_owned()).await?;
 txn.commit().await?;
 ```
 
+Since the TiKV client provides an async API, you'll need to use an async runtime (we currently only support Tokio). See [getting-started.md](getting-started.md) for a complete example.
+
 ## API summary
 
 The TiKV Rust client supports several levels of abstraction. The most convenient way to use the client is via `RawClient` and `TransactionClient`. This gives a very high-level API which mostly abstracts over the distributed nature of the store and has sensible defaults for all protocols. This interface can be configured, primarily when creating the client or transaction objects via the `Config` and `TransactionOptions` structs. Using some options, you can take over parts of the protocols (such as retrying failed messages) yourself.
