@@ -42,7 +42,7 @@ pub async fn init() -> Result<()> {
             .take(count as usize - 1)
             .map(|x| x.to_be_bytes().to_vec());
 
-        ensure_region_split(keys_1.chain(keys_2), 100).await?;
+        ensure_region_split(keys_1.chain(keys_2), 80).await?;
     }
 
     clear_tikv().await;
