@@ -62,3 +62,26 @@ async fn main() {
 ```
 
 For more examples, see the [examples](examples) directory.
+
+## A TiKV cluster
+
+To use the client, you'll need a TiKV instance to communicate with. In production, this should be a cluster of dedicated servers which are accessed via the network. To get started, you can run a TiKV 'cluster' on your local machine.
+
+A TiKV cluster consists of TiKV nodes and PD nodes. For normal use, you need at least three of each; there is no maximum. For testing etc., you need at least one TiKV node
+and one PD node. For more details, see the [TiKV docs](https://tikv.org/docs/dev/concepts/architecture/).
+
+The easiest way to manage a TiKV cluster (locally or on multiple machines) is to use [TiUP](https://github.com/pingcap/tiup). To install it on your computer, use
+
+```
+curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
+```
+
+then, to start a local TiKV 'cluster' for testing,
+
+```
+tiup playground nightly --kv-only
+```
+
+For more information about TiUP, see their [docs](https://docs.pingcap.com/tidb/stable/production-deployment-using-tiup).
+
+You can also build and/or run TiKV and PD instances manually. See [this blog post](https://ncameron.org/blog/building-running-and-benchmarking-tikv-and-tidb/) for details, note that you don't need the TiDB nodes.

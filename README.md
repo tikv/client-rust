@@ -11,6 +11,8 @@ This crate lets you connect to a TiKV cluster and use either a transactional or 
 
 The TiKV Rust client is an open source (Apache 2) project maintained by the TiKV Authors. We welcome contributions, see below for more info.
 
+Note that the current release is not suitable for production use - APIs are not yet stable and the crate has not been thoroughly tested in real-life use.
+
 ## Getting started
 
 The TiKV client is a Rust library (crate). To use this crate in your project, add the following dependency to your `Cargo.toml`:
