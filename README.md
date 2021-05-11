@@ -1,8 +1,9 @@
 # TiKV Client (Rust)
 
+[![Docs](https://docs.rs/tikv-client/badge.svg)](https://docs.rs/tikv-client)
 [![Build Status](https://travis-ci.org/tikv/client-rust.svg?branch=master)](https://travis-ci.org/tikv/client-rust)
 
-[Docs](https://www.tikv.dev/doc/rust-client/tikv_client/)
+[Nightly docs](https://www.tikv.dev/doc/rust-client/tikv_client/)
 
 This crate provides an easy-to-use client for [TiKV](https://github.com/tikv/tikv), a distributed, transactional key-value database written in Rust.
 
