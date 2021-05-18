@@ -1,15 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::{requests::new_scan_lock_request, resolve_locks};
-use crate::{
-    backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
-    config::Config,
-    pd::{PdClient, PdRpcClient},
-    request::Plan,
-    timestamp::TimestampExt,
-    transaction::{Snapshot, Transaction, TransactionOptions},
-    Result,
-};
+use crate::{Result, backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF}, config::Config, pd::{PdClient, PdRpcClient}, request::{Plan, PlanContext}, timestamp::TimestampExt, transaction::{Snapshot, Transaction, TransactionOptions}};
 use std::{mem, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
@@ -203,7 +195,7 @@ impl Client {
                 .retry_region(DEFAULT_REGION_BACKOFF)
                 .merge(crate::request::Collect)
                 .plan();
-            let res: Vec<kvrpcpb::LockInfo> = plan.execute().await?;
+            let res: Vec<kvrpcpb::LockInfo> = plan.execute(PlanContext::default()).await?;
 
             if res.is_empty() {
                 break;
@@ -214,7 +206,8 @@ impl Client {
         }
 
         // resolve locks
-        resolve_locks(locks, self.pd.clone()).await?;
+        // FIXME: this is inefficient
+        resolve_locks(locks, self.pd.clone(), true).await?;
 
         // update safepoint to PD
         let res: bool = self

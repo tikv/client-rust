@@ -120,12 +120,14 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
+        read_through_cache: bool,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
         let mut pairs = self.pairs.clone();
         pairs.sort_by(|a, b| a.key.cmp(&b.key));
         store_stream_for_keys(
             pairs.into_iter().map(Into::<KvPair>::into),
             pd_client.clone(),
+            read_through_cache,
         )
     }
 
@@ -254,8 +256,13 @@ impl Shardable for kvrpcpb::RawBatchScanRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
+        read_through_cache: bool,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
-        store_stream_for_ranges(self.ranges.clone(), pd_client.clone())
+        store_stream_for_ranges(
+            self.ranges.clone(),
+            pd_client.clone(),
+            read_through_cache,
+        )
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
@@ -354,7 +361,7 @@ mod test {
     use crate::{
         backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
         mock::{MockKvClient, MockPdClient},
-        request::Plan,
+        request::{Plan, PlanContext},
         Key,
     };
     use futures::executor;
@@ -396,7 +403,8 @@ mod test {
             .retry_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
-        let scan = executor::block_on(async { plan.execute().await }).unwrap();
+        let scan =
+            executor::block_on(async { plan.execute(PlanContext::default()).await }).unwrap();
 
         assert_eq!(scan.len(), 10);
         // FIXME test the keys returned.

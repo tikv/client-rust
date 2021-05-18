@@ -2,14 +2,7 @@
 
 use tikv_client_common::Error;
 
-use crate::{
-    backoff::DEFAULT_REGION_BACKOFF,
-    config::Config,
-    pd::PdRpcClient,
-    raw::lowering::*,
-    request::{Collect, Plan},
-    BoundRange, ColumnFamily, Key, KvPair, Result, Value,
-};
+use crate::{BoundRange, ColumnFamily, Key, KvPair, Result, Value, backoff::DEFAULT_REGION_BACKOFF, config::Config, pd::PdRpcClient, raw::lowering::*, request::{Collect, Plan, PlanContext}};
 use std::{sync::Arc, u32};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
@@ -154,7 +147,7 @@ impl Client {
             .retry_region(DEFAULT_REGION_BACKOFF)
             .post_process_default()
             .plan();
-        plan.execute().await
+        plan.execute(PlanContext::default()).await
     }
 
     /// Create a new 'batch get' request.
@@ -185,7 +178,7 @@ impl Client {
             .retry_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
-        plan.execute()
+        plan.execute(PlanContext::default())
             .await
             .map(|r| r.into_iter().map(Into::into).collect())
     }
@@ -214,7 +207,7 @@ impl Client {
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
-        plan.execute().await?;
+        plan.execute(PlanContext::default()).await?;
         Ok(())
     }
 
@@ -249,7 +242,7 @@ impl Client {
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
-        plan.execute().await?;
+        plan.execute(PlanContext::default()).await?;
         Ok(())
     }
 
@@ -278,7 +271,7 @@ impl Client {
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
-        plan.execute().await?;
+        plan.execute(PlanContext::default()).await?;
         Ok(())
     }
 
@@ -308,7 +301,7 @@ impl Client {
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
-        plan.execute().await?;
+        plan.execute(PlanContext::default()).await?;
         Ok(())
     }
 
@@ -335,7 +328,7 @@ impl Client {
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
-        plan.execute().await?;
+        plan.execute(PlanContext::default()).await?;
         Ok(())
     }
 
@@ -488,7 +481,7 @@ impl Client {
             .retry_region(DEFAULT_REGION_BACKOFF)
             .post_process_default()
             .plan();
-        plan.execute().await
+        plan.execute(PlanContext::default()).await
     }
 
     async fn scan_inner(
@@ -510,7 +503,7 @@ impl Client {
             .retry_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
-        let res = plan.execute().await;
+        let res = plan.execute(PlanContext::default()).await;
         res.map(|mut s| {
             s.truncate(limit as usize);
             s
@@ -541,7 +534,7 @@ impl Client {
             .retry_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
-        plan.execute().await
+        plan.execute(PlanContext::default()).await
     }
 
     fn assert_non_atomic(&self) -> Result<()> {

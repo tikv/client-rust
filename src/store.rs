@@ -30,6 +30,7 @@ impl KvConnectStore for TikvConnect {}
 pub fn store_stream_for_keys<K, KOut, PdC>(
     key_data: impl Iterator<Item = K> + Send + Sync + 'static,
     pd_client: Arc<PdC>,
+    read_through_cache: bool,
 ) -> BoxStream<'static, Result<(Vec<KOut>, Store)>>
 where
     PdC: PdClient,
@@ -38,11 +39,11 @@ where
 {
     pd_client
         .clone()
-        .group_keys_by_region(key_data)
+        .group_keys_by_region(key_data, read_through_cache)
         .and_then(move |(region_id, key)| {
             pd_client
                 .clone()
-                .store_for_id(region_id)
+                .store_for_id(region_id, read_through_cache)
                 .map_ok(move |store| (key, store))
         })
         .boxed()
@@ -52,10 +53,11 @@ where
 pub fn store_stream_for_range<PdC: PdClient>(
     range: (Vec<u8>, Vec<u8>),
     pd_client: Arc<PdC>,
+    read_through_cache: bool,
 ) -> BoxStream<'static, Result<((Vec<u8>, Vec<u8>), Store)>> {
     let bnd_range = BoundRange::from(range.clone());
     pd_client
-        .stores_for_range(bnd_range)
+        .stores_for_range(bnd_range, read_through_cache)
         .map_ok(move |store| {
             let region_range = store.region.range();
             let result_range = range_intersection(
@@ -70,10 +72,11 @@ pub fn store_stream_for_range<PdC: PdClient>(
 pub fn store_stream_for_range_by_start_key<PdC: PdClient>(
     start_key: Key,
     pd_client: Arc<PdC>,
+    read_through_cache: bool,
 ) -> BoxStream<'static, Result<(Vec<u8>, Store)>> {
     let bnd_range = BoundRange::range_from(start_key.clone());
     pd_client
-        .stores_for_range(bnd_range)
+        .stores_for_range(bnd_range, read_through_cache)
         .map_ok(move |store| {
             let region_range = store.region.range();
             (
@@ -102,14 +105,15 @@ fn range_intersection(region_range: (Key, Key), range: (Key, Key)) -> (Key, Key)
 pub fn store_stream_for_ranges<PdC: PdClient>(
     ranges: Vec<kvrpcpb::KeyRange>,
     pd_client: Arc<PdC>,
+    read_through_cache: bool,
 ) -> BoxStream<'static, Result<(Vec<kvrpcpb::KeyRange>, Store)>> {
     pd_client
         .clone()
-        .group_ranges_by_region(ranges)
+        .group_ranges_by_region(ranges, read_through_cache)
         .and_then(move |(region_id, range)| {
             pd_client
                 .clone()
-                .store_for_id(region_id)
+                .store_for_id(region_id, read_through_cache)
                 .map_ok(move |store| (range, store))
         })
         .boxed()

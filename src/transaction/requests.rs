@@ -225,10 +225,15 @@ impl Shardable for kvrpcpb::PrewriteRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
+        read_through_cache: bool,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
         let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
-        store_stream_for_keys(mutations.into_iter(), pd_client.clone())
+        store_stream_for_keys(
+            mutations.into_iter(),
+            pd_client.clone(),
+            read_through_cache,
+        )
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
@@ -348,10 +353,15 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
+        read_through_cache: bool,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
         let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
-        store_stream_for_keys(mutations.into_iter(), pd_client.clone())
+        store_stream_for_keys(
+            mutations.into_iter(),
+            pd_client.clone(),
+            read_through_cache,
+        )
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
@@ -428,8 +438,13 @@ impl Shardable for kvrpcpb::ScanLockRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
+        read_through_cache: bool,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
-        store_stream_for_range_by_start_key(self.start_key.clone().into(), pd_client.clone())
+        store_stream_for_range_by_start_key(
+            self.start_key.clone().into(),
+            pd_client.clone(),
+            read_through_cache,
+        )
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {

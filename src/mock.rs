@@ -128,7 +128,7 @@ impl PdClient for MockPdClient {
         Ok(Store::new(region, Arc::new(self.client.clone())))
     }
 
-    async fn region_for_key(&self, key: &Key) -> Result<Region> {
+    async fn region_for_key(&self, key: &Key, _read_through_cache: bool) -> Result<Region> {
         let bytes: &[_] = key.into();
         let region = if bytes.is_empty() || bytes[0] < 10 {
             Self::region1()
@@ -139,7 +139,7 @@ impl PdClient for MockPdClient {
         Ok(region)
     }
 
-    async fn region_for_id(&self, id: RegionId) -> Result<Region> {
+    async fn region_for_id(&self, id: RegionId, _read_through_cache: bool) -> Result<Region> {
         match id {
             1 => Ok(Self::region1()),
             2 => Ok(Self::region2()),

@@ -147,7 +147,11 @@ impl<PdC: PdClient, R: KvRequest + SingleKey> PlanBuilder<PdC, Dispatch<R>, NoTa
     /// Target the request at a single region.
     pub async fn single_region(self) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
         let key = self.plan.request.key();
-        let store = self.pd_client.clone().store_for_key(key.into()).await?;
+        let store = self
+            .pd_client
+            .clone()
+            .store_for_key(key.into(), true)
+            .await?;
         set_single_region_store(self.plan, store, self.pd_client)
     }
 }

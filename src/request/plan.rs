@@ -23,7 +23,28 @@ pub trait Plan: Sized + Clone + Sync + Send + 'static {
     type Result: Send;
 
     /// Execute the plan.
-    async fn execute(&self) -> Result<Self::Result>;
+    async fn execute(&self, ctx: PlanContext) -> Result<Self::Result>;
+}
+
+/// The context of the execution of a plan.
+///
+/// Since plans are layered and decoupled, plans can pass necessary information
+/// through the context.
+///
+/// The context only propagates from top to down
+#[derive(Debug, Clone)]
+pub struct PlanContext {
+    /// Retrying region means there are region errors in the previous execution,
+    /// indicating the region cache is invalid and needs to be updated.
+    is_retrying_region: bool,
+}
+
+impl Default for PlanContext {
+    fn default() -> Self {
+        PlanContext {
+            is_retrying_region: false,
+        }
+    }
 }
 
 /// The simplest plan which just dispatches a request to a specific kv server.
@@ -37,7 +58,7 @@ pub struct Dispatch<Req: KvRequest> {
 impl<Req: KvRequest> Plan for Dispatch<Req> {
     type Result = Req::Response;
 
-    async fn execute(&self) -> Result<Self::Result> {
+    async fn execute(&self, _ctx: PlanContext) -> Result<Self::Result> {
         let stats = tikv_stats(self.request.label());
         let result = self
             .kv_client
@@ -84,17 +105,20 @@ where
 {
     type Result = Vec<Result<P::Result>>;
 
-    async fn execute(&self) -> Result<Self::Result> {
+    async fn execute(&self, ctx: PlanContext) -> Result<Self::Result> {
         Ok(self
             .inner
-            .shards(&self.pd_client)
-            .and_then(move |(shard, store)| async move {
-                let mut clone = self.inner.clone();
-                clone.apply_shard(shard, &store)?;
-                let mut response = clone.execute().await?;
-                match response.error() {
-                    Some(e) => Err(e),
-                    None => Ok(response),
+            .shards(&self.pd_client, ctx.is_retrying_region)
+            .and_then(move |(shard, store)| {
+                let ctx = ctx.clone();
+                async move {
+                    let mut clone = self.inner.clone();
+                    clone.apply_shard(shard, &store)?;
+                    let mut response = clone.execute(ctx).await?;
+                    match response.error() {
+                        Some(e) => Err(e),
+                        None => Ok(response),
+                    }
                 }
             })
             .collect()
@@ -122,8 +146,8 @@ impl<In: Clone + Send + Sync + 'static, P: Plan<Result = Vec<Result<In>>>, M: Me
 {
     type Result = M::Out;
 
-    async fn execute(&self) -> Result<Self::Result> {
-        self.merge.merge(self.inner.execute().await?)
+    async fn execute(&self, ctx: PlanContext) -> Result<Self::Result> {
+        self.merge.merge(self.inner.execute(ctx).await?)
     }
 }
 
@@ -170,8 +194,8 @@ impl<In: Clone + Sync + Send + 'static, P: Plan<Result = In>, Pr: Process<In>> P
 {
     type Result = Pr::Out;
 
-    async fn execute(&self) -> Result<Self::Result> {
-        self.processor.process(self.inner.execute().await)
+    async fn execute(&self, ctx: PlanContext) -> Result<Self::Result> {
+        self.processor.process(self.inner.execute(ctx).await)
     }
 }
 
@@ -201,15 +225,15 @@ where
 {
     type Result = P::Result;
 
-    async fn execute(&self) -> Result<Self::Result> {
-        let mut result = self.inner.execute().await?;
+    async fn execute(&self, ctx: PlanContext) -> Result<Self::Result> {
+        let mut result = self.inner.execute(ctx.clone()).await?;
         let mut clone = self.clone();
         while let Some(region_error) = result.region_error() {
             match clone.backoff.next_delay_duration() {
                 None => return Err(region_error),
                 Some(delay_duration) => {
                     futures_timer::Delay::new(delay_duration).await;
-                    result = clone.inner.execute().await?;
+                    result = clone.inner.execute(ctx.clone()).await?;
                 }
             }
         }
@@ -241,8 +265,8 @@ where
 {
     type Result = P::Result;
 
-    async fn execute(&self) -> Result<Self::Result> {
-        let mut result = self.inner.execute().await?;
+    async fn execute(&self, ctx: PlanContext) -> Result<Self::Result> {
+        let mut result = self.inner.execute(ctx.clone()).await?;
         let mut clone = self.clone();
         loop {
             let locks = result.take_locks();
@@ -255,14 +279,14 @@ where
             }
 
             let pd_client = self.pd_client.clone();
-            if resolve_locks(locks, pd_client.clone()).await? {
-                result = self.inner.execute().await?;
+            if resolve_locks(locks, pd_client.clone(), ctx.is_retrying_region).await? {
+                result = self.inner.execute(ctx.clone()).await?;
             } else {
                 match clone.backoff.next_delay_duration() {
                     None => return Err(Error::ResolveLockError),
                     Some(delay_duration) => {
                         futures_timer::Delay::new(delay_duration).await;
-                        result = clone.inner.execute().await?;
+                        result = clone.inner.execute(ctx.clone()).await?;
                     }
                 }
             }
@@ -303,8 +327,8 @@ where
 {
     type Result = P::Result;
 
-    async fn execute(&self) -> Result<Self::Result> {
-        let mut result = self.inner.execute().await?;
+    async fn execute(&self, ctx: PlanContext) -> Result<Self::Result> {
+        let mut result = self.inner.execute(ctx).await?;
         if let Some(error) = result.error() {
             Err(error)
         } else if let Some(error) = result.region_error() {
@@ -339,9 +363,9 @@ where
 {
     type Result = ResponseAndKeys<P::Result>;
 
-    async fn execute(&self) -> Result<Self::Result> {
+    async fn execute(&self, ctx: PlanContext) -> Result<Self::Result> {
         let keys = self.inner.get_keys();
-        let res = self.inner.execute().await?;
+        let res = self.inner.execute(ctx).await?;
         Ok(ResponseAndKeys(res, keys))
     }
 }
@@ -421,7 +445,7 @@ mod test {
     impl Plan for ErrPlan {
         type Result = BatchGetResponse;
 
-        async fn execute(&self) -> Result<Self::Result> {
+        async fn execute(&self, _ctx: PlanContext) -> Result<Self::Result> {
             Err(Error::Unimplemented)
         }
     }
@@ -432,6 +456,7 @@ mod test {
         fn shards(
             &self,
             _: &Arc<impl crate::pd::PdClient>,
+            _read_through_cache: bool,
         ) -> BoxStream<'static, crate::Result<(Self::Shard, crate::store::Store)>> {
             Box::pin(stream::iter(1..=3).map(|_| Err(Error::Unimplemented)))
                 .map_ok(|_: u8| (42, mock_store()))
@@ -457,7 +482,7 @@ mod test {
             backoff: Backoff::no_backoff(),
             pd_client: Arc::new(MockPdClient::default()),
         };
-        plan.execute()
+        plan.execute(PlanContext::default())
             .await
             .unwrap()
             .iter()
