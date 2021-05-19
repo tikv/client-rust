@@ -2,7 +2,7 @@
 
 use crate::{
     pd::RetryClient,
-    region::{Region, RegionId},
+    region::{Region, RegionId, StoreId},
     Key, Result,
 };
 use std::{
@@ -10,6 +10,7 @@ use std::{
     sync::Arc,
 };
 use tikv_client_pd::Cluster;
+use tikv_client_proto::metapb::Store;
 
 pub struct RegionCache<Cl = Cluster> {
     /// Start key -> Region
@@ -21,6 +22,7 @@ pub struct RegionCache<Cl = Cluster> {
     /// example, when a region is splitted one of the new regions may have
     /// the same ID but a different RegionVerId.
     cache_by_id: HashMap<RegionId, Region>,
+    store_cache: HashMap<StoreId, Store>,
     inner_client: Arc<RetryClient<Cl>>,
 }
 
@@ -29,6 +31,7 @@ impl<Cl> RegionCache<Cl> {
         RegionCache {
             cache_by_key: BTreeMap::new(),
             cache_by_id: HashMap::new(),
+            store_cache: HashMap::new(),
             inner_client,
         }
     }
@@ -42,7 +45,7 @@ impl RegionCache<Cluster> {
             Some((_, candidate_region)) if candidate_region.contains(key) => {
                 Ok(candidate_region.clone())
             }
-            _ => self.read_through_region_for_key(key.clone()).await,
+            _ => self.read_through_region_by_key(key.clone()).await,
         }
     }
 
@@ -50,22 +53,35 @@ impl RegionCache<Cluster> {
     pub async fn get_region_by_id(&mut self, id: RegionId) -> Result<Region> {
         match self.cache_by_id.get(&id) {
             Some(region) => Ok(region.clone()),
-            None => self.read_through_region_for_id(id).await,
+            None => self.read_through_region_by_id(id).await,
+        }
+    }
+
+    pub async fn get_store_by_id(&mut self, id: StoreId) -> Result<Store> {
+        match self.store_cache.get(&id) {
+            Some(store) => Ok(store.clone()),
+            None => self.read_through_store_by_id(id).await,
         }
     }
 
     /// Force read through (query from PD) and update cache
-    pub async fn read_through_region_for_key(&mut self, key: Key) -> Result<Region> {
+    pub async fn read_through_region_by_key(&mut self, key: Key) -> Result<Region> {
         let region = self.inner_client.clone().get_region(key.into()).await?;
         self.add_region(region.clone());
         Ok(region)
     }
 
     /// Force read through (query from PD) and update cache
-    pub async fn read_through_region_for_id(&mut self, id: RegionId) -> Result<Region> {
+    pub async fn read_through_region_by_id(&mut self, id: RegionId) -> Result<Region> {
         let region = self.inner_client.clone().get_region_by_id(id).await?;
         self.add_region(region.clone());
         Ok(region)
+    }
+
+    pub async fn read_through_store_by_id(&mut self, id: StoreId) -> Result<Store> {
+        let store = self.inner_client.clone().get_store(id).await?;
+        self.store_cache.insert(id, store.clone());
+        Ok(store)
     }
 
     pub fn add_region(&mut self, region: Region) {

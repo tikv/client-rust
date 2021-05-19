@@ -1,7 +1,15 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::{requests::new_scan_lock_request, resolve_locks};
-use crate::{Result, backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF}, config::Config, pd::{PdClient, PdRpcClient}, request::{Plan, PlanContext}, timestamp::TimestampExt, transaction::{Snapshot, Transaction, TransactionOptions}};
+use crate::{
+    backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
+    config::Config,
+    pd::{PdClient, PdRpcClient},
+    request::{Plan, PlanContext},
+    timestamp::TimestampExt,
+    transaction::{Snapshot, Transaction, TransactionOptions},
+    Result,
+};
 use std::{mem, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 

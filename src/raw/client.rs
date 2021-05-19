@@ -2,7 +2,14 @@
 
 use tikv_client_common::Error;
 
-use crate::{BoundRange, ColumnFamily, Key, KvPair, Result, Value, backoff::DEFAULT_REGION_BACKOFF, config::Config, pd::PdRpcClient, raw::lowering::*, request::{Collect, Plan, PlanContext}};
+use crate::{
+    backoff::DEFAULT_REGION_BACKOFF,
+    config::Config,
+    pd::PdRpcClient,
+    raw::lowering::*,
+    request::{Collect, Plan, PlanContext},
+    BoundRange, ColumnFamily, Key, KvPair, Result, Value,
+};
 use std::{sync::Arc, u32};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;

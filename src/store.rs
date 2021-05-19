@@ -10,7 +10,7 @@ use std::{
 use tikv_client_proto::kvrpcpb;
 use tikv_client_store::{KvClient, KvConnect, TikvConnect};
 
-#[derive(new)]
+#[derive(new, Clone)]
 pub struct Store {
     pub region: Region,
     pub client: Arc<dyn KvClient + Send + Sync>,

@@ -117,7 +117,11 @@ macro_rules! shardable_range {
             ) -> BoxStream<'static, crate::Result<(Self::Shard, crate::store::Store)>> {
                 let start_key = self.start_key.clone().into();
                 let end_key = self.end_key.clone().into();
-                crate::store::store_stream_for_range((start_key, end_key), pd_client.clone(), read_through_cache)
+                crate::store::store_stream_for_range(
+                    (start_key, end_key),
+                    pd_client.clone(),
+                    read_through_cache,
+                )
             }
 
             fn apply_shard(

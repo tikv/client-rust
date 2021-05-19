@@ -43,7 +43,11 @@ pub trait PdClient: Send + Sync + 'static {
     type KvClient: KvClient + Send + Sync + 'static;
 
     /// In transactional API, `region` is decoded (keys in raw format).
-    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store>;
+    async fn map_region_to_store(
+        self: Arc<Self>,
+        region: Region,
+        read_through_cache: bool,
+    ) -> Result<Store>;
 
     /// In transactional API, the key and returned region are both decoded (keys in raw format).
     async fn region_for_key(&self, key: &Key, read_through_cache: bool) -> Result<Region>;
@@ -58,7 +62,7 @@ pub trait PdClient: Send + Sync + 'static {
     /// In transactional API, `key` is in raw format
     async fn store_for_key(self: Arc<Self>, key: &Key, read_through_cache: bool) -> Result<Store> {
         let region = self.region_for_key(key, read_through_cache).await?;
-        self.map_region_to_store(region).await
+        self.map_region_to_store(region, read_through_cache).await
     }
 
     async fn store_for_id(
@@ -67,7 +71,7 @@ pub trait PdClient: Send + Sync + 'static {
         read_through_cache: bool,
     ) -> Result<Store> {
         let region = self.region_for_id(id, read_through_cache).await?;
-        self.map_region_to_store(region).await
+        self.map_region_to_store(region, read_through_cache).await
     }
 
     fn group_keys_by_region<K, K2>(
@@ -122,7 +126,7 @@ pub trait PdClient: Send + Sync + 'static {
 
                 let region = this.region_for_key(&start_key, read_through_cache).await?;
                 let region_end = region.end_key();
-                let store = this.map_region_to_store(region).await?;
+                let store = this.map_region_to_store(region, read_through_cache).await?;
                 if end_key
                     .map(|x| x <= region_end && !x.is_empty())
                     .unwrap_or(false)
@@ -224,9 +228,25 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
 impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     type KvClient = KvC::KvClient;
 
-    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store> {
+    async fn map_region_to_store(
+        self: Arc<Self>,
+        region: Region,
+        read_through_cache: bool,
+    ) -> Result<Store> {
         let store_id = region.get_store_id()?;
-        let store = self.pd.clone().get_store(store_id).await?;
+        let store = if read_through_cache {
+            self.region_cache
+                .lock()
+                .await
+                .get_store_by_id(store_id)
+                .await?
+        } else {
+            self.region_cache
+                .lock()
+                .await
+                .read_through_store_by_id(store_id)
+                .await?
+        };
         let kv_client = self.kv_client(store.get_address()).await?;
         Ok(Store::new(region, Arc::new(kv_client)))
     }
@@ -243,7 +263,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
             self.region_cache
                 .lock()
                 .await
-                .read_through_region_for_key(key.clone())
+                .read_through_region_by_key(key.clone())
                 .await?
         } else {
             self.region_cache
@@ -260,7 +280,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
             self.region_cache
                 .lock()
                 .await
-                .read_through_region_for_id(id)
+                .read_through_region_by_id(id)
                 .await?
         } else {
             self.region_cache.lock().await.get_region_by_id(id).await?

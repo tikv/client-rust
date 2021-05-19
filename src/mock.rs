@@ -124,7 +124,11 @@ impl MockPdClient {
 impl PdClient for MockPdClient {
     type KvClient = MockKvClient;
 
-    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store> {
+    async fn map_region_to_store(
+        self: Arc<Self>,
+        region: Region,
+        _read_through_cache: bool,
+    ) -> Result<Store> {
         Ok(Store::new(region, Arc::new(self.client.clone())))
     }
 

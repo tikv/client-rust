@@ -258,11 +258,7 @@ impl Shardable for kvrpcpb::RawBatchScanRequest {
         pd_client: &Arc<impl PdClient>,
         read_through_cache: bool,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
-        store_stream_for_ranges(
-            self.ranges.clone(),
-            pd_client.clone(),
-            read_through_cache,
-        )
+        store_stream_for_ranges(self.ranges.clone(), pd_client.clone(), read_through_cache)
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
