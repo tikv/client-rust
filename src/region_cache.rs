@@ -2,7 +2,7 @@
 
 use crate::{
     pd::RetryClient,
-    region::{Region, RegionId, StoreId},
+    region::{Region, RegionId, RegionVerId, StoreId},
     Key, Result,
 };
 use std::{
@@ -92,44 +92,50 @@ impl RegionCache<Cluster> {
     }
 
     pub async fn add_region(&self, region: Region) {
+        // FIXME: will it be the performance bottleneck?
+        let mut cache_by_id = self.cache_by_id.write().await;
+        let mut cache_by_key = self.cache_by_key.write().await;
+
         let end_key = region.end_key();
-        let mut to_be_removed: Vec<(RegionId, Key)> = Vec::new();
+        let mut to_be_removed: Vec<(RegionVerId, Key)> = Vec::new();
 
-        {
-            let guard = self.cache_by_key.read().await;
-            let mut search_range = {
-                if end_key.is_empty() {
-                    guard.range(..)
-                } else {
-                    guard.range(..end_key)
+        let mut search_range = {
+            if end_key.is_empty() {
+                cache_by_key.range(..)
+            } else {
+                cache_by_key.range(..end_key)
+            }
+        };
+        while let Some((_, region_in_cache)) = search_range.next_back() {
+            if region_in_cache.region.end_key > region.region.start_key {
+                to_be_removed.push((
+                    region_in_cache.ver_id(),
+                    region_in_cache.region.start_key.clone().into(),
+                ));
+            } else {
+                break;
+            }
+        }
+
+        for (ver_id, _) in &to_be_removed {
+            let id = ver_id.id;
+            match cache_by_id.get(&id) {
+                Some(r) if &r.ver_id() == ver_id => {
+                    cache_by_id.remove(&id);
                 }
-            };
-            while let Some((_, region_in_cache)) = search_range.next_back() {
-                if region_in_cache.region.end_key > region.region.start_key {
-                    to_be_removed.push((
-                        region_in_cache.id(),
-                        region_in_cache.region.start_key.clone().into(),
-                    ));
-                } else {
-                    break;
+                _ => {}
+            }
+        }
+        cache_by_id.insert(region.id(), region.clone());
+
+        for (ver_id, start_key) in &to_be_removed {
+            match cache_by_key.get(&start_key) {
+                Some(r) if &r.ver_id() == ver_id => {
+                    cache_by_key.remove(&start_key);
                 }
+                _ => {}
             }
         }
-
-        {
-            let mut cache_by_id = self.cache_by_id.write().await;
-            for (id, _) in &to_be_removed {
-                cache_by_id.remove(id);
-            }
-            cache_by_id.insert(region.id(), region.clone());
-        }
-
-        {
-            let mut cache_by_key = self.cache_by_key.write().await;
-            for (_, start_key) in to_be_removed {
-                cache_by_key.remove(&start_key);
-            }
-            cache_by_key.insert(region.start_key(), region);
-        }
+        cache_by_key.insert(region.start_key(), region);
     }
 }
