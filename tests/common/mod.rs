@@ -88,7 +88,7 @@ async fn ensure_region_split(
 
 pub fn pd_addrs() -> Vec<String> {
     env::var(ENV_PD_ADDRS)
-        .expect(&format!("Expected {}:", ENV_PD_ADDRS))
+        .unwrap_or_else(|_| "127.0.0.1:2379".to_owned())
         .split(",")
         .map(From::from)
         .collect()

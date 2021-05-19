@@ -11,27 +11,28 @@ use std::{
 };
 use tikv_client_pd::Cluster;
 use tikv_client_proto::metapb::Store;
+use tokio::sync::RwLock;
 
 pub struct RegionCache<Cl = Cluster> {
     /// Start key -> Region
     ///
     /// Invariant: there are no intersecting regions in the map at any time.
-    cache_by_key: BTreeMap<Key, Region>,
+    cache_by_key: RwLock<BTreeMap<Key, Region>>,
     /// Region ID -> Region. Note: regions with identical ID doesn't necessarily
     /// mean they are the same, they can be different regions across time. For
     /// example, when a region is splitted one of the new regions may have
     /// the same ID but a different RegionVerId.
-    cache_by_id: HashMap<RegionId, Region>,
-    store_cache: HashMap<StoreId, Store>,
+    cache_by_id: RwLock<HashMap<RegionId, Region>>,
+    store_cache: RwLock<HashMap<StoreId, Store>>,
     inner_client: Arc<RetryClient<Cl>>,
 }
 
 impl<Cl> RegionCache<Cl> {
     pub fn new(inner_client: Arc<RetryClient<Cl>>) -> RegionCache<Cl> {
         RegionCache {
-            cache_by_key: BTreeMap::new(),
-            cache_by_id: HashMap::new(),
-            store_cache: HashMap::new(),
+            cache_by_key: RwLock::new(BTreeMap::new()),
+            cache_by_id: RwLock::new(HashMap::new()),
+            store_cache: RwLock::new(HashMap::new()),
             inner_client,
         }
     }
@@ -39,76 +40,96 @@ impl<Cl> RegionCache<Cl> {
 
 impl RegionCache<Cluster> {
     // Retrieve cache entry by key. If there's no entry, query PD and update cache.
-    pub async fn get_region_by_key(&mut self, key: &Key) -> Result<Region> {
-        let res = self.cache_by_key.range(..=key).next_back();
+    pub async fn get_region_by_key(&self, key: &Key) -> Result<Region> {
+        let res = {
+            let read_guard = self.cache_by_key.read().await;
+            read_guard
+                .range(..=key)
+                .next_back()
+                .map(|(x, y)| (x.clone(), y.clone()))
+        };
+
         match res {
-            Some((_, candidate_region)) if candidate_region.contains(key) => {
-                Ok(candidate_region.clone())
-            }
+            Some((_, candidate_region)) if candidate_region.contains(key) => Ok(candidate_region),
             _ => self.read_through_region_by_key(key.clone()).await,
         }
     }
 
     // Retrieve cache entry by RegionId. If there's no entry, query PD and update cache.
-    pub async fn get_region_by_id(&mut self, id: RegionId) -> Result<Region> {
-        match self.cache_by_id.get(&id) {
+    pub async fn get_region_by_id(&self, id: RegionId) -> Result<Region> {
+        match self.cache_by_id.read().await.get(&id) {
             Some(region) => Ok(region.clone()),
             None => self.read_through_region_by_id(id).await,
         }
     }
 
-    pub async fn get_store_by_id(&mut self, id: StoreId) -> Result<Store> {
-        match self.store_cache.get(&id) {
-            Some(store) => Ok(store.clone()),
+    pub async fn get_store_by_id(&self, id: StoreId) -> Result<Store> {
+        let store = self.store_cache.read().await.get(&id).cloned();
+        match store {
+            Some(store) => Ok(store),
             None => self.read_through_store_by_id(id).await,
         }
     }
 
     /// Force read through (query from PD) and update cache
-    pub async fn read_through_region_by_key(&mut self, key: Key) -> Result<Region> {
+    pub async fn read_through_region_by_key(&self, key: Key) -> Result<Region> {
         let region = self.inner_client.clone().get_region(key.into()).await?;
-        self.add_region(region.clone());
+        self.add_region(region.clone()).await;
         Ok(region)
     }
 
     /// Force read through (query from PD) and update cache
-    pub async fn read_through_region_by_id(&mut self, id: RegionId) -> Result<Region> {
+    pub async fn read_through_region_by_id(&self, id: RegionId) -> Result<Region> {
         let region = self.inner_client.clone().get_region_by_id(id).await?;
-        self.add_region(region.clone());
+        self.add_region(region.clone()).await;
         Ok(region)
     }
 
-    pub async fn read_through_store_by_id(&mut self, id: StoreId) -> Result<Store> {
+    pub async fn read_through_store_by_id(&self, id: StoreId) -> Result<Store> {
         let store = self.inner_client.clone().get_store(id).await?;
-        self.store_cache.insert(id, store.clone());
+        self.store_cache.write().await.insert(id, store.clone());
         Ok(store)
     }
 
-    pub fn add_region(&mut self, region: Region) {
+    pub async fn add_region(&self, region: Region) {
         let end_key = region.end_key();
         let mut to_be_removed: Vec<(RegionId, Key)> = Vec::new();
-        let mut search_range = if end_key.is_empty() {
-            self.cache_by_key.range(..)
-        } else {
-            self.cache_by_key.range(..end_key)
-        };
-        while let Some((_, region_in_cache)) = search_range.next_back() {
-            if region_in_cache.region.end_key > region.region.start_key {
-                to_be_removed.push((
-                    region_in_cache.id(),
-                    region_in_cache.region.start_key.clone().into(),
-                ));
-            } else {
-                break;
+
+        {
+            let guard = self.cache_by_key.read().await;
+            let mut search_range = {
+                if end_key.is_empty() {
+                    guard.range(..)
+                } else {
+                    guard.range(..end_key)
+                }
+            };
+            while let Some((_, region_in_cache)) = search_range.next_back() {
+                if region_in_cache.region.end_key > region.region.start_key {
+                    to_be_removed.push((
+                        region_in_cache.id(),
+                        region_in_cache.region.start_key.clone().into(),
+                    ));
+                } else {
+                    break;
+                }
             }
         }
 
-        for (id, start_key) in to_be_removed {
-            self.cache_by_id.remove(&id);
-            self.cache_by_key.remove(&start_key);
+        {
+            let mut cache_by_id = self.cache_by_id.write().await;
+            for (id, _) in &to_be_removed {
+                cache_by_id.remove(id);
+            }
+            cache_by_id.insert(region.id(), region.clone());
         }
 
-        self.cache_by_id.insert(region.id(), region.clone());
-        self.cache_by_key.insert(region.start_key(), region);
+        {
+            let mut cache_by_key = self.cache_by_key.write().await;
+            for (_, start_key) in to_be_removed {
+                cache_by_key.remove(&start_key);
+            }
+            cache_by_key.insert(region.start_key(), region);
+        }
     }
 }

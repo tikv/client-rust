@@ -16,7 +16,7 @@ use std::{collections::HashMap, sync::Arc, thread};
 use tikv_client_pd::Cluster;
 use tikv_client_proto::kvrpcpb;
 use tikv_client_store::{KvClient, KvConnect, TikvConnect};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
 const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";
@@ -221,7 +221,7 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     kv_connect: KvC,
     kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
     enable_codec: bool,
-    region_cache: Arc<Mutex<RegionCache<Cl>>>,
+    region_cache: RegionCache<Cl>,
 }
 
 #[async_trait]
@@ -235,17 +235,9 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     ) -> Result<Store> {
         let store_id = region.get_store_id()?;
         let store = if read_through_cache {
-            self.region_cache
-                .lock()
-                .await
-                .get_store_by_id(store_id)
-                .await?
+            self.region_cache.get_store_by_id(store_id).await?
         } else {
-            self.region_cache
-                .lock()
-                .await
-                .read_through_store_by_id(store_id)
-                .await?
+            self.region_cache.read_through_store_by_id(store_id).await?
         };
         let kv_client = self.kv_client(store.get_address()).await?;
         Ok(Store::new(region, Arc::new(kv_client)))
@@ -261,29 +253,19 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 
         let region = if read_through_cache {
             self.region_cache
-                .lock()
-                .await
                 .read_through_region_by_key(key.clone())
                 .await?
         } else {
-            self.region_cache
-                .lock()
-                .await
-                .get_region_by_key(&key)
-                .await?
+            self.region_cache.get_region_by_key(&key).await?
         };
         Self::decode_region(region, enable_codec)
     }
 
     async fn region_for_id(&self, id: RegionId, read_through_cache: bool) -> Result<Region> {
         let region = if read_through_cache {
-            self.region_cache
-                .lock()
-                .await
-                .read_through_region_by_id(id)
-                .await?
+            self.region_cache.read_through_region_by_id(id).await?
         } else {
-            self.region_cache.lock().await.get_region_by_id(id).await?
+            self.region_cache.get_region_by_id(id).await?
         };
 
         Self::decode_region(region, self.enable_codec)
@@ -360,7 +342,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             kv_client_cache,
             kv_connect: kv_connect(env, security_mgr),
             enable_codec,
-            region_cache: Arc::new(Mutex::new(RegionCache::new(pd))),
+            region_cache: RegionCache::new(pd),
         })
     }
 
