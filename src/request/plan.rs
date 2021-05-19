@@ -88,16 +88,14 @@ where
         let resps: FuturesOrdered<_> = self
             .inner
             .shards(&self.pd_client)
-            .map(move |shard_store| {
+            .map(move |(shard_store)| async move {
+                let (shard, store) = shard_store?;
                 let mut inner = self.inner.clone();
-                async move {
-                    let (shard, store) = shard_store?;
-                    inner.apply_shard(shard, &store)?;
-                    let mut response = inner.execute().await?;
-                    match response.error() {
-                        Some(e) => Err(e),
-                        None => Ok(response),
-                    }
+                inner.apply_shard(shard, &store)?;
+                let mut response = inner.execute().await?;
+                match response.error() {
+                    Some(e) => Err(e),
+                    None => Ok(response),
                 }
             })
             .collect()
