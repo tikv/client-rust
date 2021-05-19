@@ -10,7 +10,7 @@ use crate::{
     Error, Key, KvPair, Result, Value,
 };
 use async_trait::async_trait;
-use futures::{prelude::*, stream::StreamExt};
+use futures::{prelude::*, stream::FuturesOrdered};
 use std::{marker::PhantomData, sync::Arc};
 use tikv_client_proto::kvrpcpb;
 use tikv_client_store::{HasError, HasRegionError, KvClient};
@@ -85,20 +85,25 @@ where
     type Result = Vec<Result<P::Result>>;
 
     async fn execute(&self) -> Result<Self::Result> {
-        Ok(self
+        let resps: FuturesOrdered<_> = self
             .inner
             .shards(&self.pd_client)
-            .and_then(move |(shard, store)| async move {
-                let mut clone = self.inner.clone();
-                clone.apply_shard(shard, &store)?;
-                let mut response = clone.execute().await?;
-                match response.error() {
-                    Some(e) => Err(e),
-                    None => Ok(response),
+            .map(move |shard_store| {
+                let mut inner = self.inner.clone();
+                async move {
+                    let (shard, store) = shard_store?;
+                    inner.apply_shard(shard, &store)?;
+                    let mut response = inner.execute().await?;
+                    match response.error() {
+                        Some(e) => Err(e),
+                        None => Ok(response),
+                    }
                 }
             })
             .collect()
-            .await)
+            .await;
+
+        Ok(resps.collect().await)
     }
 }
 
