@@ -63,6 +63,8 @@ impl<Req: KvRequest + HasKeys> HasKeys for Dispatch<Req> {
     }
 }
 
+const MULTI_REGION_CONCURRENCY: usize = 16;
+
 pub struct MultiRegion<P: Plan, PdC: PdClient> {
     pub(super) inner: P,
     pub pd_client: Arc<PdC>,
@@ -85,23 +87,22 @@ where
     type Result = Vec<Result<P::Result>>;
 
     async fn execute(&self) -> Result<Self::Result> {
-        let resps: FuturesOrdered<_> = self
+        Ok(self
             .inner
             .shards(&self.pd_client)
             .map(move |shard_store| async move {
                 let (shard, store) = shard_store?;
-                let mut inner = self.inner.clone();
-                inner.apply_shard(shard, &store)?;
-                let mut response = inner.execute().await?;
+                let mut clone = self.inner.clone();
+                clone.apply_shard(shard, &store)?;
+                let mut response = clone.execute().await?;
                 match response.error() {
                     Some(e) => Err(e),
                     None => Ok(response),
                 }
             })
+            .buffered(MULTI_REGION_CONCURRENCY)
             .collect()
-            .await;
-
-        Ok(resps.collect().await)
+            .await)
     }
 }
 
