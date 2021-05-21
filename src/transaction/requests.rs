@@ -3,7 +3,8 @@
 use crate::{
     pd::PdClient,
     request::{
-        Collect, DefaultProcessor, HasKeys, KvRequest, Merge, Process, Shardable, SingleKey,
+        Collect, CollectWithShard, DefaultProcessor, KvRequest, Merge, Process, ResponseWithShard,
+        Shardable, SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_range_by_start_key, Store},
     timestamp::TimestampExt,
@@ -11,6 +12,7 @@ use crate::{
     util::iter::FlatMapOkIterExt,
     Key, KvPair, Result, Value,
 };
+use either::Either;
 use futures::stream::BoxStream;
 use std::{collections::HashMap, iter, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
@@ -223,12 +225,15 @@ impl Shardable for kvrpcpb::PrewriteRequest {
     type Shard = Vec<kvrpcpb::Mutation>;
 
     fn shards(
-        &self,
+        mut mutations: Self::Shard,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
-        let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
         store_stream_for_keys(mutations.into_iter(), pd_client.clone())
+    }
+
+    fn get_shard(&self) -> Self::Shard {
+        self.mutations.clone()
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
@@ -246,15 +251,6 @@ impl Shardable for kvrpcpb::PrewriteRequest {
 
         self.set_mutations(shard);
         Ok(())
-    }
-}
-
-impl HasLocks for kvrpcpb::PrewriteResponse {
-    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
-        self.errors
-            .iter_mut()
-            .filter_map(|error| error.locked.take())
-            .collect()
     }
 }
 
@@ -346,12 +342,15 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
     type Shard = Vec<kvrpcpb::Mutation>;
 
     fn shards(
-        &self,
+        mut mutations: Self::Shard,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
-        let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
         store_stream_for_keys(mutations.into_iter(), pd_client.clone())
+    }
+
+    fn get_shard(&self) -> Self::Shard {
+        self.mutations.clone()
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
@@ -361,46 +360,44 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
     }
 }
 
-impl HasKeys for kvrpcpb::PessimisticLockRequest {
-    fn get_keys(&self) -> Vec<Key> {
-        self.mutations
-            .iter()
-            .map(|m| m.key.clone().into())
-            .collect()
-    }
-}
+impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>
+    for CollectWithShard
+{
+    type Out = Vec<KvPair>;
 
-impl Merge<kvrpcpb::PessimisticLockResponse> for Collect {
-    // FIXME: PessimisticLockResponse only contains values.
-    // We need to pair keys and values returned somewhere.
-    // But it's blocked by the structure of the program that `map_result` only accepts the response as input
-    // Before we fix this `batch_get_for_update` is problematic.
-    type Out = Vec<Option<Value>>;
-
-    fn merge(&self, input: Vec<Result<kvrpcpb::PessimisticLockResponse>>) -> Result<Self::Out> {
+    fn merge(
+        &self,
+        input: Vec<
+            Result<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>,
+        >,
+    ) -> Result<Self::Out> {
         input
             .into_iter()
-            .flat_map_ok(|mut resp| {
+            .flat_map_ok(|ResponseWithShard(mut resp, mutations)| {
                 let values = resp.take_values();
+                let values_len = values.len();
                 let not_founds = resp.take_not_founds();
-                let v: Vec<_> = if not_founds.is_empty() {
+                let kvparis = mutations
+                    .into_iter()
+                    .map(|m| m.key)
+                    .zip(values)
+                    .map(KvPair::from);
+                assert_eq!(kvparis.len(), values_len);
+                if not_founds.is_empty() {
                     // Legacy TiKV does not distiguish not existing key and existing key
                     // that with empty value. We assume that key does not exist if value
                     // is empty.
-                    values
-                        .into_iter()
-                        .map(|v| if v.is_empty() { None } else { Some(v) })
-                        .collect()
+                    Either::Left(kvparis.filter(|kvpair| kvpair.value().is_empty()))
                 } else {
-                    assert_eq!(values.len(), not_founds.len());
-                    values
-                        .into_iter()
-                        .zip(not_founds.into_iter())
-                        .map(|(v, not_found)| if not_found { None } else { Some(v) })
-                        .collect()
-                };
-                // FIXME sucks to collect and re-iterate, but the iterators have different types
-                v.into_iter()
+                    assert_eq!(kvparis.len(), not_founds.len());
+                    Either::Right(kvparis.zip(not_founds).filter_map(|(kvpair, not_found)| {
+                        if not_found {
+                            None
+                        } else {
+                            Some(kvpair)
+                        }
+                    }))
+                }
             })
             .collect()
     }
@@ -426,10 +423,14 @@ impl Shardable for kvrpcpb::ScanLockRequest {
     type Shard = Vec<u8>;
 
     fn shards(
-        &self,
+        start_key: Self::Shard,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
-        store_stream_for_range_by_start_key(self.start_key.clone().into(), pd_client.clone())
+        store_stream_for_range_by_start_key(start_key.into(), pd_client.clone())
+    }
+
+    fn get_shard(&self) -> Self::Shard {
+        self.start_key.clone()
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
@@ -571,6 +572,19 @@ pub struct SecondaryLocksStatus {
     pub commit_ts: Option<Timestamp>,
 }
 
+pair_locks!(kvrpcpb::BatchGetResponse);
+pair_locks!(kvrpcpb::ScanResponse);
+error_locks!(kvrpcpb::GetResponse);
+error_locks!(kvrpcpb::ResolveLockResponse);
+error_locks!(kvrpcpb::CommitResponse);
+error_locks!(kvrpcpb::BatchRollbackResponse);
+error_locks!(kvrpcpb::TxnHeartBeatResponse);
+error_locks!(kvrpcpb::CheckTxnStatusResponse);
+error_locks!(kvrpcpb::CheckSecondaryLocksResponse);
+
+impl HasLocks for kvrpcpb::CleanupResponse {}
+impl HasLocks for kvrpcpb::ScanLockResponse {}
+
 impl HasLocks for kvrpcpb::PessimisticRollbackResponse {
     fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
         self.errors
@@ -589,14 +603,11 @@ impl HasLocks for kvrpcpb::PessimisticLockResponse {
     }
 }
 
-pair_locks!(kvrpcpb::BatchGetResponse);
-pair_locks!(kvrpcpb::ScanResponse);
-error_locks!(kvrpcpb::GetResponse);
-error_locks!(kvrpcpb::ResolveLockResponse);
-error_locks!(kvrpcpb::CommitResponse);
-error_locks!(kvrpcpb::BatchRollbackResponse);
-error_locks!(kvrpcpb::TxnHeartBeatResponse);
-error_locks!(kvrpcpb::CheckTxnStatusResponse);
-error_locks!(kvrpcpb::CheckSecondaryLocksResponse);
-impl HasLocks for kvrpcpb::CleanupResponse {}
-impl HasLocks for kvrpcpb::ScanLockResponse {}
+impl HasLocks for kvrpcpb::PrewriteResponse {
+    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+        self.errors
+            .iter_mut()
+            .filter_map(|error| error.locked.take())
+            .collect()
+    }
+}

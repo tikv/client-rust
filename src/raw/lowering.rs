@@ -3,8 +3,8 @@
 /// This module provides constructor functions for requests which take arguments as high-level
 /// types (i.e., the types from the client crate) and converts these to the types used in the
 /// generated protobuf code, then calls the low-level ctor functions in the requests module.
-use crate::{raw::requests, BoundRange, ColumnFamily, Key, KvPair, Value};
-use std::iter::Iterator;
+use crate::{raw::requests, region::Region, BoundRange, ColumnFamily, Key, KvPair, Value};
+use std::{iter::Iterator, sync::Arc};
 use tikv_client_proto::kvrpcpb;
 
 pub fn new_raw_get_request(key: Key, cf: Option<ColumnFamily>) -> kvrpcpb::RawGetRequest {
@@ -90,4 +90,20 @@ pub fn new_cas_request(
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawCasRequest {
     requests::new_cas_request(key.into(), value, previous_value, cf)
+}
+
+pub fn new_raw_coprocessor_request(
+    copr_name: String,
+    copr_version_req: String,
+    ranges: impl Iterator<Item = BoundRange>,
+    request_builder: impl Fn(Vec<BoundRange>, Region) -> Vec<u8> + Send + Sync + 'static,
+) -> requests::RawCoprocessorRequest {
+    requests::new_raw_coprocessor_request(
+        copr_name,
+        copr_version_req,
+        ranges.map(Into::into).collect(),
+        Arc::new(move |ranges, region| {
+            request_builder(ranges.into_iter().map(Into::into).collect(), region)
+        }),
+    )
 }

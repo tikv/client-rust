@@ -6,11 +6,10 @@ use crate::{
     request::{KvRequest, Shardable},
     stats::tikv_stats,
     transaction::{resolve_locks, HasLocks},
-    util::iter::FlatMapOkIterExt,
-    Error, Key, KvPair, Result, Value,
+    Error, Result,
 };
 use async_trait::async_trait;
-use futures::{prelude::*, stream::FuturesOrdered};
+use futures::prelude::*;
 use std::{marker::PhantomData, sync::Arc};
 use tikv_client_proto::kvrpcpb;
 use tikv_client_store::{HasError, HasRegionError, KvClient};
@@ -57,12 +56,6 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
     }
 }
 
-impl<Req: KvRequest + HasKeys> HasKeys for Dispatch<Req> {
-    fn get_keys(&self) -> Vec<Key> {
-        self.request.get_keys()
-    }
-}
-
 const MULTI_REGION_CONCURRENCY: usize = 16;
 
 pub struct MultiRegion<P: Plan, PdC: PdClient> {
@@ -87,9 +80,7 @@ where
     type Result = Vec<Result<P::Result>>;
 
     async fn execute(&self) -> Result<Self::Result> {
-        Ok(self
-            .inner
-            .shards(&self.pd_client)
+        Ok(P::shards(self.inner.get_shard(), &self.pd_client)
             .map(move |shard_store| async move {
                 let (shard, store) = shard_store?;
                 let mut clone = self.inner.clone();
@@ -136,10 +127,10 @@ impl<In: Clone + Send + Sync + 'static, P: Plan<Result = Vec<Result<In>>>, M: Me
 pub struct Collect;
 
 /// A merge strategy to be used with
-/// [`preserve_keys`](super::plan_builder::PlanBuilder::preserve_keys).
-/// It matches the keys preserved before and the values returned in the response.
+/// [`preserve_shard`](super::plan_builder::PlanBuilder::preserve_shard).
+/// It matches the shards preserved before and the values returned in the response.
 #[derive(Clone, Debug)]
-pub struct CollectAndMatchKey;
+pub struct CollectWithShard;
 
 /// A merge strategy which returns an error if any response is an error and
 /// otherwise returns a Vec of the results.
@@ -162,16 +153,13 @@ pub trait Process<In>: Sized + Clone + Send + Sync + 'static {
 }
 
 #[derive(Clone)]
-pub struct ProcessResponse<P: Plan, In, Pr: Process<In>> {
+pub struct ProcessResponse<P: Plan, Pr: Process<P::Result>> {
     pub inner: P,
     pub processor: Pr,
-    pub phantom: PhantomData<In>,
 }
 
 #[async_trait]
-impl<In: Clone + Sync + Send + 'static, P: Plan<Result = In>, Pr: Process<In>> Plan
-    for ProcessResponse<P, In, Pr>
-{
+impl<P: Plan, Pr: Process<P::Result>> Plan for ProcessResponse<P, Pr> {
     type Result = Pr::Out;
 
     async fn execute(&self) -> Result<Self::Result> {
@@ -274,12 +262,6 @@ where
     }
 }
 
-impl<P: Plan + HasKeys, PdC: PdClient> HasKeys for ResolveLock<P, PdC> {
-    fn get_keys(&self) -> Vec<Key> {
-        self.inner.get_keys()
-    }
-}
-
 /// When executed, the plan extracts errors from its inner plan, and returns an
 /// `Err` wrapping the error.
 ///
@@ -319,95 +301,57 @@ where
     }
 }
 
-/// When executed, the plan clones the keys and execute its inner plan, then
-/// returns `(keys, response)`.
+/// When executed, the plan clones the shard and execute its inner plan, then
+/// returns `(shard, response)`.
 ///
-/// It's useful when the information of keys are lost in the response but needed
+/// It's useful when the information of shard are lost in the response but needed
 /// for processing.
-pub struct PreserveKey<P: Plan + HasKeys> {
+pub struct PreserveShard<P: Plan + Shardable> {
     pub inner: P,
 }
 
-impl<P: Plan + HasKeys> Clone for PreserveKey<P> {
+impl<P: Plan + Shardable> Clone for PreserveShard<P> {
     fn clone(&self) -> Self {
-        PreserveKey {
+        PreserveShard {
             inner: self.inner.clone(),
         }
     }
 }
 
 #[async_trait]
-impl<P> Plan for PreserveKey<P>
+impl<P> Plan for PreserveShard<P>
 where
-    P: Plan + HasKeys,
+    P: Plan + Shardable,
 {
-    type Result = ResponseAndKeys<P::Result>;
+    type Result = ResponseWithShard<P::Result, P::Shard>;
 
     async fn execute(&self) -> Result<Self::Result> {
-        let keys = self.inner.get_keys();
+        let shard = self.inner.get_shard();
         let res = self.inner.execute().await?;
-        Ok(ResponseAndKeys(res, keys))
+        Ok(ResponseWithShard(res, shard))
     }
-}
-
-pub trait HasKeys {
-    fn get_keys(&self) -> Vec<Key>;
 }
 
 // contains a response and the corresponding keys
 // currently only used for matching keys and values in pessimistic lock requests
 #[derive(Debug, Clone)]
-pub struct ResponseAndKeys<Resp>(Resp, Vec<Key>);
+pub struct ResponseWithShard<Resp, Shard>(pub Resp, pub Shard);
 
-impl<Resp: HasError> HasError for ResponseAndKeys<Resp> {
+impl<Resp: HasError, Shard> HasError for ResponseWithShard<Resp, Shard> {
     fn error(&mut self) -> Option<Error> {
         self.0.error()
     }
 }
 
-impl<Resp: HasLocks> HasLocks for ResponseAndKeys<Resp> {
-    fn take_locks(&mut self) -> Vec<tikv_client_proto::kvrpcpb::LockInfo> {
+impl<Resp: HasLocks, Shard> HasLocks for ResponseWithShard<Resp, Shard> {
+    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
         self.0.take_locks()
     }
 }
 
-impl<Resp: HasRegionError> HasRegionError for ResponseAndKeys<Resp> {
+impl<Resp: HasRegionError, Shard> HasRegionError for ResponseWithShard<Resp, Shard> {
     fn region_error(&mut self) -> Option<Error> {
         self.0.region_error()
-    }
-}
-
-impl Merge<ResponseAndKeys<kvrpcpb::PessimisticLockResponse>> for CollectAndMatchKey {
-    type Out = Vec<KvPair>;
-
-    fn merge(
-        &self,
-        input: Vec<Result<ResponseAndKeys<kvrpcpb::PessimisticLockResponse>>>,
-    ) -> Result<Self::Out> {
-        input
-            .into_iter()
-            .flat_map_ok(|ResponseAndKeys(mut resp, keys)| {
-                let values = resp.take_values();
-                let not_founds = resp.take_not_founds();
-                let v: Vec<_> = if not_founds.is_empty() {
-                    // Legacy TiKV does not distiguish not existing key and existing key
-                    // that with empty value. We assume that key does not exist if value
-                    // is empty.
-                    let values: Vec<Value> = values.into_iter().filter(|v| v.is_empty()).collect();
-                    keys.into_iter().zip(values).map(From::from).collect()
-                } else {
-                    assert_eq!(values.len(), not_founds.len());
-                    let values: Vec<Value> = values
-                        .into_iter()
-                        .zip(not_founds.into_iter())
-                        .filter_map(|(v, not_found)| if not_found { None } else { Some(v) })
-                        .collect();
-                    keys.into_iter().zip(values).map(From::from).collect()
-                };
-                // FIXME sucks to collect and re-iterate, but the iterators have different types
-                v.into_iter()
-            })
-            .collect()
     }
 }
 
@@ -431,15 +375,17 @@ mod test {
     }
 
     impl Shardable for ErrPlan {
-        type Shard = u8;
+        type Shard = ();
 
         fn shards(
-            &self,
+            _: Self::Shard,
             _: &Arc<impl crate::pd::PdClient>,
         ) -> BoxStream<'static, crate::Result<(Self::Shard, crate::store::Store)>> {
-            Box::pin(stream::iter(1..=3).map(|_| Err(Error::Unimplemented)))
-                .map_ok(|_: u8| (42, mock_store()))
-                .boxed()
+            Box::pin(stream::iter(1..=3).map(|_| Err(Error::Unimplemented))).boxed()
+        }
+
+        fn get_shard(&self) -> Self::Shard {
+            ()
         }
 
         fn apply_shard(&mut self, _: Self::Shard, _: &crate::store::Store) -> Result<()> {

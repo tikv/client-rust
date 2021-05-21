@@ -10,9 +10,9 @@ use tikv_client_store::{HasError, Request};
 
 pub use self::{
     plan::{
-        Collect, CollectAndMatchKey, CollectError, DefaultProcessor, Dispatch, ExtractError,
-        HasKeys, Merge, MergeResponse, MultiRegion, Plan, PreserveKey, Process, ProcessResponse,
-        ResolveLock, RetryRegion,
+        Collect, CollectError, CollectWithShard, DefaultProcessor, Dispatch, ExtractError, Merge,
+        MergeResponse, MultiRegion, Plan, PreserveShard, Process, ProcessResponse, ResolveLock,
+        ResponseWithShard, RetryRegion,
     },
     plan_builder::{PlanBuilder, SingleKey},
     shard::Shardable,
@@ -132,19 +132,20 @@ mod test {
             type Shard = Vec<Vec<u8>>;
 
             fn shards(
-                &self,
+                shard: Self::Shard,
                 pd_client: &std::sync::Arc<impl crate::pd::PdClient>,
             ) -> futures::stream::BoxStream<
                 'static,
                 crate::Result<(Self::Shard, crate::store::Store)>,
             > {
+                store_stream_for_keys(shard.into_iter().map(Key::from), pd_client.clone())
+            }
+
+            fn get_shard(&self) -> Self::Shard {
                 // Increases by 1 for each call.
                 let mut test_invoking_count = self.test_invoking_count.lock().unwrap();
                 *test_invoking_count += 1;
-                store_stream_for_keys(
-                    Some(Key::from("mock_key".to_owned())).into_iter(),
-                    pd_client.clone(),
-                )
+                vec!["mock_key".to_owned().into_bytes()]
             }
 
             fn apply_shard(

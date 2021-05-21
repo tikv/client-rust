@@ -20,6 +20,7 @@ name = "tikv_client"
 [dependencies]
 async-trait = "0.1"
 derive-new = "0.5"
+either = "1.6"
 fail = "0.4"
 futures = { version = "0.3", features = ["async-await", "thread-pool"] }
 futures-timer = "3.0"

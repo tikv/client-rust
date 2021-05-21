@@ -3,7 +3,7 @@
 use crate::{
     backoff::Backoff,
     pd::{PdClient, PdRpcClient},
-    request::{Collect, CollectAndMatchKey, CollectError, Plan, PlanBuilder, RetryOptions},
+    request::{Collect, CollectError, CollectWithShard, Plan, PlanBuilder, RetryOptions},
     timestamp::TimestampExt,
     transaction::{buffer::Buffer, lowering::*},
     BoundRange, Error, Key, KvPair, Result, Value,
@@ -715,10 +715,10 @@ impl<PdC: PdClient> Transaction<PdC> {
         );
         let plan = PlanBuilder::new(self.rpc.clone(), request)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
-            .preserve_keys()
+            .preserve_shard()
             .multi_region()
             .retry_region(self.options.retry_options.region_backoff.clone())
-            .merge(CollectAndMatchKey)
+            .merge(CollectWithShard)
             .plan();
         let pairs = plan.execute().await;
 

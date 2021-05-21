@@ -1,12 +1,12 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::PreserveKey;
+use super::plan::PreserveShard;
 use crate::{
     backoff::Backoff,
     pd::PdClient,
     request::{
-        DefaultProcessor, Dispatch, ExtractError, HasKeys, KvRequest, Merge, MergeResponse,
-        MultiRegion, Plan, Process, ProcessResponse, ResolveLock, RetryRegion, Shardable,
+        DefaultProcessor, Dispatch, ExtractError, KvRequest, Merge, MergeResponse, MultiRegion,
+        Plan, Process, ProcessResponse, ResolveLock, RetryRegion, Shardable,
     },
     store::Store,
     transaction::HasLocks,
@@ -107,19 +107,16 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     /// Apply the default processing step to a response (usually only needed if the request is sent
     /// to a single region because post-porcessing can be incorporated in the merge step for
     /// multi-region requests).
-    pub fn post_process_default<In: Clone + Sync + Send + 'static>(
-        self,
-    ) -> PlanBuilder<PdC, ProcessResponse<P, In, DefaultProcessor>, Ph>
+    pub fn post_process_default(self) -> PlanBuilder<PdC, ProcessResponse<P, DefaultProcessor>, Ph>
     where
-        P: Plan<Result = In>,
-        DefaultProcessor: Process<In>,
+        P: Plan,
+        DefaultProcessor: Process<P::Result>,
     {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: ProcessResponse {
                 inner: self.plan,
                 processor: DefaultProcessor,
-                phantom: PhantomData,
             },
             phantom: PhantomData,
         }
@@ -162,14 +159,14 @@ impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
     }
 }
 
-impl<PdC: PdClient, P: Plan + HasKeys> PlanBuilder<PdC, P, NoTarget>
+impl<PdC: PdClient, P: Plan + Shardable> PlanBuilder<PdC, P, NoTarget>
 where
     P::Result: HasError,
 {
-    pub fn preserve_keys(self) -> PlanBuilder<PdC, PreserveKey<P>, NoTarget> {
+    pub fn preserve_shard(self) -> PlanBuilder<PdC, PreserveShard<P>, NoTarget> {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
-            plan: PreserveKey { inner: self.plan },
+            plan: PreserveShard { inner: self.plan },
             phantom: PhantomData,
         }
     }

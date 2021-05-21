@@ -5,7 +5,7 @@ use derive_new::new;
 use futures::{FutureExt, TryFutureExt};
 use grpcio::{Environment, Server, ServerBuilder};
 use std::sync::Arc;
-use tikv_client_proto::{coprocessor_v2::*, kvrpcpb::*, tikvpb::*};
+use tikv_client_proto::{kvrpcpb::*, tikvpb::*};
 
 pub const MOCK_TIKV_PORT: u16 = 50019;
 
@@ -532,7 +532,7 @@ impl Tikv for MockTikv {
         todo!()
     }
 
-    fn coprocessor_v2(
+    fn raw_coprocessor(
         &mut self,
         _: grpcio::RpcContext,
         _: RawCoprocessorRequest,

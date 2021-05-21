@@ -1071,3 +1071,22 @@ message RawCASResponse {
     bytes previous_value = 5;
 }
 
+message RawCoprocessorRequest {
+    kvrpcpb.Context context = 1;
+
+    string copr_name = 2;
+    // Coprorcessor version constraint according to the SEMVER definition.
+    string copr_version_req = 3;
+
+    repeated KeyRange ranges = 4;
+    bytes data = 5;
+}
+
+message RawCoprocessorResponse {
+    bytes data = 1;
+
+    errorpb.Error region_error = 2;
+    // Error message for cases like if no coprocessor with a matching name is found
+    // or on a version mismatch between plugin_api and the coprocessor.
+    string error = 4;
+}

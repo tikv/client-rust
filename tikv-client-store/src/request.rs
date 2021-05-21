@@ -71,6 +71,11 @@ impl_request!(
     raw_compare_and_swap_async_opt,
     "raw_compare_and_swap"
 );
+impl_request!(
+    RawCoprocessorRequest,
+    raw_coprocessor_async_opt,
+    "raw_coprocessor"
+);
 
 impl_request!(GetRequest, kv_get_async_opt, "kv_get");
 impl_request!(ScanRequest, kv_scan_async_opt, "kv_scan");
