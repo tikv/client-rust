@@ -155,10 +155,3 @@ impl PdClient for MockPdClient {
         unimplemented!()
     }
 }
-
-pub fn mock_store() -> Store {
-    Store {
-        region: Region::default(),
-        client: Arc::new(MockKvClient::new("foo".to_owned(), None)),
-    }
-}
