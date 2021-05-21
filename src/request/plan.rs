@@ -10,7 +10,7 @@ use crate::{
     Error, Key, KvPair, Result, Value,
 };
 use async_trait::async_trait;
-use futures::{prelude::*, stream::StreamExt};
+use futures::stream::StreamExt;
 use std::{marker::PhantomData, sync::Arc};
 use tikv_client_proto::kvrpcpb;
 use tikv_client_store::{HasError, HasRegionError, KvClient};
