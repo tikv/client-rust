@@ -1,4 +1,10 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
+use async_trait::async_trait;
+use futures::stream::BoxStream;
+use grpcio::CallOption;
+use std::{any::Any, ops::Range, sync::Arc};
+use tikv_client_proto::{kvrpcpb, tikvpb::TikvClient};
+use tikv_client_store::Request;
 
 use super::RawRpcRequest;
 use crate::{
@@ -11,14 +17,8 @@ use crate::{
     store::{store_stream_for_keys, store_stream_for_ranges, Store},
     transaction::HasLocks,
     util::iter::FlatMapOkIterExt,
-    BoundRange, ColumnFamily, KvPair, Result, Value,
+    ColumnFamily, Key, KvPair, Result, Value,
 };
-use async_trait::async_trait;
-use futures::stream::BoxStream;
-use grpcio::CallOption;
-use std::{any::Any, sync::Arc};
-use tikv_client_proto::{kvrpcpb, tikvpb::TikvClient};
-use tikv_client_store::Request;
 
 pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::RawGetRequest {
     let mut req = kvrpcpb::RawGetRequest::default();
@@ -406,7 +406,7 @@ impl
     Process<Vec<Result<ResponseWithShard<kvrpcpb::RawCoprocessorResponse, Vec<kvrpcpb::KeyRange>>>>>
     for DefaultProcessor
 {
-    type Out = Vec<(Vec<u8>, Vec<BoundRange>)>;
+    type Out = Vec<(Vec<u8>, Vec<Range<Key>>)>;
 
     fn process(
         &self,
@@ -420,7 +420,10 @@ impl
                 shard_resp.map(|ResponseWithShard(mut resp, ranges)| {
                     (
                         resp.take_data(),
-                        ranges.into_iter().map(Into::into).collect(),
+                        ranges
+                            .into_iter()
+                            .map(|range| range.start_key.into()..range.end_key.into())
+                            .collect(),
                     )
                 })
             })

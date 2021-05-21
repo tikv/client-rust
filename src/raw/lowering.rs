@@ -4,7 +4,7 @@
 /// types (i.e., the types from the client crate) and converts these to the types used in the
 /// generated protobuf code, then calls the low-level ctor functions in the requests module.
 use crate::{raw::requests, region::Region, BoundRange, ColumnFamily, Key, KvPair, Value};
-use std::{iter::Iterator, sync::Arc};
+use std::{iter::Iterator, ops::Range, sync::Arc};
 use tikv_client_proto::kvrpcpb;
 
 pub fn new_raw_get_request(key: Key, cf: Option<ColumnFamily>) -> kvrpcpb::RawGetRequest {
@@ -96,14 +96,20 @@ pub fn new_raw_coprocessor_request(
     copr_name: String,
     copr_version_req: String,
     ranges: impl Iterator<Item = BoundRange>,
-    request_builder: impl Fn(Vec<BoundRange>, Region) -> Vec<u8> + Send + Sync + 'static,
+    request_builder: impl Fn(Vec<Range<Key>>, Region) -> Vec<u8> + Send + Sync + 'static,
 ) -> requests::RawCoprocessorRequest {
     requests::new_raw_coprocessor_request(
         copr_name,
         copr_version_req,
         ranges.map(Into::into).collect(),
         Arc::new(move |ranges, region| {
-            request_builder(ranges.into_iter().map(Into::into).collect(), region)
+            request_builder(
+                ranges
+                    .into_iter()
+                    .map(|range| range.start_key.into()..range.end_key.into())
+                    .collect(),
+                region,
+            )
         }),
     )
 }
