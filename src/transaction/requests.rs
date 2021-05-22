@@ -387,7 +387,7 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
                     // Legacy TiKV does not distiguish not existing key and existing key
                     // that with empty value. We assume that key does not exist if value
                     // is empty.
-                    Either::Left(kvparis.filter(|kvpair| kvpair.value().is_empty()))
+                    Either::Left(kvparis.filter(|kvpair| !kvpair.value().is_empty()))
                 } else {
                     assert_eq!(kvparis.len(), not_founds.len());
                     Either::Right(kvparis.zip(not_founds).filter_map(|(kvpair, not_found)| {
