@@ -358,7 +358,7 @@ impl<Resp: HasRegionError, Shard> HasRegionError for ResponseWithShard<Resp, Sha
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::mock::{MockPdClient};
+    use crate::mock::MockPdClient;
     use futures::stream::BoxStream;
     use tikv_client_proto::kvrpcpb::BatchGetResponse;
 
