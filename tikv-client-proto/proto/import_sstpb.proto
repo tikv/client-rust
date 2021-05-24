@@ -48,6 +48,9 @@ service ImportSST {
 
     // Open a write stream to generate sst files
     rpc Write(stream WriteRequest) returns (WriteResponse) {}
+    
+    // Ingest Multiple files in one request
+    rpc MultiIngest(MultiIngestRequest) returns (IngestResponse) {}
 }
 
 enum SwitchMode {
@@ -104,6 +107,11 @@ message UploadResponse {
 message IngestRequest {
     kvrpcpb.Context context = 1;
     SSTMeta sst = 2;
+}
+
+message MultiIngestRequest {
+    kvrpcpb.Context context = 1;
+    repeated SSTMeta ssts = 2;
 }
 
 message IngestResponse {

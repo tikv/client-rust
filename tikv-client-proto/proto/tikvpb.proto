@@ -52,14 +52,6 @@ service Tikv {
     // Compare if the value in database equals to `RawCASRequest.previous_value` before putting the new value. If not, this request will have no effect and the value in the database will be returned.
     rpc RawCompareAndSwap(kvrpcpb.RawCASRequest) returns (kvrpcpb.RawCASResponse) {}
 
-    // VerKV commands.
-    rpc VerGet(kvrpcpb.VerGetRequest) returns (kvrpcpb.VerGetResponse) {}
-    rpc VerBatchGet(kvrpcpb.VerBatchGetRequest) returns (kvrpcpb.VerBatchGetResponse) {}
-    rpc VerMut(kvrpcpb.VerMutRequest) returns (kvrpcpb.VerMutResponse) {}
-    rpc VerBatchMut(kvrpcpb.VerBatchMutRequest) returns (kvrpcpb.VerBatchMutResponse) {}
-    rpc VerScan(kvrpcpb.VerScanRequest) returns (kvrpcpb.VerScanResponse) {}
-    rpc VerDeleteRange(kvrpcpb.VerDeleteRangeRequest) returns (kvrpcpb.VerDeleteRangeResponse) {}
-
     // Store commands (sent to a each TiKV node in a cluster, rather than a certain region).
     rpc UnsafeDestroyRange(kvrpcpb.UnsafeDestroyRangeRequest) returns (kvrpcpb.UnsafeDestroyRangeResponse) {}
     rpc RegisterLockObserver(kvrpcpb.RegisterLockObserverRequest) returns (kvrpcpb.RegisterLockObserverResponse) {}
@@ -107,6 +99,9 @@ service Tikv {
 
     /// Get the minimal `safe_ts` from regions at the store
     rpc GetStoreSafeTS(kvrpcpb.StoreSafeTSRequest) returns (kvrpcpb.StoreSafeTSResponse);
+
+    /// Get the information about lock waiting from TiKV.
+    rpc GetLockWaitInfo(kvrpcpb.GetLockWaitInfoRequest) returns (kvrpcpb.GetLockWaitInfoResponse);
 }
 
 message BatchCommandsRequest {
@@ -145,13 +140,6 @@ message BatchCommandsRequest {
             kvrpcpb.CheckTxnStatusRequest CheckTxnStatus = 25;
             kvrpcpb.TxnHeartBeatRequest TxnHeartBeat = 26;
 
-            kvrpcpb.VerGetRequest VerGet = 27;
-            kvrpcpb.VerBatchGetRequest VerBatchGet = 28;
-            kvrpcpb.VerMutRequest VerMut = 29;
-            kvrpcpb.VerBatchMutRequest VerBatchMut = 30;
-            kvrpcpb.VerScanRequest VerScan = 31;
-            kvrpcpb.VerDeleteRangeRequest VerDeleteRange = 32;
-
             kvrpcpb.CheckSecondaryLocksRequest CheckSecondaryLocks = 33;
 
             kvrpcpb.RawCoprocessorRequest RawCoprocessor = 34;
@@ -159,6 +147,9 @@ message BatchCommandsRequest {
             // For some test cases.
             BatchCommandsEmptyRequest Empty = 255;
         }
+
+        // Reserved for deprecated VerKV
+        reserved 27 to 32;
     }
 }
 
@@ -200,13 +191,6 @@ message BatchCommandsResponse {
             kvrpcpb.CheckTxnStatusResponse CheckTxnStatus = 25;
             kvrpcpb.TxnHeartBeatResponse TxnHeartBeat = 26;
 
-            kvrpcpb.VerGetResponse VerGet = 27;
-            kvrpcpb.VerBatchGetResponse VerBatchGet = 28;
-            kvrpcpb.VerMutResponse VerMut = 29;
-            kvrpcpb.VerBatchMutResponse VerBatchMut = 30;
-            kvrpcpb.VerScanResponse VerScan = 31;
-            kvrpcpb.VerDeleteRangeResponse VerDeleteRange = 32;
-
             kvrpcpb.CheckSecondaryLocksResponse CheckSecondaryLocks = 33;
 
             kvrpcpb.RawCoprocessorResponse RawCoprocessor = 34;
@@ -214,6 +198,9 @@ message BatchCommandsResponse {
             // For some test cases.
             BatchCommandsEmptyResponse Empty = 255;
         }
+
+        // Reserved for deprecated VerKV
+        reserved 27 to 32;
     }
 }
 

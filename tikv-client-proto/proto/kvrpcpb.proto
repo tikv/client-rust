@@ -5,6 +5,7 @@ import "metapb.proto";
 import "errorpb.proto";
 import "gogoproto/gogo.proto";
 import "rustproto.proto";
+import "deadlock.proto";
 
 option (gogoproto.marshaler_all) = true;
 option (gogoproto.sizer_all) = true;
@@ -620,106 +621,6 @@ message ReadIndexResponse{
     kvrpcpb.LockInfo locked = 3;
 }
 
-// VerKv commands
-
-enum VerOp {
-    VerPut = 0;
-    VerDel = 1;
-}
-
-message VerMutation {
-    VerOp op = 1;
-    bytes key = 2;
-    bytes value = 3;
-}
-
-message VerValue {
-    bytes value = 1;
-    uint64 version = 2;
-}
-
-message VerError {
-    string error = 1;
-}
-
-message VerKvPair {
-    VerError error = 1;
-    bytes key = 2;
-    VerValue value = 3;
-}
-
-message VerGetRequest {
-    Context context = 1;
-    bytes key = 2;
-    uint64 start_version = 3; // start_version == 0 means without start version
-}
-
-message VerGetResponse {
-    errorpb.Error region_error = 1;
-    VerError error = 2;
-    VerValue value = 3;
-    bool not_found = 4;
-}
-
-message VerBatchGetRequest {
-    Context context = 1;
-    repeated bytes key = 2;
-    uint64 start_version = 3;
-}
-
-message VerBatchGetResponse {
-    errorpb.Error region_error = 1;
-    repeated VerKvPair pairs = 2;
-}
-
-message VerMutRequest {
-    Context context = 1;
-    VerMutation mut = 2;
-    uint64 version = 3;
-}
-
-message VerMutResponse {
-    errorpb.Error region_error = 1;
-    VerError error = 2;
-}
-
-message VerBatchMutRequest {
-    Context context = 1;
-    repeated VerMutation muts = 2;
-    uint64 version = 3;
-}
-
-message VerBatchMutResponse {
-    errorpb.Error region_error = 1;
-    VerError error = 2;
-}
-
-message VerScanRequest {
-    Context context = 1;
-    bytes start_key = 2;
-    bytes end_key = 3;
-    uint32 limit = 4;
-    bool key_only = 5;
-    bool reverse = 6;
-    uint64 start_version = 7;
-}
-
-message VerScanResponse {
-    errorpb.Error region_error = 1;
-    repeated VerKvPair pairs = 2;
-}
-
-message VerDeleteRangeRequest {
-    Context context = 1;
-    bytes start_key = 2;
-    bytes end_key = 3;
-}
-
-message VerDeleteRangeResponse {
-    errorpb.Error region_error = 1;
-    VerError error = 2;
-}
-
 // Commands for debugging transactions.
 
 message MvccGetByKeyRequest {
@@ -779,6 +680,9 @@ message Context {
     // Not required to read the most up-to-date data, replicas with `safe_ts` >= `start_ts`
     // can handle read request directly
     bool stale_read = 17;
+
+    // Any additional serialized information about the request.
+    bytes resource_group_tag = 18;
 }
 
 message LockInfo {
@@ -824,6 +728,7 @@ message Deadlock {
     uint64 lock_ts = 1;
     bytes lock_key = 2;
     uint64 deadlock_key_hash = 3;
+    repeated deadlock.WaitForEntry wait_chain = 4;
 }
 
 message CommitTsExpired {
@@ -1017,6 +922,12 @@ message LeaderInfo {
     uint64 peer_id = 2;
     uint64 term = 3;
     metapb.RegionEpoch region_epoch = 4;
+    ReadState read_state = 5;
+}
+
+message ReadState {
+    uint64 applied_index = 1;
+    uint64 safe_ts = 2;
 }
 
 message CheckLeaderRequest {
@@ -1071,11 +982,23 @@ message RawCASResponse {
     bytes previous_value = 5;
 }
 
+message GetLockWaitInfoRequest {
+    Context context = 1;
+    // TODO: There may need some filter options to be used on conditional querying, e.g., finding
+    // the lock waiting status for some specified transaction.
+}
+
+message GetLockWaitInfoResponse {
+    errorpb.Error region_error = 1;
+    string error = 2;
+    repeated deadlock.WaitForEntry entries = 3;
+}
+
 message RawCoprocessorRequest {
     kvrpcpb.Context context = 1;
 
     string copr_name = 2;
-    // Coprorcessor version constraint according to the SEMVER definition.
+    // Coprorcessor version constraint following SEMVER definition.
     string copr_version_req = 3;
 
     repeated KeyRange ranges = 4;
@@ -1083,10 +1006,9 @@ message RawCoprocessorRequest {
 }
 
 message RawCoprocessorResponse {
-    bytes data = 1;
-
-    errorpb.Error region_error = 2;
+    errorpb.Error region_error = 1;
     // Error message for cases like if no coprocessor with a matching name is found
     // or on a version mismatch between plugin_api and the coprocessor.
-    string error = 4;
+    string error = 2;
+    bytes data = 3;
 }
