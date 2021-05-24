@@ -271,60 +271,6 @@ impl Tikv for MockTikv {
         todo!()
     }
 
-    fn ver_get(
-        &mut self,
-        _ctx: grpcio::RpcContext,
-        _req: tikv_client_proto::kvrpcpb::VerGetRequest,
-        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::VerGetResponse>,
-    ) {
-        todo!()
-    }
-
-    fn ver_batch_get(
-        &mut self,
-        _ctx: grpcio::RpcContext,
-        _req: tikv_client_proto::kvrpcpb::VerBatchGetRequest,
-        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::VerBatchGetResponse>,
-    ) {
-        todo!()
-    }
-
-    fn ver_mut(
-        &mut self,
-        _ctx: grpcio::RpcContext,
-        _req: tikv_client_proto::kvrpcpb::VerMutRequest,
-        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::VerMutResponse>,
-    ) {
-        todo!()
-    }
-
-    fn ver_batch_mut(
-        &mut self,
-        _ctx: grpcio::RpcContext,
-        _req: tikv_client_proto::kvrpcpb::VerBatchMutRequest,
-        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::VerBatchMutResponse>,
-    ) {
-        todo!()
-    }
-
-    fn ver_scan(
-        &mut self,
-        _ctx: grpcio::RpcContext,
-        _req: tikv_client_proto::kvrpcpb::VerScanRequest,
-        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::VerScanResponse>,
-    ) {
-        todo!()
-    }
-
-    fn ver_delete_range(
-        &mut self,
-        _ctx: grpcio::RpcContext,
-        _req: tikv_client_proto::kvrpcpb::VerDeleteRangeRequest,
-        _sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::VerDeleteRangeResponse>,
-    ) {
-        todo!()
-    }
-
     fn unsafe_destroy_range(
         &mut self,
         _ctx: grpcio::RpcContext,
@@ -546,6 +492,15 @@ impl Tikv for MockTikv {
         _: grpcio::RpcContext,
         _: StoreSafeTsRequest,
         _: grpcio::UnarySink<StoreSafeTsResponse>,
+    ) {
+        todo!()
+    }
+
+    fn get_lock_wait_info(
+        &mut self,
+        _: grpcio::RpcContext,
+        _: GetLockWaitInfoRequest,
+        _: grpcio::UnarySink<GetLockWaitInfoResponse>,
     ) {
         todo!()
     }
