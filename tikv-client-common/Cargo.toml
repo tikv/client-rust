@@ -14,6 +14,7 @@ grpcio = { version = "0.8", features = [ "secure", "prost-codec", "use-bindgen" 
 lazy_static = "1"
 log = "0.4"
 regex = "1"
+semver = "0.11"
 tikv-client-proto = { version = "0.1.0", path = "../tikv-client-proto" }
 
 [dev-dependencies]

@@ -30,6 +30,7 @@ log = "0.4"
 prometheus = { version = "0.12", features = [ "push", "process" ], default-features = false } 
 rand = "0.8"
 regex = "1"
+semver = "0.11"
 serde = "1.0"
 serde_derive = "1.0"
 thiserror = "1"

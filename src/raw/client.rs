@@ -11,7 +11,7 @@ use crate::{
     request::{Collect, Plan},
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
-use std::{ops::Range, sync::Arc};
+use std::{ops::Range, str::FromStr, sync::Arc};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
@@ -499,6 +499,7 @@ impl Client {
         ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
         request_builder: impl Fn(Vec<Range<Key>>, Region) -> Vec<u8> + Send + Sync + 'static,
     ) -> Result<Vec<(Vec<u8>, Vec<Range<Key>>)>> {
+        semver::VersionReq::from_str(&copr_version_req)?;
         let req = new_raw_coprocessor_request(
             copr_name,
             copr_version_req,
