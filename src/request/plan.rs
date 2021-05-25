@@ -332,8 +332,7 @@ where
     }
 }
 
-// contains a response and the corresponding keys
-// currently only used for matching keys and values in pessimistic lock requests
+// contains a response and the corresponding shards
 #[derive(Debug, Clone)]
 pub struct ResponseWithShard<Resp, Shard>(pub Resp, pub Shard);
 

@@ -360,6 +360,8 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
     }
 }
 
+// PessimisticLockResponse returns values that preserves the order with keys in request, thus the
+// kvpair result should be produced by zipping the keys in request and the values in respponse.
 impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>
     for CollectWithShard
 {
