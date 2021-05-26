@@ -6,23 +6,39 @@ use crate::{
     Key, Result,
 };
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
 use tikv_client_pd::Cluster;
 use tikv_client_proto::metapb::Store;
 use tokio::sync::RwLock;
 
-pub struct RegionCache<Cl = Cluster> {
-    /// Start key -> Region
+struct RegionCacheMap {
+    /// RegionVerID -> Region. It stores the concrete region caches.
+    /// RegionVerID is the unique identifer of a region *across time*.
+    // TODO: does it need TTL?
+    ver_id_to_region: HashMap<RegionVerId, Region>,
+    /// Start_key -> RegionVerID
     ///
     /// Invariant: there are no intersecting regions in the map at any time.
-    cache_by_key: RwLock<BTreeMap<Key, Region>>,
-    /// Region ID -> Region. Note: regions with identical ID doesn't necessarily
-    /// mean they are the same, they can be different regions across time. For
-    /// example, when a region is splitted one of the new regions may have
-    /// the same ID but a different RegionVerId.
-    cache_by_id: RwLock<HashMap<RegionId, Region>>,
+    key_to_ver_id: BTreeMap<Key, RegionVerId>,
+    /// RegionID -> RegionVerID. Note: regions with identical ID doesn't necessarily
+    /// mean they are the same, they can be different regions across time.
+    id_to_ver_id: HashMap<RegionId, RegionVerId>,
+}
+
+impl RegionCacheMap {
+    fn new() -> RegionCacheMap {
+        RegionCacheMap {
+            ver_id_to_region: HashMap::new(),
+            key_to_ver_id: BTreeMap::new(),
+            id_to_ver_id: HashMap::new(),
+        }
+    }
+}
+
+pub struct RegionCache<Cl = Cluster> {
+    region_cache: RwLock<RegionCacheMap>,
     store_cache: RwLock<HashMap<StoreId, Store>>,
     inner_client: Arc<RetryClient<Cl>>,
 }
@@ -30,8 +46,7 @@ pub struct RegionCache<Cl = Cluster> {
 impl<Cl> RegionCache<Cl> {
     pub fn new(inner_client: Arc<RetryClient<Cl>>) -> RegionCache<Cl> {
         RegionCache {
-            cache_by_key: RwLock::new(BTreeMap::new()),
-            cache_by_id: RwLock::new(HashMap::new()),
+            region_cache: RwLock::new(RegionCacheMap::new()),
             store_cache: RwLock::new(HashMap::new()),
             inner_client,
         }
@@ -41,26 +56,40 @@ impl<Cl> RegionCache<Cl> {
 impl RegionCache<Cluster> {
     // Retrieve cache entry by key. If there's no entry, query PD and update cache.
     pub async fn get_region_by_key(&self, key: &Key) -> Result<Region> {
+        let region_cache_guard = self.region_cache.read().await;
         let res = {
-            let read_guard = self.cache_by_key.read().await;
-            read_guard
+            region_cache_guard
+                .key_to_ver_id
                 .range(..=key)
                 .next_back()
                 .map(|(x, y)| (x.clone(), y.clone()))
         };
 
-        match res {
-            Some((_, candidate_region)) if candidate_region.contains(key) => Ok(candidate_region),
-            _ => self.read_through_region_by_key(key.clone()).await,
+        if let Some((_, candidate_region_ver_id)) = res {
+            let region = region_cache_guard
+                .ver_id_to_region
+                .get(&candidate_region_ver_id)
+                .unwrap();
+
+            if region.contains(key) {
+                return Ok(region.clone());
+            }
         }
+        std::mem::drop(region_cache_guard);
+        self.read_through_region_by_key(key.clone()).await
     }
 
     // Retrieve cache entry by RegionId. If there's no entry, query PD and update cache.
     pub async fn get_region_by_id(&self, id: RegionId) -> Result<Region> {
-        match self.cache_by_id.read().await.get(&id) {
-            Some(region) => Ok(region.clone()),
-            None => self.read_through_region_by_id(id).await,
+        let region_cache_guard = self.region_cache.read().await;
+        let ver_id = region_cache_guard.id_to_ver_id.get(&id);
+        if let Some(ver_id) = ver_id {
+            let region = region_cache_guard.ver_id_to_region.get(&ver_id).unwrap();
+            return Ok(region.clone());
         }
+
+        std::mem::drop(region_cache_guard);
+        self.read_through_region_by_id(id).await
     }
 
     pub async fn get_store_by_id(&self, id: StoreId) -> Result<Store> {
@@ -93,49 +122,43 @@ impl RegionCache<Cluster> {
 
     pub async fn add_region(&self, region: Region) {
         // FIXME: will it be the performance bottleneck?
-        let mut cache_by_id = self.cache_by_id.write().await;
-        let mut cache_by_key = self.cache_by_key.write().await;
+        let mut cache = self.region_cache.write().await;
 
         let end_key = region.end_key();
-        let mut to_be_removed: Vec<(RegionVerId, Key)> = Vec::new();
+        let mut to_be_removed: HashSet<RegionVerId> = HashSet::new();
+
+        if let Some(ver_id) = cache.id_to_ver_id.get(&region.id()) {
+            if ver_id != &region.ver_id() {
+                to_be_removed.insert(ver_id.clone());
+            }
+        }
 
         let mut search_range = {
             if end_key.is_empty() {
-                cache_by_key.range(..)
+                cache.key_to_ver_id.range(..)
             } else {
-                cache_by_key.range(..end_key)
+                cache.key_to_ver_id.range(..end_key)
             }
         };
-        while let Some((_, region_in_cache)) = search_range.next_back() {
+        while let Some((_, ver_id_in_cache)) = search_range.next_back() {
+            let region_in_cache = cache.ver_id_to_region.get(ver_id_in_cache).unwrap();
+
             if region_in_cache.region.end_key > region.region.start_key {
-                to_be_removed.push((
-                    region_in_cache.ver_id(),
-                    region_in_cache.region.start_key.clone().into(),
-                ));
+                to_be_removed.insert(ver_id_in_cache.clone());
             } else {
                 break;
             }
         }
 
-        for (ver_id, _) in &to_be_removed {
-            let id = ver_id.id;
-            match cache_by_id.get(&id) {
-                Some(r) if &r.ver_id() == ver_id => {
-                    cache_by_id.remove(&id);
-                }
-                _ => {}
-            }
+        for ver_id in to_be_removed {
+            let region_to_remove = cache.ver_id_to_region.remove(&ver_id).unwrap();
+            cache.key_to_ver_id.remove(&region_to_remove.start_key());
+            cache.id_to_ver_id.remove(&region_to_remove.id());
         }
-        cache_by_id.insert(region.id(), region.clone());
-
-        for (ver_id, start_key) in &to_be_removed {
-            match cache_by_key.get(&start_key) {
-                Some(r) if &r.ver_id() == ver_id => {
-                    cache_by_key.remove(&start_key);
-                }
-                _ => {}
-            }
-        }
-        cache_by_key.insert(region.start_key(), region);
+        cache
+            .key_to_ver_id
+            .insert(region.start_key(), region.ver_id());
+        cache.id_to_ver_id.insert(region.id(), region.ver_id());
+        cache.ver_id_to_region.insert(region.ver_id(), region);
     }
 }

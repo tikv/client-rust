@@ -208,6 +208,34 @@ pub struct RetryRegion<P: Plan, PdC: PdClient> {
     pub backoff: Backoff,
 }
 
+impl<P: Plan, PdC: PdClient> RetryRegion<P, PdC> {
+    fn handle_cache_by_region_error(&self, error: Error) -> Result<()> {
+        match error {
+            Error::MultipleErrors(errors) => {
+                for e in errors {
+                    self.handle_cache_by_region_error(e)?;
+                }
+                Ok(())
+            }
+            Error::RegionError(region_error) => {
+                if !region_error.message.is_empty() {
+                    return Err(Error::StringError(format!(
+                        "region error: {}",
+                        region_error.message
+                    )));
+                }
+                todo!();
+                if let Some(e) = region_error.not_leader {}
+                Ok(())
+            }
+            // Error::RegionForKeyNotFound { key } => {} // TODO: should we retry it here?
+            // Error::RegionNotFound { region_id } => {}
+            // Error::LeaderNotFound { region_id } => {}
+            x => Err(x),
+        }
+    }
+}
+
 impl<P: Plan, PdC: PdClient> Clone for RetryRegion<P, PdC> {
     fn clone(&self) -> Self {
         RetryRegion {
