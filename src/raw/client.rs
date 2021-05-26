@@ -7,7 +7,7 @@ use crate::{
     config::Config,
     pd::PdRpcClient,
     raw::lowering::*,
-    request::{Collect, Plan, PlanContext},
+    request::{Collect, Plan},
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
 use std::{sync::Arc, u32};
@@ -154,7 +154,7 @@ impl Client {
             .retry_region(DEFAULT_REGION_BACKOFF)
             .post_process_default()
             .plan();
-        plan.execute(PlanContext::default()).await
+        plan.execute().await
     }
 
     /// Create a new 'batch get' request.
@@ -181,11 +181,10 @@ impl Client {
     ) -> Result<Vec<KvPair>> {
         let request = new_raw_batch_get_request(keys.into_iter().map(Into::into), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .multi_region()
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
-        plan.execute(PlanContext::default())
+        plan.execute()
             .await
             .map(|r| r.into_iter().map(Into::into).collect())
     }
@@ -214,7 +213,7 @@ impl Client {
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
-        plan.execute(PlanContext::default()).await?;
+        plan.execute().await?;
         Ok(())
     }
 
@@ -245,11 +244,10 @@ impl Client {
             self.atomic,
         );
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .multi_region()
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
-        plan.execute(PlanContext::default()).await?;
+        plan.execute().await?;
         Ok(())
     }
 
@@ -278,7 +276,7 @@ impl Client {
             .retry_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
-        plan.execute(PlanContext::default()).await?;
+        plan.execute().await?;
         Ok(())
     }
 
@@ -304,11 +302,10 @@ impl Client {
         let request =
             new_raw_batch_delete_request(keys.into_iter().map(Into::into), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .multi_region()
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
-        plan.execute(PlanContext::default()).await?;
+        plan.execute().await?;
         Ok(())
     }
 
@@ -331,11 +328,10 @@ impl Client {
         self.assert_non_atomic()?;
         let request = new_raw_delete_range_request(range.into(), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .multi_region()
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
-        plan.execute(PlanContext::default()).await?;
+        plan.execute().await?;
         Ok(())
     }
 
@@ -488,7 +484,7 @@ impl Client {
             .retry_region(DEFAULT_REGION_BACKOFF)
             .post_process_default()
             .plan();
-        plan.execute(PlanContext::default()).await
+        plan.execute().await
     }
 
     async fn scan_inner(
@@ -506,11 +502,10 @@ impl Client {
 
         let request = new_raw_scan_request(range.into(), limit, key_only, self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .multi_region()
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
-        let res = plan.execute(PlanContext::default()).await;
+        let res = plan.execute().await;
         res.map(|mut s| {
             s.truncate(limit as usize);
             s
@@ -537,11 +532,10 @@ impl Client {
             self.cf.clone(),
         );
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .multi_region()
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
-        plan.execute(PlanContext::default()).await
+        plan.execute().await
     }
 
     fn assert_non_atomic(&self) -> Result<()> {

@@ -5,8 +5,8 @@ use crate::{
     backoff::Backoff,
     pd::PdClient,
     request::{
-        DefaultProcessor, Dispatch, ExtractError, HasKeys, KvRequest, Merge, MergeResponse,
-        MultiRegion, Plan, Process, ProcessResponse, ResolveLock, RetryRegion, Shardable,
+        DefaultProcessor, Dispatch, ExtractError, HasKeys, KvRequest, Merge, MergeResponse, Plan,
+        Process, ProcessResponse, ResolveLock, RetryRegion, RetryableMultiRegion, Shardable,
     },
     store::Store,
     transaction::HasLocks,
@@ -131,12 +131,16 @@ where
     P::Result: HasError,
 {
     /// Split the request into shards sending a request to the region of each shard.
-    pub fn multi_region(self) -> PlanBuilder<PdC, MultiRegion<P, PdC>, Targetted> {
+    pub fn retry_multi_region(
+        self,
+        backoff: Backoff,
+    ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC>, Targetted> {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
-            plan: MultiRegion {
+            plan: RetryableMultiRegion {
                 inner: self.plan,
                 pd_client: self.pd_client,
+                backoff,
             },
             phantom: PhantomData,
         }

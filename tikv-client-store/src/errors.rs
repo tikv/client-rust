@@ -182,13 +182,12 @@ impl<T: HasRegionError, E> HasRegionError for Result<T, E> {
 
 impl<T: HasRegionError> HasRegionError for Vec<T> {
     fn region_error(&mut self) -> Option<Error> {
-        for t in self {
-            if let Some(e) = t.region_error() {
-                return Some(e);
-            }
+        let errors: Vec<_> = self.iter_mut().filter_map(|x| x.region_error()).collect();
+        if errors.is_empty() {
+            None
+        } else {
+            Some(Error::MultipleErrors(errors))
         }
-
-        None
     }
 }
 

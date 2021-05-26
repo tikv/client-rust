@@ -5,7 +5,7 @@ use crate::{
     backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     config::Config,
     pd::{PdClient, PdRpcClient},
-    request::{Plan, PlanContext},
+    request::Plan,
     timestamp::TimestampExt,
     transaction::{Snapshot, Transaction, TransactionOptions},
     Result,
@@ -199,11 +199,10 @@ impl Client {
 
             let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
                 .resolve_lock(OPTIMISTIC_BACKOFF)
-                .multi_region()
-                .retry_region(DEFAULT_REGION_BACKOFF)
+                .retry_multi_region(DEFAULT_REGION_BACKOFF)
                 .merge(crate::request::Collect)
                 .plan();
-            let res: Vec<kvrpcpb::LockInfo> = plan.execute(PlanContext::default()).await?;
+            let res: Vec<kvrpcpb::LockInfo> = plan.execute().await?;
 
             if res.is_empty() {
                 break;

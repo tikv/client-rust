@@ -3,9 +3,7 @@
 use crate::{
     backoff::Backoff,
     pd::{PdClient, PdRpcClient},
-    request::{
-        Collect, CollectAndMatchKey, CollectError, Plan, PlanBuilder, PlanContext, RetryOptions,
-    },
+    request::{Collect, CollectAndMatchKey, CollectError, Plan, PlanBuilder, RetryOptions},
     timestamp::TimestampExt,
     transaction::{buffer::Buffer, lowering::*},
     BoundRange, Error, Key, KvPair, Result, Value,
@@ -122,7 +120,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     .retry_region(retry_options.region_backoff)
                     .post_process_default()
                     .plan();
-                plan.execute(PlanContext::default()).await
+                plan.execute().await
             })
             .await
     }
@@ -246,11 +244,10 @@ impl<PdC: PdClient> Transaction<PdC> {
                 let request = new_batch_get_request(keys, timestamp);
                 let plan = PlanBuilder::new(rpc, request)
                     .resolve_lock(retry_options.lock_backoff)
-                    .multi_region()
-                    .retry_region(retry_options.region_backoff)
+                    .retry_multi_region(retry_options.region_backoff)
                     .merge(Collect)
                     .plan();
-                plan.execute(PlanContext::default())
+                plan.execute()
                     .await
                     .map(|r| r.into_iter().map(Into::into).collect())
             })
@@ -640,7 +637,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             .retry_region(self.options.retry_options.region_backoff.clone())
             .post_process_default()
             .plan();
-        plan.execute(PlanContext::default()).await
+        plan.execute().await
     }
 
     async fn scan_inner(
@@ -662,11 +659,10 @@ impl<PdC: PdClient> Transaction<PdC> {
                     let request = new_scan_request(new_range, timestamp, new_limit, key_only);
                     let plan = PlanBuilder::new(rpc, request)
                         .resolve_lock(retry_options.lock_backoff)
-                        .multi_region()
-                        .retry_region(retry_options.region_backoff)
+                        .retry_multi_region(retry_options.region_backoff)
                         .merge(Collect)
                         .plan();
-                    plan.execute(PlanContext::default())
+                    plan.execute()
                         .await
                         .map(|r| r.into_iter().map(Into::into).collect())
                 },
@@ -718,11 +714,10 @@ impl<PdC: PdClient> Transaction<PdC> {
         let plan = PlanBuilder::new(self.rpc.clone(), request)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .preserve_keys()
-            .multi_region()
-            .retry_region(self.options.retry_options.region_backoff.clone())
+            .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .merge(CollectAndMatchKey)
             .plan();
-        let pairs = plan.execute(PlanContext::default()).await;
+        let pairs = plan.execute().await;
 
         // primary key will be set here if needed
         self.buffer.primary_key_or(&first_key);
@@ -797,7 +792,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     .await?
                     .retry_region(region_backoff.clone())
                     .plan();
-                plan.execute(PlanContext::default()).await?;
+                plan.execute().await?;
             }
             Ok::<(), Error>(())
         };
@@ -1087,12 +1082,11 @@ impl<PdC: PdClient> Committer<PdC> {
 
         let plan = PlanBuilder::new(self.rpc.clone(), request)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
-            .multi_region()
-            .retry_region(self.options.retry_options.region_backoff.clone())
+            .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .merge(CollectError)
             .extract_error()
             .plan();
-        let response = plan.execute(PlanContext::default()).await?;
+        let response = plan.execute().await?;
 
         if self.options.try_one_pc && response.len() == 1 {
             if response[0].one_pc_commit_ts == 0 {
@@ -1127,11 +1121,10 @@ impl<PdC: PdClient> Committer<PdC> {
         );
         let plan = PlanBuilder::new(self.rpc.clone(), req)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
-            .multi_region()
-            .retry_region(self.options.retry_options.region_backoff.clone())
+            .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .extract_error()
             .plan();
-        plan.execute(PlanContext::default())
+        plan.execute()
             .inspect_err(|e| {
                 // We don't know whether the transaction is committed or not if we fail to receive
                 // the response. Then, we mark the transaction as undetermined and propagate the
@@ -1164,11 +1157,10 @@ impl<PdC: PdClient> Committer<PdC> {
         };
         let plan = PlanBuilder::new(self.rpc, req)
             .resolve_lock(self.options.retry_options.lock_backoff)
-            .multi_region()
-            .retry_region(self.options.retry_options.region_backoff)
+            .retry_multi_region(self.options.retry_options.region_backoff)
             .extract_error()
             .plan();
-        plan.execute(PlanContext::default()).await?;
+        plan.execute().await?;
         Ok(())
     }
 
@@ -1185,21 +1177,19 @@ impl<PdC: PdClient> Committer<PdC> {
                 let req = new_batch_rollback_request(keys, self.start_version);
                 let plan = PlanBuilder::new(self.rpc, req)
                     .resolve_lock(self.options.retry_options.lock_backoff)
-                    .multi_region()
-                    .retry_region(self.options.retry_options.region_backoff)
+                    .retry_multi_region(self.options.retry_options.region_backoff)
                     .extract_error()
                     .plan();
-                plan.execute(PlanContext::default()).await?;
+                plan.execute().await?;
             }
             TransactionKind::Pessimistic(for_update_ts) => {
                 let req = new_pessimistic_rollback_request(keys, self.start_version, for_update_ts);
                 let plan = PlanBuilder::new(self.rpc, req)
                     .resolve_lock(self.options.retry_options.lock_backoff)
-                    .multi_region()
-                    .retry_region(self.options.retry_options.region_backoff)
+                    .retry_multi_region(self.options.retry_options.region_backoff)
                     .extract_error()
                     .plan();
-                plan.execute(PlanContext::default()).await?;
+                plan.execute().await?;
             }
         }
         Ok(())

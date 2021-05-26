@@ -357,7 +357,7 @@ mod test {
     use crate::{
         backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
         mock::{MockKvClient, MockPdClient},
-        request::{Plan, PlanContext},
+        request::Plan,
         Key,
     };
     use futures::executor;
@@ -395,12 +395,10 @@ mod test {
         };
         let plan = crate::request::PlanBuilder::new(client.clone(), scan)
             .resolve_lock(OPTIMISTIC_BACKOFF)
-            .multi_region()
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
-        let scan =
-            executor::block_on(async { plan.execute(PlanContext::default()).await }).unwrap();
+        let scan = executor::block_on(async { plan.execute().await }).unwrap();
 
         assert_eq!(scan.len(), 10);
         // FIXME test the keys returned.

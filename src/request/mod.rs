@@ -11,8 +11,8 @@ use tikv_client_store::{HasError, Request};
 pub use self::{
     plan::{
         Collect, CollectAndMatchKey, CollectError, DefaultProcessor, Dispatch, ExtractError,
-        HasKeys, Merge, MergeResponse, MultiRegion, Plan, PlanContext, PreserveKey, Process,
-        ProcessResponse, ResolveLock, RetryRegion,
+        HasKeys, Merge, MergeResponse, Plan, PreserveKey, Process, ProcessResponse, ResolveLock,
+        RetryRegion, RetryableMultiRegion,
     },
     plan_builder::{PlanBuilder, SingleKey},
     shard::Shardable,
@@ -170,11 +170,10 @@ mod test {
 
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
             .resolve_lock(Backoff::no_jitter_backoff(1, 1, 3))
-            .multi_region()
-            .retry_region(Backoff::no_jitter_backoff(1, 1, 3))
+            .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
             .extract_error()
             .plan();
-        let _ = executor::block_on(async { plan.execute(PlanContext::default()).await });
+        let _ = executor::block_on(async { plan.execute().await });
 
         // Original call plus the 3 retries
         assert_eq!(*invoking_count.lock().unwrap(), 4);
@@ -208,18 +207,16 @@ mod test {
         // does not extract error
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), req.clone())
             .resolve_lock(OPTIMISTIC_BACKOFF)
-            .multi_region()
-            .retry_region(OPTIMISTIC_BACKOFF)
+            .retry_multi_region(OPTIMISTIC_BACKOFF)
             .plan();
-        assert!(executor::block_on(async { plan.execute(PlanContext::default()).await }).is_ok());
+        assert!(executor::block_on(async { plan.execute().await }).is_ok());
 
         // extract error
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), req)
             .resolve_lock(OPTIMISTIC_BACKOFF)
-            .multi_region()
-            .retry_region(OPTIMISTIC_BACKOFF)
+            .retry_multi_region(OPTIMISTIC_BACKOFF)
             .extract_error()
             .plan();
-        assert!(executor::block_on(async { plan.execute(PlanContext::default()).await }).is_err());
+        assert!(executor::block_on(async { plan.execute().await }).is_err());
     }
 }

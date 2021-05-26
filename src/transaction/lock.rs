@@ -4,7 +4,7 @@ use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     pd::PdClient,
     region::RegionVerId,
-    request::{Plan, PlanContext},
+    request::Plan,
     timestamp::TimestampExt,
     transaction::requests,
     Error, Result,
@@ -68,7 +68,7 @@ pub async fn resolve_locks(
                     .retry_region(DEFAULT_REGION_BACKOFF)
                     .post_process_default()
                     .plan();
-                let commit_version = plan.execute(PlanContext::default()).await?;
+                let commit_version = plan.execute().await?;
                 commit_versions.insert(lock.lock_version, commit_version);
                 commit_version
             }
@@ -113,7 +113,7 @@ async fn resolve_lock_with_retry(
             .retry_region(Backoff::no_backoff())
             .extract_error()
             .plan();
-        match plan.execute(PlanContext::default()).await {
+        match plan.execute().await {
             Ok(_) => {
                 return Ok(ver_id);
             }

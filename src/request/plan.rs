@@ -10,8 +10,8 @@ use crate::{
     Error, Key, KvPair, Result, Value,
 };
 use async_trait::async_trait;
-use futures::{prelude::*, stream::StreamExt};
-use std::{marker::PhantomData, sync::Arc};
+use futures::stream::StreamExt;
+use std::{collections::VecDeque, marker::PhantomData, sync::Arc};
 use tikv_client_proto::kvrpcpb;
 use tikv_client_store::{HasError, HasRegionError, KvClient};
 
@@ -23,28 +23,7 @@ pub trait Plan: Sized + Clone + Sync + Send + 'static {
     type Result: Send;
 
     /// Execute the plan.
-    async fn execute(&self, ctx: PlanContext) -> Result<Self::Result>;
-}
-
-/// The context of the execution of a plan.
-///
-/// Since plans are layered and decoupled, plans can pass necessary information
-/// through the context.
-///
-/// The context only propagates from top to down
-#[derive(Debug, Clone)]
-pub struct PlanContext {
-    /// Retrying region means there are region errors in the previous execution,
-    /// indicating the region cache is invalid and needs to be updated.
-    is_retrying_region: bool,
-}
-
-impl Default for PlanContext {
-    fn default() -> Self {
-        PlanContext {
-            is_retrying_region: false,
-        }
-    }
+    async fn execute(&self) -> Result<Self::Result>;
 }
 
 /// The simplest plan which just dispatches a request to a specific kv server.
@@ -58,7 +37,7 @@ pub struct Dispatch<Req: KvRequest> {
 impl<Req: KvRequest> Plan for Dispatch<Req> {
     type Result = Req::Response;
 
-    async fn execute(&self, _ctx: PlanContext) -> Result<Self::Result> {
+    async fn execute(&self) -> Result<Self::Result> {
         let stats = tikv_stats(self.request.label());
         let result = self
             .kv_client
@@ -84,45 +63,66 @@ impl<Req: KvRequest + HasKeys> HasKeys for Dispatch<Req> {
     }
 }
 
-pub struct MultiRegion<P: Plan, PdC: PdClient> {
+pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
     pub(super) inner: P,
     pub pd_client: Arc<PdC>,
+    pub backoff: Backoff,
 }
 
-impl<P: Plan, PdC: PdClient> Clone for MultiRegion<P, PdC> {
+impl<P: Plan, PdC: PdClient> Clone for RetryableMultiRegion<P, PdC> {
     fn clone(&self) -> Self {
-        MultiRegion {
+        RetryableMultiRegion {
             inner: self.inner.clone(),
             pd_client: self.pd_client.clone(),
+            backoff: self.backoff.clone(),
         }
     }
 }
 
 #[async_trait]
-impl<P: Plan + Shardable, PdC: PdClient> Plan for MultiRegion<P, PdC>
+impl<P: Plan + Shardable, PdC: PdClient> Plan for RetryableMultiRegion<P, PdC>
 where
     P::Result: HasError,
 {
     type Result = Vec<Result<P::Result>>;
 
-    async fn execute(&self, ctx: PlanContext) -> Result<Self::Result> {
-        Ok(self
-            .inner
-            .shards(&self.pd_client, ctx.is_retrying_region)
-            .and_then(move |(shard, store)| {
-                let ctx = ctx.clone();
-                async move {
-                    let mut clone = self.inner.clone();
-                    clone.apply_shard(shard, &store)?;
-                    let mut response = clone.execute(ctx).await?;
-                    match response.error() {
-                        Some(e) => Err(e),
-                        None => Ok(response),
+    async fn execute(&self) -> Result<Self::Result> {
+        // The plans to be executed. There can be more children plans because one
+        // shard can become more if it returns region error.
+        let mut children_plans = VecDeque::new();
+        let mut results: Self::Result = Vec::new();
+        children_plans.push_back((self.inner.clone(), self.backoff.clone()));
+
+        // TODO: parallelize
+        while let Some((current_plan, mut backoff)) = children_plans.pop_front() {
+            let shards = current_plan
+                .shards(&self.pd_client, backoff.current_attempts() > 0)
+                .collect::<Vec<_>>()
+                .await;
+            for shard in shards {
+                let (shard, store) = shard?;
+                let mut clone = self.inner.clone();
+                clone.apply_shard(shard, &store)?;
+                let mut resp = clone.execute().await?;
+
+                if let Some(e) = resp.error() {
+                    results.push(Err(e));
+                } else if let Some(e) = resp.region_error() {
+                    // TODO: handle specific kinds of region errors accordingly
+                    match backoff.next_delay_duration() {
+                        Some(duration) => {
+                            futures_timer::Delay::new(duration).await;
+                            children_plans.push_back((clone, backoff.clone()));
+                        }
+                        None => results.push(Err(e)),
                     }
+                } else {
+                    results.push(Ok(resp))
                 }
-            })
-            .collect()
-            .await)
+            }
+        }
+
+        Ok(results)
     }
 }
 
@@ -146,8 +146,8 @@ impl<In: Clone + Send + Sync + 'static, P: Plan<Result = Vec<Result<In>>>, M: Me
 {
     type Result = M::Out;
 
-    async fn execute(&self, ctx: PlanContext) -> Result<Self::Result> {
-        self.merge.merge(self.inner.execute(ctx).await?)
+    async fn execute(&self) -> Result<Self::Result> {
+        self.merge.merge(self.inner.execute().await?)
     }
 }
 
@@ -194,8 +194,8 @@ impl<In: Clone + Sync + Send + 'static, P: Plan<Result = In>, Pr: Process<In>> P
 {
     type Result = Pr::Out;
 
-    async fn execute(&self, ctx: PlanContext) -> Result<Self::Result> {
-        self.processor.process(self.inner.execute(ctx).await)
+    async fn execute(&self) -> Result<Self::Result> {
+        self.processor.process(self.inner.execute().await)
     }
 }
 
@@ -206,34 +206,6 @@ pub struct RetryRegion<P: Plan, PdC: PdClient> {
     pub inner: P,
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
-}
-
-impl<P: Plan, PdC: PdClient> RetryRegion<P, PdC> {
-    fn handle_cache_by_region_error(&self, error: Error) -> Result<()> {
-        match error {
-            Error::MultipleErrors(errors) => {
-                for e in errors {
-                    self.handle_cache_by_region_error(e)?;
-                }
-                Ok(())
-            }
-            Error::RegionError(region_error) => {
-                if !region_error.message.is_empty() {
-                    return Err(Error::StringError(format!(
-                        "region error: {}",
-                        region_error.message
-                    )));
-                }
-                todo!();
-                if let Some(e) = region_error.not_leader {}
-                Ok(())
-            }
-            // Error::RegionForKeyNotFound { key } => {} // TODO: should we retry it here?
-            // Error::RegionNotFound { region_id } => {}
-            // Error::LeaderNotFound { region_id } => {}
-            x => Err(x),
-        }
-    }
 }
 
 impl<P: Plan, PdC: PdClient> Clone for RetryRegion<P, PdC> {
@@ -253,15 +225,15 @@ where
 {
     type Result = P::Result;
 
-    async fn execute(&self, ctx: PlanContext) -> Result<Self::Result> {
-        let mut result = self.inner.execute(ctx.clone()).await?;
+    async fn execute(&self) -> Result<Self::Result> {
+        let mut result = self.inner.execute().await?;
         let mut clone = self.clone();
         while let Some(region_error) = result.region_error() {
             match clone.backoff.next_delay_duration() {
                 None => return Err(region_error),
                 Some(delay_duration) => {
                     futures_timer::Delay::new(delay_duration).await;
-                    result = clone.inner.execute(ctx.clone()).await?;
+                    result = clone.inner.execute().await?;
                 }
             }
         }
@@ -293,8 +265,8 @@ where
 {
     type Result = P::Result;
 
-    async fn execute(&self, ctx: PlanContext) -> Result<Self::Result> {
-        let mut result = self.inner.execute(ctx.clone()).await?;
+    async fn execute(&self) -> Result<Self::Result> {
+        let mut result = self.inner.execute().await?;
         let mut clone = self.clone();
         loop {
             let locks = result.take_locks();
@@ -307,14 +279,15 @@ where
             }
 
             let pd_client = self.pd_client.clone();
-            if resolve_locks(locks, pd_client.clone(), ctx.is_retrying_region).await? {
-                result = self.inner.execute(ctx.clone()).await?;
+            // FIXME: read_through_cache in resolve_locks?
+            if resolve_locks(locks, pd_client.clone(), true).await? {
+                result = self.inner.execute().await?;
             } else {
                 match clone.backoff.next_delay_duration() {
                     None => return Err(Error::ResolveLockError),
                     Some(delay_duration) => {
                         futures_timer::Delay::new(delay_duration).await;
-                        result = clone.inner.execute(ctx.clone()).await?;
+                        result = clone.inner.execute().await?;
                     }
                 }
             }
@@ -355,8 +328,8 @@ where
 {
     type Result = P::Result;
 
-    async fn execute(&self, ctx: PlanContext) -> Result<Self::Result> {
-        let mut result = self.inner.execute(ctx).await?;
+    async fn execute(&self) -> Result<Self::Result> {
+        let mut result = self.inner.execute().await?;
         if let Some(error) = result.error() {
             Err(error)
         } else if let Some(error) = result.region_error() {
@@ -391,9 +364,9 @@ where
 {
     type Result = ResponseAndKeys<P::Result>;
 
-    async fn execute(&self, ctx: PlanContext) -> Result<Self::Result> {
+    async fn execute(&self) -> Result<Self::Result> {
         let keys = self.inner.get_keys();
-        let res = self.inner.execute(ctx).await?;
+        let res = self.inner.execute().await?;
         Ok(ResponseAndKeys(res, keys))
     }
 }
@@ -463,7 +436,10 @@ impl Merge<ResponseAndKeys<kvrpcpb::PessimisticLockResponse>> for CollectAndMatc
 mod test {
     use super::*;
     use crate::mock::{mock_store, MockPdClient};
-    use futures::stream::BoxStream;
+    use futures::{
+        stream::{self, BoxStream},
+        TryStreamExt,
+    };
     use tikv_client_proto::kvrpcpb::BatchGetResponse;
 
     #[derive(Clone)]
@@ -473,7 +449,7 @@ mod test {
     impl Plan for ErrPlan {
         type Result = BatchGetResponse;
 
-        async fn execute(&self, _ctx: PlanContext) -> Result<Self::Result> {
+        async fn execute(&self) -> Result<Self::Result> {
             Err(Error::Unimplemented)
         }
     }
@@ -498,22 +474,15 @@ mod test {
 
     #[tokio::test]
     async fn test_err() {
-        let plan = RetryRegion {
-            inner: MultiRegion {
-                inner: ResolveLock {
-                    inner: ErrPlan,
-                    backoff: Backoff::no_backoff(),
-                    pd_client: Arc::new(MockPdClient::default()),
-                },
+        let plan = RetryableMultiRegion {
+            inner: ResolveLock {
+                inner: ErrPlan,
+                backoff: Backoff::no_backoff(),
                 pd_client: Arc::new(MockPdClient::default()),
             },
-            backoff: Backoff::no_backoff(),
             pd_client: Arc::new(MockPdClient::default()),
+            backoff: Backoff::no_backoff(),
         };
-        plan.execute(PlanContext::default())
-            .await
-            .unwrap()
-            .iter()
-            .for_each(|r| assert!(r.is_err()));
+        assert!(plan.execute().await.is_err())
     }
 }
