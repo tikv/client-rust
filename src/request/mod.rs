@@ -70,7 +70,6 @@ mod test {
         transaction::lowering::new_commit_request,
         Error, Key, Result,
     };
-    use futures::executor;
     use grpcio::CallOption;
     use std::{
         any::Any,
@@ -80,8 +79,8 @@ mod test {
     use tikv_client_proto::{kvrpcpb, pdpb::Timestamp, tikvpb::TikvClient};
     use tikv_client_store::HasRegionError;
 
-    #[test]
-    fn test_region_retry() {
+    #[tokio::test]
+    async fn test_region_retry() {
         #[derive(Clone)]
         struct MockRpcResponse;
 
@@ -173,14 +172,14 @@ mod test {
             .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
             .extract_error()
             .plan();
-        let _ = executor::block_on(async { plan.execute().await });
+        let _ = plan.execute().await;
 
         // Original call plus the 3 retries
         assert_eq!(*invoking_count.lock().unwrap(), 4);
     }
 
-    #[test]
-    fn test_extract_error() {
+    #[tokio::test]
+    async fn test_extract_error() {
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |_: &dyn Any| {
                 Ok(Box::new(kvrpcpb::CommitResponse {
@@ -209,7 +208,7 @@ mod test {
             .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_multi_region(OPTIMISTIC_BACKOFF)
             .plan();
-        assert!(executor::block_on(async { plan.execute().await }).is_ok());
+        assert!(plan.execute().await.is_ok());
 
         // extract error
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), req)
@@ -217,6 +216,6 @@ mod test {
             .retry_multi_region(OPTIMISTIC_BACKOFF)
             .extract_error()
             .plan();
-        assert!(executor::block_on(async { plan.execute().await }).is_err());
+        assert!(plan.execute().await.is_err());
     }
 }

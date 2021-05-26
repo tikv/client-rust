@@ -9,11 +9,13 @@ use crate::{
     util::iter::FlatMapOkIterExt,
     Error, Key, KvPair, Result, Value,
 };
+use async_recursion::async_recursion;
 use async_trait::async_trait;
-use futures::stream::StreamExt;
+use futures::{future::try_join_all, stream::StreamExt};
 use std::{collections::VecDeque, marker::PhantomData, sync::Arc};
 use tikv_client_proto::kvrpcpb;
 use tikv_client_store::{HasError, HasRegionError, KvClient};
+use tokio::sync::Semaphore;
 
 /// A plan for how to execute a request. A user builds up a plan with various
 /// options, then exectutes it.
@@ -63,10 +65,78 @@ impl<Req: KvRequest + HasKeys> HasKeys for Dispatch<Req> {
     }
 }
 
+const MULTI_REGION_CONCURRENCY: usize = 16;
+
 pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
     pub(super) inner: P,
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
+}
+
+impl<P: Plan + Shardable, PdC: PdClient> RetryableMultiRegion<P, PdC>
+where
+    P::Result: HasError,
+{
+    #[async_recursion]
+    async fn single_plan_handler(
+        pd_client: Arc<PdC>,
+        current_plan: P,
+        backoff: Backoff,
+        permits: Arc<Semaphore>,
+    ) -> Result<<Self as Plan>::Result> {
+        let shards = current_plan
+            .shards(&pd_client, backoff.current_attempts() > 0)
+            .collect::<Vec<_>>()
+            .await;
+        let mut handles = Vec::new();
+        for shard in shards {
+            let (shard, store) = shard?;
+            let mut clone = current_plan.clone();
+            clone.apply_shard(shard, &store)?;
+            let handle = tokio::spawn(Self::single_shard_handler(
+                pd_client.clone(),
+                clone,
+                backoff.clone(),
+                permits.clone(),
+            ));
+            handles.push(handle);
+        }
+        Ok(try_join_all(handles)
+            .await?
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect())
+    }
+
+    #[async_recursion]
+    async fn single_shard_handler(
+        pd_client: Arc<PdC>,
+        plan: P,
+        mut backoff: Backoff,
+        permits: Arc<Semaphore>,
+    ) -> Result<<Self as Plan>::Result> {
+        // limit concurrent requests
+        let permit = permits.acquire().await;
+        let mut resp = plan.execute().await?;
+        drop(permit);
+
+        if let Some(e) = resp.error() {
+            Ok(vec![Err(e)])
+        } else if let Some(e) = resp.region_error() {
+            // TODO: handle specific kinds of region errors accordingly
+            match backoff.next_delay_duration() {
+                Some(duration) => {
+                    futures_timer::Delay::new(duration).await;
+                    Self::single_plan_handler(pd_client, plan, backoff, permits).await
+                }
+                None => Err(e),
+            }
+        } else {
+            Ok(vec![Ok(resp)])
+        }
+    }
 }
 
 impl<P: Plan, PdC: PdClient> Clone for RetryableMultiRegion<P, PdC> {
@@ -90,39 +160,19 @@ where
         // The plans to be executed. There can be more children plans because one
         // shard can become more if it returns region error.
         let mut children_plans = VecDeque::new();
-        let mut results: Self::Result = Vec::new();
         children_plans.push_back((self.inner.clone(), self.backoff.clone()));
 
-        // TODO: parallelize
-        while let Some((current_plan, mut backoff)) = children_plans.pop_front() {
-            let shards = current_plan
-                .shards(&self.pd_client, backoff.current_attempts() > 0)
-                .collect::<Vec<_>>()
-                .await;
-            for shard in shards {
-                let (shard, store) = shard?;
-                let mut clone = self.inner.clone();
-                clone.apply_shard(shard, &store)?;
-                let mut resp = clone.execute().await?;
-
-                if let Some(e) = resp.error() {
-                    results.push(Err(e));
-                } else if let Some(e) = resp.region_error() {
-                    // TODO: handle specific kinds of region errors accordingly
-                    match backoff.next_delay_duration() {
-                        Some(duration) => {
-                            futures_timer::Delay::new(duration).await;
-                            children_plans.push_back((clone, backoff.clone()));
-                        }
-                        None => results.push(Err(e)),
-                    }
-                } else {
-                    results.push(Ok(resp))
-                }
-            }
-        }
-
-        Ok(results)
+        // Limit the maximum concurrency of multi-region request. If there are
+        // too many concurrent requests, TiKV is more likely to return a "TiKV
+        // is busy" error
+        let concurrency_permits = Arc::new(Semaphore::new(MULTI_REGION_CONCURRENCY));
+        let handle = tokio::spawn(Self::single_plan_handler(
+            self.pd_client.clone(),
+            self.inner.clone(),
+            self.backoff.clone(),
+            concurrency_permits.clone(),
+        ));
+        handle.await?
     }
 }
 

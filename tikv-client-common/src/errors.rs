@@ -57,6 +57,9 @@ pub enum Error {
     /// Invalid ColumnFamily
     #[error("Unsupported column family {}", _0)]
     ColumnFamilyError(String),
+    /// Can't join tokio tasks
+    #[error("Failed to join tokio tasks")]
+    JoinError(#[from] tokio::task::JoinError),
     /// No region is found for the given key.
     #[error("Region is not found for key: {:?}", key)]
     RegionForKeyNotFound { key: Vec<u8> },
