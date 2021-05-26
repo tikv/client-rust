@@ -29,4 +29,7 @@ docker-kv:
 
 docker: docker-pd docker-kv
 
+tiup:
+	tiup playground nightly --db 0 --tiflash 0 --monitor false --kv.config $(shell pwd)/config/tikv.toml --pd.config $(shell pwd)/config/pd.toml &
+
 all: check doc test
