@@ -225,15 +225,12 @@ impl Shardable for kvrpcpb::PrewriteRequest {
     type Shard = Vec<kvrpcpb::Mutation>;
 
     fn shards(
-        mut mutations: Self::Shard,
+        &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
+        let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
         store_stream_for_keys(mutations.into_iter(), pd_client.clone())
-    }
-
-    fn get_shard(&self) -> Self::Shard {
-        self.mutations.clone()
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
@@ -342,15 +339,12 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
     type Shard = Vec<kvrpcpb::Mutation>;
 
     fn shards(
-        mut mutations: Self::Shard,
+        &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
+        let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
         store_stream_for_keys(mutations.into_iter(), pd_client.clone())
-    }
-
-    fn get_shard(&self) -> Self::Shard {
-        self.mutations.clone()
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
@@ -425,14 +419,10 @@ impl Shardable for kvrpcpb::ScanLockRequest {
     type Shard = Vec<u8>;
 
     fn shards(
-        start_key: Self::Shard,
+        &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
-        store_stream_for_range_by_start_key(start_key.into(), pd_client.clone())
-    }
-
-    fn get_shard(&self) -> Self::Shard {
-        self.start_key.clone()
+        store_stream_for_range_by_start_key(self.start_key.clone().into(), pd_client.clone())
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {

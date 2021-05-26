@@ -166,7 +166,10 @@ where
     pub fn preserve_shard(self) -> PlanBuilder<PdC, PreserveShard<P>, NoTarget> {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
-            plan: PreserveShard { inner: self.plan },
+            plan: PreserveShard {
+                inner: self.plan,
+                shard: None,
+            },
             phantom: PhantomData,
         }
     }

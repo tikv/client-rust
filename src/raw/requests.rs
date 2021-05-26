@@ -125,18 +125,15 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
     type Shard = Vec<kvrpcpb::KvPair>;
 
     fn shards(
-        mut pairs: Self::Shard,
+        &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
+        let mut pairs = self.pairs.clone();
         pairs.sort_by(|a, b| a.key.cmp(&b.key));
         store_stream_for_keys(
             pairs.into_iter().map(Into::<KvPair>::into),
             pd_client.clone(),
         )
-    }
-
-    fn get_shard(&self) -> Self::Shard {
-        self.pairs.clone()
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
@@ -262,14 +259,10 @@ impl Shardable for kvrpcpb::RawBatchScanRequest {
     type Shard = Vec<kvrpcpb::KeyRange>;
 
     fn shards(
-        ranges: Self::Shard,
+        &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
-        store_stream_for_ranges(ranges, pd_client.clone())
-    }
-
-    fn get_shard(&self) -> Self::Shard {
-        self.ranges.clone()
+        store_stream_for_ranges(self.ranges.clone(), pd_client.clone())
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
@@ -382,14 +375,10 @@ impl Shardable for RawCoprocessorRequest {
     type Shard = Vec<kvrpcpb::KeyRange>;
 
     fn shards(
-        ranges: Self::Shard,
+        &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
-        store_stream_for_ranges(ranges, pd_client.clone())
-    }
-
-    fn get_shard(&self) -> Self::Shard {
-        self.inner.ranges.clone()
+        store_stream_for_ranges(self.inner.ranges.clone(), pd_client.clone())
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {

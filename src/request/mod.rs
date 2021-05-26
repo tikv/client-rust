@@ -132,20 +132,19 @@ mod test {
             type Shard = Vec<Vec<u8>>;
 
             fn shards(
-                shard: Self::Shard,
+                &self,
                 pd_client: &std::sync::Arc<impl crate::pd::PdClient>,
             ) -> futures::stream::BoxStream<
                 'static,
                 crate::Result<(Self::Shard, crate::store::Store)>,
             > {
-                store_stream_for_keys(shard.into_iter().map(Key::from), pd_client.clone())
-            }
-
-            fn get_shard(&self) -> Self::Shard {
                 // Increases by 1 for each call.
                 let mut test_invoking_count = self.test_invoking_count.lock().unwrap();
                 *test_invoking_count += 1;
-                vec!["mock_key".to_owned().into_bytes()]
+                store_stream_for_keys(
+                    Some(Key::from("mock_key".to_owned())).into_iter(),
+                    pd_client.clone(),
+                )
             }
 
             fn apply_shard(

@@ -76,7 +76,9 @@ where
     type Result = Vec<Result<P::Result>>;
 
     async fn execute(&self) -> Result<Self::Result> {
-        Ok(P::shards(self.inner.get_shard(), &self.pd_client)
+        Ok(self
+            .inner
+            .shards(&self.pd_client)
             .map(move |shard_store| async move {
                 let (shard, store) = shard_store?;
                 let mut clone = self.inner.clone();
@@ -325,7 +327,12 @@ where
 
     async fn execute(&self) -> Result<Self::Result> {
         let res = self.inner.execute().await?;
-        Ok(ResponseWithShard(res, self.shard.expect("Unreachable: Shardable::apply_shard() is not called before executing PreserveShard").clone()))
+        let shard = self
+            .shard
+            .as_ref()
+            .expect("Unreachable: Shardable::apply_shard() is not called before executing PreserveShard")
+            .clone();
+        Ok(ResponseWithShard(res, shard))
     }
 }
 
@@ -374,14 +381,10 @@ mod test {
         type Shard = ();
 
         fn shards(
-            _: Self::Shard,
+            &self,
             _: &Arc<impl crate::pd::PdClient>,
         ) -> BoxStream<'static, crate::Result<(Self::Shard, crate::store::Store)>> {
             Box::pin(stream::iter(1..=3).map(|_| Err(Error::Unimplemented))).boxed()
-        }
-
-        fn get_shard(&self) -> Self::Shard {
-            ()
         }
 
         fn apply_shard(&mut self, _: Self::Shard, _: &crate::store::Store) -> Result<()> {
