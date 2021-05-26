@@ -41,11 +41,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
         let result = self
             .kv_client
             .as_ref()
-            .ok_or_else(|| {
-                Error::StringError(
-                    "Unreachable: kv_client has not been initialised in Dispatch".to_owned(),
-                )
-            })?
+            .expect("Unreachable: kv_client has not been initialised in Dispatch")
             .dispatch(&self.request)
             .await;
         let result = stats.done(result);
@@ -308,12 +304,14 @@ where
 /// for processing.
 pub struct PreserveShard<P: Plan + Shardable> {
     pub inner: P,
+    pub shard: Option<P::Shard>,
 }
 
 impl<P: Plan + Shardable> Clone for PreserveShard<P> {
     fn clone(&self) -> Self {
         PreserveShard {
             inner: self.inner.clone(),
+            shard: None,
         }
     }
 }
@@ -326,9 +324,8 @@ where
     type Result = ResponseWithShard<P::Result, P::Shard>;
 
     async fn execute(&self) -> Result<Self::Result> {
-        let shard = self.inner.get_shard();
         let res = self.inner.execute().await?;
-        Ok(ResponseWithShard(res, shard))
+        Ok(ResponseWithShard(res, self.shard.expect("Unreachable: Shardable::apply_shard() is not called before executing PreserveShard").clone()))
     }
 }
 

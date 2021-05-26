@@ -11,27 +11,6 @@ use std::sync::Arc;
 
 use super::plan::PreserveShard;
 
-macro_rules! impl_inner_shardable {
-    () => {
-        type Shard = P::Shard;
-
-        fn shards(
-            shard: Self::Shard,
-            pd_client: &Arc<impl PdClient>,
-        ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
-            P::shards(shard, pd_client)
-        }
-
-        fn get_shard(&self) -> Self::Shard {
-            self.inner.get_shard()
-        }
-
-        fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
-            self.inner.apply_shard(shard, store)
-        }
-    };
-}
-
 pub trait Shardable {
     type Shard: Send;
 
@@ -74,7 +53,23 @@ impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
 }
 
 impl<P: Plan + Shardable, PdC: PdClient> Shardable for RetryRegion<P, PdC> {
-    impl_inner_shardable!();
+    type Shard = P::Shard;
+
+    fn shards(
+        shard: Self::Shard,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
+        P::shards(shard, pd_client)
+    }
+
+    fn get_shard(&self) -> Self::Shard {
+        self.inner.get_shard()
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
+        self.shard = Some(shard.clone());
+        self.inner.apply_shard(shard, store)
+    }
 }
 
 #[macro_export]
