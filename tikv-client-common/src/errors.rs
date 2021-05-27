@@ -63,9 +63,9 @@ pub enum Error {
     /// No region is found for the given key.
     #[error("Region is not found for key: {:?}", key)]
     RegionForKeyNotFound { key: Vec<u8> },
-    /// No region is found for the given id.
-    #[error("Region {} is not found", region_id)]
-    RegionNotFound { region_id: u64 },
+    /// No region is found for the given id. note: distinguish it with the RegionNotFound error in errorpb.
+    #[error("Region {} is not found in the response", region_id)]
+    RegionNotFoundInResponse { region_id: u64 },
     /// No leader is found for the given id.
     #[error("Leader of region {} is not found", region_id)]
     LeaderNotFound { region_id: u64 },

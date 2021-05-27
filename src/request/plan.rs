@@ -5,6 +5,7 @@ use crate::{
     pd::PdClient,
     request::{KvRequest, Shardable},
     stats::tikv_stats,
+    store::Store,
     transaction::{resolve_locks, HasLocks},
     util::iter::FlatMapOkIterExt,
     Error, Key, KvPair, Result, Value,
@@ -77,25 +78,28 @@ impl<P: Plan + Shardable, PdC: PdClient> RetryableMultiRegion<P, PdC>
 where
     P::Result: HasError,
 {
+    // A plan may involve multiple shards
     #[async_recursion]
     async fn single_plan_handler(
         pd_client: Arc<PdC>,
         current_plan: P,
         backoff: Backoff,
         permits: Arc<Semaphore>,
+        read_through_cache: bool,
     ) -> Result<<Self as Plan>::Result> {
         let shards = current_plan
-            .shards(&pd_client, backoff.current_attempts() > 0)
+            .shards(&pd_client, read_through_cache)
             .collect::<Vec<_>>()
             .await;
         let mut handles = Vec::new();
         for shard in shards {
-            let (shard, store) = shard?;
+            let (shard, region_store) = shard?;
             let mut clone = current_plan.clone();
-            clone.apply_shard(shard, &store)?;
+            clone.apply_shard(shard, &region_store)?;
             let handle = tokio::spawn(Self::single_shard_handler(
                 pd_client.clone(),
                 clone,
+                region_store,
                 backoff.clone(),
                 permits.clone(),
             ));
@@ -114,6 +118,7 @@ where
     async fn single_shard_handler(
         pd_client: Arc<PdC>,
         plan: P,
+        region_store: Store,
         mut backoff: Backoff,
         permits: Arc<Semaphore>,
     ) -> Result<<Self as Plan>::Result> {
@@ -125,16 +130,89 @@ where
         if let Some(e) = resp.error() {
             Ok(vec![Err(e)])
         } else if let Some(e) = resp.region_error() {
-            // TODO: handle specific kinds of region errors accordingly
             match backoff.next_delay_duration() {
                 Some(duration) => {
-                    futures_timer::Delay::new(duration).await;
-                    Self::single_plan_handler(pd_client, plan, backoff, permits).await
+                    // don't backoff if we have handeld the region error
+                    let region_error_resolved =
+                        Self::handle_region_error(pd_client.clone(), e, region_store).await?;
+                    if !region_error_resolved {
+                        futures_timer::Delay::new(duration).await;
+                    }
+                    Self::single_plan_handler(
+                        pd_client,
+                        plan,
+                        backoff,
+                        permits,
+                        !region_error_resolved,
+                    )
+                    .await
                 }
                 None => Err(e),
             }
         } else {
             Ok(vec![Ok(resp)])
+        }
+    }
+
+    // Returns whether the region error is successfully handled.
+    // Returns error if the region error shouldn't be retried.
+    async fn handle_region_error(
+        pd_client: Arc<PdC>,
+        error: Error,
+        region_store: Store,
+    ) -> Result<bool> {
+        match error {
+            Error::RegionError(e) => {
+                if e.has_not_leader() {
+                    let not_leader = e.get_not_leader();
+                    if not_leader.has_leader() {
+                        Ok(pd_client
+                            .update_leader(
+                                region_store.region.ver_id(),
+                                not_leader.get_leader().clone(),
+                            )
+                            .await
+                            .is_ok())
+                    } else {
+                        // The peer doesn't know who is the current leader. Generally it's because
+                        // the Raft group is in an election, but it's possible that the peer is
+                        // isolated and removed from the Raft group. So it's necessary to reload
+                        // the region from PD.
+                        pd_client
+                            .invalidate_region_cache(region_store.region.ver_id())
+                            .await;
+                        Ok(false)
+                    }
+                } else if e.has_store_not_match() {
+                    pd_client
+                        .invalidate_region_cache(region_store.region.ver_id())
+                        .await;
+                    Ok(false)
+                } else if e.has_epoch_not_match() {
+                    // TODO
+                    Err(Error::RegionError(e))
+                } else if e.has_server_is_busy()
+                    || e.has_stale_command()
+                    || e.has_region_not_found()
+                    || e.has_max_timestamp_not_synced()
+                {
+                    Ok(false)
+                } else if e.has_raft_entry_too_large() {
+                    Err(Error::RegionError(e))
+                } else {
+                    pd_client
+                        .invalidate_region_cache(region_store.region.ver_id())
+                        .await;
+                    Ok(false)
+                }
+            }
+            // TODO: whether to retry here?
+            Error::RegionForKeyNotFound { .. }
+            | Error::RegionNotFoundInResponse { .. }
+            | Error::LeaderNotFound { .. } => Ok(false),
+            _ => {
+                unreachable!()
+            }
         }
     }
 }
@@ -171,6 +249,7 @@ where
             self.inner.clone(),
             self.backoff.clone(),
             concurrency_permits.clone(),
+            false,
         ));
         handle.await?
     }

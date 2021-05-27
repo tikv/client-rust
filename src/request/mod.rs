@@ -92,7 +92,7 @@ mod test {
 
         impl HasRegionError for MockRpcResponse {
             fn region_error(&mut self) -> Option<Error> {
-                Some(Error::RegionNotFound { region_id: 1 })
+                Some(Error::RegionNotFoundInResponse { region_id: 1 })
             }
         }
 

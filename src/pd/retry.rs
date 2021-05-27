@@ -126,7 +126,9 @@ impl RetryClient<Cluster> {
             cluster
                 .get_region_by_id(region_id, self.timeout)
                 .await
-                .and_then(|resp| region_from_response(resp, || Error::RegionNotFound { region_id }))
+                .and_then(|resp| {
+                    region_from_response(resp, || Error::RegionNotFoundInResponse { region_id })
+                })
         })
     }
 

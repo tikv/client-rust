@@ -9,8 +9,9 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
+use tikv_client_common::Error;
 use tikv_client_pd::Cluster;
-use tikv_client_proto::metapb::Store;
+use tikv_client_proto::metapb::{self, Store};
 use tokio::sync::RwLock;
 
 struct RegionCacheMap {
@@ -160,5 +161,32 @@ impl RegionCache<Cluster> {
             .insert(region.start_key(), region.ver_id());
         cache.id_to_ver_id.insert(region.id(), region.ver_id());
         cache.ver_id_to_region.insert(region.ver_id(), region);
+    }
+
+    pub async fn update_leader(
+        &self,
+        ver_id: crate::region::RegionVerId,
+        leader: metapb::Peer,
+    ) -> Result<()> {
+        let mut cache = self.region_cache.write().await;
+        let region_entry = cache.ver_id_to_region.get_mut(&ver_id).ok_or_else(|| {
+            Error::StringError(
+                "update leader failed: no corresponding entry in the region cache".to_owned(),
+            )
+        })?;
+        region_entry.leader = Some(leader);
+        Ok(())
+    }
+
+    pub async fn invalidate_region_cache(&self, ver_id: crate::region::RegionVerId) {
+        let mut cache = self.region_cache.write().await;
+        let region_entry = cache.ver_id_to_region.get(&ver_id);
+        if let Some(region) = region_entry {
+            let id = region.id();
+            let start_key = region.start_key();
+            cache.ver_id_to_region.remove(&ver_id);
+            cache.id_to_ver_id.remove(&id);
+            cache.key_to_ver_id.remove(&start_key);
+        }
     }
 }

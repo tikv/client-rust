@@ -4,7 +4,7 @@ use crate::{
     compat::stream_fn,
     kv::codec,
     pd::RetryClient,
-    region::{Region, RegionId},
+    region::{Region, RegionId, RegionVerId},
     region_cache::RegionCache,
     store::Store,
     BoundRange, Config, Key, Result, SecurityManager, Timestamp,
@@ -14,7 +14,7 @@ use futures::{prelude::*, stream::BoxStream};
 use grpcio::{EnvBuilder, Environment};
 use std::{collections::HashMap, sync::Arc, thread};
 use tikv_client_pd::Cluster;
-use tikv_client_proto::kvrpcpb;
+use tikv_client_proto::{kvrpcpb, metapb};
 use tikv_client_store::{KvClient, KvConnect, TikvConnect};
 use tokio::sync::RwLock;
 
@@ -212,6 +212,10 @@ pub trait PdClient: Send + Sync + 'static {
         }
         Ok(region)
     }
+
+    async fn update_leader(&self, ver_id: RegionVerId, leader: metapb::Peer) -> Result<()>;
+
+    async fn invalidate_region_cache(&self, ver_id: RegionVerId);
 }
 
 /// This client converts requests for the logical TiKV cluster into requests
@@ -277,6 +281,14 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
         self.pd.clone().update_safepoint(safepoint).await
+    }
+
+    async fn update_leader(&self, ver_id: RegionVerId, leader: metapb::Peer) -> Result<()> {
+        self.region_cache.update_leader(ver_id, leader).await
+    }
+
+    async fn invalidate_region_cache(&self, ver_id: RegionVerId) {
+        self.region_cache.invalidate_region_cache(ver_id).await
     }
 }
 

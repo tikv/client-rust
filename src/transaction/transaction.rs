@@ -1251,10 +1251,10 @@ mod tests {
         let heartbeats_cloned = heartbeats.clone();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |req: &dyn Any| {
-                if let Some(_) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
+                if req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>().is_some() {
                     heartbeats_cloned.fetch_add(1, Ordering::SeqCst);
                     Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>)
-                } else if let Some(_) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                } else if req.downcast_ref::<kvrpcpb::PrewriteRequest>().is_some() {
                     Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
                 } else {
                     Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
@@ -1285,12 +1285,15 @@ mod tests {
         let heartbeats_cloned = heartbeats.clone();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |req: &dyn Any| {
-                if let Some(_) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
+                if req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>().is_some() {
                     heartbeats_cloned.fetch_add(1, Ordering::SeqCst);
                     Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>)
-                } else if let Some(_) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                } else if req.downcast_ref::<kvrpcpb::PrewriteRequest>().is_some() {
                     Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
-                } else if let Some(_) = req.downcast_ref::<kvrpcpb::PessimisticLockRequest>() {
+                } else if req
+                    .downcast_ref::<kvrpcpb::PessimisticLockRequest>()
+                    .is_some()
+                {
                     Ok(Box::new(kvrpcpb::PessimisticLockResponse::default()) as Box<dyn Any>)
                 } else {
                     Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)

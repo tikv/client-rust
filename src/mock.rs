@@ -147,7 +147,7 @@ impl PdClient for MockPdClient {
         match id {
             1 => Ok(Self::region1()),
             2 => Ok(Self::region2()),
-            _ => Err(Error::RegionNotFound { region_id: id }),
+            _ => Err(Error::RegionNotFoundInResponse { region_id: id }),
         }
     }
 
@@ -157,6 +157,18 @@ impl PdClient for MockPdClient {
 
     async fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> Result<bool> {
         unimplemented!()
+    }
+
+    async fn update_leader(
+        &self,
+        _ver_id: crate::region::RegionVerId,
+        _leader: metapb::Peer,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    async fn invalidate_region_cache(&self, _ver_id: crate::region::RegionVerId) {
+        todo!()
     }
 }
 

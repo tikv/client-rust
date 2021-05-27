@@ -393,7 +393,7 @@ mod test {
             key_only: true,
             ..Default::default()
         };
-        let plan = crate::request::PlanBuilder::new(client.clone(), scan)
+        let plan = crate::request::PlanBuilder::new(client, scan)
             .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
