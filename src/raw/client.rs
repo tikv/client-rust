@@ -7,10 +7,11 @@ use crate::{
     config::Config,
     pd::PdRpcClient,
     raw::lowering::*,
+    region::Region,
     request::{Collect, Plan},
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
-use std::{sync::Arc, u32};
+use std::{ops::Range, str::FromStr, sync::Arc};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
@@ -485,6 +486,29 @@ impl Client {
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), req)
             .single_region()
             .await?
+            .retry_region(DEFAULT_REGION_BACKOFF)
+            .post_process_default()
+            .plan();
+        plan.execute().await
+    }
+
+    pub async fn coprocessor(
+        &self,
+        copr_name: String,
+        copr_version_req: String,
+        ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
+        request_builder: impl Fn(Vec<Range<Key>>, Region) -> Vec<u8> + Send + Sync + 'static,
+    ) -> Result<Vec<(Vec<u8>, Vec<Range<Key>>)>> {
+        semver::VersionReq::from_str(&copr_version_req)?;
+        let req = new_raw_coprocessor_request(
+            copr_name,
+            copr_version_req,
+            ranges.into_iter().map(Into::into),
+            request_builder,
+        );
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), req)
+            .preserve_shard()
+            .multi_region()
             .retry_region(DEFAULT_REGION_BACKOFF)
             .post_process_default()
             .plan();

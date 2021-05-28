@@ -470,6 +470,12 @@ message RecordPair {
     uint64 value = 2;
 }
 
+message PeerStat {
+    uint64 region_id = 1;
+    uint64 read_keys = 2;
+    uint64 read_bytes = 3;
+}
+
 message StoreStats {
     uint64 store_id = 1;
     // Capacity for the store.
@@ -508,6 +514,8 @@ message StoreStats {
     repeated RecordPair write_io_rates = 18;
     // Operations' latencies in the store
     repeated RecordPair op_latencies = 19;
+    // Hot peer stat in the store
+    repeated PeerStat peer_stats = 20;
 }
 
 message StoreHeartbeatRequest {

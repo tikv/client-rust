@@ -69,6 +69,8 @@ pub enum Error {
     /// Scan limit exceeds the maximum
     #[error("Limit {} exceeds max scan limit {}", limit, max_limit)]
     MaxScanLimitExceeded { limit: u32, max_limit: u32 },
+    #[error("Invalid Semver string: {0:?}")]
+    InvalidSemver(#[from] semver::ReqParseError),
     /// A string error returned by TiKV server
     #[error("Kv error. {}", message)]
     KvError { message: String },

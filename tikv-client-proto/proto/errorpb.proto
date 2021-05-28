@@ -107,6 +107,13 @@ message ProposalInMergingMode {
     uint64 region_id = 1;
 }
 
+message DataIsNotReady {
+    // The requested region ID
+    uint64 region_id = 1;
+    uint64 peer_id = 2;
+    uint64 safe_ts = 3;
+}
+
 // Error wraps all region errors, indicates an error encountered by a request.
 message Error {
     reserved "stale_epoch";
@@ -124,4 +131,5 @@ message Error {
     MaxTimestampNotSynced max_timestamp_not_synced = 10;
     ReadIndexNotReady read_index_not_ready = 11;
     ProposalInMergingMode proposal_in_merging_mode = 12;
+    DataIsNotReady data_is_not_ready = 13;
 }

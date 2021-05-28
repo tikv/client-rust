@@ -214,3 +214,32 @@ message BackupResponse {
 service Backup {
     rpc backup(BackupRequest) returns (stream BackupResponse) {}
 }
+
+// ExternalStorage is a service for using a cloud backend from StorageBackend to store files.
+// This can be used to backup and restore SST files.
+service ExternalStorage {
+    // Restore to a file
+    rpc restore(ExternalStorageRestoreRequest) returns (ExternalStorageRestoreResponse) {}
+    // Save a file to storage
+    rpc save(ExternalStorageSaveRequest) returns (ExternalStorageSaveResponse) {}
+}
+
+message ExternalStorageRestoreRequest {
+    StorageBackend storage_backend = 1;
+    string object_name = 2;
+    string restore_name = 3;
+    uint64 content_length = 4;
+}
+
+message ExternalStorageRestoreResponse {
+}
+
+message ExternalStorageSaveRequest {
+    StorageBackend storage_backend = 1;
+    string object_name = 2;
+    uint64 content_length = 3;
+}
+
+message ExternalStorageSaveResponse {
+}
+
