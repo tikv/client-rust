@@ -773,7 +773,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             HeartbeatOption::NoHeartbeat => DEFAULT_HEARTBEAT_INTERVAL,
             HeartbeatOption::FixedTime(heartbeat_interval) => heartbeat_interval,
         };
-        let elapsed = self.start_instant.elapsed().as_millis() as u64;
+        let start_instant = self.start_instant.clone();
 
         let heartbeat_task = async move {
             loop {
@@ -792,7 +792,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 let request = new_heart_beat_request(
                     start_ts.clone(),
                     primary_key.clone(),
-                    elapsed + DEFAULT_LOCK_TTL,
+                    start_instant.elapsed().as_millis() as u64 + DEFAULT_LOCK_TTL,
                 );
                 let plan = PlanBuilder::new(rpc.clone(), request)
                     .single_region()
