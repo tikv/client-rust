@@ -1,6 +1,6 @@
 [package]
 name = "tikv-client-proto"
-version = "0.0.99"
+version = "0.1.0"
 edition = "2018"
 license = "Apache-2.0"
 authors = ["The TiKV Project Authors"]
@@ -16,5 +16,5 @@ protobuf = "2.8"
 prost = { version = "0.7" }
 prost-derive = { version = "0.7" }
 futures = "0.3"
-grpcio = { version = "0.8", default-features = false, features = ["secure", "prost-codec", "use-bindgen"] }
+grpcio = { version = "0.9", default-features = false, features = ["secure", "prost-codec", "use-bindgen"] }
 lazy_static = { version = "1" }

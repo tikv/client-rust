@@ -1,8 +1,9 @@
 # TiKV Client (Rust)
 
+[![Docs](https://docs.rs/tikv-client/badge.svg)](https://docs.rs/tikv-client)
 [![Build Status](https://travis-ci.org/tikv/client-rust.svg?branch=master)](https://travis-ci.org/tikv/client-rust)
 
-[Docs](https://www.tikv.dev/doc/rust-client/tikv_client/)
+[Nightly docs](https://www.tikv.dev/doc/rust-client/tikv_client/)
 
 This crate provides an easy-to-use client for [TiKV](https://github.com/tikv/tikv), a distributed, transactional key-value database written in Rust.
 
@@ -10,13 +11,15 @@ This crate lets you connect to a TiKV cluster and use either a transactional or 
 
 The TiKV Rust client is an open source (Apache 2) project maintained by the TiKV Authors. We welcome contributions, see below for more info.
 
+Note that the current release is not suitable for production use - APIs are not yet stable and the crate has not been thoroughly tested in real-life use.
+
 ## Getting started
 
 The TiKV client is a Rust library (crate). To use this crate in your project, add the following dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-tikv-client = "0.0.99"
+tikv-client = "0.1.0"
 ```
 
 The minimum supported version of Rust is 1.40. The minimum supported version of TiKV is 5.0.
@@ -85,7 +88,7 @@ Important note: It is **not recommended or supported** to use both the raw and t
 | `batch_delete`     | `Iter<Key>`         |                  |                                                |
 | `batch_scan`       | `Iter<BoundRange>`  | `Vec<KvPair>`    | See docs for `each_limit` parameter behavior. The order of ranges is retained. |
 | `batch_scan_keys`  | `Iter<BoundRange>`  | `Vec<Key>`       | See docs for `each_limit` parameter behavior. The order of ranges is retained. |
-| `compare_and_swap` | `Key` + 2x `Value`  | `(Option<Value>, bool)` |                                         | 
+| `compare_and_swap` | `Key` + 2x `Value`  | `(Option<Value>, bool)` |                                         |
 
 ### Transactional requests
 
