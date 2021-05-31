@@ -3,6 +3,7 @@
 use crate::{BoundRange, Key, KvPair, Result, Transaction, Value};
 use derive_new::new;
 use futures::stream::BoxStream;
+use log::debug;
 use std::ops::RangeBounds;
 
 /// A read-only transaction which reads at the given timestamp.
@@ -20,11 +21,13 @@ pub struct Snapshot {
 impl Snapshot {
     /// Get the value associated with the given key.
     pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
+        debug!("invoking get request on snapshot");
         self.transaction.get(key).await
     }
 
     /// Check whether the key exists.
     pub async fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
+        debug!("invoking key_exists request on snapshot");
         self.transaction.key_exists(key).await
     }
 
@@ -33,6 +36,7 @@ impl Snapshot {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
+        debug!("invoking batch_get request on snapshot");
         self.transaction.batch_get(keys).await
     }
 
@@ -42,6 +46,7 @@ impl Snapshot {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
+        debug!("invoking scan request on snapshot");
         self.transaction.scan(range, limit).await
     }
 
@@ -51,12 +56,14 @@ impl Snapshot {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
+        debug!("invoking scan_keys request on snapshot");
         self.transaction.scan_keys(range, limit).await
     }
 
     /// Unimplemented. Similar to scan, but in the reverse direction.
     #[allow(dead_code)]
     fn scan_reverse(&mut self, range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
+        debug!("invoking scan_reverse request on snapshot");
         self.transaction.scan_reverse(range)
     }
 }
