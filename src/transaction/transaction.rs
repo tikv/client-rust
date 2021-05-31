@@ -11,6 +11,7 @@ use crate::{
 use derive_new::new;
 use fail::fail_point;
 use futures::{prelude::*, stream::BoxStream};
+use log::debug;
 use std::{iter, ops::RangeBounds, sync::Arc, time::Instant};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 use tokio::{sync::RwLock, time::Duration};
@@ -104,6 +105,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
+        debug!("invoking transactional get request");
         self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
@@ -168,6 +170,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
+        debug!("invoking transactional get_for_update request");
         self.check_allow_operation().await?;
         if !self.is_pessimistic() {
             let key = key.into();
@@ -198,6 +201,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
+        debug!("invoking transactional key_exists request");
         let key = key.into();
         Ok(self.scan_keys(key.clone()..=key, 1).await?.next().is_some())
     }
@@ -234,6 +238,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
+        debug!("invoking transactional batch_get request");
         self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
@@ -286,6 +291,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
+        debug!("invoking transactional batch_get_for_update request");
         self.check_allow_operation().await?;
         let keys: Vec<Key> = keys.into_iter().map(|k| k.into()).collect();
         if !self.is_pessimistic() {
@@ -329,6 +335,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
+        debug!("invoking transactional scan request");
         self.scan_inner(range, limit, false).await
     }
 
@@ -364,6 +371,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
+        debug!("invoking transactional scan_keys request");
         Ok(self
             .scan_inner(range, limit, true)
             .await?
@@ -374,6 +382,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     ///
     /// Similar to [`scan`](Transaction::scan), but scans in the reverse direction.
     pub(crate) fn scan_reverse(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
+        debug!("invoking transactional scan_reverse request");
         unimplemented!()
     }
 
@@ -394,6 +403,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn put(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
+        debug!("invoking transactional put request");
         self.check_allow_operation().await?;
         let key = key.into();
         if self.is_pessimistic() {
@@ -424,6 +434,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn insert(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
+        debug!("invoking transactional insert request");
         self.check_allow_operation().await?;
         let key = key.into();
         if self.buffer.get(&key).is_some() {
@@ -458,6 +469,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn delete(&mut self, key: impl Into<Key>) -> Result<()> {
+        debug!("invoking transactional delete request");
         self.check_allow_operation().await?;
         let key = key.into();
         if self.is_pessimistic() {
@@ -495,6 +507,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<()> {
+        debug!("invoking transactional lock_keys request");
         self.check_allow_operation().await?;
         match self.options.kind {
             TransactionKind::Optimistic => {
@@ -526,6 +539,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn commit(&mut self) -> Result<Option<Timestamp>> {
+        debug!("commiting transaction");
         {
             let mut status = self.status.write().await;
             if !matches!(
@@ -582,6 +596,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn rollback(&mut self) -> Result<()> {
+        debug!("rolling back transaction");
         {
             let status = self.status.read().await;
             if !matches!(
@@ -625,6 +640,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Returns the TTL set on the transaction's locks by TiKV.
     #[doc(hidden)]
     pub async fn send_heart_beat(&mut self) -> Result<u64> {
+        debug!("sending heart_beat");
         self.check_allow_operation().await?;
         let primary_key = match self.buffer.get_primary_key() {
             Some(k) => k,
@@ -686,6 +702,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         keys: impl IntoIterator<Item = impl PessimisticLock>,
         need_value: bool,
     ) -> Result<Vec<KvPair>> {
+        debug!("acquiring pessimistic lock");
         assert!(
             matches!(self.options.kind, TransactionKind::Pessimistic(_)),
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
@@ -752,6 +769,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     async fn start_auto_heartbeat(&mut self) {
+        debug!("starting auto_heartbeat");
         if !self.options.heartbeat_option.is_auto_heartbeat() || self.is_heartbeat_started {
             return;
         }
@@ -810,6 +828,7 @@ impl<PdC: PdClient> Transaction<PdC> {
 
 impl<PdC: PdClient> Drop for Transaction<PdC> {
     fn drop(&mut self) {
+        debug!("dropping transaction");
         if std::thread::panicking() {
             return;
         }
