@@ -9,6 +9,7 @@ use crate::{
     transaction::requests,
     Error, Result,
 };
+use log::debug;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -28,6 +29,7 @@ pub async fn resolve_locks(
     locks: Vec<kvrpcpb::LockInfo>,
     pd_client: Arc<impl PdClient>,
 ) -> Result<bool> {
+    debug!("resolving locks");
     let ts = pd_client.clone().get_timestamp().await?;
     let mut has_live_locks = false;
     let expired_locks = locks.into_iter().filter(|lock| {
@@ -94,9 +96,11 @@ async fn resolve_lock_with_retry(
     commit_version: u64,
     pd_client: Arc<impl PdClient>,
 ) -> Result<RegionVerId> {
+    debug!("resolving locks with retry");
     // FIXME: Add backoff
     let mut error = None;
-    for _ in 0..RESOLVE_LOCK_RETRY_LIMIT {
+    for i in 0..RESOLVE_LOCK_RETRY_LIMIT {
+        debug!("resolving locks: attempt {}", (i + 1));
         let store = pd_client.clone().store_for_key(key.into()).await?;
         let ver_id = store.region.ver_id();
         let request = requests::new_resolve_lock_request(start_version, commit_version);

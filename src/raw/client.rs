@@ -10,6 +10,7 @@ use crate::{
     request::{Collect, Plan},
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
+use log::debug;
 use std::{sync::Arc, u32};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
@@ -147,6 +148,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
+        debug!("invoking raw get request");
         let request = new_raw_get_request(key.into(), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .single_region()
@@ -179,6 +181,7 @@ impl Client {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
+        debug!("invoking raw batch_get request");
         let request = new_raw_batch_get_request(keys.into_iter().map(Into::into), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .multi_region()
@@ -207,6 +210,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
+        debug!("invoking raw put request");
         let request = new_raw_put_request(key.into(), value.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .single_region()
@@ -239,6 +243,7 @@ impl Client {
         &self,
         pairs: impl IntoIterator<Item = impl Into<KvPair>>,
     ) -> Result<()> {
+        debug!("invoking raw batch_put request");
         let request = new_raw_batch_put_request(
             pairs.into_iter().map(Into::into),
             self.cf.clone(),
@@ -271,6 +276,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn delete(&self, key: impl Into<Key>) -> Result<()> {
+        debug!("invoking raw delete request");
         let request = new_raw_delete_request(key.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .single_region()
@@ -300,6 +306,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
+        debug!("invoking raw batch_delete request");
         self.assert_non_atomic()?;
         let request =
             new_raw_batch_delete_request(keys.into_iter().map(Into::into), self.cf.clone());
@@ -328,6 +335,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn delete_range(&self, range: impl Into<BoundRange>) -> Result<()> {
+        debug!("invoking raw delete_range request");
         self.assert_non_atomic()?;
         let request = new_raw_delete_range_request(range.into(), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
@@ -359,6 +367,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn scan(&self, range: impl Into<BoundRange>, limit: u32) -> Result<Vec<KvPair>> {
+        debug!("invoking raw scan request");
         self.scan_inner(range.into(), limit, false).await
     }
 
@@ -382,6 +391,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn scan_keys(&self, range: impl Into<BoundRange>, limit: u32) -> Result<Vec<Key>> {
+        debug!("invoking raw scan_keys request");
         Ok(self
             .scan_inner(range, limit, true)
             .await?
@@ -418,6 +428,7 @@ impl Client {
         ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
         each_limit: u32,
     ) -> Result<Vec<KvPair>> {
+        debug!("invoking raw batch_scan request");
         self.batch_scan_inner(ranges, each_limit, false).await
     }
 
