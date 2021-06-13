@@ -9,13 +9,14 @@
 //!
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 
-pub use self::client::Client;
+pub use self::{client::Client, sync_client::SyncClient};
 use crate::Error;
 use std::{convert::TryFrom, fmt};
 
 mod client;
 pub mod lowering;
 mod requests;
+mod sync_client;
 
 /// A [`ColumnFamily`](ColumnFamily) is an optional parameter for [`raw::Client`](Client) requests.
 ///
