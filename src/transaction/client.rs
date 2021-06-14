@@ -185,7 +185,7 @@ impl Client {
     ///
     /// GC deletes MVCC records whose timestamp is lower than the given `safepoint`. We must guarantee
     ///  that all transactions started before this timestamp had committed. We can keep an active
-    /// transaction list in application to decide the minimal start timestamp of them.
+    /// transaction list in application to decide which is the minimal start timestamp of them.
     ///
     /// For each key, the last mutation record (unless it's a deletion) before `safepoint` is retained.
     ///
