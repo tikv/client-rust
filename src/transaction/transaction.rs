@@ -791,7 +791,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             HeartbeatOption::NoHeartbeat => DEFAULT_HEARTBEAT_INTERVAL,
             HeartbeatOption::FixedTime(heartbeat_interval) => heartbeat_interval,
         };
-        let start_instant = self.start_instant.clone();
+        let start_instant = self.start_instant;
 
         let heartbeat_task = async move {
             loop {
