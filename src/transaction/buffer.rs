@@ -69,7 +69,7 @@ impl Buffer {
         f: F,
     ) -> Result<impl Iterator<Item = KvPair>>
     where
-        F: FnOnce(Box<dyn Iterator<Item = Key>>) -> Fut,
+        F: FnOnce(Box<dyn Iterator<Item = Key> + Send>) -> Fut,
         Fut: Future<Output = Result<Vec<KvPair>>>,
     {
         let (cached_results, undetermined_keys) = {
@@ -237,7 +237,7 @@ impl Buffer {
 
     fn get_from_mutations(&self, key: &Key) -> MutationValue {
         self.entry_map
-            .get(&key)
+            .get(key)
             .map(BufferEntry::get_value)
             .unwrap_or(MutationValue::Undetermined)
     }

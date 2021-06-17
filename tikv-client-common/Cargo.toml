@@ -1,6 +1,6 @@
 [package]
 name = "tikv-client-common"
-version = "0.0.99"
+version = "0.1.0"
 edition = "2018"
 license = "Apache-2.0"
 authors = ["The TiKV Project Authors"]
@@ -10,11 +10,11 @@ description = "Common components of the TiKV Rust client"
 [dependencies]
 thiserror = "1"
 futures = { version = "0.3", features = ["compat", "async-await", "thread-pool"] }
-grpcio = { version = "0.8", features = [ "secure", "prost-codec", "use-bindgen" ], default-features = false }
+grpcio = { version = "0.9", features = [ "secure", "prost-codec", "use-bindgen" ], default-features = false }
 lazy_static = "1"
 log = "0.4"
 regex = "1"
-tikv-client-proto = { version = "0.0.99", path = "../tikv-client-proto" }
+tikv-client-proto = { version = "0.1.0", path = "../tikv-client-proto" }
 tokio = "1"
 
 [dev-dependencies]
