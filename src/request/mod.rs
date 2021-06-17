@@ -133,10 +133,9 @@ mod test {
             fn shards(
                 &self,
                 pd_client: &std::sync::Arc<impl crate::pd::PdClient>,
-                read_through_cache: bool,
             ) -> futures::stream::BoxStream<
                 'static,
-                crate::Result<(Self::Shard, crate::store::Store)>,
+                crate::Result<(Self::Shard, crate::store::RegionStore)>,
             > {
                 // Increases by 1 for each call.
                 let mut test_invoking_count = self.test_invoking_count.lock().unwrap();
@@ -144,14 +143,13 @@ mod test {
                 store_stream_for_keys(
                     Some(Key::from("mock_key".to_owned())).into_iter(),
                     pd_client.clone(),
-                    read_through_cache,
                 )
             }
 
             fn apply_shard(
                 &mut self,
                 _shard: Self::Shard,
-                _store: &crate::store::Store,
+                _store: &crate::store::RegionStore,
             ) -> crate::Result<()> {
                 Ok(())
             }

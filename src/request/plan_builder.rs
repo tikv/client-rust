@@ -8,7 +8,7 @@ use crate::{
         DefaultProcessor, Dispatch, ExtractError, HasKeys, KvRequest, Merge, MergeResponse, Plan,
         Process, ProcessResponse, ResolveLock, RetryRegion, RetryableMultiRegion, Shardable,
     },
-    store::Store,
+    store::RegionStore,
     transaction::HasLocks,
     Result,
 };
@@ -149,13 +149,11 @@ where
 
 impl<PdC: PdClient, R: KvRequest + SingleKey> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
     /// Target the request at a single region.
+    // FIXME: single region should be a special case of multi-retryable-region
     pub async fn single_region(self) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
         let key = self.plan.request.key();
-        let store = self
-            .pd_client
-            .clone()
-            .store_for_key(key.into(), true)
-            .await?;
+        // TODO: retry when region error occurred
+        let store = self.pd_client.clone().store_for_key(key.into()).await?;
         set_single_region_store(self.plan, store, self.pd_client)
     }
 }
@@ -164,7 +162,7 @@ impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
     /// Target the request at a single region; caller supplies the store to target.
     pub async fn single_region_with_store(
         self,
-        store: Store,
+        store: RegionStore,
     ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
         set_single_region_store(self.plan, store, self.pd_client)
     }
@@ -198,7 +196,7 @@ where
 
 fn set_single_region_store<PdC: PdClient, R: KvRequest>(
     mut plan: Dispatch<R>,
-    store: Store,
+    store: RegionStore,
     pd_client: Arc<PdC>,
 ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
     plan.request.set_context(store.region.context()?);

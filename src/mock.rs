@@ -8,7 +8,7 @@
 use crate::{
     pd::{PdClient, PdRpcClient, RetryClient},
     region::{Region, RegionId},
-    store::Store,
+    store::RegionStore,
     Config, Error, Key, Result, Timestamp,
 };
 use async_trait::async_trait;
@@ -124,15 +124,11 @@ impl MockPdClient {
 impl PdClient for MockPdClient {
     type KvClient = MockKvClient;
 
-    async fn map_region_to_store(
-        self: Arc<Self>,
-        region: Region,
-        _read_through_cache: bool,
-    ) -> Result<Store> {
-        Ok(Store::new(region, Arc::new(self.client.clone())))
+    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<RegionStore> {
+        Ok(RegionStore::new(region, Arc::new(self.client.clone())))
     }
 
-    async fn region_for_key(&self, key: &Key, _read_through_cache: bool) -> Result<Region> {
+    async fn region_for_key(&self, key: &Key) -> Result<Region> {
         let bytes: &[_] = key.into();
         let region = if bytes.is_empty() || bytes[0] < 10 {
             Self::region1()
@@ -143,7 +139,7 @@ impl PdClient for MockPdClient {
         Ok(region)
     }
 
-    async fn region_for_id(&self, id: RegionId, _read_through_cache: bool) -> Result<Region> {
+    async fn region_for_id(&self, id: RegionId) -> Result<Region> {
         match id {
             1 => Ok(Self::region1()),
             2 => Ok(Self::region2()),
@@ -167,13 +163,11 @@ impl PdClient for MockPdClient {
         todo!()
     }
 
-    async fn invalidate_region_cache(&self, _ver_id: crate::region::RegionVerId) {
-        todo!()
-    }
+    async fn invalidate_region_cache(&self, _ver_id: crate::region::RegionVerId) {}
 }
 
-pub fn mock_store() -> Store {
-    Store {
+pub fn mock_store() -> RegionStore {
+    RegionStore {
         region: Region::default(),
         client: Arc::new(MockKvClient::new("foo".to_owned(), None)),
     }

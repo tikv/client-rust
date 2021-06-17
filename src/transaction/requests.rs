@@ -5,7 +5,7 @@ use crate::{
     request::{
         Collect, DefaultProcessor, HasKeys, KvRequest, Merge, Process, Shardable, SingleKey,
     },
-    store::{store_stream_for_keys, store_stream_for_range_by_start_key, Store},
+    store::{store_stream_for_keys, store_stream_for_range_by_start_key, RegionStore},
     timestamp::TimestampExt,
     transaction::HasLocks,
     util::iter::FlatMapOkIterExt,
@@ -225,14 +225,13 @@ impl Shardable for kvrpcpb::PrewriteRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-        read_through_cache: bool,
-    ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
         let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
-        store_stream_for_keys(mutations.into_iter(), pd_client.clone(), read_through_cache)
+        store_stream_for_keys(mutations.into_iter(), pd_client.clone())
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
+    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
         self.set_context(store.region.context()?);
 
         // Only need to set secondary keys if we're sending the primary key.
@@ -349,14 +348,13 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-        read_through_cache: bool,
-    ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
         let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
-        store_stream_for_keys(mutations.into_iter(), pd_client.clone(), read_through_cache)
+        store_stream_for_keys(mutations.into_iter(), pd_client.clone())
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
+    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
         self.set_context(store.region.context()?);
         self.set_mutations(shard);
         Ok(())
@@ -430,16 +428,11 @@ impl Shardable for kvrpcpb::ScanLockRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-        read_through_cache: bool,
-    ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
-        store_stream_for_range_by_start_key(
-            self.start_key.clone().into(),
-            pd_client.clone(),
-            read_through_cache,
-        )
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+        store_stream_for_range_by_start_key(self.start_key.clone().into(), pd_client.clone())
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
+    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
         self.set_context(store.region.context()?);
         self.set_start_key(shard);
         Ok(())

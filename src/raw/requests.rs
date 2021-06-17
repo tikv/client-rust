@@ -4,7 +4,7 @@ use super::RawRpcRequest;
 use crate::{
     pd::PdClient,
     request::{Collect, DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey},
-    store::{store_stream_for_keys, store_stream_for_ranges, Store},
+    store::{store_stream_for_keys, store_stream_for_ranges, RegionStore},
     transaction::HasLocks,
     util::iter::FlatMapOkIterExt,
     ColumnFamily, KvPair, Result, Value,
@@ -120,18 +120,16 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-        read_through_cache: bool,
-    ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
         let mut pairs = self.pairs.clone();
         pairs.sort_by(|a, b| a.key.cmp(&b.key));
         store_stream_for_keys(
             pairs.into_iter().map(Into::<KvPair>::into),
             pd_client.clone(),
-            read_through_cache,
         )
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
+    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
         self.set_context(store.region.context()?);
         self.set_pairs(shard);
         Ok(())
@@ -256,12 +254,11 @@ impl Shardable for kvrpcpb::RawBatchScanRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-        read_through_cache: bool,
-    ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
-        store_stream_for_ranges(self.ranges.clone(), pd_client.clone(), read_through_cache)
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+        store_stream_for_ranges(self.ranges.clone(), pd_client.clone())
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
+    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
         self.set_context(store.region.context()?);
         self.set_ranges(shard);
         Ok(())

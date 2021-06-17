@@ -5,7 +5,7 @@ use crate::{
     pd::PdClient,
     request::{KvRequest, Shardable},
     stats::tikv_stats,
-    store::Store,
+    store::RegionStore,
     transaction::{resolve_locks, HasLocks},
     util::iter::FlatMapOkIterExt,
     Error, Key, KvPair, Result, Value,
@@ -85,12 +85,8 @@ where
         current_plan: P,
         backoff: Backoff,
         permits: Arc<Semaphore>,
-        read_through_cache: bool,
     ) -> Result<<Self as Plan>::Result> {
-        let shards = current_plan
-            .shards(&pd_client, read_through_cache)
-            .collect::<Vec<_>>()
-            .await;
+        let shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
         let mut handles = Vec::new();
         for shard in shards {
             let (shard, region_store) = shard?;
@@ -118,7 +114,7 @@ where
     async fn single_shard_handler(
         pd_client: Arc<PdC>,
         plan: P,
-        region_store: Store,
+        region_store: RegionStore,
         mut backoff: Backoff,
         permits: Arc<Semaphore>,
     ) -> Result<<Self as Plan>::Result> {
@@ -132,20 +128,16 @@ where
         } else if let Some(e) = resp.region_error() {
             match backoff.next_delay_duration() {
                 Some(duration) => {
-                    // don't backoff if we have handeld the region error
+                    let ver_id = region_store.region.ver_id();
                     let region_error_resolved =
                         Self::handle_region_error(pd_client.clone(), e, region_store).await?;
+                    // don't sleep if we have resolved the region error
                     if !region_error_resolved {
+                        // TODO: should we move the invalidation to `handle_region_error`?
+                        pd_client.invalidate_region_cache(ver_id).await;
                         futures_timer::Delay::new(duration).await;
                     }
-                    Self::single_plan_handler(
-                        pd_client,
-                        plan,
-                        backoff,
-                        permits,
-                        !region_error_resolved,
-                    )
-                    .await
+                    Self::single_plan_handler(pd_client, plan, backoff, permits).await
                 }
                 None => Err(e),
             }
@@ -159,7 +151,7 @@ where
     async fn handle_region_error(
         pd_client: Arc<PdC>,
         error: Error,
-        region_store: Store,
+        region_store: RegionStore,
     ) -> Result<bool> {
         match error {
             Error::RegionError(e) => {
@@ -244,14 +236,13 @@ where
         // too many concurrent requests, TiKV is more likely to return a "TiKV
         // is busy" error
         let concurrency_permits = Arc::new(Semaphore::new(MULTI_REGION_CONCURRENCY));
-        let handle = tokio::spawn(Self::single_plan_handler(
+        Self::single_plan_handler(
             self.pd_client.clone(),
             self.inner.clone(),
             self.backoff.clone(),
             concurrency_permits.clone(),
-            false,
-        ));
-        handle.await?
+        )
+        .await
     }
 }
 
@@ -409,7 +400,7 @@ where
 
             let pd_client = self.pd_client.clone();
             // FIXME: read_through_cache in resolve_locks?
-            if resolve_locks(locks, pd_client.clone(), true).await? {
+            if resolve_locks(locks, pd_client.clone()).await? {
                 result = self.inner.execute().await?;
             } else {
                 match clone.backoff.next_delay_duration() {
@@ -589,14 +580,13 @@ mod test {
         fn shards(
             &self,
             _: &Arc<impl crate::pd::PdClient>,
-            _read_through_cache: bool,
-        ) -> BoxStream<'static, crate::Result<(Self::Shard, crate::store::Store)>> {
+        ) -> BoxStream<'static, crate::Result<(Self::Shard, crate::store::RegionStore)>> {
             Box::pin(stream::iter(1..=3).map(|_| Err(Error::Unimplemented)))
                 .map_ok(|_: u8| (42, mock_store()))
                 .boxed()
         }
 
-        fn apply_shard(&mut self, _: Self::Shard, _: &crate::store::Store) -> Result<()> {
+        fn apply_shard(&mut self, _: Self::Shard, _: &crate::store::RegionStore) -> Result<()> {
             Ok(())
         }
     }

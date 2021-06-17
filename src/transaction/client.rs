@@ -221,8 +221,8 @@ impl Client {
         }
 
         // resolve locks
-        // FIXME: this is inefficient
-        resolve_locks(locks, self.pd.clone(), true).await?;
+        // FIXME: (1) this is inefficient (2) when region error occurred
+        resolve_locks(locks, self.pd.clone()).await?;
 
         // update safepoint to PD
         let res: bool = self

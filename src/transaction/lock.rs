@@ -28,7 +28,6 @@ const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 pub async fn resolve_locks(
     locks: Vec<kvrpcpb::LockInfo>,
     pd_client: Arc<impl PdClient>,
-    read_through_cache: bool,
 ) -> Result<bool> {
     debug!("resolving locks");
     let ts = pd_client.clone().get_timestamp().await?;
@@ -47,7 +46,7 @@ pub async fn resolve_locks(
     let mut clean_regions: HashMap<u64, HashSet<RegionVerId>> = HashMap::new();
     for lock in expired_locks {
         let region_ver_id = pd_client
-            .region_for_key(&lock.primary_lock.clone().into(), read_through_cache)
+            .region_for_key(&lock.primary_lock.clone().into())
             .await?
             .ver_id();
         // skip if the region is cleaned
@@ -81,7 +80,6 @@ pub async fn resolve_locks(
             lock.lock_version,
             commit_version,
             pd_client.clone(),
-            read_through_cache,
         )
         .await?;
         clean_regions
@@ -97,17 +95,13 @@ async fn resolve_lock_with_retry(
     start_version: u64,
     commit_version: u64,
     pd_client: Arc<impl PdClient>,
-    read_through_cache: bool,
 ) -> Result<RegionVerId> {
     debug!("resolving locks with retry");
     // FIXME: Add backoff
     let mut error = None;
     for i in 0..RESOLVE_LOCK_RETRY_LIMIT {
         debug!("resolving locks: attempt {}", (i + 1));
-        let store = pd_client
-            .clone()
-            .store_for_key(key.into(), read_through_cache)
-            .await?;
+        let store = pd_client.clone().store_for_key(key.into()).await?;
         let ver_id = store.region.ver_id();
         let request = requests::new_resolve_lock_request(start_version, commit_version);
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
@@ -142,12 +136,11 @@ pub trait HasLocks {
 mod tests {
     use super::*;
     use crate::mock::{MockKvClient, MockPdClient};
-    use futures::executor;
     use std::any::Any;
     use tikv_client_proto::errorpb;
 
-    #[test]
-    fn test_resolve_lock_with_retry() {
+    #[tokio::test]
+    async fn test_resolve_lock_with_retry() {
         // Test resolve lock within retry limit
         fail::cfg("region-error", "9*return").unwrap();
 
@@ -164,14 +157,16 @@ mod tests {
 
         let key = vec![1];
         let region1 = MockPdClient::region1();
-        let resolved_region =
-            executor::block_on(resolve_lock_with_retry(&key, 1, 2, client.clone(), true)).unwrap();
+        let resolved_region = resolve_lock_with_retry(&key, 1, 2, client.clone())
+            .await
+            .unwrap();
         assert_eq!(region1.ver_id(), resolved_region);
 
         // Test resolve lock over retry limit
         fail::cfg("region-error", "10*return").unwrap();
         let key = vec![100];
-        executor::block_on(resolve_lock_with_retry(&key, 3, 4, client, true))
+        resolve_lock_with_retry(&key, 3, 4, client)
+            .await
             .expect_err("should return error");
     }
 }

@@ -85,7 +85,7 @@ impl RegionCache<Cluster> {
         let region_cache_guard = self.region_cache.read().await;
         let ver_id = region_cache_guard.id_to_ver_id.get(&id);
         if let Some(ver_id) = ver_id {
-            let region = region_cache_guard.ver_id_to_region.get(&ver_id).unwrap();
+            let region = region_cache_guard.ver_id_to_region.get(ver_id).unwrap();
             return Ok(region.clone());
         }
 
@@ -109,13 +109,13 @@ impl RegionCache<Cluster> {
     }
 
     /// Force read through (query from PD) and update cache
-    pub async fn read_through_region_by_id(&self, id: RegionId) -> Result<Region> {
+    async fn read_through_region_by_id(&self, id: RegionId) -> Result<Region> {
         let region = self.inner_client.clone().get_region_by_id(id).await?;
         self.add_region(region.clone()).await;
         Ok(region)
     }
 
-    pub async fn read_through_store_by_id(&self, id: StoreId) -> Result<Store> {
+    async fn read_through_store_by_id(&self, id: StoreId) -> Result<Store> {
         let store = self.inner_client.clone().get_store(id).await?;
         self.store_cache.write().await.insert(id, store.clone());
         Ok(store)
