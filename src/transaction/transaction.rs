@@ -1,9 +1,12 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    backoff::Backoff,
+    backoff::{Backoff, DEFAULT_REGION_BACKOFF},
     pd::{PdClient, PdRpcClient},
-    request::{Collect, CollectAndMatchKey, CollectError, Plan, PlanBuilder, RetryOptions},
+    request::{
+        Collect, CollectAndMatchKey, CollectError, CollectSingleKey, Plan, PlanBuilder,
+        RetryOptions,
+    },
     timestamp::TimestampExt,
     transaction::{buffer::Buffer, lowering::*},
     BoundRange, Error, Key, KvPair, Result, Value,
@@ -116,10 +119,9 @@ impl<PdC: PdClient> Transaction<PdC> {
             .get_or_else(key, |key| async move {
                 let request = new_get_request(key, timestamp);
                 let plan = PlanBuilder::new(rpc, request)
-                    .single_region()
-                    .await?
                     .resolve_lock(retry_options.lock_backoff)
-                    .retry_region(retry_options.region_backoff)
+                    .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                    .merge(CollectSingleKey)
                     .post_process_default()
                     .plan();
                 plan.execute().await
@@ -651,10 +653,9 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.start_instant.elapsed().as_millis() as u64 + DEFAULT_LOCK_TTL,
         );
         let plan = PlanBuilder::new(self.rpc.clone(), request)
-            .single_region()
-            .await?
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
-            .retry_region(self.options.retry_options.region_backoff.clone())
+            .retry_multi_region(self.options.retry_options.region_backoff.clone())
+            .merge(CollectSingleKey)
             .post_process_default()
             .plan();
         plan.execute().await
@@ -810,9 +811,8 @@ impl<PdC: PdClient> Transaction<PdC> {
                     start_instant.elapsed().as_millis() as u64 + DEFAULT_LOCK_TTL,
                 );
                 let plan = PlanBuilder::new(rpc.clone(), request)
-                    .single_region()
-                    .await?
-                    .retry_region(region_backoff.clone())
+                    .retry_multi_region(region_backoff.clone())
+                    .merge(CollectSingleKey)
                     .plan();
                 plan.execute().await?;
             }

@@ -4,7 +4,7 @@ use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     pd::PdClient,
     region::RegionVerId,
-    request::Plan,
+    request::{CollectSingleKey, Plan},
     timestamp::TimestampExt,
     transaction::requests,
     Error, Result,
@@ -63,10 +63,9 @@ pub async fn resolve_locks(
             None => {
                 let request = requests::new_cleanup_request(lock.primary_lock, lock.lock_version);
                 let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
-                    .single_region()
-                    .await?
                     .resolve_lock(OPTIMISTIC_BACKOFF)
-                    .retry_region(DEFAULT_REGION_BACKOFF)
+                    .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                    .merge(CollectSingleKey)
                     .post_process_default()
                     .plan();
                 let commit_version = plan.execute().await?;
@@ -104,11 +103,11 @@ async fn resolve_lock_with_retry(
         let store = pd_client.clone().store_for_key(key.into()).await?;
         let ver_id = store.region.ver_id();
         let request = requests::new_resolve_lock_request(start_version, commit_version);
+        // The unique place where single-region is used
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
             .single_region_with_store(store)
             .await?
             .resolve_lock(Backoff::no_backoff())
-            .retry_region(Backoff::no_backoff())
             .extract_error()
             .plan();
         match plan.execute().await {

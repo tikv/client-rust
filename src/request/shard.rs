@@ -2,7 +2,7 @@
 
 use crate::{
     pd::PdClient,
-    request::{Dispatch, HasKeys, KvRequest, Plan, PreserveKey, ResolveLock, RetryRegion},
+    request::{Dispatch, HasKeys, KvRequest, Plan, PreserveKey, ResolveLock},
     store::RegionStore,
     Result,
 };
@@ -61,8 +61,37 @@ impl<P: Plan + HasKeys + Shardable> Shardable for PreserveKey<P> {
     impl_inner_shardable!();
 }
 
-impl<P: Plan + Shardable, PdC: PdClient> Shardable for RetryRegion<P, PdC> {
-    impl_inner_shardable!();
+#[macro_export]
+macro_rules! shardable_key {
+    ($type_: ty) => {
+        impl Shardable for $type_ {
+            type Shard = Vec<Vec<u8>>;
+
+            fn shards(
+                &self,
+                pd_client: &std::sync::Arc<impl crate::pd::PdClient>,
+            ) -> futures::stream::BoxStream<
+                'static,
+                crate::Result<(Self::Shard, crate::store::RegionStore)>,
+            > {
+                crate::store::store_stream_for_keys(
+                    std::iter::once(self.key.clone()),
+                    pd_client.clone(),
+                )
+            }
+
+            fn apply_shard(
+                &mut self,
+                mut shard: Self::Shard,
+                store: &crate::store::RegionStore,
+            ) -> crate::Result<()> {
+                self.set_context(store.region.context()?);
+                assert!(shard.len() == 1);
+                self.set_key(shard.pop().unwrap());
+                Ok(())
+            }
+        }
+    };
 }
 
 #[macro_export]

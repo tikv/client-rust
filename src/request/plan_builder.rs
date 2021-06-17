@@ -6,7 +6,7 @@ use crate::{
     pd::PdClient,
     request::{
         DefaultProcessor, Dispatch, ExtractError, HasKeys, KvRequest, Merge, MergeResponse, Plan,
-        Process, ProcessResponse, ResolveLock, RetryRegion, RetryableMultiRegion, Shardable,
+        Process, ProcessResponse, ResolveLock, RetryableMultiRegion, Shardable,
     },
     store::RegionStore,
     transaction::HasLocks,
@@ -60,24 +60,6 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: ResolveLock {
-                inner: self.plan,
-                backoff,
-                pd_client: self.pd_client,
-            },
-            phantom: PhantomData,
-        }
-    }
-
-    /// If there is a region error, re-shard the request and re-resolve regions, then retry.
-    ///
-    /// Note that this plan must wrap a multi-region plan if the request should be re-sharded.
-    pub fn retry_region(self, backoff: Backoff) -> PlanBuilder<PdC, RetryRegion<P, PdC>, Ph>
-    where
-        P::Result: HasError,
-    {
-        PlanBuilder {
-            pd_client: self.pd_client.clone(),
-            plan: RetryRegion {
                 inner: self.plan,
                 backoff,
                 pd_client: self.pd_client,
@@ -148,8 +130,9 @@ where
 }
 
 impl<PdC: PdClient, R: KvRequest + SingleKey> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
-    /// Target the request at a single region.
-    // FIXME: single region should be a special case of multi-retryable-region
+    /// Target the request at a single region. *Note*: single region plan will
+    /// cannot automatically retry on region errors. It's only used for requests
+    /// that target at a specific region but not keys (e.g. ResolveLockRequest).
     pub async fn single_region(self) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
         let key = self.plan.request.key();
         // TODO: retry when region error occurred

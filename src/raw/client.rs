@@ -7,7 +7,7 @@ use crate::{
     config::Config,
     pd::PdRpcClient,
     raw::lowering::*,
-    request::{Collect, Plan},
+    request::{Collect, CollectSingleKey, Plan},
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
 use log::debug;
@@ -151,9 +151,8 @@ impl Client {
         debug!("invoking raw get request");
         let request = new_raw_get_request(key.into(), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .single_region()
-            .await?
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectSingleKey)
             .post_process_default()
             .plan();
         plan.execute().await
@@ -212,9 +211,8 @@ impl Client {
         debug!("invoking raw put request");
         let request = new_raw_put_request(key.into(), value.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .single_region()
-            .await?
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectSingleKey)
             .extract_error()
             .plan();
         plan.execute().await?;
@@ -277,9 +275,8 @@ impl Client {
         debug!("invoking raw delete request");
         let request = new_raw_delete_request(key.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .single_region()
-            .await?
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectSingleKey)
             .extract_error()
             .plan();
         plan.execute().await?;
@@ -490,9 +487,8 @@ impl Client {
             self.cf.clone(),
         );
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), req)
-            .single_region()
-            .await?
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectSingleKey)
             .post_process_default()
             .plan();
         plan.execute().await

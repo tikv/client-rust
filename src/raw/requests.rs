@@ -2,8 +2,12 @@
 
 use super::RawRpcRequest;
 use crate::{
+    collect_first,
     pd::PdClient,
-    request::{Collect, DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey},
+    request::{
+        Collect, CollectSingleKey, DefaultProcessor, KvRequest, Merge, Process, Shardable,
+        SingleKey,
+    },
     store::{store_stream_for_keys, store_stream_for_ranges, RegionStore},
     transaction::HasLocks,
     util::iter::FlatMapOkIterExt,
@@ -24,6 +28,9 @@ pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::R
 impl KvRequest for kvrpcpb::RawGetRequest {
     type Response = kvrpcpb::RawGetResponse;
 }
+
+shardable_key!(kvrpcpb::RawGetRequest);
+collect_first!(kvrpcpb::RawGetResponse);
 
 impl SingleKey for kvrpcpb::RawGetRequest {
     fn key(&self) -> &Vec<u8> {
@@ -91,6 +98,8 @@ impl KvRequest for kvrpcpb::RawPutRequest {
     type Response = kvrpcpb::RawPutResponse;
 }
 
+shardable_key!(kvrpcpb::RawPutRequest);
+collect_first!(kvrpcpb::RawPutResponse);
 impl SingleKey for kvrpcpb::RawPutRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -153,6 +162,8 @@ impl KvRequest for kvrpcpb::RawDeleteRequest {
     type Response = kvrpcpb::RawDeleteResponse;
 }
 
+shardable_key!(kvrpcpb::RawDeleteRequest);
+collect_first!(kvrpcpb::RawDeleteResponse);
 impl SingleKey for kvrpcpb::RawDeleteRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -297,6 +308,8 @@ impl KvRequest for kvrpcpb::RawCasRequest {
     type Response = kvrpcpb::RawCasResponse;
 }
 
+shardable_key!(kvrpcpb::RawCasRequest);
+collect_first!(kvrpcpb::RawCasResponse);
 impl SingleKey for kvrpcpb::RawCasRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key

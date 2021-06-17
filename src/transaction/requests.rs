@@ -1,9 +1,11 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
+    collect_first,
     pd::PdClient,
     request::{
-        Collect, DefaultProcessor, HasKeys, KvRequest, Merge, Process, Shardable, SingleKey,
+        Collect, CollectSingleKey, DefaultProcessor, HasKeys, KvRequest, Merge, Process, Shardable,
+        SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_range_by_start_key, RegionStore},
     timestamp::TimestampExt,
@@ -13,7 +15,10 @@ use crate::{
 };
 use futures::stream::BoxStream;
 use std::{collections::HashMap, iter, sync::Arc};
-use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use tikv_client_proto::{
+    kvrpcpb::{self, TxnHeartBeatResponse},
+    pdpb::Timestamp,
+};
 
 // implement HasLocks for a response type that has a `pairs` field,
 // where locks can be extracted from both the `pairs` and `error` fields
@@ -67,6 +72,8 @@ impl KvRequest for kvrpcpb::GetRequest {
     type Response = kvrpcpb::GetResponse;
 }
 
+shardable_key!(kvrpcpb::GetRequest);
+collect_first!(kvrpcpb::GetResponse);
 impl SingleKey for kvrpcpb::GetRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -154,6 +161,10 @@ pub fn new_resolve_lock_request(
     req
 }
 
+// Note: ResolveLockRequest is a special one: it can be sent to a specified
+// region without keys. So it's not Shardable. And we don't automatically retry
+// on its region errors (in the Plan level). The region error must be manually
+// handled (in the upper level).
 impl KvRequest for kvrpcpb::ResolveLockRequest {
     type Response = kvrpcpb::ResolveLockResponse;
 }
@@ -170,6 +181,8 @@ impl KvRequest for kvrpcpb::CleanupRequest {
     type Response = kvrpcpb::CleanupResponse;
 }
 
+shardable_key!(kvrpcpb::CleanupRequest);
+collect_first!(kvrpcpb::CleanupResponse);
 impl SingleKey for kvrpcpb::CleanupRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -466,6 +479,26 @@ impl KvRequest for kvrpcpb::TxnHeartBeatRequest {
     type Response = kvrpcpb::TxnHeartBeatResponse;
 }
 
+impl Shardable for kvrpcpb::TxnHeartBeatRequest {
+    type Shard = Vec<Vec<u8>>;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+        crate::store::store_stream_for_keys(std::iter::once(self.key().clone()), pd_client.clone())
+    }
+
+    fn apply_shard(&mut self, mut shard: Self::Shard, store: &RegionStore) -> Result<()> {
+        self.set_context(store.region.context()?);
+        assert!(shard.len() == 1);
+        self.primary_lock = shard.pop().unwrap();
+        Ok(())
+    }
+}
+
+collect_first!(TxnHeartBeatResponse);
+
 impl SingleKey for kvrpcpb::TxnHeartBeatRequest {
     fn key(&self) -> &Vec<u8> {
         &self.primary_lock
@@ -482,6 +515,24 @@ impl Process<kvrpcpb::TxnHeartBeatResponse> for DefaultProcessor {
 
 impl KvRequest for kvrpcpb::CheckTxnStatusRequest {
     type Response = kvrpcpb::CheckTxnStatusResponse;
+}
+
+impl Shardable for kvrpcpb::CheckTxnStatusRequest {
+    type Shard = Vec<Vec<u8>>;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+        crate::store::store_stream_for_keys(std::iter::once(self.key().clone()), pd_client.clone())
+    }
+
+    fn apply_shard(&mut self, mut shard: Self::Shard, store: &RegionStore) -> Result<()> {
+        self.set_context(store.region.context()?);
+        assert!(shard.len() == 1);
+        self.set_primary_key(shard.pop().unwrap());
+        Ok(())
+    }
 }
 
 impl SingleKey for kvrpcpb::CheckTxnStatusRequest {

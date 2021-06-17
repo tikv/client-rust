@@ -275,6 +275,23 @@ impl<In: Clone + Send + Sync + 'static, P: Plan<Result = Vec<Result<In>>>, M: Me
 #[derive(Clone, Copy)]
 pub struct Collect;
 
+#[derive(Clone, Copy)]
+pub struct CollectSingleKey;
+
+#[macro_export]
+macro_rules! collect_first {
+    ($type_: ty) => {
+        impl Merge<$type_> for CollectSingleKey {
+            type Out = $type_;
+
+            fn merge(&self, mut input: Vec<Result<$type_>>) -> Result<Self::Out> {
+                assert!(input.len() == 1);
+                input.pop().unwrap()
+            }
+        }
+    };
+}
+
 /// A merge strategy to be used with
 /// [`preserve_keys`](super::plan_builder::PlanBuilder::preserve_keys).
 /// It matches the keys preserved before and the values returned in the response.
@@ -321,46 +338,6 @@ impl<In: Clone + Sync + Send + 'static, P: Plan<Result = In>, Pr: Process<In>> P
 
 #[derive(Clone, Copy, Debug)]
 pub struct DefaultProcessor;
-
-pub struct RetryRegion<P: Plan, PdC: PdClient> {
-    pub inner: P,
-    pub pd_client: Arc<PdC>,
-    pub backoff: Backoff,
-}
-
-impl<P: Plan, PdC: PdClient> Clone for RetryRegion<P, PdC> {
-    fn clone(&self) -> Self {
-        RetryRegion {
-            inner: self.inner.clone(),
-            pd_client: self.pd_client.clone(),
-            backoff: self.backoff.clone(),
-        }
-    }
-}
-
-#[async_trait]
-impl<P: Plan, PdC: PdClient> Plan for RetryRegion<P, PdC>
-where
-    P::Result: HasError,
-{
-    type Result = P::Result;
-
-    async fn execute(&self) -> Result<Self::Result> {
-        let mut result = self.inner.execute().await?;
-        let mut clone = self.clone();
-        while let Some(region_error) = result.region_error() {
-            match clone.backoff.next_delay_duration() {
-                None => return Err(region_error),
-                Some(delay_duration) => {
-                    futures_timer::Delay::new(delay_duration).await;
-                    result = clone.inner.execute().await?;
-                }
-            }
-        }
-
-        Ok(result)
-    }
-}
 
 pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub inner: P,
