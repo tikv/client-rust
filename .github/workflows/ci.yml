@@ -72,7 +72,6 @@ jobs:
           path: |
             ~/.cargo/.crates.toml
             ~/.cargo/.crates2.json
-            ~/.cargo/bin
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
           key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
