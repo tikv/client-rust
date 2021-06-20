@@ -636,7 +636,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     /// Get the start timestamp of this transaction.
-    pub fn get_start_timestamp(&self) -> Timestamp {
+    pub fn start_timestamp(&self) -> Timestamp {
         self.timestamp.clone()
     }
 
