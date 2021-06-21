@@ -5,6 +5,7 @@ use crate::{
     region::{Region, RegionId, RegionVerId, StoreId},
     Key, Result,
 };
+use async_recursion::async_recursion;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
@@ -12,7 +13,9 @@ use std::{
 use tikv_client_common::Error;
 use tikv_client_pd::Cluster;
 use tikv_client_proto::metapb::{self, Store};
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
+
+const MAX_RETRY_WAITING_CONCURRENT_REQUEST: usize = 4;
 
 struct RegionCacheMap {
     /// RegionVerID -> Region. It stores the concrete region caches.
@@ -26,6 +29,9 @@ struct RegionCacheMap {
     /// RegionID -> RegionVerID. Note: regions with identical ID doesn't necessarily
     /// mean they are the same, they can be different regions across time.
     id_to_ver_id: HashMap<RegionId, RegionVerId>,
+    /// We don't want to spawn multiple queries querying a same region id. If a
+    /// request is on its way, others will wait for its completion.
+    on_my_way_id: HashMap<RegionId, Arc<Notify>>,
 }
 
 impl RegionCacheMap {
@@ -34,6 +40,7 @@ impl RegionCacheMap {
             ver_id_to_region: HashMap::new(),
             key_to_ver_id: BTreeMap::new(),
             id_to_ver_id: HashMap::new(),
+            on_my_way_id: HashMap::new(),
         }
     }
 }
@@ -76,21 +83,40 @@ impl RegionCache<Cluster> {
                 return Ok(region.clone());
             }
         }
-        std::mem::drop(region_cache_guard);
+        drop(region_cache_guard);
         self.read_through_region_by_key(key.clone()).await
     }
 
     // Retrieve cache entry by RegionId. If there's no entry, query PD and update cache.
     pub async fn get_region_by_id(&self, id: RegionId) -> Result<Region> {
-        let region_cache_guard = self.region_cache.read().await;
-        let ver_id = region_cache_guard.id_to_ver_id.get(&id);
-        if let Some(ver_id) = ver_id {
-            let region = region_cache_guard.ver_id_to_region.get(ver_id).unwrap();
-            return Ok(region.clone());
-        }
+        for _ in 0..=MAX_RETRY_WAITING_CONCURRENT_REQUEST {
+            let region_cache_guard = self.region_cache.read().await;
 
-        std::mem::drop(region_cache_guard);
-        self.read_through_region_by_id(id).await
+            // check cache
+            let ver_id = region_cache_guard.id_to_ver_id.get(&id);
+            if let Some(ver_id) = ver_id {
+                let region = region_cache_guard.ver_id_to_region.get(ver_id).unwrap();
+                return Ok(region.clone());
+            }
+
+            // check concurrent requests
+            let mut notify = None;
+            if let Some(n) = region_cache_guard.on_my_way_id.get(&id) {
+                notify = Some(n.clone());
+            }
+            drop(region_cache_guard);
+
+            if let Some(n) = notify {
+                n.notified().await;
+                continue;
+            } else {
+                return self.read_through_region_by_id(id).await;
+            }
+        }
+        Err(Error::StringError(format!(
+            "Concurrent PD requests failed for {} times",
+            MAX_RETRY_WAITING_CONCURRENT_REQUEST
+        )))
     }
 
     pub async fn get_store_by_id(&self, id: StoreId) -> Result<Store> {
@@ -110,8 +136,23 @@ impl RegionCache<Cluster> {
 
     /// Force read through (query from PD) and update cache
     async fn read_through_region_by_id(&self, id: RegionId) -> Result<Region> {
+        // put a notify to let others know the region id is being queried
+        let notify = Arc::new(Notify::new());
+        {
+            let mut region_cache_guard = self.region_cache.write().await;
+            region_cache_guard.on_my_way_id.insert(id, notify.clone());
+        }
+
         let region = self.inner_client.clone().get_region_by_id(id).await?;
         self.add_region(region.clone()).await;
+
+        // notify others
+        {
+            let mut region_cache_guard = self.region_cache.write().await;
+            notify.notify_waiters();
+            region_cache_guard.on_my_way_id.remove(&id);
+        }
+
         Ok(region)
     }
 
