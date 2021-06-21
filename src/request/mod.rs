@@ -74,7 +74,7 @@ mod test {
     use std::{
         any::Any,
         iter,
-        sync::{Arc, Mutex},
+        sync::{atomic::AtomicUsize, Arc},
     };
     use tikv_client_proto::{kvrpcpb, pdpb::Timestamp, tikvpb::TikvClient};
     use tikv_client_store::HasRegionError;
@@ -100,7 +100,7 @@ mod test {
 
         #[derive(Clone)]
         struct MockKvRequest {
-            test_invoking_count: Arc<Mutex<usize>>,
+            test_invoking_count: Arc<AtomicUsize>,
         }
 
         #[async_trait]
@@ -138,8 +138,8 @@ mod test {
                 crate::Result<(Self::Shard, crate::store::RegionStore)>,
             > {
                 // Increases by 1 for each call.
-                let mut test_invoking_count = self.test_invoking_count.lock().unwrap();
-                *test_invoking_count += 1;
+                self.test_invoking_count
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 store_stream_for_keys(
                     Some(Key::from("mock_key".to_owned())).into_iter(),
                     pd_client.clone(),
@@ -155,7 +155,7 @@ mod test {
             }
         }
 
-        let invoking_count = Arc::new(Mutex::new(0));
+        let invoking_count = Arc::new(AtomicUsize::new(0));
 
         let request = MockKvRequest {
             test_invoking_count: invoking_count.clone(),
@@ -173,7 +173,7 @@ mod test {
         let _ = plan.execute().await;
 
         // Original call plus the 3 retries
-        assert_eq!(*invoking_count.lock().unwrap(), 4);
+        assert_eq!(invoking_count.load(std::sync::atomic::Ordering::SeqCst), 4);
     }
 
     #[tokio::test]

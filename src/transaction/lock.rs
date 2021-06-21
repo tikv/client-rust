@@ -146,8 +146,10 @@ mod tests {
         let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |_: &dyn Any| {
                 fail::fail_point!("region-error", |_| {
-                    let mut resp = kvrpcpb::ResolveLockResponse::default();
-                    resp.region_error = Some(errorpb::Error::default());
+                    let resp = kvrpcpb::ResolveLockResponse {
+                        region_error: Some(errorpb::Error::default()),
+                        ..Default::default()
+                    };
                     Ok(Box::new(resp) as Box<dyn Any>)
                 });
                 Ok(Box::new(kvrpcpb::ResolveLockResponse::default()) as Box<dyn Any>)

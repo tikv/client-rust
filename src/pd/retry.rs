@@ -211,13 +211,16 @@ impl Reconnect for RetryClient<Cluster> {
 mod test {
     use super::*;
     use futures::{executor, future::ready};
-    use std::sync::Mutex;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex,
+    };
     use tikv_client_common::internal_err;
 
     #[test]
     fn test_reconnect() {
         struct MockClient {
-            reconnect_count: Mutex<usize>,
+            reconnect_count: AtomicUsize,
             cluster: RwLock<((), Instant)>,
         }
 
@@ -226,7 +229,8 @@ mod test {
             type Cl = ();
 
             async fn reconnect(&self, _: u64) -> Result<()> {
-                *self.reconnect_count.lock().unwrap() += 1;
+                self.reconnect_count
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 // Not actually unimplemented, we just don't care about the error.
                 Err(Error::Unimplemented)
             }
@@ -242,23 +246,35 @@ mod test {
 
         executor::block_on(async {
             let client = Arc::new(MockClient {
-                reconnect_count: Mutex::new(0),
+                reconnect_count: AtomicUsize::new(0),
                 cluster: RwLock::new(((), Instant::now())),
             });
 
             assert!(retry_err(client.clone()).await.is_err());
-            assert_eq!(*client.reconnect_count.lock().unwrap(), MAX_REQUEST_COUNT);
+            assert_eq!(
+                client
+                    .reconnect_count
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                MAX_REQUEST_COUNT
+            );
 
-            *client.reconnect_count.lock().unwrap() = 0;
+            client
+                .reconnect_count
+                .store(0, std::sync::atomic::Ordering::SeqCst);
             assert!(retry_ok(client.clone()).await.is_ok());
-            assert_eq!(*client.reconnect_count.lock().unwrap(), 0);
+            assert_eq!(
+                client
+                    .reconnect_count
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                0
+            );
         })
     }
 
     #[test]
     fn test_retry() {
         struct MockClient {
-            cluster: RwLock<(Mutex<usize>, Instant)>,
+            cluster: RwLock<(AtomicUsize, Instant)>,
         }
 
         #[async_trait]
@@ -272,15 +288,13 @@ mod test {
 
         async fn retry_max_err(
             client: Arc<MockClient>,
-            max_retries: Arc<Mutex<usize>>,
+            max_retries: Arc<AtomicUsize>,
         ) -> Result<()> {
             retry!(client, "test", |c| {
-                let mut c = c.lock().unwrap();
-                *c += 1;
+                c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-                let mut max_retries = max_retries.lock().unwrap();
-                *max_retries -= 1;
-                if *max_retries == 0 {
+                let max_retries = max_retries.fetch_sub(1, Ordering::SeqCst) - 1;
+                if max_retries == 0 {
                     ready(Ok(()))
                 } else {
                     ready(Err(internal_err!("whoops")))
@@ -290,15 +304,13 @@ mod test {
 
         async fn retry_max_ok(
             client: Arc<MockClient>,
-            max_retries: Arc<Mutex<usize>>,
+            max_retries: Arc<AtomicUsize>,
         ) -> Result<()> {
             retry!(client, "test", |c| {
-                let mut c = c.lock().unwrap();
-                *c += 1;
+                c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-                let mut max_retries = max_retries.lock().unwrap();
-                *max_retries -= 1;
-                if *max_retries == 0 {
+                let max_retries = max_retries.fetch_sub(1, Ordering::SeqCst) - 1;
+                if max_retries == 0 {
                     ready(Ok(()))
                 } else {
                     ready(Err(internal_err!("whoops")))
@@ -308,23 +320,23 @@ mod test {
 
         executor::block_on(async {
             let client = Arc::new(MockClient {
-                cluster: RwLock::new((Mutex::new(0), Instant::now())),
+                cluster: RwLock::new((AtomicUsize::new(0), Instant::now())),
             });
-            let max_retries = Arc::new(Mutex::new(1000));
+            let max_retries = Arc::new(AtomicUsize::new(1000));
 
             assert!(retry_max_err(client.clone(), max_retries).await.is_err());
             assert_eq!(
-                *client.cluster.read().await.0.lock().unwrap(),
+                client.cluster.read().await.0.load(Ordering::SeqCst),
                 LEADER_CHANGE_RETRY
             );
 
             let client = Arc::new(MockClient {
-                cluster: RwLock::new((Mutex::new(0), Instant::now())),
+                cluster: RwLock::new((AtomicUsize::new(0), Instant::now())),
             });
-            let max_retries = Arc::new(Mutex::new(2));
+            let max_retries = Arc::new(AtomicUsize::new(2));
 
             assert!(retry_max_ok(client.clone(), max_retries).await.is_ok());
-            assert_eq!(*client.cluster.read().await.0.lock().unwrap(), 2);
+            assert_eq!(client.cluster.read().await.0.load(Ordering::SeqCst), 2);
         })
     }
 }

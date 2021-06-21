@@ -38,6 +38,7 @@ pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
     .unwrap()
 }
 
+#[allow(clippy::type_complexity)]
 #[derive(new, Default, Clone)]
 pub struct MockKvClient {
     pub addr: String,
@@ -99,8 +100,10 @@ impl MockPdClient {
         region.region.set_start_key(vec![0]);
         region.region.set_end_key(vec![10]);
 
-        let mut leader = metapb::Peer::default();
-        leader.store_id = 41;
+        let leader = metapb::Peer {
+            store_id: 41,
+            ..Default::default()
+        };
         region.leader = Some(leader);
 
         region
@@ -112,8 +115,10 @@ impl MockPdClient {
         region.region.set_start_key(vec![10]);
         region.region.set_end_key(vec![250, 250]);
 
-        let mut leader = metapb::Peer::default();
-        leader.store_id = 42;
+        let leader = metapb::Peer {
+            store_id: 42,
+            ..Default::default()
+        };
         region.leader = Some(leader);
 
         region

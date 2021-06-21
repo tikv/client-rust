@@ -384,8 +384,10 @@ mod test {
 
                 let mut resp = kvrpcpb::RawScanResponse::default();
                 for i in req.start_key[0]..req.end_key[0] {
-                    let mut kv = kvrpcpb::KvPair::default();
-                    kv.key = vec![i];
+                    let kv = kvrpcpb::KvPair {
+                        key: vec![i],
+                        ..Default::default()
+                    };
                     resp.kvs.push(kv);
                 }
 

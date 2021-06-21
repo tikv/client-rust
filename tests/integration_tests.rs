@@ -697,7 +697,7 @@ async fn txn_get_for_update() -> Result<()> {
     assert!(t1.get_for_update(key1.clone()).await?.unwrap() == value1);
     t1.commit().await?;
 
-    assert!(t2.batch_get(keys.clone()).await?.collect::<Vec<_>>().len() == 0);
+    assert!(t2.batch_get(keys.clone()).await?.count() == 0);
     let res: HashMap<_, _> = t2
         .batch_get_for_update(keys.clone())
         .await?
@@ -711,7 +711,7 @@ async fn txn_get_for_update() -> Result<()> {
     assert!(t3.get_for_update(key1).await?.is_none());
     assert!(t3.commit().await.is_err());
 
-    assert!(t4.batch_get_for_update(keys).await?.len() == 0);
+    assert!(t4.batch_get_for_update(keys).await?.is_empty());
     assert!(t4.commit().await.is_err());
 
     Ok(())

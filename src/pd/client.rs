@@ -358,9 +358,9 @@ pub mod test {
         let addr1 = "foo";
         let addr2 = "bar";
 
-        let kv1 = client.kv_client(&addr1).await.unwrap();
-        let kv2 = client.kv_client(&addr2).await.unwrap();
-        let kv3 = client.kv_client(&addr2).await.unwrap();
+        let kv1 = client.kv_client(addr1).await.unwrap();
+        let kv2 = client.kv_client(addr2).await.unwrap();
+        let kv3 = client.kv_client(addr2).await.unwrap();
         assert!(kv1.addr != kv2.addr);
         assert_eq!(kv2.addr, kv3.addr);
     }
