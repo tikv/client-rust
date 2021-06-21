@@ -4,8 +4,7 @@ use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF},
     pd::{PdClient, PdRpcClient},
     request::{
-        Collect, CollectAndMatchKey, CollectError, CollectSingleKey, Plan, PlanBuilder,
-        RetryOptions,
+        Collect, CollectAndMatchKey, CollectError, CollectFirst, Plan, PlanBuilder, RetryOptions,
     },
     timestamp::TimestampExt,
     transaction::{buffer::Buffer, lowering::*},
@@ -121,7 +120,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 let plan = PlanBuilder::new(rpc, request)
                     .resolve_lock(retry_options.lock_backoff)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
-                    .merge(CollectSingleKey)
+                    .merge(CollectFirst)
                     .post_process_default()
                     .plan();
                 plan.execute().await
@@ -660,7 +659,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let plan = PlanBuilder::new(self.rpc.clone(), request)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
-            .merge(CollectSingleKey)
+            .merge(CollectFirst)
             .post_process_default()
             .plan();
         plan.execute().await
@@ -817,7 +816,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 );
                 let plan = PlanBuilder::new(rpc.clone(), request)
                     .retry_multi_region(region_backoff.clone())
-                    .merge(CollectSingleKey)
+                    .merge(CollectFirst)
                     .plan();
                 plan.execute().await?;
             }

@@ -5,7 +5,6 @@ use crate::{
     region::{Region, RegionId, RegionVerId, StoreId},
     Key, Result,
 };
-use async_recursion::async_recursion;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,

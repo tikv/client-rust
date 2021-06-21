@@ -322,7 +322,6 @@ async fn txn_read() -> Result<()> {
 // FIXME: the test is temporarily ingnored since it's easy to fail when scheduling is frequent.
 #[tokio::test]
 #[serial]
-#[ignore]
 async fn txn_bank_transfer() -> Result<()> {
     init().await?;
     let client = TransactionClient::new(pd_addrs()).await?;
@@ -360,7 +359,7 @@ async fn txn_bank_transfer() -> Result<()> {
             .await?;
         txn.put(bob.clone(), bob_balance.to_be_bytes().to_vec())
             .await?;
-        txn.commit().await?;
+        let _ = txn.commit().await;
     }
 
     // check

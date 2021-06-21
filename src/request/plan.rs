@@ -275,13 +275,15 @@ impl<In: Clone + Send + Sync + 'static, P: Plan<Result = Vec<Result<In>>>, M: Me
 #[derive(Clone, Copy)]
 pub struct Collect;
 
+/// A merge strategy that only takes the first element. It's used for requests
+/// that should have exactly one response, e.g. a get request.
 #[derive(Clone, Copy)]
-pub struct CollectSingleKey;
+pub struct CollectFirst;
 
 #[macro_export]
 macro_rules! collect_first {
     ($type_: ty) => {
-        impl Merge<$type_> for CollectSingleKey {
+        impl Merge<$type_> for CollectFirst {
             type Out = $type_;
 
             fn merge(&self, mut input: Vec<Result<$type_>>) -> Result<Self::Out> {

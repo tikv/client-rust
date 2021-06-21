@@ -10,7 +10,7 @@ use tikv_client_store::{HasError, Request};
 
 pub use self::{
     plan::{
-        Collect, CollectAndMatchKey, CollectError, CollectSingleKey, DefaultProcessor, Dispatch,
+        Collect, CollectAndMatchKey, CollectError, CollectFirst, DefaultProcessor, Dispatch,
         ExtractError, HasKeys, Merge, MergeResponse, Plan, PreserveKey, Process, ProcessResponse,
         ResolveLock, RetryableMultiRegion,
     },

@@ -5,8 +5,7 @@ use crate::{
     collect_first,
     pd::PdClient,
     request::{
-        Collect, CollectSingleKey, DefaultProcessor, KvRequest, Merge, Process, Shardable,
-        SingleKey,
+        Collect, CollectFirst, DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_ranges, RegionStore},
     transaction::HasLocks,
