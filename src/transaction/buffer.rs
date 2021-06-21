@@ -237,7 +237,7 @@ impl Buffer {
 
     fn get_from_mutations(&self, key: &Key) -> MutationValue {
         self.entry_map
-            .get(&key)
+            .get(key)
             .map(BufferEntry::get_value)
             .unwrap_or(MutationValue::Undetermined)
     }

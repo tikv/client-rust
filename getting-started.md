@@ -79,7 +79,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh
 then, to start a local TiKV 'cluster' for testing,
 
 ```
-tiup playground nightly --kv-only
+tiup playground nightly --mode tikv-slim
 ```
 
 For more information about TiUP, see their [docs](https://docs.pingcap.com/tidb/stable/production-deployment-using-tiup).
