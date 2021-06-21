@@ -636,6 +636,11 @@ impl<PdC: PdClient> Transaction<PdC> {
         res
     }
 
+    /// Get the start timestamp of this transaction.
+    pub fn start_timestamp(&self) -> Timestamp {
+        self.timestamp.clone()
+    }
+
     /// Send a heart beat message to keep the transaction alive on the server and update its TTL.
     ///
     /// Returns the TTL set on the transaction's locks by TiKV.
