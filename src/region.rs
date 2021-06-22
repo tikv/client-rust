@@ -29,6 +29,8 @@ pub struct Region {
     pub leader: Option<metapb::Peer>,
 }
 
+impl Eq for Region {}
+
 impl Region {
     pub fn contains(&self, key: &Key) -> bool {
         let key: &[u8] = key.into();

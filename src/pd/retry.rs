@@ -28,6 +28,22 @@ const RECONNECT_INTERVAL_SEC: u64 = 1;
 const MAX_REQUEST_COUNT: usize = 5;
 const LEADER_CHANGE_RETRY: usize = 10;
 
+#[async_trait]
+pub trait RetryClientTrait {
+    // These get_* functions will try multiple times to make a request, reconnecting as necessary.
+    // It does not know about encoding. Caller should take care of it.
+    async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<Region>;
+
+    async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<Region>;
+
+    async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store>;
+
+    async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>>;
+
+    async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp>;
+
+    async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
+}
 /// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
 pub struct RetryClient<Cl = Cluster> {
     // Tuple is the cluster and the time of the cluster's last reconnect.
@@ -104,10 +120,13 @@ impl RetryClient<Cluster> {
             timeout,
         })
     }
+}
 
+#[async_trait]
+impl RetryClientTrait for RetryClient<Cluster> {
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
     // It does not know about encoding. Caller should take care of it.
-    pub async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<Region> {
+    async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<Region> {
         retry!(self, "get_region", |cluster| {
             let key = key.clone();
             async {
@@ -121,7 +140,7 @@ impl RetryClient<Cluster> {
         })
     }
 
-    pub async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<Region> {
+    async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<Region> {
         retry!(self, "get_region_by_id", |cluster| async {
             cluster
                 .get_region_by_id(region_id, self.timeout)
@@ -132,7 +151,7 @@ impl RetryClient<Cluster> {
         })
     }
 
-    pub async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store> {
+    async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store> {
         retry!(self, "get_store", |cluster| async {
             cluster
                 .get_store(id, self.timeout)
@@ -142,7 +161,7 @@ impl RetryClient<Cluster> {
     }
 
     #[allow(dead_code)]
-    pub async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
+    async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
         retry!(self, "get_all_stores", |cluster| async {
             cluster
                 .get_all_stores(self.timeout)
@@ -151,11 +170,11 @@ impl RetryClient<Cluster> {
         })
     }
 
-    pub async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
+    async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
         retry!(self, "get_timestamp", |cluster| cluster.get_timestamp())
     }
 
-    pub async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
+    async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
         retry!(self, "update_gc_safepoint", |cluster| async {
             cluster
                 .update_safepoint(safepoint, self.timeout)

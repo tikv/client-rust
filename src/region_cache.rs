@@ -1,7 +1,7 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    pd::RetryClient,
+    pd::{RetryClient, RetryClientTrait},
     region::{Region, RegionId, RegionVerId, StoreId},
     Key, Result,
 };
@@ -44,14 +44,14 @@ impl RegionCacheMap {
     }
 }
 
-pub struct RegionCache<Cl = Cluster> {
+pub struct RegionCache<Client = RetryClient<Cluster>> {
     region_cache: RwLock<RegionCacheMap>,
     store_cache: RwLock<HashMap<StoreId, Store>>,
-    inner_client: Arc<RetryClient<Cl>>,
+    inner_client: Arc<Client>,
 }
 
-impl<Cl> RegionCache<Cl> {
-    pub fn new(inner_client: Arc<RetryClient<Cl>>) -> RegionCache<Cl> {
+impl<Client> RegionCache<Client> {
+    pub fn new(inner_client: Arc<Client>) -> RegionCache<Client> {
         RegionCache {
             region_cache: RwLock::new(RegionCacheMap::new()),
             store_cache: RwLock::new(HashMap::new()),
@@ -60,7 +60,7 @@ impl<Cl> RegionCache<Cl> {
     }
 }
 
-impl RegionCache<Cluster> {
+impl<C: RetryClientTrait> RegionCache<C> {
     // Retrieve cache entry by key. If there's no entry, query PD and update cache.
     pub async fn get_region_by_key(&self, key: &Key) -> Result<Region> {
         let region_cache_guard = self.region_cache.read().await;
@@ -228,5 +228,265 @@ impl RegionCache<Cluster> {
             cache.id_to_ver_id.remove(&id);
             cache.key_to_ver_id.remove(&start_key);
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::RegionCache;
+    use crate::{
+        pd::RetryClientTrait,
+        region::{Region, RegionId},
+        Key, Result,
+    };
+    use async_trait::async_trait;
+    use std::{
+        collections::{BTreeMap, HashMap, HashSet},
+        sync::{
+            atomic::{AtomicU64, Ordering::SeqCst},
+            Arc,
+        },
+    };
+    use tikv_client_common::Error;
+    use tikv_client_proto::metapb;
+    use tokio::sync::Mutex;
+
+    #[derive(Default)]
+    struct MockRetryClient {
+        pub regions: Mutex<HashMap<RegionId, Region>>,
+        pub get_region_count: AtomicU64,
+    }
+
+    #[async_trait]
+    impl RetryClientTrait for MockRetryClient {
+        async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<crate::region::Region> {
+            self.get_region_count.fetch_add(1, SeqCst);
+            self.regions
+                .lock()
+                .await
+                .iter()
+                .filter(|(_, r)| r.contains(&key.clone().into()))
+                .map(|(_, r)| r.clone())
+                .next()
+                .ok_or_else(|| Error::StringError("MockRetryClient: region not found".to_owned()))
+        }
+
+        async fn get_region_by_id(
+            self: Arc<Self>,
+            region_id: crate::region::RegionId,
+        ) -> Result<crate::region::Region> {
+            self.get_region_count.fetch_add(1, SeqCst);
+            self.regions
+                .lock()
+                .await
+                .iter()
+                .filter(|(id, _)| id == &&region_id)
+                .map(|(_, r)| r.clone())
+                .next()
+                .ok_or_else(|| Error::StringError("MockRetryClient: region not found".to_owned()))
+        }
+
+        async fn get_store(
+            self: Arc<Self>,
+            _id: crate::region::StoreId,
+        ) -> Result<tikv_client_proto::metapb::Store> {
+            todo!()
+        }
+
+        async fn get_all_stores(self: Arc<Self>) -> Result<Vec<tikv_client_proto::metapb::Store>> {
+            todo!()
+        }
+
+        async fn get_timestamp(self: Arc<Self>) -> Result<tikv_client_proto::pdpb::Timestamp> {
+            todo!()
+        }
+
+        async fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> Result<bool> {
+            todo!()
+        }
+    }
+
+    #[tokio::test]
+    async fn cache_is_used() -> Result<()> {
+        let retry_client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(retry_client.clone());
+        retry_client.regions.lock().await.insert(
+            1,
+            Region {
+                region: metapb::Region {
+                    id: 1,
+                    start_key: vec![],
+                    end_key: vec![100],
+                    ..Default::default()
+                },
+                leader: Some(metapb::Peer {
+                    store_id: 1,
+                    ..Default::default()
+                }),
+            },
+        );
+        retry_client.regions.lock().await.insert(
+            2,
+            Region {
+                region: metapb::Region {
+                    id: 2,
+                    start_key: vec![101],
+                    end_key: vec![],
+                    ..Default::default()
+                },
+                leader: Some(metapb::Peer {
+                    store_id: 2,
+                    ..Default::default()
+                }),
+            },
+        );
+
+        assert_eq!(retry_client.get_region_count.load(SeqCst), 0);
+
+        // first query, read through
+        assert_eq!(cache.get_region_by_id(1).await?.end_key(), vec![100].into());
+        assert_eq!(retry_client.get_region_count.load(SeqCst), 1);
+
+        // should read from cache
+        assert_eq!(cache.get_region_by_id(1).await?.end_key(), vec![100].into());
+        assert_eq!(retry_client.get_region_count.load(SeqCst), 1);
+
+        // invalidate, should read through
+        cache
+            .invalidate_region_cache(cache.get_region_by_id(1).await?.ver_id())
+            .await;
+        assert_eq!(cache.get_region_by_id(1).await?.end_key(), vec![100].into());
+        assert_eq!(retry_client.get_region_count.load(SeqCst), 2);
+
+        // update leader should work
+        cache
+            .update_leader(
+                cache.get_region_by_id(2).await?.ver_id(),
+                metapb::Peer {
+                    store_id: 102,
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert_eq!(
+            cache.get_region_by_id(2).await?.leader.unwrap().store_id,
+            102
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_add_disjoint_regions() {
+        let retry_client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(retry_client.clone());
+        let region1 = region(1, vec![], vec![10]);
+        let region2 = region(2, vec![10], vec![20]);
+        let region3 = region(3, vec![30], vec![]);
+        cache.add_region(region1.clone()).await;
+        cache.add_region(region2.clone()).await;
+        cache.add_region(region3.clone()).await;
+
+        let mut expected_cache = BTreeMap::new();
+        expected_cache.insert(vec![].into(), region1);
+        expected_cache.insert(vec![10].into(), region2);
+        expected_cache.insert(vec![30].into(), region3);
+
+        assert(&cache, &expected_cache).await
+    }
+
+    #[tokio::test]
+    async fn test_add_intersecting_regions() {
+        let retry_client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(retry_client.clone());
+
+        cache.add_region(region(1, vec![], vec![10])).await;
+        cache.add_region(region(2, vec![10], vec![20])).await;
+        cache.add_region(region(3, vec![30], vec![40])).await;
+        cache.add_region(region(4, vec![50], vec![60])).await;
+        cache.add_region(region(5, vec![20], vec![35])).await;
+
+        let mut expected_cache: BTreeMap<Key, _> = BTreeMap::new();
+        expected_cache.insert(vec![].into(), region(1, vec![], vec![10]));
+        expected_cache.insert(vec![10].into(), region(2, vec![10], vec![20]));
+        expected_cache.insert(vec![20].into(), region(5, vec![20], vec![35]));
+        expected_cache.insert(vec![50].into(), region(4, vec![50], vec![60]));
+        assert(&cache, &expected_cache).await;
+
+        cache.add_region(region(6, vec![15], vec![25])).await;
+        let mut expected_cache = BTreeMap::new();
+        expected_cache.insert(vec![].into(), region(1, vec![], vec![10]));
+        expected_cache.insert(vec![15].into(), region(6, vec![15], vec![25]));
+        expected_cache.insert(vec![50].into(), region(4, vec![50], vec![60]));
+        assert(&cache, &expected_cache).await;
+
+        cache.add_region(region(7, vec![20], vec![])).await;
+        let mut expected_cache = BTreeMap::new();
+        expected_cache.insert(vec![].into(), region(1, vec![], vec![10]));
+        expected_cache.insert(vec![20].into(), region(7, vec![20], vec![]));
+        assert(&cache, &expected_cache).await;
+
+        cache.add_region(region(8, vec![], vec![15])).await;
+        let mut expected_cache = BTreeMap::new();
+        expected_cache.insert(vec![].into(), region(8, vec![], vec![15]));
+        expected_cache.insert(vec![20].into(), region(7, vec![20], vec![]));
+        assert(&cache, &expected_cache).await;
+    }
+
+    #[tokio::test]
+    async fn test_get_region_by_key() -> Result<()> {
+        let retry_client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(retry_client.clone());
+
+        let region1 = region(1, vec![], vec![10]);
+        let region2 = region(2, vec![10], vec![20]);
+        let region3 = region(3, vec![30], vec![40]);
+        let region4 = region(4, vec![50], vec![]);
+        cache.add_region(region1.clone()).await;
+        cache.add_region(region2.clone()).await;
+        cache.add_region(region3.clone()).await;
+        cache.add_region(region4.clone()).await;
+
+        assert_eq!(
+            cache.get_region_by_key(&vec![].into()).await?,
+            region1.clone()
+        );
+        assert_eq!(
+            cache.get_region_by_key(&vec![5].into()).await?,
+            region1.clone()
+        );
+        assert_eq!(
+            cache.get_region_by_key(&vec![10].into()).await?,
+            region2.clone()
+        );
+        assert!(cache.get_region_by_key(&vec![20].into()).await.is_err());
+        assert!(cache.get_region_by_key(&vec![25].into()).await.is_err());
+        assert_eq!(cache.get_region_by_key(&vec![60].into()).await?, region4);
+        Ok(())
+    }
+
+    // a helper function to assert the cache is in expected state
+    async fn assert(cache: &RegionCache<MockRetryClient>, expected_cache: &BTreeMap<Key, Region>) {
+        let guard = cache.region_cache.read().await;
+        let mut actual_keys = guard.ver_id_to_region.values().collect::<Vec<_>>();
+        let mut expected_keys = expected_cache.values().collect::<Vec<_>>();
+        actual_keys.sort_by_cached_key(|r| r.id());
+        expected_keys.sort_by_cached_key(|r| r.id());
+
+        assert_eq!(actual_keys, expected_keys);
+        assert_eq!(
+            guard.key_to_ver_id.keys().collect::<HashSet<_>>(),
+            expected_cache.keys().collect::<HashSet<_>>()
+        )
+    }
+
+    fn region(id: RegionId, start_key: Vec<u8>, end_key: Vec<u8>) -> Region {
+        let mut region = Region::default();
+        region.region.set_id(id);
+        region.region.set_start_key(start_key);
+        region.region.set_end_key(end_key);
+        // We don't care about other fields here
+
+        region
     }
 }

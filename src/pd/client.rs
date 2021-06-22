@@ -3,7 +3,7 @@
 use crate::{
     compat::stream_fn,
     kv::codec,
-    pd::RetryClient,
+    pd::{retry::RetryClientTrait, RetryClient},
     region::{Region, RegionId, RegionVerId},
     region_cache::RegionCache,
     store::RegionStore,
@@ -212,7 +212,7 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     kv_connect: KvC,
     kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
     enable_codec: bool,
-    region_cache: RegionCache<Cl>,
+    region_cache: RegionCache<RetryClient<Cl>>,
 }
 
 #[async_trait]
