@@ -3,7 +3,7 @@
 //! A utility module for managing and retrying PD requests.
 
 use crate::{
-    region::{Region, RegionId, StoreId},
+    region::{RegionId, RegionWithLeader, StoreId},
     stats::pd_stats,
     Error, Result, SecurityManager,
 };
@@ -32,9 +32,9 @@ const LEADER_CHANGE_RETRY: usize = 10;
 pub trait RetryClientTrait {
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
     // It does not know about encoding. Caller should take care of it.
-    async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<Region>;
+    async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader>;
 
-    async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<Region>;
+    async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader>;
 
     async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store>;
 
@@ -126,7 +126,7 @@ impl RetryClient<Cluster> {
 impl RetryClientTrait for RetryClient<Cluster> {
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
     // It does not know about encoding. Caller should take care of it.
-    async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<Region> {
+    async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
         retry!(self, "get_region", |cluster| {
             let key = key.clone();
             async {
@@ -140,7 +140,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
-    async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<Region> {
+    async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader> {
         retry!(self, "get_region_by_id", |cluster| async {
             cluster
                 .get_region_by_id(region_id, self.timeout)
@@ -195,9 +195,9 @@ impl fmt::Debug for RetryClient {
 fn region_from_response(
     resp: pdpb::GetRegionResponse,
     err: impl FnOnce() -> Error,
-) -> Result<Region> {
+) -> Result<RegionWithLeader> {
     let region = resp.region.ok_or_else(err)?;
-    Ok(Region::new(region, resp.leader))
+    Ok(RegionWithLeader::new(region, resp.leader))
 }
 
 // A node-like thing that can be connected to.

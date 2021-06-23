@@ -2,7 +2,7 @@
 
 use crate::{
     pd::{RetryClient, RetryClientTrait},
-    region::{Region, RegionId, RegionVerId, StoreId},
+    region::{RegionId, RegionVerId, RegionWithLeader, StoreId},
     Key, Result,
 };
 use std::{
@@ -20,7 +20,7 @@ struct RegionCacheMap {
     /// RegionVerID -> Region. It stores the concrete region caches.
     /// RegionVerID is the unique identifer of a region *across time*.
     // TODO: does it need TTL?
-    ver_id_to_region: HashMap<RegionVerId, Region>,
+    ver_id_to_region: HashMap<RegionVerId, RegionWithLeader>,
     /// Start_key -> RegionVerID
     ///
     /// Invariant: there are no intersecting regions in the map at any time.
@@ -62,7 +62,7 @@ impl<Client> RegionCache<Client> {
 
 impl<C: RetryClientTrait> RegionCache<C> {
     // Retrieve cache entry by key. If there's no entry, query PD and update cache.
-    pub async fn get_region_by_key(&self, key: &Key) -> Result<Region> {
+    pub async fn get_region_by_key(&self, key: &Key) -> Result<RegionWithLeader> {
         let region_cache_guard = self.region_cache.read().await;
         let res = {
             region_cache_guard
@@ -87,7 +87,7 @@ impl<C: RetryClientTrait> RegionCache<C> {
     }
 
     // Retrieve cache entry by RegionId. If there's no entry, query PD and update cache.
-    pub async fn get_region_by_id(&self, id: RegionId) -> Result<Region> {
+    pub async fn get_region_by_id(&self, id: RegionId) -> Result<RegionWithLeader> {
         for _ in 0..=MAX_RETRY_WAITING_CONCURRENT_REQUEST {
             let region_cache_guard = self.region_cache.read().await;
 
@@ -127,14 +127,14 @@ impl<C: RetryClientTrait> RegionCache<C> {
     }
 
     /// Force read through (query from PD) and update cache
-    pub async fn read_through_region_by_key(&self, key: Key) -> Result<Region> {
+    pub async fn read_through_region_by_key(&self, key: Key) -> Result<RegionWithLeader> {
         let region = self.inner_client.clone().get_region(key.into()).await?;
         self.add_region(region.clone()).await;
         Ok(region)
     }
 
     /// Force read through (query from PD) and update cache
-    async fn read_through_region_by_id(&self, id: RegionId) -> Result<Region> {
+    async fn read_through_region_by_id(&self, id: RegionId) -> Result<RegionWithLeader> {
         // put a notify to let others know the region id is being queried
         let notify = Arc::new(Notify::new());
         {
@@ -161,7 +161,7 @@ impl<C: RetryClientTrait> RegionCache<C> {
         Ok(store)
     }
 
-    pub async fn add_region(&self, region: Region) {
+    pub async fn add_region(&self, region: RegionWithLeader) {
         // FIXME: will it be the performance bottleneck?
         let mut cache = self.region_cache.write().await;
 
@@ -209,11 +209,10 @@ impl<C: RetryClientTrait> RegionCache<C> {
         leader: metapb::Peer,
     ) -> Result<()> {
         let mut cache = self.region_cache.write().await;
-        let region_entry = cache.ver_id_to_region.get_mut(&ver_id).ok_or_else(|| {
-            Error::StringError(
-                "update leader failed: no corresponding entry in the region cache".to_owned(),
-            )
-        })?;
+        let region_entry = cache
+            .ver_id_to_region
+            .get_mut(&ver_id)
+            .ok_or(Error::EntryNotFoundInRegionCache)?;
         region_entry.leader = Some(leader);
         Ok(())
     }
@@ -236,7 +235,7 @@ mod test {
     use super::RegionCache;
     use crate::{
         pd::RetryClientTrait,
-        region::{Region, RegionId},
+        region::{RegionId, RegionWithLeader},
         Key, Result,
     };
     use async_trait::async_trait;
@@ -253,13 +252,16 @@ mod test {
 
     #[derive(Default)]
     struct MockRetryClient {
-        pub regions: Mutex<HashMap<RegionId, Region>>,
+        pub regions: Mutex<HashMap<RegionId, RegionWithLeader>>,
         pub get_region_count: AtomicU64,
     }
 
     #[async_trait]
     impl RetryClientTrait for MockRetryClient {
-        async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<crate::region::Region> {
+        async fn get_region(
+            self: Arc<Self>,
+            key: Vec<u8>,
+        ) -> Result<crate::region::RegionWithLeader> {
             self.get_region_count.fetch_add(1, SeqCst);
             self.regions
                 .lock()
@@ -274,7 +276,7 @@ mod test {
         async fn get_region_by_id(
             self: Arc<Self>,
             region_id: crate::region::RegionId,
-        ) -> Result<crate::region::Region> {
+        ) -> Result<crate::region::RegionWithLeader> {
             self.get_region_count.fetch_add(1, SeqCst);
             self.regions
                 .lock()
@@ -312,7 +314,7 @@ mod test {
         let cache = RegionCache::new(retry_client.clone());
         retry_client.regions.lock().await.insert(
             1,
-            Region {
+            RegionWithLeader {
                 region: metapb::Region {
                     id: 1,
                     start_key: vec![],
@@ -327,7 +329,7 @@ mod test {
         );
         retry_client.regions.lock().await.insert(
             2,
-            Region {
+            RegionWithLeader {
                 region: metapb::Region {
                     id: 2,
                     start_key: vec![101],
@@ -466,7 +468,10 @@ mod test {
     }
 
     // a helper function to assert the cache is in expected state
-    async fn assert(cache: &RegionCache<MockRetryClient>, expected_cache: &BTreeMap<Key, Region>) {
+    async fn assert(
+        cache: &RegionCache<MockRetryClient>,
+        expected_cache: &BTreeMap<Key, RegionWithLeader>,
+    ) {
         let guard = cache.region_cache.read().await;
         let mut actual_keys = guard.ver_id_to_region.values().collect::<Vec<_>>();
         let mut expected_keys = expected_cache.values().collect::<Vec<_>>();
@@ -480,8 +485,8 @@ mod test {
         )
     }
 
-    fn region(id: RegionId, start_key: Vec<u8>, end_key: Vec<u8>) -> Region {
-        let mut region = Region::default();
+    fn region(id: RegionId, start_key: Vec<u8>, end_key: Vec<u8>) -> RegionWithLeader {
+        let mut region = RegionWithLeader::default();
         region.region.set_id(id);
         region.region.set_start_key(start_key);
         region.region.set_end_key(end_key);

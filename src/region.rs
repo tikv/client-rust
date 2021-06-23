@@ -24,14 +24,14 @@ pub struct RegionVerId {
 ///
 /// In TiKV all data is partitioned by range. Each partition is called a region.
 #[derive(new, Clone, Default, Debug, PartialEq)]
-pub struct Region {
+pub struct RegionWithLeader {
     pub region: metapb::Region,
     pub leader: Option<metapb::Peer>,
 }
 
-impl Eq for Region {}
+impl Eq for RegionWithLeader {}
 
-impl Region {
+impl RegionWithLeader {
     pub fn contains(&self, key: &Key) -> bool {
         let key: &[u8] = key.into();
         let start_key = self.region.get_start_key();

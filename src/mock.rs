@@ -7,7 +7,7 @@
 
 use crate::{
     pd::{PdClient, PdRpcClient, RetryClient},
-    region::{Region, RegionId},
+    region::{RegionId, RegionWithLeader},
     store::RegionStore,
     Config, Error, Key, Result, Timestamp,
 };
@@ -94,8 +94,8 @@ impl MockPdClient {
         }
     }
 
-    pub fn region1() -> Region {
-        let mut region = Region::default();
+    pub fn region1() -> RegionWithLeader {
+        let mut region = RegionWithLeader::default();
         region.region.id = 1;
         region.region.set_start_key(vec![0]);
         region.region.set_end_key(vec![10]);
@@ -109,8 +109,8 @@ impl MockPdClient {
         region
     }
 
-    pub fn region2() -> Region {
-        let mut region = Region::default();
+    pub fn region2() -> RegionWithLeader {
+        let mut region = RegionWithLeader::default();
         region.region.id = 2;
         region.region.set_start_key(vec![10]);
         region.region.set_end_key(vec![250, 250]);
@@ -129,11 +129,11 @@ impl MockPdClient {
 impl PdClient for MockPdClient {
     type KvClient = MockKvClient;
 
-    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<RegionStore> {
+    async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
         Ok(RegionStore::new(region, Arc::new(self.client.clone())))
     }
 
-    async fn region_for_key(&self, key: &Key) -> Result<Region> {
+    async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
         let bytes: &[_] = key.into();
         let region = if bytes.is_empty() || bytes[0] < 10 {
             Self::region1()
@@ -144,7 +144,7 @@ impl PdClient for MockPdClient {
         Ok(region)
     }
 
-    async fn region_for_id(&self, id: RegionId) -> Result<Region> {
+    async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {
         match id {
             1 => Ok(Self::region1()),
             2 => Ok(Self::region2()),
@@ -173,7 +173,7 @@ impl PdClient for MockPdClient {
 
 pub fn mock_store() -> RegionStore {
     RegionStore {
-        region: Region::default(),
+        region_with_leader: RegionWithLeader::default(),
         client: Arc::new(MockKvClient::new("foo".to_owned(), None)),
     }
 }

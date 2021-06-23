@@ -101,7 +101,7 @@ async fn resolve_lock_with_retry(
     for i in 0..RESOLVE_LOCK_RETRY_LIMIT {
         debug!("resolving locks: attempt {}", (i + 1));
         let store = pd_client.clone().store_for_key(key.into()).await?;
-        let ver_id = store.region.ver_id();
+        let ver_id = store.region_with_leader.ver_id();
         let request = requests::new_resolve_lock_request(start_version, commit_version);
         // The unique place where single-region is used
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)

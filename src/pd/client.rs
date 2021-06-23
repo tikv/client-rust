@@ -4,7 +4,7 @@ use crate::{
     compat::stream_fn,
     kv::codec,
     pd::{retry::RetryClientTrait, RetryClient},
-    region::{Region, RegionId, RegionVerId},
+    region::{RegionId, RegionVerId, RegionWithLeader},
     region_cache::RegionCache,
     store::RegionStore,
     BoundRange, Config, Key, Result, SecurityManager, Timestamp,
@@ -43,13 +43,13 @@ pub trait PdClient: Send + Sync + 'static {
     type KvClient: KvClient + Send + Sync + 'static;
 
     /// In transactional API, `region` is decoded (keys in raw format).
-    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<RegionStore>;
+    async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore>;
 
     /// In transactional API, the key and returned region are both decoded (keys in raw format).
-    async fn region_for_key(&self, key: &Key) -> Result<Region>;
+    async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader>;
 
     /// In transactional API, the returned region is decoded (keys in raw format)
-    async fn region_for_id(&self, id: RegionId) -> Result<Region>;
+    async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader>;
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp>;
 
@@ -192,7 +192,7 @@ pub trait PdClient: Send + Sync + 'static {
         .boxed()
     }
 
-    fn decode_region(mut region: Region, enable_codec: bool) -> Result<Region> {
+    fn decode_region(mut region: RegionWithLeader, enable_codec: bool) -> Result<RegionWithLeader> {
         if enable_codec {
             codec::decode_bytes_in_place(&mut region.region.mut_start_key(), false)?;
             codec::decode_bytes_in_place(&mut region.region.mut_end_key(), false)?;
@@ -219,14 +219,14 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
 impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     type KvClient = KvC::KvClient;
 
-    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<RegionStore> {
+    async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
         let store_id = region.get_store_id()?;
         let store = self.region_cache.get_store_by_id(store_id).await?;
         let kv_client = self.kv_client(store.get_address()).await?;
         Ok(RegionStore::new(region, Arc::new(kv_client)))
     }
 
-    async fn region_for_key(&self, key: &Key) -> Result<Region> {
+    async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
         let enable_codec = self.enable_codec;
         let key = if enable_codec {
             key.to_encoded()
@@ -238,7 +238,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         Self::decode_region(region, enable_codec)
     }
 
-    async fn region_for_id(&self, id: RegionId) -> Result<Region> {
+    async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {
         let region = self.region_cache.get_region_by_id(id).await?;
         Self::decode_region(region, self.enable_codec)
     }
@@ -408,13 +408,13 @@ pub mod test {
         let k3: Key = vec![11, 4].into();
         let range1 = (k1, k2.clone()).into();
         let mut stream = executor::block_on_stream(client.clone().stores_for_range(range1));
-        assert_eq!(stream.next().unwrap().unwrap().region.id(), 1);
+        assert_eq!(stream.next().unwrap().unwrap().region_with_leader.id(), 1);
         assert!(stream.next().is_none());
 
         let range2 = (k2, k3).into();
         let mut stream = executor::block_on_stream(client.stores_for_range(range2));
-        assert_eq!(stream.next().unwrap().unwrap().region.id(), 1);
-        assert_eq!(stream.next().unwrap().unwrap().region.id(), 2);
+        assert_eq!(stream.next().unwrap().unwrap().region_with_leader.id(), 1);
+        assert_eq!(stream.next().unwrap().unwrap().region_with_leader.id(), 2);
         assert!(stream.next().is_none());
     }
 

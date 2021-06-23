@@ -245,7 +245,7 @@ impl Shardable for kvrpcpb::PrewriteRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region.context()?);
+        self.set_context(store.region_with_leader.context()?);
 
         // Only need to set secondary keys if we're sending the primary key.
         if self.use_async_commit && !self.mutations.iter().any(|m| m.key == self.primary_lock) {
@@ -368,7 +368,7 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region.context()?);
+        self.set_context(store.region_with_leader.context()?);
         self.set_mutations(shard);
         Ok(())
     }
@@ -446,7 +446,7 @@ impl Shardable for kvrpcpb::ScanLockRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region.context()?);
+        self.set_context(store.region_with_leader.context()?);
         self.set_start_key(shard);
         Ok(())
     }
@@ -490,7 +490,7 @@ impl Shardable for kvrpcpb::TxnHeartBeatRequest {
     }
 
     fn apply_shard(&mut self, mut shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region.context()?);
+        self.set_context(store.region_with_leader.context()?);
         assert!(shard.len() == 1);
         self.primary_lock = shard.pop().unwrap();
         Ok(())
@@ -528,7 +528,7 @@ impl Shardable for kvrpcpb::CheckTxnStatusRequest {
     }
 
     fn apply_shard(&mut self, mut shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region.context()?);
+        self.set_context(store.region_with_leader.context()?);
         assert!(shard.len() == 1);
         self.set_primary_key(shard.pop().unwrap());
         Ok(())

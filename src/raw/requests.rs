@@ -138,7 +138,7 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region.context()?);
+        self.set_context(store.region_with_leader.context()?);
         self.set_pairs(shard);
         Ok(())
     }
@@ -269,7 +269,7 @@ impl Shardable for kvrpcpb::RawBatchScanRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region.context()?);
+        self.set_context(store.region_with_leader.context()?);
         self.set_ranges(shard);
         Ok(())
     }

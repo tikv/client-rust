@@ -14,7 +14,7 @@ use async_recursion::async_recursion;
 use async_trait::async_trait;
 use futures::{future::try_join_all, stream::StreamExt};
 use std::{collections::VecDeque, marker::PhantomData, sync::Arc};
-use tikv_client_proto::kvrpcpb;
+use tikv_client_proto::{errorpb::EpochNotMatch, kvrpcpb};
 use tikv_client_store::{HasError, HasRegionError, KvClient};
 use tokio::sync::Semaphore;
 
@@ -119,7 +119,7 @@ where
         permits: Arc<Semaphore>,
     ) -> Result<<Self as Plan>::Result> {
         // limit concurrent requests
-        let permit = permits.acquire().await;
+        let permit = permits.acquire().await.unwrap();
         let mut resp = plan.execute().await?;
         drop(permit);
 
@@ -128,13 +128,10 @@ where
         } else if let Some(e) = resp.region_error() {
             match backoff.next_delay_duration() {
                 Some(duration) => {
-                    let ver_id = region_store.region.ver_id();
                     let region_error_resolved =
                         Self::handle_region_error(pd_client.clone(), e, region_store).await?;
                     // don't sleep if we have resolved the region error
                     if !region_error_resolved {
-                        // TODO: should we move the invalidation to `handle_region_error`?
-                        pd_client.invalidate_region_cache(ver_id).await;
                         futures_timer::Delay::new(duration).await;
                     }
                     Self::single_plan_handler(pd_client, plan, backoff, permits).await
@@ -146,59 +143,68 @@ where
         }
     }
 
-    // Returns whether the region error is successfully handled.
-    // Returns error if the region error shouldn't be retried.
+    // Returns
+    // 1. Ok(true): error has been resolved, retry immediately
+    // 2. Ok(false): backoff, and then retry
+    // 3. Err(Error): can't be resolved, return the error to upper level
     async fn handle_region_error(
         pd_client: Arc<PdC>,
         error: Error,
         region_store: RegionStore,
     ) -> Result<bool> {
         match error {
-            Error::RegionError(e) => {
+            Error::RegionError(mut e) => {
+                let ver_id = region_store.region_with_leader.ver_id();
                 if e.has_not_leader() {
                     let not_leader = e.get_not_leader();
                     if not_leader.has_leader() {
-                        Ok(pd_client
+                        match pd_client
                             .update_leader(
-                                region_store.region.ver_id(),
+                                region_store.region_with_leader.ver_id(),
                                 not_leader.get_leader().clone(),
                             )
                             .await
-                            .is_ok())
+                        {
+                            Ok(_) => Ok(true),
+                            Err(Error::EntryNotFoundInRegionCache) => Ok(false),
+                            Err(e) => {
+                                pd_client.invalidate_region_cache(ver_id).await;
+                                Err(e)
+                            }
+                        }
                     } else {
                         // The peer doesn't know who is the current leader. Generally it's because
                         // the Raft group is in an election, but it's possible that the peer is
                         // isolated and removed from the Raft group. So it's necessary to reload
                         // the region from PD.
-                        pd_client
-                            .invalidate_region_cache(region_store.region.ver_id())
-                            .await;
+                        pd_client.invalidate_region_cache(ver_id).await;
                         Ok(false)
                     }
                 } else if e.has_store_not_match() {
-                    pd_client
-                        .invalidate_region_cache(region_store.region.ver_id())
-                        .await;
+                    pd_client.invalidate_region_cache(ver_id).await;
                     Ok(false)
                 } else if e.has_epoch_not_match() {
-                    // TODO
-                    Err(Error::RegionError(e))
+                    Self::on_region_epoch_not_match(
+                        pd_client.clone(),
+                        region_store,
+                        e.take_epoch_not_match(),
+                    )
+                    .await
                 } else if e.has_server_is_busy()
                     || e.has_stale_command()
                     || e.has_region_not_found()
                     || e.has_max_timestamp_not_synced()
                 {
+                    pd_client.invalidate_region_cache(ver_id).await;
                     Ok(false)
                 } else if e.has_raft_entry_too_large() {
                     Err(Error::RegionError(e))
                 } else {
-                    pd_client
-                        .invalidate_region_cache(region_store.region.ver_id())
-                        .await;
+                    pd_client.invalidate_region_cache(ver_id).await;
                     Ok(false)
                 }
             }
-            // TODO: whether to retry here?
+            // errors from PD requests, backoff and retry
             Error::RegionForKeyNotFound { .. }
             | Error::RegionNotFoundInResponse { .. }
             | Error::LeaderNotFound { .. } => Ok(false),
@@ -206,6 +212,47 @@ where
                 unreachable!()
             }
         }
+    }
+
+    // Returns
+    // 1. Ok(true): error has been resolved, retry immediately
+    // 2. Ok(false): backoff, and then retry
+    // 3. Err(Error): can't be resolved, return the error to upper level
+    async fn on_region_epoch_not_match(
+        pd_client: Arc<PdC>,
+        region_store: RegionStore,
+        error: EpochNotMatch,
+    ) -> Result<bool> {
+        let ver_id = region_store.region_with_leader.ver_id();
+        if error.get_current_regions().is_empty() {
+            pd_client.invalidate_region_cache(ver_id).await;
+            return Ok(true);
+        }
+
+        for r in error.get_current_regions() {
+            if r.get_id() == region_store.region_with_leader.id() {
+                let returned_conf_ver = r.get_region_epoch().get_conf_ver();
+                let returned_version = r.get_region_epoch().get_version();
+                let current_conf_ver = region_store
+                    .region_with_leader
+                    .region
+                    .get_region_epoch()
+                    .get_conf_ver();
+                let current_version = region_store
+                    .region_with_leader
+                    .region
+                    .get_region_epoch()
+                    .get_version();
+
+                // Find whether the current region is ahead of TiKV's. If so, backoff.
+                if returned_conf_ver < current_conf_ver || returned_version < current_version {
+                    return Ok(false);
+                }
+            }
+        }
+        // TODO: finer grained processing
+        pd_client.invalidate_region_cache(ver_id).await;
+        Ok(false)
     }
 }
 

@@ -1,6 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{pd::PdClient, region::Region, BoundRange, Key, Result};
+use crate::{pd::PdClient, region::RegionWithLeader, BoundRange, Key, Result};
 use derive_new::new;
 use futures::{prelude::*, stream::BoxStream};
 use std::{
@@ -12,12 +12,12 @@ use tikv_client_store::{KvClient, KvConnect, TikvConnect};
 
 #[derive(new, Clone)]
 pub struct RegionStore {
-    pub region: Region,
+    pub region_with_leader: RegionWithLeader,
     pub client: Arc<dyn KvClient + Send + Sync>,
 }
 
 pub trait KvConnectStore: KvConnect {
-    fn connect_to_store(&self, region: Region, address: String) -> Result<RegionStore> {
+    fn connect_to_store(&self, region: RegionWithLeader, address: String) -> Result<RegionStore> {
         info!("connect to tikv endpoint: {:?}", &address);
         let client = self.connect(address.as_str())?;
         Ok(RegionStore::new(region, Arc::new(client)))
@@ -57,7 +57,7 @@ pub fn store_stream_for_range<PdC: PdClient>(
     pd_client
         .stores_for_range(bnd_range)
         .map_ok(move |store| {
-            let region_range = store.region.range();
+            let region_range = store.region_with_leader.range();
             let result_range = range_intersection(
                 region_range,
                 (range.0.clone().into(), range.1.clone().into()),
@@ -75,7 +75,7 @@ pub fn store_stream_for_range_by_start_key<PdC: PdClient>(
     pd_client
         .stores_for_range(bnd_range)
         .map_ok(move |store| {
-            let region_range = store.region.range();
+            let region_range = store.region_with_leader.range();
             (
                 range_intersection(region_range, (start_key.clone(), vec![].into()))
                     .0

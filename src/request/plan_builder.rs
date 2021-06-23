@@ -182,7 +182,8 @@ fn set_single_region_store<PdC: PdClient, R: KvRequest>(
     store: RegionStore,
     pd_client: Arc<PdC>,
 ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
-    plan.request.set_context(store.region.context()?);
+    plan.request
+        .set_context(store.region_with_leader.context()?);
     plan.kv_client = Some(store.client);
     Ok(PlanBuilder {
         plan,

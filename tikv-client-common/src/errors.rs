@@ -33,6 +33,10 @@ pub enum Error {
         "The operation is not supported in current mode, please consider using RawClient with or without atomic mode"
     )]
     UnsupportedMode,
+    #[error("There is no current_regions in the EpochNotMatch error")]
+    NoCurrentRegions,
+    #[error("The specified entry is not found in the region cache")]
+    EntryNotFoundInRegionCache,
     /// Wraps a `std::io::Error`.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
