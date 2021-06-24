@@ -103,7 +103,7 @@ async fn resolve_lock_with_retry(
         let store = pd_client.clone().store_for_key(key.into()).await?;
         let ver_id = store.region_with_leader.ver_id();
         let request = requests::new_resolve_lock_request(start_version, commit_version);
-        // The unique place where single-region is used
+        // The only place where single-region is used
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
             .single_region_with_store(store)
             .await?
@@ -114,10 +114,17 @@ async fn resolve_lock_with_retry(
             Ok(_) => {
                 return Ok(ver_id);
             }
-            Err(e @ Error::RegionError(_)) => {
-                // Retry on region error
-                error = Some(e);
-                continue;
+            // Retry on region error
+            Err(Error::ExtractedErrors(mut errors)) => {
+                // ResolveLockResponse can have at most 1 error
+                match errors.pop() {
+                    e @ Some(Error::RegionError(_)) => {
+                        error = e;
+                        continue;
+                    }
+                    Some(e) => return Err(e),
+                    None => unreachable!(),
+                }
             }
             Err(e) => return Err(e),
         }
