@@ -6,11 +6,11 @@ use crate::{
 };
 use async_trait::async_trait;
 use derive_new::new;
-use tikv_client_store::{HasError, Request};
+use tikv_client_store::{HasKeyErrors, Request};
 
 pub use self::{
     plan::{
-        Collect, CollectAndMatchKey, CollectError, CollectFirst, DefaultProcessor, Dispatch,
+        Collect, CollectAndMatchKey, CollectError, CollectSingle, DefaultProcessor, Dispatch,
         ExtractError, HasKeys, Merge, MergeResponse, Plan, PreserveKey, Process, ProcessResponse,
         ResolveLock, RetryableMultiRegion,
     },
@@ -27,7 +27,7 @@ mod shard;
 #[async_trait]
 pub trait KvRequest: Request + Sized + Clone + Sync + Send + 'static {
     /// The expected response to the request.
-    type Response: HasError + HasLocks + Clone + Send + 'static;
+    type Response: HasKeyErrors + HasLocks + Clone + Send + 'static;
 }
 
 #[derive(Clone, Debug, new, Eq, PartialEq)]
@@ -84,8 +84,8 @@ mod test {
         #[derive(Clone)]
         struct MockRpcResponse;
 
-        impl HasError for MockRpcResponse {
-            fn error(&mut self) -> Option<Error> {
+        impl HasKeyErrors for MockRpcResponse {
+            fn key_errors(&mut self) -> Option<Vec<Error>> {
                 None
             }
         }

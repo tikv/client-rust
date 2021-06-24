@@ -88,7 +88,13 @@ async fn ensure_region_split(
 
 pub fn pd_addrs() -> Vec<String> {
     env::var(ENV_PD_ADDRS)
-        .unwrap_or_else(|_| "127.0.0.1:2379".to_owned())
+        .unwrap_or_else(|_| {
+            info!(
+                "Environment variable {} is not found. Using {:?} as default.",
+                ENV_PD_ADDRS, "127.0.0.1:2379"
+            );
+            "127.0.0.1:2379".to_owned()
+        })
         .split(',')
         .map(From::from)
         .collect()

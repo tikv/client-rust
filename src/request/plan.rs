@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use futures::{future::try_join_all, stream::StreamExt};
 use std::{collections::VecDeque, marker::PhantomData, sync::Arc};
 use tikv_client_proto::{errorpb::EpochNotMatch, kvrpcpb};
-use tikv_client_store::{HasError, HasRegionError, KvClient};
+use tikv_client_store::{HasKeyErrors, HasRegionError, HasRegionErrors, KvClient};
 use tokio::sync::Semaphore;
 
 /// A plan for how to execute a request. A user builds up a plan with various
@@ -76,7 +76,7 @@ pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
 
 impl<P: Plan + Shardable, PdC: PdClient> RetryableMultiRegion<P, PdC>
 where
-    P::Result: HasError,
+    P::Result: HasKeyErrors + HasRegionError,
 {
     // A plan may involve multiple shards
     #[async_recursion]
@@ -123,8 +123,8 @@ where
         let mut resp = plan.execute().await?;
         drop(permit);
 
-        if let Some(e) = resp.error() {
-            Ok(vec![Err(e)])
+        if let Some(e) = resp.key_errors() {
+            Ok(vec![Err(Error::MultipleKeyErrors(e))])
         } else if let Some(e) = resp.region_error() {
             match backoff.next_delay_duration() {
                 Some(duration) => {
@@ -269,7 +269,7 @@ impl<P: Plan, PdC: PdClient> Clone for RetryableMultiRegion<P, PdC> {
 #[async_trait]
 impl<P: Plan + Shardable, PdC: PdClient> Plan for RetryableMultiRegion<P, PdC>
 where
-    P::Result: HasError,
+    P::Result: HasKeyErrors + HasRegionError,
 {
     type Result = Vec<Result<P::Result>>;
 
@@ -325,12 +325,12 @@ pub struct Collect;
 /// A merge strategy that only takes the first element. It's used for requests
 /// that should have exactly one response, e.g. a get request.
 #[derive(Clone, Copy)]
-pub struct CollectFirst;
+pub struct CollectSingle;
 
 #[macro_export]
 macro_rules! collect_first {
     ($type_: ty) => {
-        impl Merge<$type_> for CollectFirst {
+        impl Merge<$type_> for CollectSingle {
             type Out = $type_;
 
             fn merge(&self, mut input: Vec<Result<$type_>>) -> Result<Self::Out> {
@@ -470,16 +470,16 @@ impl<P: Plan> Clone for ExtractError<P> {
 #[async_trait]
 impl<P: Plan> Plan for ExtractError<P>
 where
-    P::Result: HasError,
+    P::Result: HasKeyErrors + HasRegionErrors,
 {
     type Result = P::Result;
 
     async fn execute(&self) -> Result<Self::Result> {
         let mut result = self.inner.execute().await?;
-        if let Some(error) = result.error() {
-            Err(error)
-        } else if let Some(error) = result.region_error() {
-            Err(error)
+        if let Some(errors) = result.key_errors() {
+            Err(Error::ExtractedErrors(errors))
+        } else if let Some(errors) = result.region_errors() {
+            Err(Error::ExtractedErrors(errors))
         } else {
             Ok(result)
         }
@@ -526,9 +526,9 @@ pub trait HasKeys {
 #[derive(Debug, Clone)]
 pub struct ResponseAndKeys<Resp>(Resp, Vec<Key>);
 
-impl<Resp: HasError> HasError for ResponseAndKeys<Resp> {
-    fn error(&mut self) -> Option<Error> {
-        self.0.error()
+impl<Resp: HasKeyErrors> HasKeyErrors for ResponseAndKeys<Resp> {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
+        self.0.key_errors()
     }
 }
 

@@ -7,7 +7,7 @@ use crate::{
     config::Config,
     pd::PdRpcClient,
     raw::lowering::*,
-    request::{Collect, CollectFirst, Plan},
+    request::{Collect, CollectSingle, Plan},
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
 use log::debug;
@@ -152,7 +152,7 @@ impl Client {
         let request = new_raw_get_request(key.into(), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
-            .merge(CollectFirst)
+            .merge(CollectSingle)
             .post_process_default()
             .plan();
         plan.execute().await
@@ -212,7 +212,7 @@ impl Client {
         let request = new_raw_put_request(key.into(), value.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
-            .merge(CollectFirst)
+            .merge(CollectSingle)
             .extract_error()
             .plan();
         plan.execute().await?;
@@ -276,7 +276,7 @@ impl Client {
         let request = new_raw_delete_request(key.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
-            .merge(CollectFirst)
+            .merge(CollectSingle)
             .extract_error()
             .plan();
         plan.execute().await?;
@@ -488,7 +488,7 @@ impl Client {
         );
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), req)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
-            .merge(CollectFirst)
+            .merge(CollectSingle)
             .post_process_default()
             .plan();
         plan.execute().await

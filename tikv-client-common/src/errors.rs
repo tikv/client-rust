@@ -55,9 +55,12 @@ pub enum Error {
     /// Wraps `tikv_client_proto::kvrpcpb::KeyError`
     #[error("{0:?}")]
     KeyError(tikv_client_proto::kvrpcpb::KeyError),
-    /// Multiple errors
+    /// Multiple errors generated from the ExtractError plan.
     #[error("Multiple errors: {0:?}")]
-    MultipleErrors(Vec<Error>),
+    ExtractedErrors(Vec<Error>),
+    /// Multiple key errors
+    #[error("Multiple key errors: {0:?}")]
+    MultipleKeyErrors(Vec<Error>),
     /// Invalid ColumnFamily
     #[error("Unsupported column family {}", _0)]
     ColumnFamilyError(String),

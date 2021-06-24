@@ -4,12 +4,24 @@ use crate::Error;
 use std::fmt::Display;
 use tikv_client_proto::kvrpcpb;
 
+// Those that can have a single region error
 pub trait HasRegionError {
     fn region_error(&mut self) -> Option<Error>;
 }
 
-pub trait HasError: HasRegionError {
-    fn error(&mut self) -> Option<Error>;
+// Those that can have multiple region errors
+pub trait HasRegionErrors {
+    fn region_errors(&mut self) -> Option<Vec<Error>>;
+}
+
+pub trait HasKeyErrors {
+    fn key_errors(&mut self) -> Option<Vec<Error>>;
+}
+
+impl<T: HasRegionError> HasRegionErrors for T {
+    fn region_errors(&mut self) -> Option<Vec<Error>> {
+        self.region_error().map(|e| vec![e])
+    }
 }
 
 macro_rules! has_region_error {
@@ -56,10 +68,10 @@ has_region_error!(kvrpcpb::RawCasResponse);
 
 macro_rules! has_key_error {
     ($type:ty) => {
-        impl HasError for $type {
-            fn error(&mut self) -> Option<Error> {
+        impl HasKeyErrors for $type {
+            fn key_errors(&mut self) -> Option<Vec<Error>> {
                 if self.has_error() {
-                    Some(self.take_error().into())
+                    Some(vec![self.take_error().into()])
                 } else {
                     None
                 }
@@ -81,14 +93,14 @@ has_key_error!(kvrpcpb::CheckSecondaryLocksResponse);
 
 macro_rules! has_str_error {
     ($type:ty) => {
-        impl HasError for $type {
-            fn error(&mut self) -> Option<Error> {
+        impl HasKeyErrors for $type {
+            fn key_errors(&mut self) -> Option<Vec<Error>> {
                 if self.get_error().is_empty() {
                     None
                 } else {
-                    Some(Error::KvError {
+                    Some(vec![Error::KvError {
                         message: self.take_error(),
-                    })
+                    }])
                 }
             }
         }
@@ -105,67 +117,67 @@ has_str_error!(kvrpcpb::RawCasResponse);
 has_str_error!(kvrpcpb::ImportResponse);
 has_str_error!(kvrpcpb::DeleteRangeResponse);
 
-impl HasError for kvrpcpb::ScanResponse {
-    fn error(&mut self) -> Option<Error> {
+impl HasKeyErrors for kvrpcpb::ScanResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
         extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take()))
     }
 }
 
-impl HasError for kvrpcpb::BatchGetResponse {
-    fn error(&mut self) -> Option<Error> {
+impl HasKeyErrors for kvrpcpb::BatchGetResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
         extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take()))
     }
 }
 
-impl HasError for kvrpcpb::RawBatchGetResponse {
-    fn error(&mut self) -> Option<Error> {
+impl HasKeyErrors for kvrpcpb::RawBatchGetResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
         extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take()))
     }
 }
 
-impl HasError for kvrpcpb::RawScanResponse {
-    fn error(&mut self) -> Option<Error> {
+impl HasKeyErrors for kvrpcpb::RawScanResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
         extract_errors(self.kvs.iter_mut().map(|pair| pair.error.take()))
     }
 }
 
-impl HasError for kvrpcpb::RawBatchScanResponse {
-    fn error(&mut self) -> Option<Error> {
+impl HasKeyErrors for kvrpcpb::RawBatchScanResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
         extract_errors(self.kvs.iter_mut().map(|pair| pair.error.take()))
     }
 }
 
-impl HasError for kvrpcpb::PrewriteResponse {
-    fn error(&mut self) -> Option<Error> {
+impl HasKeyErrors for kvrpcpb::PrewriteResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
         extract_errors(self.take_errors().into_iter().map(Some))
     }
 }
 
-impl HasError for kvrpcpb::PessimisticLockResponse {
-    fn error(&mut self) -> Option<Error> {
+impl HasKeyErrors for kvrpcpb::PessimisticLockResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
         extract_errors(self.take_errors().into_iter().map(Some))
     }
 }
 
-impl HasError for kvrpcpb::PessimisticRollbackResponse {
-    fn error(&mut self) -> Option<Error> {
+impl HasKeyErrors for kvrpcpb::PessimisticRollbackResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
         extract_errors(self.take_errors().into_iter().map(Some))
     }
 }
 
-impl<T: HasError, E: Display> HasError for Result<T, E> {
-    fn error(&mut self) -> Option<Error> {
+impl<T: HasKeyErrors, E: Display> HasKeyErrors for Result<T, E> {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
         match self {
-            Ok(x) => x.error(),
-            Err(e) => Some(Error::StringError(e.to_string())),
+            Ok(x) => x.key_errors(),
+            Err(e) => Some(vec![Error::StringError(e.to_string())]),
         }
     }
 }
 
-impl<T: HasError> HasError for Vec<T> {
-    fn error(&mut self) -> Option<Error> {
+impl<T: HasKeyErrors> HasKeyErrors for Vec<T> {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
         for t in self {
-            if let Some(e) = t.error() {
+            if let Some(e) = t.key_errors() {
                 return Some(e);
             }
         }
@@ -180,31 +192,31 @@ impl<T: HasRegionError, E> HasRegionError for Result<T, E> {
     }
 }
 
-impl<T: HasRegionError> HasRegionError for Vec<T> {
-    fn region_error(&mut self) -> Option<Error> {
+impl<T: HasRegionError> HasRegionErrors for Vec<T> {
+    fn region_errors(&mut self) -> Option<Vec<Error>> {
         let errors: Vec<_> = self.iter_mut().filter_map(|x| x.region_error()).collect();
         if errors.is_empty() {
             None
         } else {
-            Some(Error::MultipleErrors(errors))
+            Some(errors)
         }
     }
 }
 
-fn extract_errors(error_iter: impl Iterator<Item = Option<kvrpcpb::KeyError>>) -> Option<Error> {
+fn extract_errors(
+    error_iter: impl Iterator<Item = Option<kvrpcpb::KeyError>>,
+) -> Option<Vec<Error>> {
     let errors: Vec<Error> = error_iter.flatten().map(Into::into).collect();
     if errors.is_empty() {
         None
-    } else if errors.len() == 1 {
-        Some(errors.into_iter().next().unwrap())
     } else {
-        Some(Error::MultipleErrors(errors))
+        Some(errors)
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::HasError;
+    use super::HasKeyErrors;
     use tikv_client_common::{internal_err, Error};
     use tikv_client_proto::kvrpcpb;
     #[test]
@@ -214,7 +226,7 @@ mod test {
             error: None,
             commit_version: 0,
         });
-        assert!(resp.error().is_none());
+        assert!(resp.key_errors().is_none());
 
         let mut resp: Result<_, Error> = Ok(kvrpcpb::CommitResponse {
             region_error: None,
@@ -231,9 +243,9 @@ mod test {
             }),
             commit_version: 0,
         });
-        assert!(resp.error().is_some());
+        assert!(resp.key_errors().is_some());
 
         let mut resp: Result<kvrpcpb::CommitResponse, _> = Err(internal_err!("some error"));
-        assert!(resp.error().is_some());
+        assert!(resp.key_errors().is_some());
     }
 }

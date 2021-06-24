@@ -4,7 +4,7 @@ use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     pd::PdClient,
     region::RegionVerId,
-    request::{CollectFirst, Plan},
+    request::{CollectSingle, Plan},
     timestamp::TimestampExt,
     transaction::requests,
     Error, Result,
@@ -65,7 +65,7 @@ pub async fn resolve_locks(
                 let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
                     .resolve_lock(OPTIMISTIC_BACKOFF)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
-                    .merge(CollectFirst)
+                    .merge(CollectSingle)
                     .post_process_default()
                     .plan();
                 let commit_version = plan.execute().await?;

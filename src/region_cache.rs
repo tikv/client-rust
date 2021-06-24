@@ -99,10 +99,7 @@ impl<C: RetryClientTrait> RegionCache<C> {
             }
 
             // check concurrent requests
-            let mut notify = None;
-            if let Some(n) = region_cache_guard.on_my_way_id.get(&id) {
-                notify = Some(n.clone());
-            }
+            let notify = region_cache_guard.on_my_way_id.get(&id).cloned();
             drop(region_cache_guard);
 
             if let Some(n) = notify {

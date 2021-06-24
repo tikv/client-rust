@@ -359,7 +359,7 @@ async fn txn_bank_transfer() -> Result<()> {
             .await?;
         txn.put(bob.clone(), bob_balance.to_be_bytes().to_vec())
             .await?;
-        let _ = txn.commit().await;
+        txn.commit().await?;
     }
 
     // check

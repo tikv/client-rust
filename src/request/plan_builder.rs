@@ -13,7 +13,7 @@ use crate::{
     Result,
 };
 use std::{marker::PhantomData, sync::Arc};
-use tikv_client_store::HasError;
+use tikv_client_store::{HasKeyErrors, HasRegionError, HasRegionErrors};
 
 /// Builder type for plans (see that module for more).
 pub struct PlanBuilder<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> {
@@ -110,7 +110,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
 
 impl<PdC: PdClient, P: Plan + Shardable> PlanBuilder<PdC, P, NoTarget>
 where
-    P::Result: HasError,
+    P::Result: HasKeyErrors + HasRegionError,
 {
     /// Split the request into shards sending a request to the region of each shard.
     pub fn retry_multi_region(
@@ -153,7 +153,7 @@ impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
 
 impl<PdC: PdClient, P: Plan + HasKeys> PlanBuilder<PdC, P, NoTarget>
 where
-    P::Result: HasError,
+    P::Result: HasKeyErrors,
 {
     pub fn preserve_keys(self) -> PlanBuilder<PdC, PreserveKey<P>, NoTarget> {
         PlanBuilder {
@@ -166,7 +166,7 @@ where
 
 impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted>
 where
-    P::Result: HasError,
+    P::Result: HasKeyErrors + HasRegionErrors,
 {
     pub fn extract_error(self) -> PlanBuilder<PdC, ExtractError<P>, Targetted> {
         PlanBuilder {
