@@ -635,6 +635,11 @@ impl<PdC: PdClient> Transaction<PdC> {
         res
     }
 
+    /// Get the start timestamp of this transaction.
+    pub fn start_timestamp(&self) -> Timestamp {
+        self.timestamp.clone()
+    }
+
     /// Send a heart beat message to keep the transaction alive on the server and update its TTL.
     ///
     /// Returns the TTL set on the transaction's locks by TiKV.
@@ -646,7 +651,11 @@ impl<PdC: PdClient> Transaction<PdC> {
             Some(k) => k,
             None => return Err(Error::NoPrimaryKey),
         };
-        let request = new_heart_beat_request(self.timestamp.clone(), primary_key, DEFAULT_LOCK_TTL);
+        let request = new_heart_beat_request(
+            self.timestamp.clone(),
+            primary_key,
+            self.start_instant.elapsed().as_millis() as u64 + DEFAULT_LOCK_TTL,
+        );
         let plan = PlanBuilder::new(self.rpc.clone(), request)
             .single_region()
             .await?
@@ -787,6 +796,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             HeartbeatOption::NoHeartbeat => DEFAULT_HEARTBEAT_INTERVAL,
             HeartbeatOption::FixedTime(heartbeat_interval) => heartbeat_interval,
         };
+        let start_instant = self.start_instant;
 
         let heartbeat_task = async move {
             loop {
@@ -802,11 +812,10 @@ impl<PdC: PdClient> Transaction<PdC> {
                         break;
                     }
                 }
-                let current_ts = rpc.clone().get_timestamp().await?;
                 let request = new_heart_beat_request(
                     start_ts.clone(),
                     primary_key.clone(),
-                    (current_ts.physical - start_ts.physical) as u64 + DEFAULT_LOCK_TTL,
+                    start_instant.elapsed().as_millis() as u64 + DEFAULT_LOCK_TTL,
                 );
                 let plan = PlanBuilder::new(rpc.clone(), request)
                     .single_region()
