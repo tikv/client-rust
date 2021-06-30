@@ -13,7 +13,7 @@ use crate::{
 use async_recursion::async_recursion;
 use async_trait::async_trait;
 use futures::{future::try_join_all, stream::StreamExt};
-use std::{collections::VecDeque, marker::PhantomData, sync::Arc};
+use std::{marker::PhantomData, sync::Arc};
 use tikv_client_proto::{errorpb::EpochNotMatch, kvrpcpb};
 use tikv_client_store::{HasKeyErrors, HasRegionError, HasRegionErrors, KvClient};
 use tokio::sync::Semaphore;
@@ -166,7 +166,6 @@ where
                             .await
                         {
                             Ok(_) => Ok(true),
-                            Err(Error::EntryNotFoundInRegionCache) => Ok(false),
                             Err(e) => {
                                 pd_client.invalidate_region_cache(ver_id).await;
                                 Err(e)
@@ -190,25 +189,25 @@ where
                         e.take_epoch_not_match(),
                     )
                     .await
-                } else if e.has_server_is_busy()
-                    || e.has_stale_command()
-                    || e.has_region_not_found()
-                    || e.has_max_timestamp_not_synced()
-                {
+                } else if e.has_stale_command() || e.has_region_not_found() {
                     pd_client.invalidate_region_cache(ver_id).await;
                     Ok(false)
-                } else if e.has_raft_entry_too_large() {
+                } else if e.has_server_is_busy()
+                    || e.has_raft_entry_too_large()
+                    || e.has_max_timestamp_not_synced()
+                {
                     Err(Error::RegionError(e))
                 } else {
+                    info!("unknwon region error: {:?}", e);
                     pd_client.invalidate_region_cache(ver_id).await;
                     Ok(false)
                 }
             }
-            // errors from PD requests, backoff and retry
-            Error::RegionForKeyNotFound { .. }
-            | Error::RegionNotFoundInResponse { .. }
-            | Error::LeaderNotFound { .. } => Ok(false),
             _ => {
+                error!(
+                    "Unexpected type of error passed to handle_region_error: {:?}",
+                    error
+                );
                 unreachable!()
             }
         }
@@ -274,11 +273,6 @@ where
     type Result = Vec<Result<P::Result>>;
 
     async fn execute(&self) -> Result<Self::Result> {
-        // The plans to be executed. There can be more children plans because one
-        // shard can become more if it returns region error.
-        let mut children_plans = VecDeque::new();
-        children_plans.push_back((self.inner.clone(), self.backoff.clone()));
-
         // Limit the maximum concurrency of multi-region request. If there are
         // too many concurrent requests, TiKV is more likely to return a "TiKV
         // is busy" error
@@ -425,7 +419,6 @@ where
             }
 
             let pd_client = self.pd_client.clone();
-            // FIXME: read_through_cache in resolve_locks?
             if resolve_locks(locks, pd_client.clone()).await? {
                 result = self.inner.execute().await?;
             } else {

@@ -32,7 +32,7 @@ regex = "1"
 serde = "1.0"
 serde_derive = "1.0"
 thiserror = "1"
-tokio = { version = "1", features = [ "sync", "time" ] }
+tokio = { version = "1", features = [ "sync", "rt-multi-thread", "macros" ] }
 async-recursion = "0.3"
 
 tikv-client-common = { version = "0.1.0", path = "tikv-client-common" }
