@@ -91,8 +91,8 @@ mod test {
         }
 
         impl HasRegionError for MockRpcResponse {
-            fn region_error(&mut self) -> Option<Error> {
-                Some(Error::RegionNotFoundInResponse { region_id: 1 })
+            fn region_error(&mut self) -> Option<tikv_client_proto::errorpb::Error> {
+                Some(tikv_client_proto::errorpb::Error::default())
             }
         }
 

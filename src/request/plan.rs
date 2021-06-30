@@ -136,7 +136,7 @@ where
                     }
                     Self::single_plan_handler(pd_client, plan, backoff, permits).await
                 }
-                None => Err(e),
+                None => Err(Error::RegionError(e)),
             }
         } else {
             Ok(vec![Ok(resp)])
@@ -149,67 +149,56 @@ where
     // 3. Err(Error): can't be resolved, return the error to upper level
     async fn handle_region_error(
         pd_client: Arc<PdC>,
-        error: Error,
+        mut e: tikv_client_proto::errorpb::Error,
         region_store: RegionStore,
     ) -> Result<bool> {
-        match error {
-            Error::RegionError(mut e) => {
-                let ver_id = region_store.region_with_leader.ver_id();
-                if e.has_not_leader() {
-                    let not_leader = e.get_not_leader();
-                    if not_leader.has_leader() {
-                        match pd_client
-                            .update_leader(
-                                region_store.region_with_leader.ver_id(),
-                                not_leader.get_leader().clone(),
-                            )
-                            .await
-                        {
-                            Ok(_) => Ok(true),
-                            Err(e) => {
-                                pd_client.invalidate_region_cache(ver_id).await;
-                                Err(e)
-                            }
-                        }
-                    } else {
-                        // The peer doesn't know who is the current leader. Generally it's because
-                        // the Raft group is in an election, but it's possible that the peer is
-                        // isolated and removed from the Raft group. So it's necessary to reload
-                        // the region from PD.
-                        pd_client.invalidate_region_cache(ver_id).await;
-                        Ok(false)
-                    }
-                } else if e.has_store_not_match() {
-                    pd_client.invalidate_region_cache(ver_id).await;
-                    Ok(false)
-                } else if e.has_epoch_not_match() {
-                    Self::on_region_epoch_not_match(
-                        pd_client.clone(),
-                        region_store,
-                        e.take_epoch_not_match(),
+        let ver_id = region_store.region_with_leader.ver_id();
+        if e.has_not_leader() {
+            let not_leader = e.get_not_leader();
+            if not_leader.has_leader() {
+                match pd_client
+                    .update_leader(
+                        region_store.region_with_leader.ver_id(),
+                        not_leader.get_leader().clone(),
                     )
                     .await
-                } else if e.has_stale_command() || e.has_region_not_found() {
-                    pd_client.invalidate_region_cache(ver_id).await;
-                    Ok(false)
-                } else if e.has_server_is_busy()
-                    || e.has_raft_entry_too_large()
-                    || e.has_max_timestamp_not_synced()
                 {
-                    Err(Error::RegionError(e))
-                } else {
-                    info!("unknwon region error: {:?}", e);
-                    pd_client.invalidate_region_cache(ver_id).await;
-                    Ok(false)
+                    Ok(_) => Ok(true),
+                    Err(e) => {
+                        pd_client.invalidate_region_cache(ver_id).await;
+                        Err(e)
+                    }
                 }
+            } else {
+                // The peer doesn't know who is the current leader. Generally it's because
+                // the Raft group is in an election, but it's possible that the peer is
+                // isolated and removed from the Raft group. So it's necessary to reload
+                // the region from PD.
+                pd_client.invalidate_region_cache(ver_id).await;
+                Ok(false)
             }
-            _ => {
-                error!(
-                    "Unexpected type of error passed to handle_region_error: {:?}",
-                    error
-                );
-                unreachable!()
-            }
+        } else if e.has_store_not_match() {
+            pd_client.invalidate_region_cache(ver_id).await;
+            Ok(false)
+        } else if e.has_epoch_not_match() {
+            Self::on_region_epoch_not_match(
+                pd_client.clone(),
+                region_store,
+                e.take_epoch_not_match(),
+            )
+            .await
+        } else if e.has_stale_command() || e.has_region_not_found() {
+            pd_client.invalidate_region_cache(ver_id).await;
+            Ok(false)
+        } else if e.has_server_is_busy()
+            || e.has_raft_entry_too_large()
+            || e.has_max_timestamp_not_synced()
+        {
+            Err(Error::RegionError(e))
+        } else {
+            info!("unknwon region error: {:?}", e);
+            pd_client.invalidate_region_cache(ver_id).await;
+            Ok(false)
         }
     }
 
@@ -472,7 +461,9 @@ where
         if let Some(errors) = result.key_errors() {
             Err(Error::ExtractedErrors(errors))
         } else if let Some(errors) = result.region_errors() {
-            Err(Error::ExtractedErrors(errors))
+            Err(Error::ExtractedErrors(
+                errors.into_iter().map(Error::RegionError).collect(),
+            ))
         } else {
             Ok(result)
         }
@@ -532,7 +523,7 @@ impl<Resp: HasLocks> HasLocks for ResponseAndKeys<Resp> {
 }
 
 impl<Resp: HasRegionError> HasRegionError for ResponseAndKeys<Resp> {
-    fn region_error(&mut self) -> Option<Error> {
+    fn region_error(&mut self) -> Option<tikv_client_proto::errorpb::Error> {
         self.0.region_error()
     }
 }
