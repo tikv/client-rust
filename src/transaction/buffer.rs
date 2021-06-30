@@ -401,10 +401,7 @@ mod tests {
             ))
             .unwrap()
             .collect::<Vec<_>>(),
-            vec![KvPair(
-                Key::from(b"key1".to_vec()),
-                Value::from(b"value".to_vec()),
-            ),]
+            vec![KvPair(Key::from(b"key1".to_vec()), b"value".to_vec(),),]
         );
     }
 

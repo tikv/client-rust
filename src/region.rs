@@ -1,3 +1,5 @@
+// Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
+
 use crate::{Error, Key, Result};
 use derive_new::new;
 use tikv_client_proto::{kvrpcpb, metapb};
@@ -22,12 +24,14 @@ pub struct RegionVerId {
 ///
 /// In TiKV all data is partitioned by range. Each partition is called a region.
 #[derive(new, Clone, Default, Debug, PartialEq)]
-pub struct Region {
+pub struct RegionWithLeader {
     pub region: metapb::Region,
     pub leader: Option<metapb::Peer>,
 }
 
-impl Region {
+impl Eq for RegionWithLeader {}
+
+impl RegionWithLeader {
     pub fn contains(&self, key: &Key) -> bool {
         let key: &[u8] = key.into();
         let start_key = self.region.get_start_key();

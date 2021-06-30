@@ -209,8 +209,7 @@ impl Client {
 
             let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
                 .resolve_lock(OPTIMISTIC_BACKOFF)
-                .multi_region()
-                .retry_region(DEFAULT_REGION_BACKOFF)
+                .retry_multi_region(DEFAULT_REGION_BACKOFF)
                 .merge(crate::request::Collect)
                 .plan();
             let res: Vec<kvrpcpb::LockInfo> = plan.execute().await?;
@@ -224,6 +223,7 @@ impl Client {
         }
 
         // resolve locks
+        // FIXME: (1) this is inefficient (2) when region error occurred
         resolve_locks(locks, self.pd.clone()).await?;
 
         // update safepoint to PD

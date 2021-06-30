@@ -3,9 +3,9 @@
 default: check
 
 check:
-	cargo check --all
+	cargo check --all --all-targets --all-features
 	cargo fmt -- --check
-	cargo clippy -- -D clippy::all
+	cargo clippy --all-targets --all-features -- -D clippy::all
 
 unit-test:
 	cargo test --all

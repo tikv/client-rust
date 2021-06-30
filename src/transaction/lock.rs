@@ -4,7 +4,7 @@ use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     pd::PdClient,
     region::RegionVerId,
-    request::Plan,
+    request::{CollectSingle, Plan},
     timestamp::TimestampExt,
     transaction::requests,
     Error, Result,
@@ -63,10 +63,9 @@ pub async fn resolve_locks(
             None => {
                 let request = requests::new_cleanup_request(lock.primary_lock, lock.lock_version);
                 let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
-                    .single_region()
-                    .await?
                     .resolve_lock(OPTIMISTIC_BACKOFF)
-                    .retry_region(DEFAULT_REGION_BACKOFF)
+                    .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                    .merge(CollectSingle)
                     .post_process_default()
                     .plan();
                 let commit_version = plan.execute().await?;
@@ -102,23 +101,30 @@ async fn resolve_lock_with_retry(
     for i in 0..RESOLVE_LOCK_RETRY_LIMIT {
         debug!("resolving locks: attempt {}", (i + 1));
         let store = pd_client.clone().store_for_key(key.into()).await?;
-        let ver_id = store.region.ver_id();
+        let ver_id = store.region_with_leader.ver_id();
         let request = requests::new_resolve_lock_request(start_version, commit_version);
+        // The only place where single-region is used
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
             .single_region_with_store(store)
             .await?
             .resolve_lock(Backoff::no_backoff())
-            .retry_region(Backoff::no_backoff())
             .extract_error()
             .plan();
         match plan.execute().await {
             Ok(_) => {
                 return Ok(ver_id);
             }
-            Err(e @ Error::RegionError(_)) => {
-                // Retry on region error
-                error = Some(e);
-                continue;
+            // Retry on region error
+            Err(Error::ExtractedErrors(mut errors)) => {
+                // ResolveLockResponse can have at most 1 error
+                match errors.pop() {
+                    e @ Some(Error::RegionError(_)) => {
+                        error = e;
+                        continue;
+                    }
+                    Some(e) => return Err(e),
+                    None => unreachable!(),
+                }
             }
             Err(e) => return Err(e),
         }
@@ -136,20 +142,21 @@ pub trait HasLocks {
 mod tests {
     use super::*;
     use crate::mock::{MockKvClient, MockPdClient};
-    use futures::executor;
     use std::any::Any;
     use tikv_client_proto::errorpb;
 
-    #[test]
-    fn test_resolve_lock_with_retry() {
+    #[tokio::test]
+    async fn test_resolve_lock_with_retry() {
         // Test resolve lock within retry limit
         fail::cfg("region-error", "9*return").unwrap();
 
         let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |_: &dyn Any| {
                 fail::fail_point!("region-error", |_| {
-                    let mut resp = kvrpcpb::ResolveLockResponse::default();
-                    resp.region_error = Some(errorpb::Error::default());
+                    let resp = kvrpcpb::ResolveLockResponse {
+                        region_error: Some(errorpb::Error::default()),
+                        ..Default::default()
+                    };
                     Ok(Box::new(resp) as Box<dyn Any>)
                 });
                 Ok(Box::new(kvrpcpb::ResolveLockResponse::default()) as Box<dyn Any>)
@@ -158,14 +165,16 @@ mod tests {
 
         let key = vec![1];
         let region1 = MockPdClient::region1();
-        let resolved_region =
-            executor::block_on(resolve_lock_with_retry(&key, 1, 2, client.clone())).unwrap();
+        let resolved_region = resolve_lock_with_retry(&key, 1, 2, client.clone())
+            .await
+            .unwrap();
         assert_eq!(region1.ver_id(), resolved_region);
 
         // Test resolve lock over retry limit
         fail::cfg("region-error", "10*return").unwrap();
         let key = vec![100];
-        executor::block_on(resolve_lock_with_retry(&key, 3, 4, client))
+        resolve_lock_with_retry(&key, 3, 4, client)
+            .await
             .expect_err("should return error");
     }
 }

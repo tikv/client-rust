@@ -322,7 +322,6 @@ async fn txn_read() -> Result<()> {
 // FIXME: the test is temporarily ingnored since it's easy to fail when scheduling is frequent.
 #[tokio::test]
 #[serial]
-#[ignore]
 async fn txn_bank_transfer() -> Result<()> {
     init().await?;
     let client = TransactionClient::new(pd_addrs()).await?;
@@ -698,7 +697,7 @@ async fn txn_get_for_update() -> Result<()> {
     assert!(t1.get_for_update(key1.clone()).await?.unwrap() == value1);
     t1.commit().await?;
 
-    assert!(t2.batch_get(keys.clone()).await?.collect::<Vec<_>>().len() == 0);
+    assert!(t2.batch_get(keys.clone()).await?.count() == 0);
     let res: HashMap<_, _> = t2
         .batch_get_for_update(keys.clone())
         .await?
@@ -712,7 +711,7 @@ async fn txn_get_for_update() -> Result<()> {
     assert!(t3.get_for_update(key1).await?.is_none());
     assert!(t3.commit().await.is_err());
 
-    assert!(t4.batch_get_for_update(keys).await?.len() == 0);
+    assert!(t4.batch_get_for_update(keys).await?.is_empty());
     assert!(t4.commit().await.is_err());
 
     Ok(())
