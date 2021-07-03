@@ -115,7 +115,8 @@ mod mock;
 mod proptests;
 
 #[macro_use]
-extern crate log;
+extern crate slog;
+extern crate slog_term;
 
 #[doc(inline)]
 pub use crate::backoff::Backoff;

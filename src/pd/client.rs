@@ -11,6 +11,7 @@ use crate::{
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
 use grpcio::{EnvBuilder, Environment};
+use slog::{Drain, Logger};
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
@@ -207,6 +208,7 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     kv_connect: KvC,
     kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
     enable_codec: bool,
+    logger: Logger,
 }
 
 #[async_trait]
@@ -284,6 +286,9 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         MakeKvC: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> KvC,
         MakePd: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> PdFut,
     {
+        let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
+        let logger = Logger::root(slog_term::FullFormat::new(plain).build().fuse(), o!());
+        info!(logger, "Logging ready!");
         let env = Arc::new(
             EnvBuilder::new()
                 .cq_count(CQ_COUNT)
@@ -307,6 +312,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             kv_client_cache,
             kv_connect: kv_connect(env, security_mgr),
             enable_codec,
+            logger,
         })
     }
 
@@ -314,7 +320,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         if let Some(client) = self.kv_client_cache.read().unwrap().get(address) {
             return Ok(client.clone());
         };
-        info!("connect to tikv endpoint: {:?}", address);
+        info!(self.logger, "connect to tikv endpoint: {:?}", address);
         self.kv_connect.connect(address).map(|client| {
             self.kv_client_cache
                 .write()

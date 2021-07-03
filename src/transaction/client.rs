@@ -10,7 +10,7 @@ use crate::{
     transaction::{Snapshot, Transaction, TransactionOptions},
     Result,
 };
-use log::debug;
+use slog::{Drain, Logger};
 use std::{mem, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
@@ -35,6 +35,7 @@ const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
 /// awaited to execute.
 pub struct Client {
     pd: Arc<PdRpcClient>,
+    logger: Logger,
 }
 
 impl Client {
@@ -54,7 +55,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn new<S: Into<String>>(pd_endpoints: Vec<S>) -> Result<Client> {
-        debug!("creating transactional client");
+        // debug!(self.logger, "creating transactional client");
         Self::new_with_config(pd_endpoints, Config::default()).await
     }
 
@@ -81,10 +82,12 @@ impl Client {
         pd_endpoints: Vec<S>,
         config: Config,
     ) -> Result<Client> {
-        debug!("creating transactional client with custom configuration");
+        let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
+        let logger = Logger::root(slog_term::FullFormat::new(plain).build().fuse(), o!());
+        debug!(logger, "creating new transactional client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, true).await?);
-        Ok(Client { pd })
+        Ok(Client { pd, logger })
     }
 
     /// Creates a new optimistic [`Transaction`].
@@ -108,7 +111,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn begin_optimistic(&self) -> Result<Transaction> {
-        debug!("creating new optimistic transaction");
+        debug!(self.logger, "creating new optimistic transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, TransactionOptions::new_optimistic()))
     }
@@ -131,7 +134,7 @@ impl Client {
     /// # });
     /// ```
     pub async fn begin_pessimistic(&self) -> Result<Transaction> {
-        debug!("creating new pessimistic transaction");
+        debug!(self.logger, "creating new pessimistic transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, TransactionOptions::new_pessimistic()))
     }
@@ -154,15 +157,16 @@ impl Client {
     /// # });
     /// ```
     pub async fn begin_with_options(&self, options: TransactionOptions) -> Result<Transaction> {
-        debug!("creating new customized transaction");
+        debug!(self.logger, "creating new customized transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, options))
     }
 
     /// Create a new [`Snapshot`](Snapshot) at the given [`Timestamp`](Timestamp).
     pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> Snapshot {
-        debug!("creating new snapshot");
-        Snapshot::new(self.new_transaction(timestamp, options.read_only()))
+        debug!(self.logger, "creating new snapshot");
+        let logger = self.logger.new(o!("child" => 1));
+        Snapshot::new(self.new_transaction(timestamp, options.read_only()), logger)
     }
 
     /// Retrieve the current [`Timestamp`].
@@ -196,7 +200,7 @@ impl Client {
     /// This is a simplified version of [GC in TiDB](https://docs.pingcap.com/tidb/stable/garbage-collection-overview).
     /// We skip the second step "delete ranges" which is an optimization for TiDB.
     pub async fn gc(&self, safepoint: Timestamp) -> Result<bool> {
-        debug!("invoking transactional gc request");
+        debug!(self.logger, "invoking transactional gc request");
         // scan all locks with ts <= safepoint
         let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
         let mut start_key = vec![];
@@ -233,12 +237,13 @@ impl Client {
             .update_safepoint(safepoint.version())
             .await?;
         if !res {
-            info!("new safepoint != user-specified safepoint");
+            info!(self.logger, "new safepoint != user-specified safepoint");
         }
         Ok(res)
     }
 
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
-        Transaction::new(timestamp, self.pd.clone(), options)
+        let logger = self.logger.new(o!("child" => 1));
+        Transaction::new(timestamp, self.pd.clone(), options, logger)
     }
 }
