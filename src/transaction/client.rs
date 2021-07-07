@@ -87,13 +87,10 @@ impl Client {
         config: Config,
         optional_logger: Option<Logger>,
     ) -> Result<Client> {
-        let logger = match optional_logger {
-            None => {
-                let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-                Logger::root(slog_term::FullFormat::new(plain).build().fuse(), o!())
-            },
-            Some(logger) => logger,
-        };
+        let logger = optional_logger.unwrap_or_else(|| {
+            let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
+            Logger::root(slog_term::FullFormat::new(plain).build().fuse(), o!())
+        });
         debug!(logger, "creating new transactional client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, true).await?);
