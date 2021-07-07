@@ -44,11 +44,14 @@ impl Client {
     /// # use tikv_client::RawClient;
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// # });
     /// ```
-    pub async fn new<S: Into<String>>(pd_endpoints: Vec<S>) -> Result<Client> {
-        Self::new_with_config(pd_endpoints, Config::default()).await
+    pub async fn new<S: Into<String>>(
+        pd_endpoints: Vec<S>,
+        logger: Option<Logger>,
+    ) -> Result<Client> {
+        Self::new_with_config(pd_endpoints, Config::default(), logger).await
     }
 
     /// Create a raw [`Client`] with a custom configuration, and connect to the TiKV cluster.
@@ -67,15 +70,22 @@ impl Client {
     /// let client = RawClient::new_with_config(
     ///     vec!["192.168.0.100"],
     ///     Config::default().with_timeout(Duration::from_secs(60)),
+    ///     None,
     /// ).await.unwrap();
     /// # });
     /// ```
     pub async fn new_with_config<S: Into<String>>(
         pd_endpoints: Vec<S>,
         config: Config,
+        optional_logger: Option<Logger>,
     ) -> Result<Client> {
-        let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-        let logger = Logger::root(slog_term::FullFormat::new(plain).build().fuse(), o!());
+        let logger = match optional_logger {
+            None => {
+                let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
+                Logger::root(slog_term::FullFormat::new(plain).build().fuse(), o!())
+            },
+            Some(logger) => logger,
+        };
         debug!(logger, "creating new raw client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let rpc = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, false).await?);
@@ -103,7 +113,7 @@ impl Client {
     /// # use futures::prelude::*;
     /// # use std::convert::TryInto;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(vec!["192.168.0.100"])
+    /// let client = RawClient::new(vec!["192.168.0.100"], None)
     ///     .await
     ///     .unwrap()
     ///     .with_cf(ColumnFamily::Write);
@@ -148,7 +158,7 @@ impl Client {
     /// # use tikv_client::{Value, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let req = client.get(key);
     /// let result: Option<Value> = req.await.unwrap();
@@ -178,7 +188,7 @@ impl Client {
     /// # use tikv_client::{KvPair, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let req = client.batch_get(keys);
     /// let result: Vec<KvPair> = req.await.unwrap();
@@ -209,7 +219,7 @@ impl Client {
     /// # use tikv_client::{Key, Value, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let val = "TiKV".to_owned();
     /// let req = client.put(key, val);
@@ -238,7 +248,7 @@ impl Client {
     /// # use tikv_client::{Result, KvPair, Key, Value, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let kvpair1 = ("PD".to_owned(), "Go".to_owned());
     /// let kvpair2 = ("TiKV".to_owned(), "Rust".to_owned());
     /// let iterable = vec![kvpair1, kvpair2];
@@ -276,7 +286,7 @@ impl Client {
     /// # use tikv_client::{Key, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let req = client.delete(key);
     /// let result: () = req.await.unwrap();
@@ -306,7 +316,7 @@ impl Client {
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let req = client.batch_delete(keys);
     /// let result: () = req.await.unwrap();
@@ -335,7 +345,7 @@ impl Client {
     /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = client.delete_range(inclusive_range.into_owned());
     /// let result: () = req.await.unwrap();
@@ -367,7 +377,7 @@ impl Client {
     /// # use tikv_client::{KvPair, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = client.scan(inclusive_range.into_owned(), 2);
     /// let result: Vec<KvPair> = req.await.unwrap();
@@ -391,7 +401,7 @@ impl Client {
     /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = client.scan_keys(inclusive_range.into_owned(), 2);
     /// let result: Vec<Key> = req.await.unwrap();
@@ -422,7 +432,7 @@ impl Client {
     /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let inclusive_range1 = "TiDB"..="TiKV";
     /// let inclusive_range2 = "TiKV"..="TiSpark";
     /// let iterable = vec![inclusive_range1.into_owned(), inclusive_range2.into_owned()];
@@ -454,7 +464,7 @@ impl Client {
     /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let inclusive_range1 = "TiDB"..="TiKV";
     /// let inclusive_range2 = "TiKV"..="TiSpark";
     /// let iterable = vec![inclusive_range1.into_owned(), inclusive_range2.into_owned()];

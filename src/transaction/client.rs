@@ -51,12 +51,15 @@ impl Client {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// # });
     /// ```
-    pub async fn new<S: Into<String>>(pd_endpoints: Vec<S>) -> Result<Client> {
+    pub async fn new<S: Into<String>>(
+        pd_endpoints: Vec<S>,
+        logger: Option<Logger>,
+    ) -> Result<Client> {
         // debug!(self.logger, "creating transactional client");
-        Self::new_with_config(pd_endpoints, Config::default()).await
+        Self::new_with_config(pd_endpoints, Config::default(), logger).await
     }
 
     /// Create a transactional [`Client`] with a custom configuration, and connect to the TiKV cluster.
@@ -75,15 +78,22 @@ impl Client {
     /// let client = TransactionClient::new_with_config(
     ///     vec!["192.168.0.100"],
     ///     Config::default().with_timeout(Duration::from_secs(60)),
+    ///     None,
     /// ).await.unwrap();
     /// # });
     /// ```
     pub async fn new_with_config<S: Into<String>>(
         pd_endpoints: Vec<S>,
         config: Config,
+        optional_logger: Option<Logger>,
     ) -> Result<Client> {
-        let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-        let logger = Logger::root(slog_term::FullFormat::new(plain).build().fuse(), o!());
+        let logger = match optional_logger {
+            None => {
+                let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
+                Logger::root(slog_term::FullFormat::new(plain).build().fuse(), o!())
+            },
+            Some(logger) => logger,
+        };
         debug!(logger, "creating new transactional client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, true).await?);
@@ -104,7 +114,7 @@ impl Client {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let mut transaction = client.begin_optimistic().await.unwrap();
     /// // ... Issue some commands.
     /// transaction.commit().await.unwrap();
@@ -127,7 +137,7 @@ impl Client {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let mut transaction = client.begin_pessimistic().await.unwrap();
     /// // ... Issue some commands.
     /// transaction.commit().await.unwrap();
@@ -147,7 +157,7 @@ impl Client {
     /// # use tikv_client::{Config, TransactionClient, TransactionOptions};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let mut transaction = client
     ///     .begin_with_options(TransactionOptions::default().use_async_commit())
     ///     .await
@@ -177,7 +187,7 @@ impl Client {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let timestamp = client.current_timestamp().await.unwrap();
     /// # });
     /// ```
