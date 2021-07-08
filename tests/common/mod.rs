@@ -17,7 +17,7 @@ pub async fn clear_tikv() {
         ColumnFamily::Write,
     ];
     for cf in cfs {
-        let raw_client = RawClient::new(pd_addrs()).await.unwrap().with_cf(cf);
+        let raw_client = RawClient::new(pd_addrs(), None).await.unwrap().with_cf(cf);
         raw_client.delete_range(vec![]..).await.unwrap();
     }
 }
@@ -60,7 +60,7 @@ async fn ensure_region_split(
     // 1. write plenty transactional keys
     // 2. wait until regions split
 
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client = TransactionClient::new(pd_addrs(), None).await?;
     let mut txn = client.begin_optimistic().await?;
     for key in keys.into_iter() {
         txn.put(key.into(), vec![0, 0, 0, 0]).await?;

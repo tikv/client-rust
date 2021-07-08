@@ -16,7 +16,7 @@ async fn txn_optimistic_heartbeat() -> Result<()> {
 
     let key1 = "key1".to_owned();
     let key2 = "key2".to_owned();
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client = TransactionClient::new(pd_addrs(), None).await?;
 
     let mut heartbeat_txn = client
         .begin_with_options(
