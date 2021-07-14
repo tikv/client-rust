@@ -123,7 +123,9 @@ pub use crate::backoff::Backoff;
 #[doc(inline)]
 pub use crate::kv::{BoundRange, IntoOwnedRange, Key, KvPair, Value};
 #[doc(inline)]
-pub use crate::raw::{lowering as raw_lowering, Client as RawClient, ColumnFamily};
+pub use crate::raw::{
+    lowering as raw_lowering, Client as RawClient, ColumnFamily, SyncClient as SyncRawClient,
+};
 #[doc(inline)]
 pub use crate::request::RetryOptions;
 #[doc(inline)]
