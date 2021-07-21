@@ -17,7 +17,7 @@ pub async fn clear_tikv() {
         ColumnFamily::Write,
     ];
     for cf in cfs {
-        let raw_client = RawClient::new(pd_addrs()).await.unwrap().with_cf(cf);
+        let raw_client = RawClient::new(pd_addrs(), None).await.unwrap().with_cf(cf);
         raw_client.delete_range(vec![]..).await.unwrap();
     }
 }
@@ -25,11 +25,6 @@ pub async fn clear_tikv() {
 // To test with multiple regions, prewrite some data. Tests that hope to test
 // with multiple regions should use keys in the corresponding ranges.
 pub async fn init() -> Result<()> {
-    // ignore SetLoggerError
-    let _ = simple_logger::SimpleLogger::new()
-        .with_level(log::LevelFilter::Warn)
-        .init();
-
     if env::var(ENV_ENABLE_MULIT_REGION).is_ok() {
         // 1000 keys: 0..1000
         let keys_1 = std::iter::successors(Some(0u32), |x| Some(x + 1))
@@ -60,7 +55,7 @@ async fn ensure_region_split(
     // 1. write plenty transactional keys
     // 2. wait until regions split
 
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client = TransactionClient::new(pd_addrs(), None).await?;
     let mut txn = client.begin_optimistic().await?;
     for key in keys.into_iter() {
         txn.put(key.into(), vec![0, 0, 0, 0]).await?;

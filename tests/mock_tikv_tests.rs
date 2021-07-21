@@ -15,7 +15,7 @@ mod test {
         let mut tikv_server = start_mock_tikv_server();
         let _pd_server = start_mock_pd_server();
 
-        let client = RawClient::new(vec![format!("localhost:{}", MOCK_PD_PORT)])
+        let client = RawClient::new(vec![format!("localhost:{}", MOCK_PD_PORT)], None)
             .await
             .unwrap();
 

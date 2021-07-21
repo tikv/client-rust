@@ -18,7 +18,7 @@ pub struct RegionStore {
 
 pub trait KvConnectStore: KvConnect {
     fn connect_to_store(&self, region: RegionWithLeader, address: String) -> Result<RegionStore> {
-        info!("connect to tikv endpoint: {:?}", &address);
+        log::info!("connect to tikv endpoint: {:?}", &address);
         let client = self.connect(address.as_str())?;
         Ok(RegionStore::new(region, Arc::new(client)))
     }

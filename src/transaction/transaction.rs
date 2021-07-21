@@ -13,7 +13,7 @@ use crate::{
 use derive_new::new;
 use fail::fail_point;
 use futures::{prelude::*, stream::BoxStream};
-use log::debug;
+use slog::Logger;
 use std::{iter, ops::RangeBounds, sync::Arc, time::Instant};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 use tokio::{sync::RwLock, time::Duration};
@@ -49,7 +49,7 @@ use tokio::{sync::RwLock, time::Duration};
 /// # use tikv_client::{Config, TransactionClient};
 /// # use futures::prelude::*;
 /// # futures::executor::block_on(async {
-/// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
+/// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
 /// let mut txn = client.begin_optimistic().await.unwrap();
 /// let foo = txn.get("foo".to_owned()).await.unwrap().unwrap();
 /// txn.put("bar".to_owned(), foo).await.unwrap();
@@ -64,6 +64,7 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     options: TransactionOptions,
     is_heartbeat_started: bool,
     start_instant: Instant,
+    logger: Logger,
 }
 
 impl<PdC: PdClient> Transaction<PdC> {
@@ -71,6 +72,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         timestamp: Timestamp,
         rpc: Arc<PdC>,
         options: TransactionOptions,
+        logger: Logger,
     ) -> Transaction<PdC> {
         let status = if options.read_only {
             TransactionStatus::ReadOnly
@@ -85,6 +87,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             options,
             is_heartbeat_started: false,
             start_instant: std::time::Instant::now(),
+            logger,
         }
     }
 
@@ -100,14 +103,14 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let result: Option<Value> = txn.get(key).await.unwrap();
     /// # });
     /// ```
     pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
-        debug!("invoking transactional get request");
+        debug!(self.logger, "invoking transactional get request");
         self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
@@ -161,7 +164,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let result: Value = txn.get_for_update(key).await.unwrap().unwrap();
@@ -171,7 +174,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
-        debug!("invoking transactional get_for_update request");
+        debug!(self.logger, "invoking transactional get_for_update request");
         self.check_allow_operation().await?;
         if !self.is_pessimistic() {
             let key = key.into();
@@ -195,14 +198,14 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let exists = txn.key_exists("k1".to_owned()).await.unwrap();
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
     pub async fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
-        debug!("invoking transactional key_exists request");
+        debug!(self.logger, "invoking transactional key_exists request");
         let key = key.into();
         Ok(self.scan_keys(key.clone()..=key, 1).await?.next().is_some())
     }
@@ -222,7 +225,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let result: HashMap<Key, Value> = txn
@@ -239,7 +242,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        debug!("invoking transactional batch_get request");
+        debug!(self.logger, "invoking transactional batch_get request");
         self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
@@ -275,7 +278,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let keys = vec!["foo".to_owned(), "bar".to_owned()];
     /// let result: Vec<KvPair> = txn
@@ -291,7 +294,10 @@ impl<PdC: PdClient> Transaction<PdC> {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
-        debug!("invoking transactional batch_get_for_update request");
+        debug!(
+            self.logger,
+            "invoking transactional batch_get_for_update request"
+        );
         self.check_allow_operation().await?;
         let keys: Vec<Key> = keys.into_iter().map(|k| k.into()).collect();
         if !self.is_pessimistic() {
@@ -317,7 +323,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key1: Key = b"foo".to_vec().into();
     /// let key2: Key = b"bar".to_vec().into();
@@ -335,7 +341,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        debug!("invoking transactional scan request");
+        debug!(self.logger, "invoking transactional scan request");
         self.scan_inner(range, limit, false).await
     }
 
@@ -353,7 +359,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key1: Key = b"foo".to_vec().into();
     /// let key2: Key = b"bar".to_vec().into();
@@ -371,7 +377,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
-        debug!("invoking transactional scan_keys request");
+        debug!(self.logger, "invoking transactional scan_keys request");
         Ok(self
             .scan_inner(range, limit, true)
             .await?
@@ -382,7 +388,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     ///
     /// Similar to [`scan`](Transaction::scan), but scans in the reverse direction.
     pub(crate) fn scan_reverse(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
-        debug!("invoking transactional scan_reverse request");
+        debug!(self.logger, "invoking transactional scan_reverse request");
         unimplemented!()
     }
 
@@ -394,7 +400,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "foo".to_owned();
     /// let val = "FOO".to_owned();
@@ -403,7 +409,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn put(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        debug!("invoking transactional put request");
+        debug!(self.logger, "invoking transactional put request");
         self.check_allow_operation().await?;
         let key = key.into();
         if self.is_pessimistic() {
@@ -425,7 +431,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "foo".to_owned();
     /// let val = "FOO".to_owned();
@@ -434,7 +440,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn insert(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        debug!("invoking transactional insert request");
+        debug!(self.logger, "invoking transactional insert request");
         self.check_allow_operation().await?;
         let key = key.into();
         if self.buffer.get(&key).is_some() {
@@ -461,7 +467,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Key, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "foo".to_owned();
     /// txn.delete(key);
@@ -469,7 +475,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn delete(&mut self, key: impl Into<Key>) -> Result<()> {
-        debug!("invoking transactional delete request");
+        debug!(self.logger, "invoking transactional delete request");
         self.check_allow_operation().await?;
         let key = key.into();
         if self.is_pessimistic() {
@@ -496,7 +502,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// txn.lock_keys(vec!["TiKV".to_owned(), "Rust".to_owned()]);
     /// // ... Do some actions.
@@ -507,7 +513,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<()> {
-        debug!("invoking transactional lock_keys request");
+        debug!(self.logger, "invoking transactional lock_keys request");
         self.check_allow_operation().await?;
         match self.options.kind {
             TransactionKind::Optimistic => {
@@ -532,14 +538,14 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Config, Timestamp, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// // ... Do some actions.
     /// let result: Timestamp = txn.commit().await.unwrap().unwrap();
     /// # });
     /// ```
     pub async fn commit(&mut self) -> Result<Option<Timestamp>> {
-        debug!("commiting transaction");
+        debug!(self.logger, "commiting transaction");
         {
             let mut status = self.status.write().await;
             if !matches!(
@@ -568,6 +574,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.options.clone(),
             self.buffer.get_write_size() as u64,
             self.start_instant,
+            self.logger.new(o!("child" => 1)),
         )
         .commit()
         .await;
@@ -589,14 +596,14 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Config, Timestamp, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// // ... Do some actions.
     /// txn.rollback().await.unwrap();
     /// # });
     /// ```
     pub async fn rollback(&mut self) -> Result<()> {
-        debug!("rolling back transaction");
+        debug!(self.logger, "rolling back transaction");
         {
             let status = self.status.read().await;
             if !matches!(
@@ -624,6 +631,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.options.clone(),
             self.buffer.get_write_size() as u64,
             self.start_instant,
+            self.logger.new(o!("child" => 1)),
         )
         .rollback()
         .await;
@@ -645,7 +653,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Returns the TTL set on the transaction's locks by TiKV.
     #[doc(hidden)]
     pub async fn send_heart_beat(&mut self) -> Result<u64> {
-        debug!("sending heart_beat");
+        debug!(self.logger, "sending heart_beat");
         self.check_allow_operation().await?;
         let primary_key = match self.buffer.get_primary_key() {
             Some(k) => k,
@@ -709,7 +717,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         keys: impl IntoIterator<Item = impl PessimisticLock>,
         need_value: bool,
     ) -> Result<Vec<KvPair>> {
-        debug!("acquiring pessimistic lock");
+        debug!(self.logger, "acquiring pessimistic lock");
         assert!(
             matches!(self.options.kind, TransactionKind::Pessimistic(_)),
             "`pessimistic_lock` is only valid to use with pessimistic transactions"
@@ -775,7 +783,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     async fn start_auto_heartbeat(&mut self) {
-        debug!("starting auto_heartbeat");
+        debug!(self.logger, "starting auto_heartbeat");
         if !self.options.heartbeat_option.is_auto_heartbeat() || self.is_heartbeat_started {
             return;
         }
@@ -825,7 +833,7 @@ impl<PdC: PdClient> Transaction<PdC> {
 
         tokio::spawn(async {
             if let Err(err) = heartbeat_task.await {
-                error!("Error: While sending heartbeat. {}", err);
+                log::error!("Error: While sending heartbeat. {}", err);
             }
         });
     }
@@ -833,7 +841,7 @@ impl<PdC: PdClient> Transaction<PdC> {
 
 impl<PdC: PdClient> Drop for Transaction<PdC> {
     fn drop(&mut self) {
-        debug!("dropping transaction");
+        debug!(self.logger, "dropping transaction");
         if std::thread::panicking() {
             return;
         }
@@ -844,7 +852,10 @@ impl<PdC: PdClient> Drop for Transaction<PdC> {
                     panic!("Dropping an active transaction. Consider commit or rollback it.")
                 }
                 CheckLevel::Warn => {
-                    warn!("Dropping an active transaction. Consider commit or rollback it.")
+                    warn!(
+                        self.logger,
+                        "Dropping an active transaction. Consider commit or rollback it."
+                    )
                 }
 
                 CheckLevel::None => {}
@@ -1030,6 +1041,7 @@ impl HeartbeatOption {
 /// The `commit` phase is to mark all written data as successfully committed.
 ///
 /// The committer implements `prewrite`, `commit` and `rollback` functions.
+#[allow(clippy::too_many_arguments)]
 #[derive(new)]
 struct Committer<PdC: PdClient = PdRpcClient> {
     primary_key: Option<Key>,
@@ -1041,10 +1053,13 @@ struct Committer<PdC: PdClient = PdRpcClient> {
     undetermined: bool,
     write_size: u64,
     start_instant: Instant,
+    logger: Logger,
 }
 
 impl<PdC: PdClient> Committer<PdC> {
     async fn commit(mut self) -> Result<Option<Timestamp>> {
+        debug!(self.logger, "committing");
+
         let min_commit_ts = self.prewrite().await?;
 
         fail_point!("after-prewrite");
@@ -1071,13 +1086,14 @@ impl<PdC: PdClient> Committer<PdC> {
         };
         tokio::spawn(self.commit_secondary(commit_ts.clone()).map(|res| {
             if let Err(e) = res {
-                warn!("Failed to commit secondary keys: {}", e);
+                log::warn!("Failed to commit secondary keys: {}", e);
             }
         }));
         Ok(Some(commit_ts))
     }
 
     async fn prewrite(&mut self) -> Result<Option<Timestamp>> {
+        debug!(self.logger, "prewriting");
         let primary_lock = self.primary_key.clone().unwrap();
         let elapsed = self.start_instant.elapsed().as_millis() as u64;
         let lock_ttl = self.calc_txn_lock_ttl();
@@ -1139,6 +1155,7 @@ impl<PdC: PdClient> Committer<PdC> {
 
     /// Commits the primary key and returns the commit version
     async fn commit_primary(&mut self) -> Result<Timestamp> {
+        debug!(self.logger, "committing primary");
         let primary_key = self.primary_key.clone().into_iter();
         let commit_version = self.rpc.clone().get_timestamp().await?;
         let req = new_commit_request(
@@ -1166,6 +1183,7 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     async fn commit_secondary(self, commit_version: Timestamp) -> Result<()> {
+        debug!(self.logger, "committing secondary");
         let mutations_len = self.mutations.len();
         let primary_only = mutations_len == 1;
         let mutations = self.mutations.into_iter();
@@ -1192,6 +1210,7 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     async fn rollback(self) -> Result<()> {
+        debug!(self.logger, "rolling back");
         if self.options.kind == TransactionKind::Optimistic && self.mutations.is_empty() {
             return Ok(());
         }
@@ -1259,6 +1278,7 @@ mod tests {
         Transaction, TransactionOptions,
     };
     use fail::FailScenario;
+    use slog::{Drain, Logger};
     use std::{
         any::Any,
         io,
@@ -1272,6 +1292,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_optimistic_heartbeat() -> Result<(), io::Error> {
+        let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
+        let logger = Logger::root(
+            slog_term::FullFormat::new(plain)
+                .build()
+                .filter_level(slog::Level::Info)
+                .fuse(),
+            o!(),
+        );
         let scenario = FailScenario::setup();
         fail::cfg("after-prewrite", "sleep(1500)").unwrap();
         let heartbeats = Arc::new(AtomicUsize::new(0));
@@ -1294,6 +1322,7 @@ mod tests {
             pd_client,
             TransactionOptions::new_optimistic()
                 .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_secs(1))),
+            logger.new(o!("child" => 1)),
         );
         heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
         let heartbeat_txn_handle = tokio::task::spawn_blocking(move || {
@@ -1308,6 +1337,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_pessimistic_heartbeat() -> Result<(), io::Error> {
+        let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
+
+        let logger = Logger::root(
+            slog_term::FullFormat::new(plain)
+                .build()
+                .filter_level(slog::Level::Info)
+                .fuse(),
+            o!(),
+        );
         let heartbeats = Arc::new(AtomicUsize::new(0));
         let heartbeats_cloned = heartbeats.clone();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -1333,6 +1371,7 @@ mod tests {
             pd_client,
             TransactionOptions::new_pessimistic()
                 .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_secs(1))),
+            logger.new(o!("child" => 1)),
         );
         heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
         assert_eq!(heartbeats.load(Ordering::SeqCst), 0);

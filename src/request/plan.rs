@@ -196,7 +196,8 @@ where
         {
             Err(Error::RegionError(e))
         } else {
-            info!("unknwon region error: {:?}", e);
+            // TODO: pass the logger around
+            // info!("unknwon region error: {:?}", e);
             pd_client.invalidate_region_cache(ver_id).await;
             Ok(false)
         }

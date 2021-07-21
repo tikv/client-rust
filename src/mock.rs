@@ -13,6 +13,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use derive_new::new;
+use slog::{Drain, Logger};
 use std::{any::Any, sync::Arc};
 use tikv_client_proto::metapb;
 use tikv_client_store::{KvClient, KvConnect, Request};
@@ -21,8 +22,16 @@ use tikv_client_store::{KvClient, KvConnect, Request};
 /// client can be tested without doing any RPC calls.
 pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
     let config = Config::default();
+    let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
+    let logger = Logger::root(
+        slog_term::FullFormat::new(plain)
+            .build()
+            .filter_level(slog::Level::Info)
+            .fuse(),
+        o!(),
+    );
     PdRpcClient::new(
-        &config,
+        config.clone(),
         |_, _| MockKvConnect,
         |e, sm| {
             futures::future::ok(RetryClient::new_with_cluster(
@@ -33,6 +42,7 @@ pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
             ))
         },
         false,
+        logger,
     )
     .await
     .unwrap()

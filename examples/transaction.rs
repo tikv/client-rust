@@ -81,7 +81,7 @@ async fn main() {
         Config::default()
     };
 
-    let txn = Client::new_with_config(args.pd, config)
+    let txn = Client::new_with_config(args.pd, config, None)
         .await
         .expect("Could not connect to tikv");
 
