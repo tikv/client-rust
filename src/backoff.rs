@@ -76,6 +76,11 @@ impl Backoff {
         self.kind == BackoffKind::None
     }
 
+    /// Returns the number of attempts
+    pub fn current_attempts(&self) -> u32 {
+        self.current_attempts
+    }
+
     /// Don't wait. Usually indicates that we should not retry a request.
     pub const fn no_backoff() -> Backoff {
         Backoff {

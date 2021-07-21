@@ -104,6 +104,7 @@ mod pd;
 #[doc(hidden)]
 pub mod raw;
 mod region;
+mod region_cache;
 mod stats;
 mod store;
 mod timestamp;

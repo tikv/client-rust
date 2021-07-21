@@ -7,7 +7,7 @@ mod request;
 #[doc(inline)]
 pub use crate::{
     client::{KvClient, KvConnect, TikvConnect},
-    errors::{HasError, HasRegionError},
+    errors::{HasKeyErrors, HasRegionError, HasRegionErrors},
     request::Request,
 };
 pub use tikv_client_common::{security::SecurityManager, Error, Result};

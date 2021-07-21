@@ -25,11 +25,6 @@ pub async fn clear_tikv() {
 // To test with multiple regions, prewrite some data. Tests that hope to test
 // with multiple regions should use keys in the corresponding ranges.
 pub async fn init() -> Result<()> {
-    // ignore SetLoggerError
-    let _ = simple_logger::SimpleLogger::new()
-        .with_level(log::LevelFilter::Warn)
-        .init();
-
     if env::var(ENV_ENABLE_MULIT_REGION).is_ok() {
         // 1000 keys: 0..1000
         let keys_1 = std::iter::successors(Some(0u32), |x| Some(x + 1))
@@ -88,8 +83,14 @@ async fn ensure_region_split(
 
 pub fn pd_addrs() -> Vec<String> {
     env::var(ENV_PD_ADDRS)
-        .expect(&format!("Expected {}:", ENV_PD_ADDRS))
-        .split(",")
+        .unwrap_or_else(|_| {
+            info!(
+                "Environment variable {} is not found. Using {:?} as default.",
+                ENV_PD_ADDRS, "127.0.0.1:2379"
+            );
+            "127.0.0.1:2379".to_owned()
+        })
+        .split(',')
         .map(From::from)
         .collect()
 }

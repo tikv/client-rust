@@ -3,23 +3,21 @@
 use crate::{
     compat::stream_fn,
     kv::codec,
-    pd::RetryClient,
-    region::{Region, RegionId},
-    store::Store,
+    pd::{retry::RetryClientTrait, RetryClient},
+    region::{RegionId, RegionVerId, RegionWithLeader},
+    region_cache::RegionCache,
+    store::RegionStore,
     BoundRange, Config, Key, Result, SecurityManager, Timestamp,
 };
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
 use grpcio::{EnvBuilder, Environment};
-use slog::{Drain, Logger};
-use std::{
-    collections::HashMap,
-    sync::{Arc, RwLock},
-    thread,
-};
+use slog::Logger;
+use std::{collections::HashMap, sync::Arc, thread};
 use tikv_client_pd::Cluster;
-use tikv_client_proto::kvrpcpb;
+use tikv_client_proto::{kvrpcpb, metapb};
 use tikv_client_store::{KvClient, KvConnect, TikvConnect};
+use tokio::sync::RwLock;
 
 const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";
@@ -46,25 +44,25 @@ pub trait PdClient: Send + Sync + 'static {
     type KvClient: KvClient + Send + Sync + 'static;
 
     /// In transactional API, `region` is decoded (keys in raw format).
-    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store>;
+    async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore>;
 
     /// In transactional API, the key and returned region are both decoded (keys in raw format).
-    async fn region_for_key(&self, key: &Key) -> Result<Region>;
+    async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader>;
 
     /// In transactional API, the returned region is decoded (keys in raw format)
-    async fn region_for_id(&self, id: RegionId) -> Result<Region>;
+    async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader>;
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp>;
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
 
     /// In transactional API, `key` is in raw format
-    async fn store_for_key(self: Arc<Self>, key: &Key) -> Result<Store> {
+    async fn store_for_key(self: Arc<Self>, key: &Key) -> Result<RegionStore> {
         let region = self.region_for_key(key).await?;
         self.map_region_to_store(region).await
     }
 
-    async fn store_for_id(self: Arc<Self>, id: RegionId) -> Result<Store> {
+    async fn store_for_id(self: Arc<Self>, id: RegionId) -> Result<RegionStore> {
         let region = self.region_for_id(id).await?;
         self.map_region_to_store(region).await
     }
@@ -101,7 +99,10 @@ pub trait PdClient: Send + Sync + 'static {
     }
 
     /// Returns a Stream which iterates over the contexts for each region covered by range.
-    fn stores_for_range(self: Arc<Self>, range: BoundRange) -> BoxStream<'static, Result<Store>> {
+    fn stores_for_range(
+        self: Arc<Self>,
+        range: BoundRange,
+    ) -> BoxStream<'static, Result<RegionStore>> {
         let (start_key, end_key) = range.into_keys();
         stream_fn(Some(start_key), move |start_key| {
             let end_key = end_key.clone();
@@ -192,13 +193,17 @@ pub trait PdClient: Send + Sync + 'static {
         .boxed()
     }
 
-    fn decode_region(mut region: Region, enable_codec: bool) -> Result<Region> {
+    fn decode_region(mut region: RegionWithLeader, enable_codec: bool) -> Result<RegionWithLeader> {
         if enable_codec {
             codec::decode_bytes_in_place(&mut region.region.mut_start_key(), false)?;
             codec::decode_bytes_in_place(&mut region.region.mut_end_key(), false)?;
         }
         Ok(region)
     }
+
+    async fn update_leader(&self, ver_id: RegionVerId, leader: metapb::Peer) -> Result<()>;
+
+    async fn invalidate_region_cache(&self, ver_id: RegionVerId);
 }
 
 /// This client converts requests for the logical TiKV cluster into requests
@@ -208,6 +213,7 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     kv_connect: KvC,
     kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
     enable_codec: bool,
+    region_cache: RegionCache<RetryClient<Cl>>,
     logger: Logger,
 }
 
@@ -215,26 +221,27 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
 impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     type KvClient = KvC::KvClient;
 
-    async fn map_region_to_store(self: Arc<Self>, region: Region) -> Result<Store> {
+    async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
         let store_id = region.get_store_id()?;
-        let store = self.pd.clone().get_store(store_id).await?;
-        let kv_client = self.kv_client(store.get_address())?;
-        Ok(Store::new(region, Arc::new(kv_client)))
+        let store = self.region_cache.get_store_by_id(store_id).await?;
+        let kv_client = self.kv_client(store.get_address()).await?;
+        Ok(RegionStore::new(region, Arc::new(kv_client)))
     }
 
-    async fn region_for_key(&self, key: &Key) -> Result<Region> {
+    async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
         let enable_codec = self.enable_codec;
         let key = if enable_codec {
-            key.to_encoded().into()
+            key.to_encoded()
         } else {
-            key.clone().into()
+            key.clone()
         };
-        let region = self.pd.clone().get_region(key).await?;
+
+        let region = self.region_cache.get_region_by_key(&key).await?;
         Self::decode_region(region, enable_codec)
     }
 
-    async fn region_for_id(&self, id: RegionId) -> Result<Region> {
-        let region = self.pd.clone().get_region_by_id(id).await?;
+    async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {
+        let region = self.region_cache.get_region_by_id(id).await?;
         Self::decode_region(region, self.enable_codec)
     }
 
@@ -245,21 +252,31 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
         self.pd.clone().update_safepoint(safepoint).await
     }
+
+    async fn update_leader(&self, ver_id: RegionVerId, leader: metapb::Peer) -> Result<()> {
+        self.region_cache.update_leader(ver_id, leader).await
+    }
+
+    async fn invalidate_region_cache(&self, ver_id: RegionVerId) {
+        self.region_cache.invalidate_region_cache(ver_id).await
+    }
 }
 
 impl PdRpcClient<TikvConnect, Cluster> {
     pub async fn connect(
         pd_endpoints: &[String],
-        config: &Config,
+        config: Config,
         enable_codec: bool,
+        logger: Logger,
     ) -> Result<PdRpcClient> {
         PdRpcClient::new(
-            config,
+            config.clone(),
             |env, security_mgr| TikvConnect::new(env, security_mgr, config.timeout),
             |env, security_mgr| {
                 RetryClient::connect(env, pd_endpoints, security_mgr, config.timeout)
             },
             enable_codec,
+            logger,
         )
         .await
     }
@@ -276,19 +293,17 @@ fn thread_name(prefix: &str) -> String {
 
 impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
     pub async fn new<PdFut, MakeKvC, MakePd>(
-        config: &Config,
+        config: Config,
         kv_connect: MakeKvC,
         pd: MakePd,
         enable_codec: bool,
+        logger: Logger,
     ) -> Result<PdRpcClient<KvC, Cl>>
     where
         PdFut: Future<Output = Result<RetryClient<Cl>>>,
         MakeKvC: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> KvC,
         MakePd: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> PdFut,
     {
-        let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-        let logger = Logger::root(slog_term::FullFormat::new(plain).build().fuse(), o!());
-        info!(logger, "Logging ready!");
         let env = Arc::new(
             EnvBuilder::new()
                 .cq_count(CQ_COUNT)
@@ -308,26 +323,30 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         let pd = Arc::new(pd(env.clone(), security_mgr.clone()).await?);
         let kv_client_cache = Default::default();
         Ok(PdRpcClient {
-            pd,
+            pd: pd.clone(),
             kv_client_cache,
             kv_connect: kv_connect(env, security_mgr),
             enable_codec,
+            region_cache: RegionCache::new(pd),
             logger,
         })
     }
 
-    fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
-        if let Some(client) = self.kv_client_cache.read().unwrap().get(address) {
+    async fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
+        if let Some(client) = self.kv_client_cache.read().await.get(address) {
             return Ok(client.clone());
         };
         info!(self.logger, "connect to tikv endpoint: {:?}", address);
-        self.kv_connect.connect(address).map(|client| {
-            self.kv_client_cache
-                .write()
-                .unwrap()
-                .insert(address.to_owned(), client.clone());
-            client
-        })
+        match self.kv_connect.connect(address) {
+            Ok(client) => {
+                self.kv_client_cache
+                    .write()
+                    .await
+                    .insert(address.to_owned(), client.clone());
+                Ok(client)
+            }
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -338,16 +357,16 @@ pub mod test {
 
     use futures::{executor, executor::block_on};
 
-    #[test]
-    fn test_kv_client_caching() {
+    #[tokio::test]
+    async fn test_kv_client_caching() {
         let client = block_on(pd_rpc_client());
 
         let addr1 = "foo";
         let addr2 = "bar";
 
-        let kv1 = client.kv_client(&addr1).unwrap();
-        let kv2 = client.kv_client(&addr2).unwrap();
-        let kv3 = client.kv_client(&addr2).unwrap();
+        let kv1 = client.kv_client(addr1).await.unwrap();
+        let kv2 = client.kv_client(addr2).await.unwrap();
+        let kv3 = client.kv_client(addr2).await.unwrap();
         assert!(kv1.addr != kv2.addr);
         assert_eq!(kv2.addr, kv3.addr);
     }
@@ -395,13 +414,13 @@ pub mod test {
         let k3: Key = vec![11, 4].into();
         let range1 = (k1, k2.clone()).into();
         let mut stream = executor::block_on_stream(client.clone().stores_for_range(range1));
-        assert_eq!(stream.next().unwrap().unwrap().region.id(), 1);
+        assert_eq!(stream.next().unwrap().unwrap().region_with_leader.id(), 1);
         assert!(stream.next().is_none());
 
         let range2 = (k2, k3).into();
         let mut stream = executor::block_on_stream(client.stores_for_range(range2));
-        assert_eq!(stream.next().unwrap().unwrap().region.id(), 1);
-        assert_eq!(stream.next().unwrap().unwrap().region.id(), 2);
+        assert_eq!(stream.next().unwrap().unwrap().region_with_leader.id(), 1);
+        assert_eq!(stream.next().unwrap().unwrap().region_with_leader.id(), 2);
         assert!(stream.next().is_none());
     }
 

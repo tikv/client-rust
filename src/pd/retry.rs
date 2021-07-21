@@ -3,7 +3,7 @@
 //! A utility module for managing and retrying PD requests.
 
 use crate::{
-    region::{Region, RegionId, StoreId},
+    region::{RegionId, RegionWithLeader, StoreId},
     stats::pd_stats,
     Error, Result, SecurityManager,
 };
@@ -28,6 +28,22 @@ const RECONNECT_INTERVAL_SEC: u64 = 1;
 const MAX_REQUEST_COUNT: usize = 5;
 const LEADER_CHANGE_RETRY: usize = 10;
 
+#[async_trait]
+pub trait RetryClientTrait {
+    // These get_* functions will try multiple times to make a request, reconnecting as necessary.
+    // It does not know about encoding. Caller should take care of it.
+    async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader>;
+
+    async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader>;
+
+    async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store>;
+
+    async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>>;
+
+    async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp>;
+
+    async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
+}
 /// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
 pub struct RetryClient<Cl = Cluster> {
     // Tuple is the cluster and the time of the cluster's last reconnect.
@@ -104,10 +120,13 @@ impl RetryClient<Cluster> {
             timeout,
         })
     }
+}
 
+#[async_trait]
+impl RetryClientTrait for RetryClient<Cluster> {
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
     // It does not know about encoding. Caller should take care of it.
-    pub async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<Region> {
+    async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
         retry!(self, "get_region", |cluster| {
             let key = key.clone();
             async {
@@ -121,16 +140,18 @@ impl RetryClient<Cluster> {
         })
     }
 
-    pub async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<Region> {
+    async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader> {
         retry!(self, "get_region_by_id", |cluster| async {
             cluster
                 .get_region_by_id(region_id, self.timeout)
                 .await
-                .and_then(|resp| region_from_response(resp, || Error::RegionNotFound { region_id }))
+                .and_then(|resp| {
+                    region_from_response(resp, || Error::RegionNotFoundInResponse { region_id })
+                })
         })
     }
 
-    pub async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store> {
+    async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store> {
         retry!(self, "get_store", |cluster| async {
             cluster
                 .get_store(id, self.timeout)
@@ -140,7 +161,7 @@ impl RetryClient<Cluster> {
     }
 
     #[allow(dead_code)]
-    pub async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
+    async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
         retry!(self, "get_all_stores", |cluster| async {
             cluster
                 .get_all_stores(self.timeout)
@@ -149,11 +170,11 @@ impl RetryClient<Cluster> {
         })
     }
 
-    pub async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
+    async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
         retry!(self, "get_timestamp", |cluster| cluster.get_timestamp())
     }
 
-    pub async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
+    async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
         retry!(self, "update_gc_safepoint", |cluster| async {
             cluster
                 .update_safepoint(safepoint, self.timeout)
@@ -174,9 +195,9 @@ impl fmt::Debug for RetryClient {
 fn region_from_response(
     resp: pdpb::GetRegionResponse,
     err: impl FnOnce() -> Error,
-) -> Result<Region> {
+) -> Result<RegionWithLeader> {
     let region = resp.region.ok_or_else(err)?;
-    Ok(Region::new(region, resp.leader))
+    Ok(RegionWithLeader::new(region, resp.leader))
 }
 
 // A node-like thing that can be connected to.
@@ -209,13 +230,16 @@ impl Reconnect for RetryClient<Cluster> {
 mod test {
     use super::*;
     use futures::{executor, future::ready};
-    use std::sync::Mutex;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex,
+    };
     use tikv_client_common::internal_err;
 
     #[test]
     fn test_reconnect() {
         struct MockClient {
-            reconnect_count: Mutex<usize>,
+            reconnect_count: AtomicUsize,
             cluster: RwLock<((), Instant)>,
         }
 
@@ -224,7 +248,8 @@ mod test {
             type Cl = ();
 
             async fn reconnect(&self, _: u64) -> Result<()> {
-                *self.reconnect_count.lock().unwrap() += 1;
+                self.reconnect_count
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 // Not actually unimplemented, we just don't care about the error.
                 Err(Error::Unimplemented)
             }
@@ -240,23 +265,35 @@ mod test {
 
         executor::block_on(async {
             let client = Arc::new(MockClient {
-                reconnect_count: Mutex::new(0),
+                reconnect_count: AtomicUsize::new(0),
                 cluster: RwLock::new(((), Instant::now())),
             });
 
             assert!(retry_err(client.clone()).await.is_err());
-            assert_eq!(*client.reconnect_count.lock().unwrap(), MAX_REQUEST_COUNT);
+            assert_eq!(
+                client
+                    .reconnect_count
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                MAX_REQUEST_COUNT
+            );
 
-            *client.reconnect_count.lock().unwrap() = 0;
+            client
+                .reconnect_count
+                .store(0, std::sync::atomic::Ordering::SeqCst);
             assert!(retry_ok(client.clone()).await.is_ok());
-            assert_eq!(*client.reconnect_count.lock().unwrap(), 0);
+            assert_eq!(
+                client
+                    .reconnect_count
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                0
+            );
         })
     }
 
     #[test]
     fn test_retry() {
         struct MockClient {
-            cluster: RwLock<(Mutex<usize>, Instant)>,
+            cluster: RwLock<(AtomicUsize, Instant)>,
         }
 
         #[async_trait]
@@ -270,15 +307,13 @@ mod test {
 
         async fn retry_max_err(
             client: Arc<MockClient>,
-            max_retries: Arc<Mutex<usize>>,
+            max_retries: Arc<AtomicUsize>,
         ) -> Result<()> {
             retry!(client, "test", |c| {
-                let mut c = c.lock().unwrap();
-                *c += 1;
+                c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-                let mut max_retries = max_retries.lock().unwrap();
-                *max_retries -= 1;
-                if *max_retries == 0 {
+                let max_retries = max_retries.fetch_sub(1, Ordering::SeqCst) - 1;
+                if max_retries == 0 {
                     ready(Ok(()))
                 } else {
                     ready(Err(internal_err!("whoops")))
@@ -288,15 +323,13 @@ mod test {
 
         async fn retry_max_ok(
             client: Arc<MockClient>,
-            max_retries: Arc<Mutex<usize>>,
+            max_retries: Arc<AtomicUsize>,
         ) -> Result<()> {
             retry!(client, "test", |c| {
-                let mut c = c.lock().unwrap();
-                *c += 1;
+                c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-                let mut max_retries = max_retries.lock().unwrap();
-                *max_retries -= 1;
-                if *max_retries == 0 {
+                let max_retries = max_retries.fetch_sub(1, Ordering::SeqCst) - 1;
+                if max_retries == 0 {
                     ready(Ok(()))
                 } else {
                     ready(Err(internal_err!("whoops")))
@@ -306,23 +339,23 @@ mod test {
 
         executor::block_on(async {
             let client = Arc::new(MockClient {
-                cluster: RwLock::new((Mutex::new(0), Instant::now())),
+                cluster: RwLock::new((AtomicUsize::new(0), Instant::now())),
             });
-            let max_retries = Arc::new(Mutex::new(1000));
+            let max_retries = Arc::new(AtomicUsize::new(1000));
 
             assert!(retry_max_err(client.clone(), max_retries).await.is_err());
             assert_eq!(
-                *client.cluster.read().await.0.lock().unwrap(),
+                client.cluster.read().await.0.load(Ordering::SeqCst),
                 LEADER_CHANGE_RETRY
             );
 
             let client = Arc::new(MockClient {
-                cluster: RwLock::new((Mutex::new(0), Instant::now())),
+                cluster: RwLock::new((AtomicUsize::new(0), Instant::now())),
             });
-            let max_retries = Arc::new(Mutex::new(2));
+            let max_retries = Arc::new(AtomicUsize::new(2));
 
             assert!(retry_max_ok(client.clone(), max_retries).await.is_ok());
-            assert_eq!(*client.cluster.read().await.0.lock().unwrap(), 2);
+            assert_eq!(client.cluster.read().await.0.load(Ordering::SeqCst), 2);
         })
     }
 }

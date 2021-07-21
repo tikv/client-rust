@@ -5,15 +5,15 @@ use crate::{
     backoff::Backoff,
     pd::PdClient,
     request::{
-        DefaultProcessor, Dispatch, ExtractError, HasKeys, KvRequest, Merge, MergeResponse,
-        MultiRegion, Plan, Process, ProcessResponse, ResolveLock, RetryRegion, Shardable,
+        DefaultProcessor, Dispatch, ExtractError, HasKeys, KvRequest, Merge, MergeResponse, Plan,
+        Process, ProcessResponse, ResolveLock, RetryableMultiRegion, Shardable,
     },
-    store::Store,
+    store::RegionStore,
     transaction::HasLocks,
     Result,
 };
 use std::{marker::PhantomData, sync::Arc};
-use tikv_client_store::HasError;
+use tikv_client_store::{HasKeyErrors, HasRegionError, HasRegionErrors};
 
 /// Builder type for plans (see that module for more).
 pub struct PlanBuilder<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> {
@@ -68,24 +68,6 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         }
     }
 
-    /// If there is a region error, re-shard the request and re-resolve regions, then retry.
-    ///
-    /// Note that this plan must wrap a multi-region plan if the request should be re-sharded.
-    pub fn retry_region(self, backoff: Backoff) -> PlanBuilder<PdC, RetryRegion<P, PdC>, Ph>
-    where
-        P::Result: HasError,
-    {
-        PlanBuilder {
-            pd_client: self.pd_client.clone(),
-            plan: RetryRegion {
-                inner: self.plan,
-                backoff,
-                pd_client: self.pd_client,
-            },
-            phantom: PhantomData,
-        }
-    }
-
     /// Merge the results of a request. Usually used where a request is sent to multiple regions
     /// to combine the responses from each region.
     pub fn merge<In, M: Merge<In>>(self, merge: M) -> PlanBuilder<PdC, MergeResponse<P, In, M>, Ph>
@@ -128,15 +110,19 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
 
 impl<PdC: PdClient, P: Plan + Shardable> PlanBuilder<PdC, P, NoTarget>
 where
-    P::Result: HasError,
+    P::Result: HasKeyErrors + HasRegionError,
 {
     /// Split the request into shards sending a request to the region of each shard.
-    pub fn multi_region(self) -> PlanBuilder<PdC, MultiRegion<P, PdC>, Targetted> {
+    pub fn retry_multi_region(
+        self,
+        backoff: Backoff,
+    ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC>, Targetted> {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
-            plan: MultiRegion {
+            plan: RetryableMultiRegion {
                 inner: self.plan,
                 pd_client: self.pd_client,
+                backoff,
             },
             phantom: PhantomData,
         }
@@ -144,9 +130,12 @@ where
 }
 
 impl<PdC: PdClient, R: KvRequest + SingleKey> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
-    /// Target the request at a single region.
+    /// Target the request at a single region. *Note*: single region plan will
+    /// cannot automatically retry on region errors. It's only used for requests
+    /// that target at a specific region but not keys (e.g. ResolveLockRequest).
     pub async fn single_region(self) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
         let key = self.plan.request.key();
+        // TODO: retry when region error occurred
         let store = self.pd_client.clone().store_for_key(key.into()).await?;
         set_single_region_store(self.plan, store, self.pd_client)
     }
@@ -156,7 +145,7 @@ impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
     /// Target the request at a single region; caller supplies the store to target.
     pub async fn single_region_with_store(
         self,
-        store: Store,
+        store: RegionStore,
     ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
         set_single_region_store(self.plan, store, self.pd_client)
     }
@@ -164,7 +153,7 @@ impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
 
 impl<PdC: PdClient, P: Plan + HasKeys> PlanBuilder<PdC, P, NoTarget>
 where
-    P::Result: HasError,
+    P::Result: HasKeyErrors,
 {
     pub fn preserve_keys(self) -> PlanBuilder<PdC, PreserveKey<P>, NoTarget> {
         PlanBuilder {
@@ -177,7 +166,7 @@ where
 
 impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted>
 where
-    P::Result: HasError,
+    P::Result: HasKeyErrors + HasRegionErrors,
 {
     pub fn extract_error(self) -> PlanBuilder<PdC, ExtractError<P>, Targetted> {
         PlanBuilder {
@@ -190,10 +179,11 @@ where
 
 fn set_single_region_store<PdC: PdClient, R: KvRequest>(
     mut plan: Dispatch<R>,
-    store: Store,
+    store: RegionStore,
     pd_client: Arc<PdC>,
 ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
-    plan.request.set_context(store.region.context()?);
+    plan.request
+        .set_context(store.region_with_leader.context()?);
     plan.kv_client = Some(store.client);
     Ok(PlanBuilder {
         plan,
