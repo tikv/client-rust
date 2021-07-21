@@ -522,8 +522,8 @@ impl<PdC: PdClient> Transaction<PdC> {
                 }
             }
             TransactionKind::Pessimistic(_) => {
-                let keys: Vec<Key> = keys.into_iter().map(|k| k.into()).collect();
-                self.pessimistic_lock(keys.into_iter(), false).await?;
+                self.pessimistic_lock(keys.into_iter().map(|k| k.into()), false)
+                    .await?;
             }
         }
         Ok(())

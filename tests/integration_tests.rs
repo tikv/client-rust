@@ -309,8 +309,8 @@ async fn txn_read() -> Result<()> {
     .collect::<Vec<_>>();
 
     let mut txn = client.begin_pessimistic().await?;
-    let res = txn.batch_get(keys.clone()).await?.collect::<Vec<_>>();
-    assert_eq!(res.len(), keys.len());
+    let res = txn.batch_get(keys.clone()).await?;
+    assert_eq!(res.count(), keys.len());
 
     let res = txn.batch_get_for_update(keys.clone()).await?;
     assert_eq!(res.len(), keys.len());
