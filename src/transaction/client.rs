@@ -89,11 +89,17 @@ impl Client {
     ) -> Result<Client> {
         let logger = optional_logger.unwrap_or_else(|| {
             let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-            Logger::root(slog_term::FullFormat::new(plain).build().fuse(), o!())
+            Logger::root(
+                slog_term::FullFormat::new(plain)
+                    .build()
+                    .filter_level(slog::Level::Info)
+                    .fuse(),
+                o!(),
+            )
         });
         debug!(logger, "creating new transactional client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, true).await?);
+        let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config, true, logger.clone()).await?);
         Ok(Client { pd, logger })
     }
 
@@ -220,8 +226,7 @@ impl Client {
 
             let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
                 .resolve_lock(OPTIMISTIC_BACKOFF)
-                .multi_region()
-                .retry_region(DEFAULT_REGION_BACKOFF)
+                .retry_multi_region(DEFAULT_REGION_BACKOFF)
                 .merge(crate::request::Collect)
                 .plan();
             let res: Vec<kvrpcpb::LockInfo> = plan.execute().await?;
@@ -235,6 +240,7 @@ impl Client {
         }
 
         // resolve locks
+        // FIXME: (1) this is inefficient (2) when region error occurred
         resolve_locks(locks, self.pd.clone()).await?;
 
         // update safepoint to PD

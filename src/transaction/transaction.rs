@@ -1,9 +1,11 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    backoff::Backoff,
+    backoff::{Backoff, DEFAULT_REGION_BACKOFF},
     pd::{PdClient, PdRpcClient},
-    request::{Collect, CollectAndMatchKey, CollectError, Plan, PlanBuilder, RetryOptions},
+    request::{
+        Collect, CollectAndMatchKey, CollectError, CollectSingle, Plan, PlanBuilder, RetryOptions,
+    },
     timestamp::TimestampExt,
     transaction::{buffer::Buffer, lowering::*},
     BoundRange, Error, Key, KvPair, Result, Value,
@@ -119,10 +121,9 @@ impl<PdC: PdClient> Transaction<PdC> {
             .get_or_else(key, |key| async move {
                 let request = new_get_request(key, timestamp);
                 let plan = PlanBuilder::new(rpc, request)
-                    .single_region()
-                    .await?
                     .resolve_lock(retry_options.lock_backoff)
-                    .retry_region(retry_options.region_backoff)
+                    .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                    .merge(CollectSingle)
                     .post_process_default()
                     .plan();
                 plan.execute().await
@@ -252,8 +253,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 let request = new_batch_get_request(keys, timestamp);
                 let plan = PlanBuilder::new(rpc, request)
                     .resolve_lock(retry_options.lock_backoff)
-                    .multi_region()
-                    .retry_region(retry_options.region_backoff)
+                    .retry_multi_region(retry_options.region_backoff)
                     .merge(Collect)
                     .plan();
                 plan.execute()
@@ -522,8 +522,8 @@ impl<PdC: PdClient> Transaction<PdC> {
                 }
             }
             TransactionKind::Pessimistic(_) => {
-                let keys: Vec<Key> = keys.into_iter().map(|k| k.into()).collect();
-                self.pessimistic_lock(keys.into_iter(), false).await?;
+                self.pessimistic_lock(keys.into_iter().map(|k| k.into()), false)
+                    .await?;
             }
         }
         Ok(())
@@ -665,10 +665,9 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.start_instant.elapsed().as_millis() as u64 + DEFAULT_LOCK_TTL,
         );
         let plan = PlanBuilder::new(self.rpc.clone(), request)
-            .single_region()
-            .await?
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
-            .retry_region(self.options.retry_options.region_backoff.clone())
+            .retry_multi_region(self.options.retry_options.region_backoff.clone())
+            .merge(CollectSingle)
             .post_process_default()
             .plan();
         plan.execute().await
@@ -693,8 +692,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     let request = new_scan_request(new_range, timestamp, new_limit, key_only);
                     let plan = PlanBuilder::new(rpc, request)
                         .resolve_lock(retry_options.lock_backoff)
-                        .multi_region()
-                        .retry_region(retry_options.region_backoff)
+                        .retry_multi_region(retry_options.region_backoff)
                         .merge(Collect)
                         .plan();
                     plan.execute()
@@ -750,8 +748,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let plan = PlanBuilder::new(self.rpc.clone(), request)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .preserve_keys()
-            .multi_region()
-            .retry_region(self.options.retry_options.region_backoff.clone())
+            .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .merge(CollectAndMatchKey)
             .plan();
         let pairs = plan.execute().await;
@@ -826,9 +823,8 @@ impl<PdC: PdClient> Transaction<PdC> {
                     start_instant.elapsed().as_millis() as u64 + DEFAULT_LOCK_TTL,
                 );
                 let plan = PlanBuilder::new(rpc.clone(), request)
-                    .single_region()
-                    .await?
-                    .retry_region(region_backoff.clone())
+                    .retry_multi_region(region_backoff.clone())
+                    .merge(CollectSingle)
                     .plan();
                 plan.execute().await?;
             }
@@ -1045,6 +1041,7 @@ impl HeartbeatOption {
 /// The `commit` phase is to mark all written data as successfully committed.
 ///
 /// The committer implements `prewrite`, `commit` and `rollback` functions.
+#[allow(clippy::too_many_arguments)]
 #[derive(new)]
 struct Committer<PdC: PdClient = PdRpcClient> {
     primary_key: Option<Key>,
@@ -1128,8 +1125,7 @@ impl<PdC: PdClient> Committer<PdC> {
 
         let plan = PlanBuilder::new(self.rpc.clone(), request)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
-            .multi_region()
-            .retry_region(self.options.retry_options.region_backoff.clone())
+            .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .merge(CollectError)
             .extract_error()
             .plan();
@@ -1169,8 +1165,7 @@ impl<PdC: PdClient> Committer<PdC> {
         );
         let plan = PlanBuilder::new(self.rpc.clone(), req)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
-            .multi_region()
-            .retry_region(self.options.retry_options.region_backoff.clone())
+            .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .extract_error()
             .plan();
         plan.execute()
@@ -1207,8 +1202,7 @@ impl<PdC: PdClient> Committer<PdC> {
         };
         let plan = PlanBuilder::new(self.rpc, req)
             .resolve_lock(self.options.retry_options.lock_backoff)
-            .multi_region()
-            .retry_region(self.options.retry_options.region_backoff)
+            .retry_multi_region(self.options.retry_options.region_backoff)
             .extract_error()
             .plan();
         plan.execute().await?;
@@ -1229,8 +1223,7 @@ impl<PdC: PdClient> Committer<PdC> {
                 let req = new_batch_rollback_request(keys, self.start_version);
                 let plan = PlanBuilder::new(self.rpc, req)
                     .resolve_lock(self.options.retry_options.lock_backoff)
-                    .multi_region()
-                    .retry_region(self.options.retry_options.region_backoff)
+                    .retry_multi_region(self.options.retry_options.region_backoff)
                     .extract_error()
                     .plan();
                 plan.execute().await?;
@@ -1239,8 +1232,7 @@ impl<PdC: PdClient> Committer<PdC> {
                 let req = new_pessimistic_rollback_request(keys, self.start_version, for_update_ts);
                 let plan = PlanBuilder::new(self.rpc, req)
                     .resolve_lock(self.options.retry_options.lock_backoff)
-                    .multi_region()
-                    .retry_region(self.options.retry_options.region_backoff)
+                    .retry_multi_region(self.options.retry_options.region_backoff)
                     .extract_error()
                     .plan();
                 plan.execute().await?;
@@ -1301,18 +1293,23 @@ mod tests {
     #[tokio::test]
     async fn test_optimistic_heartbeat() -> Result<(), io::Error> {
         let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-        let logger = Logger::root(slog_term::FullFormat::new(plain).build().fuse(), o!());
-        info!(logger, "Testing: test_optimistic_heartbeat");
+        let logger = Logger::root(
+            slog_term::FullFormat::new(plain)
+                .build()
+                .filter_level(slog::Level::Info)
+                .fuse(),
+            o!(),
+        );
         let scenario = FailScenario::setup();
         fail::cfg("after-prewrite", "sleep(1500)").unwrap();
         let heartbeats = Arc::new(AtomicUsize::new(0));
         let heartbeats_cloned = heartbeats.clone();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |req: &dyn Any| {
-                if let Some(_) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
+                if req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>().is_some() {
                     heartbeats_cloned.fetch_add(1, Ordering::SeqCst);
                     Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>)
-                } else if let Some(_) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                } else if req.downcast_ref::<kvrpcpb::PrewriteRequest>().is_some() {
                     Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
                 } else {
                     Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
@@ -1341,18 +1338,27 @@ mod tests {
     #[tokio::test]
     async fn test_pessimistic_heartbeat() -> Result<(), io::Error> {
         let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-        let logger = Logger::root(slog_term::FullFormat::new(plain).build().fuse(), o!());
-        info!(logger, "Testing: test_pessimistic_heartbeat");
+
+        let logger = Logger::root(
+            slog_term::FullFormat::new(plain)
+                .build()
+                .filter_level(slog::Level::Info)
+                .fuse(),
+            o!(),
+        );
         let heartbeats = Arc::new(AtomicUsize::new(0));
         let heartbeats_cloned = heartbeats.clone();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |req: &dyn Any| {
-                if let Some(_) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
+                if req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>().is_some() {
                     heartbeats_cloned.fetch_add(1, Ordering::SeqCst);
                     Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>)
-                } else if let Some(_) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                } else if req.downcast_ref::<kvrpcpb::PrewriteRequest>().is_some() {
                     Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
-                } else if let Some(_) = req.downcast_ref::<kvrpcpb::PessimisticLockRequest>() {
+                } else if req
+                    .downcast_ref::<kvrpcpb::PessimisticLockRequest>()
+                    .is_some()
+                {
                     Ok(Box::new(kvrpcpb::PessimisticLockResponse::default()) as Box<dyn Any>)
                 } else {
                     Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)

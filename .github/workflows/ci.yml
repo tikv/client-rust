@@ -20,6 +20,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: check
+          args: --all-targets --all-features
 
   fmt:
     name: rustfmt
@@ -49,7 +50,7 @@ jobs:
       - uses: actions-rs/clippy-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-features
+          args: --all-targets --all-features -- -D clippy::all
           name: Clippy Output
   unit-test:
     name: unit test
@@ -98,7 +99,6 @@ jobs:
           path: |
             ~/.cargo/.crates.toml
             ~/.cargo/.crates2.json
-            ~/.cargo/bin
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
           key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}

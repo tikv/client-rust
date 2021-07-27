@@ -2,9 +2,12 @@
 
 use super::RawRpcRequest;
 use crate::{
+    collect_first,
     pd::PdClient,
-    request::{Collect, DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey},
-    store::{store_stream_for_keys, store_stream_for_ranges, Store},
+    request::{
+        Collect, CollectSingle, DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey,
+    },
+    store::{store_stream_for_keys, store_stream_for_ranges, RegionStore},
     transaction::HasLocks,
     util::iter::FlatMapOkIterExt,
     ColumnFamily, KvPair, Result, Value,
@@ -24,6 +27,9 @@ pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::R
 impl KvRequest for kvrpcpb::RawGetRequest {
     type Response = kvrpcpb::RawGetResponse;
 }
+
+shardable_key!(kvrpcpb::RawGetRequest);
+collect_first!(kvrpcpb::RawGetResponse);
 
 impl SingleKey for kvrpcpb::RawGetRequest {
     fn key(&self) -> &Vec<u8> {
@@ -91,6 +97,8 @@ impl KvRequest for kvrpcpb::RawPutRequest {
     type Response = kvrpcpb::RawPutResponse;
 }
 
+shardable_key!(kvrpcpb::RawPutRequest);
+collect_first!(kvrpcpb::RawPutResponse);
 impl SingleKey for kvrpcpb::RawPutRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -120,7 +128,7 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-    ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
         let mut pairs = self.pairs.clone();
         pairs.sort_by(|a, b| a.key.cmp(&b.key));
         store_stream_for_keys(
@@ -129,8 +137,8 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
         )
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
-        self.set_context(store.region.context()?);
+    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
+        self.set_context(store.region_with_leader.context()?);
         self.set_pairs(shard);
         Ok(())
     }
@@ -153,6 +161,8 @@ impl KvRequest for kvrpcpb::RawDeleteRequest {
     type Response = kvrpcpb::RawDeleteResponse;
 }
 
+shardable_key!(kvrpcpb::RawDeleteRequest);
+collect_first!(kvrpcpb::RawDeleteResponse);
 impl SingleKey for kvrpcpb::RawDeleteRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -254,12 +264,12 @@ impl Shardable for kvrpcpb::RawBatchScanRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-    ) -> BoxStream<'static, Result<(Self::Shard, Store)>> {
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
         store_stream_for_ranges(self.ranges.clone(), pd_client.clone())
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &Store) -> Result<()> {
-        self.set_context(store.region.context()?);
+    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
+        self.set_context(store.region_with_leader.context()?);
         self.set_ranges(shard);
         Ok(())
     }
@@ -297,6 +307,8 @@ impl KvRequest for kvrpcpb::RawCasRequest {
     type Response = kvrpcpb::RawCasResponse;
 }
 
+shardable_key!(kvrpcpb::RawCasRequest);
+collect_first!(kvrpcpb::RawCasResponse);
 impl SingleKey for kvrpcpb::RawCasRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -372,8 +384,10 @@ mod test {
 
                 let mut resp = kvrpcpb::RawScanResponse::default();
                 for i in req.start_key[0]..req.end_key[0] {
-                    let mut kv = kvrpcpb::KvPair::default();
-                    kv.key = vec![i];
+                    let kv = kvrpcpb::KvPair {
+                        key: vec![i],
+                        ..Default::default()
+                    };
                     resp.kvs.push(kv);
                 }
 
@@ -390,10 +404,9 @@ mod test {
             key_only: true,
             ..Default::default()
         };
-        let plan = crate::request::PlanBuilder::new(client.clone(), scan)
+        let plan = crate::request::PlanBuilder::new(client, scan)
             .resolve_lock(OPTIMISTIC_BACKOFF)
-            .multi_region()
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
         let scan = executor::block_on(async { plan.execute().await }).unwrap();
