@@ -1,11 +1,14 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-/// This module provides constructor functions for requests which take arguments as high-level
-/// types (i.e., the types from the client crate) and converts these to the types used in the
-/// generated protobuf code, then calls the low-level ctor functions in the requests module.
-use crate::{raw::requests, region::Region, BoundRange, ColumnFamily, Key, KvPair, Value};
+//! This module provides constructor functions for requests which take arguments as high-level
+//! types (i.e., the types from the client crate) and converts these to the types used in the
+//! generated protobuf code, then calls the low-level ctor functions in the requests module.
+
 use std::{iter::Iterator, ops::Range, sync::Arc};
-use tikv_client_proto::kvrpcpb;
+
+use tikv_client_proto::{kvrpcpb, metapb};
+
+use crate::{raw::requests, BoundRange, ColumnFamily, Key, KvPair, Value};
 
 pub fn new_raw_get_request(key: Key, cf: Option<ColumnFamily>) -> kvrpcpb::RawGetRequest {
     requests::new_raw_get_request(key.into(), cf)
@@ -96,7 +99,7 @@ pub fn new_raw_coprocessor_request(
     copr_name: String,
     copr_version_req: String,
     ranges: impl Iterator<Item = BoundRange>,
-    request_builder: impl Fn(Vec<Range<Key>>, Region) -> Vec<u8> + Send + Sync + 'static,
+    request_builder: impl Fn(Vec<Range<Key>>, metapb::Region) -> Vec<u8> + Send + Sync + 'static,
 ) -> requests::RawCoprocessorRequest {
     requests::new_raw_coprocessor_request(
         copr_name,

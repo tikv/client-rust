@@ -69,7 +69,7 @@ impl Buffer {
         f: F,
     ) -> Result<impl Iterator<Item = KvPair>>
     where
-        F: FnOnce(Box<dyn Iterator<Item = Key>>) -> Fut,
+        F: FnOnce(Box<dyn Iterator<Item = Key> + Send>) -> Fut,
         Fut: Future<Output = Result<Vec<KvPair>>>,
     {
         let (cached_results, undetermined_keys) = {
@@ -237,7 +237,7 @@ impl Buffer {
 
     fn get_from_mutations(&self, key: &Key) -> MutationValue {
         self.entry_map
-            .get(&key)
+            .get(key)
             .map(BufferEntry::get_value)
             .unwrap_or(MutationValue::Undetermined)
     }
@@ -253,15 +253,11 @@ impl Buffer {
             Some(BufferEntry::Cached(v)) | Some(BufferEntry::Locked(Some(v))) => {
                 assert!(&value == v);
             }
-            Some(BufferEntry::Put(v)) => {
-                assert!(value.as_ref() == Some(v))
-            }
+            Some(BufferEntry::Put(v)) => assert!(value.as_ref() == Some(v)),
             Some(BufferEntry::Del) => {
                 assert!(value.is_none());
             }
-            Some(BufferEntry::Insert(v)) => {
-                assert!(value.as_ref() == Some(v))
-            }
+            Some(BufferEntry::Insert(v)) => assert!(value.as_ref() == Some(v)),
             Some(BufferEntry::CheckNotExist) => {
                 assert!(value.is_none());
             }
@@ -401,10 +397,7 @@ mod tests {
             ))
             .unwrap()
             .collect::<Vec<_>>(),
-            vec![KvPair(
-                Key::from(b"key1".to_vec()),
-                Value::from(b"value".to_vec()),
-            ),]
+            vec![KvPair(Key::from(b"key1".to_vec()), b"value".to_vec(),),]
         );
     }
 

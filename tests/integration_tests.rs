@@ -34,7 +34,7 @@ const NUM_TRNASFER: u32 = 100;
 #[serial]
 async fn txn_get_timestamp() -> Result<()> {
     const COUNT: usize = 1 << 8; // use a small number to make test fast
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client = TransactionClient::new(pd_addrs(), None).await?;
 
     let mut versions = future::join_all((0..COUNT).map(|_| client.current_timestamp()))
         .await
@@ -55,7 +55,7 @@ async fn txn_get_timestamp() -> Result<()> {
 async fn txn_crud() -> Result<()> {
     init().await?;
 
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client = TransactionClient::new(pd_addrs(), None).await?;
     let mut txn = client.begin_optimistic().await?;
 
     // Get non-existent keys
@@ -139,7 +139,7 @@ async fn txn_crud() -> Result<()> {
 async fn txn_insert_duplicate_keys() -> Result<()> {
     init().await?;
 
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client = TransactionClient::new(pd_addrs(), None).await?;
     // Initialize TiKV store with {foo => bar}
     let mut txn = client.begin_optimistic().await?;
     txn.put("foo".to_owned(), "bar".to_owned()).await?;
@@ -163,7 +163,7 @@ async fn txn_insert_duplicate_keys() -> Result<()> {
 async fn txn_pessimistic() -> Result<()> {
     init().await?;
 
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client = TransactionClient::new(pd_addrs(), None).await?;
     let mut txn = client.begin_pessimistic().await?;
     txn.put("foo".to_owned(), "foo".to_owned()).await.unwrap();
 
@@ -180,7 +180,7 @@ async fn txn_pessimistic() -> Result<()> {
 #[serial]
 async fn raw_bank_transfer() -> Result<()> {
     init().await?;
-    let client = RawClient::new(pd_addrs()).await?;
+    let client = RawClient::new(pd_addrs(), None).await?;
     let mut rng = thread_rng();
 
     let people = gen_u32_keys(NUM_PEOPLE, &mut rng);
@@ -232,7 +232,7 @@ async fn txn_read() -> Result<()> {
     let value = "large_value".repeat(10);
 
     init().await?;
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client = TransactionClient::new(pd_addrs(), None).await?;
 
     for i in 0..2u32.pow(NUM_BITS_TXN) {
         let mut cur = i * 2u32.pow(32 - NUM_BITS_TXN);
@@ -309,8 +309,8 @@ async fn txn_read() -> Result<()> {
     .collect::<Vec<_>>();
 
     let mut txn = client.begin_pessimistic().await?;
-    let res = txn.batch_get(keys.clone()).await?.collect::<Vec<_>>();
-    assert_eq!(res.len(), keys.len());
+    let res = txn.batch_get(keys.clone()).await?;
+    assert_eq!(res.count(), keys.len());
 
     let res = txn.batch_get_for_update(keys.clone()).await?;
     assert_eq!(res.len(), keys.len());
@@ -319,11 +319,12 @@ async fn txn_read() -> Result<()> {
     Ok(())
 }
 
+// FIXME: the test is temporarily ingnored since it's easy to fail when scheduling is frequent.
 #[tokio::test]
 #[serial]
 async fn txn_bank_transfer() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client = TransactionClient::new(pd_addrs(), None).await?;
     let mut rng = thread_rng();
     let options = TransactionOptions::new_optimistic()
         .use_async_commit()
@@ -376,7 +377,7 @@ async fn txn_bank_transfer() -> Result<()> {
 #[serial]
 async fn raw_req() -> Result<()> {
     init().await?;
-    let client = RawClient::new(pd_addrs()).await?;
+    let client = RawClient::new(pd_addrs(), None).await?;
 
     // empty; get non-existent key
     let res = client.get("k1".to_owned()).await;
@@ -506,7 +507,7 @@ async fn raw_req() -> Result<()> {
 #[serial]
 async fn txn_update_safepoint() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client = TransactionClient::new(pd_addrs(), None).await?;
     let res = client.gc(client.current_timestamp().await?).await?;
     assert!(res);
     Ok(())
@@ -521,7 +522,7 @@ async fn raw_write_million() -> Result<()> {
     let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
 
     init().await?;
-    let client = RawClient::new(pd_addrs()).await?;
+    let client = RawClient::new(pd_addrs(), None).await?;
 
     for i in 0..2u32.pow(NUM_BITS_TXN) {
         let mut cur = i * 2u32.pow(32 - NUM_BITS_TXN);
@@ -567,7 +568,7 @@ async fn raw_write_million() -> Result<()> {
 #[serial]
 async fn txn_pessimistic_rollback() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
     let mut preload_txn = client.begin_optimistic().await?;
     let key1 = vec![1];
     let key2 = vec![2];
@@ -600,7 +601,8 @@ async fn txn_pessimistic_rollback() -> Result<()> {
 async fn txn_pessimistic_delete() -> Result<()> {
     init().await?;
     let client =
-        TransactionClient::new_with_config(vec!["127.0.0.1:2379"], Default::default()).await?;
+        TransactionClient::new_with_config(vec!["127.0.0.1:2379"], Default::default(), None)
+            .await?;
 
     // The transaction will lock the keys and must release the locks on commit,
     // even when values are not written to the DB.
@@ -642,7 +644,7 @@ async fn txn_pessimistic_delete() -> Result<()> {
 #[serial]
 async fn txn_lock_keys() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
 
     let k1 = b"key1".to_vec();
     let k2 = b"key2".to_vec();
@@ -676,7 +678,7 @@ async fn txn_lock_keys() -> Result<()> {
 #[serial]
 async fn txn_get_for_update() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
     let key1 = "key".to_owned();
     let key2 = "another key".to_owned();
     let value1 = b"some value".to_owned();
@@ -696,7 +698,7 @@ async fn txn_get_for_update() -> Result<()> {
     assert!(t1.get_for_update(key1.clone()).await?.unwrap() == value1);
     t1.commit().await?;
 
-    assert!(t2.batch_get(keys.clone()).await?.collect::<Vec<_>>().len() == 0);
+    assert!(t2.batch_get(keys.clone()).await?.count() == 0);
     let res: HashMap<_, _> = t2
         .batch_get_for_update(keys.clone())
         .await?
@@ -710,7 +712,7 @@ async fn txn_get_for_update() -> Result<()> {
     assert!(t3.get_for_update(key1).await?.is_none());
     assert!(t3.commit().await.is_err());
 
-    assert!(t4.batch_get_for_update(keys).await?.len() == 0);
+    assert!(t4.batch_get_for_update(keys).await?.is_empty());
     assert!(t4.commit().await.is_err());
 
     Ok(())
@@ -723,7 +725,7 @@ async fn txn_pessimistic_heartbeat() -> Result<()> {
 
     let key1 = "key1".to_owned();
     let key2 = "key2".to_owned();
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client = TransactionClient::new(pd_addrs(), None).await?;
 
     let mut heartbeat_txn = client
         .begin_with_options(TransactionOptions::new_pessimistic())
@@ -763,7 +765,9 @@ async fn txn_pessimistic_heartbeat() -> Result<()> {
 #[serial]
 async fn raw_cas() -> Result<()> {
     init().await?;
-    let client = RawClient::new(pd_addrs()).await?.with_atomic_for_cas();
+    let client = RawClient::new(pd_addrs(), None)
+        .await?
+        .with_atomic_for_cas();
     let key = "key".to_owned();
     let value = "value".to_owned();
     let new_value = "new value".to_owned();
@@ -806,7 +810,7 @@ async fn raw_cas() -> Result<()> {
         client.batch_delete(vec![key.clone()]).await.err().unwrap(),
         Error::UnsupportedMode
     ));
-    let client = RawClient::new(pd_addrs()).await?;
+    let client = RawClient::new(pd_addrs(), None).await?;
     assert!(matches!(
         client
             .compare_and_swap(key.clone(), None, vec![])

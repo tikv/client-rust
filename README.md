@@ -33,7 +33,7 @@ Raw mode:
 ```rust
 use tikv_client::RawClient;
 
-let client = RawClient::new(vec!["127.0.0.1:2379"]).await?;
+let client = RawClient::new(vec!["127.0.0.1:2379"], None).await?;
 client.put("key".to_owned(), "value".to_owned()).await?;
 let value = client.get("key".to_owned()).await?;
 ```
@@ -43,7 +43,7 @@ Transactional mode:
 ```rust
 use tikv_client::TransactionClient;
 
-let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"]).await?;
+let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"], None).await?;
 let mut txn = txn_client.begin_optimistic().await?;
 txn.put("key".to_owned(), "value".to_owned()).await?;
 let value = txn.get("key".to_owned()).await?;
@@ -115,10 +115,10 @@ We welcome your contributions! Contributing code is great, we also appreciate fi
 
 We use the standard Cargo workflows, e.g., `cargo build` to build and `cargo test` to run unit tests. You will need to use a nightly Rust toolchain to build and run tests.
 
-Running integration tests or manually testing the client with a TiKV cluster is a little bit more involved. The easiest way is to use [TiUp](https://github.com/pingcap/tiup) to initialise a cluster on your local machine:
+Running integration tests or manually testing the client with a TiKV cluster is a little bit more involved. The easiest way is to use [TiUp](https://github.com/pingcap/tiup) (>= 1.5) to initialise a cluster on your local machine:
 
 ```
-tiup playground nightly --db 0 --tiflash 0 --monitor false
+tiup playground nightly --mode tikv-slim
 ```
 
 Then if you want to run integration tests:

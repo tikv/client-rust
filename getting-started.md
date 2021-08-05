@@ -23,7 +23,7 @@ Raw mode:
 ```rust
 use tikv_client::RawClient;
 
-let client = RawClient::new(vec!["127.0.0.1:2379"]).await?;
+let client = RawClient::new(vec!["127.0.0.1:2379"], None).await?;
 client.put("key".to_owned(), "value".to_owned()).await?;
 let value = client.get("key".to_owned()).await?;
 ```
@@ -33,7 +33,7 @@ Transactional mode:
 ```rust
 use tikv_client::TransactionClient;
 
-let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"]).await?;
+let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"], None).await?;
 let mut txn = txn_client.begin_optimistic().await?;
 txn.put("key".to_owned(), "value".to_owned()).await?;
 let value = txn.get("key".to_owned()).await?;
@@ -46,7 +46,7 @@ To make an example which builds and runs,
 use tikv_client::{TransactionClient, Error};
 
 async fn run() -> Result<(), Error> {
-    let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"]).await?;
+    let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"], None).await?;
     let mut txn = txn_client.begin_optimistic().await?;
     txn.put("key".to_owned(), "value".to_owned()).await?;
     let value = txn.get("key".to_owned()).await?;
@@ -79,7 +79,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh
 then, to start a local TiKV 'cluster' for testing,
 
 ```
-tiup playground nightly --kv-only
+tiup playground nightly --mode tikv-slim
 ```
 
 For more information about TiUP, see their [docs](https://docs.pingcap.com/tidb/stable/production-deployment-using-tiup).

@@ -1,17 +1,20 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use core::ops::Range;
+use std::{str::FromStr, sync::Arc, u32};
+
+use slog::{Drain, Logger};
 use tikv_client_common::Error;
+use tikv_client_proto::metapb;
 
 use crate::{
     backoff::DEFAULT_REGION_BACKOFF,
     config::Config,
     pd::PdRpcClient,
     raw::lowering::*,
-    region::Region,
-    request::{Collect, Plan},
+    request::{Collect, CollectSingle, Plan},
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
-use std::{ops::Range, str::FromStr, sync::Arc};
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
@@ -28,6 +31,7 @@ pub struct Client {
     cf: Option<ColumnFamily>,
     /// Whether to use the [`atomic mode`](Client::with_atomic_for_cas).
     atomic: bool,
+    logger: Logger,
 }
 
 impl Client {
@@ -43,11 +47,14 @@ impl Client {
     /// # use tikv_client::RawClient;
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// # });
     /// ```
-    pub async fn new<S: Into<String>>(pd_endpoints: Vec<S>) -> Result<Client> {
-        Self::new_with_config(pd_endpoints, Config::default()).await
+    pub async fn new<S: Into<String>>(
+        pd_endpoints: Vec<S>,
+        logger: Option<Logger>,
+    ) -> Result<Client> {
+        Self::new_with_config(pd_endpoints, Config::default(), logger).await
     }
 
     /// Create a raw [`Client`] with a custom configuration, and connect to the TiKV cluster.
@@ -66,19 +73,34 @@ impl Client {
     /// let client = RawClient::new_with_config(
     ///     vec!["192.168.0.100"],
     ///     Config::default().with_timeout(Duration::from_secs(60)),
+    ///     None,
     /// ).await.unwrap();
     /// # });
     /// ```
     pub async fn new_with_config<S: Into<String>>(
         pd_endpoints: Vec<S>,
         config: Config,
+        optional_logger: Option<Logger>,
     ) -> Result<Client> {
+        let logger = optional_logger.unwrap_or_else(|| {
+            let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
+            Logger::root(
+                slog_term::FullFormat::new(plain)
+                    .build()
+                    .filter_level(slog::Level::Info)
+                    .fuse(),
+                o!(),
+            )
+        });
+        debug!(logger, "creating new raw client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let rpc = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, false).await?);
+        let rpc =
+            Arc::new(PdRpcClient::connect(&pd_endpoints, config, false, logger.clone()).await?);
         Ok(Client {
             rpc,
             cf: None,
             atomic: false,
+            logger,
         })
     }
 
@@ -98,7 +120,7 @@ impl Client {
     /// # use futures::prelude::*;
     /// # use std::convert::TryInto;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(vec!["192.168.0.100"])
+    /// let client = RawClient::new(vec!["192.168.0.100"], None)
     ///     .await
     ///     .unwrap()
     ///     .with_cf(ColumnFamily::Write);
@@ -111,6 +133,7 @@ impl Client {
             rpc: self.rpc.clone(),
             cf: Some(cf),
             atomic: self.atomic,
+            logger: self.logger.clone(),
         }
     }
 
@@ -126,6 +149,7 @@ impl Client {
             rpc: self.rpc.clone(),
             cf: self.cf.clone(),
             atomic: true,
+            logger: self.logger.clone(),
         }
     }
 
@@ -141,18 +165,18 @@ impl Client {
     /// # use tikv_client::{Value, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let req = client.get(key);
     /// let result: Option<Value> = req.await.unwrap();
     /// # });
     /// ```
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
+        debug!(self.logger, "invoking raw get request");
         let request = new_raw_get_request(key.into(), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .single_region()
-            .await?
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectSingle)
             .post_process_default()
             .plan();
         plan.execute().await
@@ -170,7 +194,7 @@ impl Client {
     /// # use tikv_client::{KvPair, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let req = client.batch_get(keys);
     /// let result: Vec<KvPair> = req.await.unwrap();
@@ -180,10 +204,10 @@ impl Client {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
+        debug!(self.logger, "invoking raw batch_get request");
         let request = new_raw_batch_get_request(keys.into_iter().map(Into::into), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .multi_region()
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
         plan.execute()
@@ -200,7 +224,7 @@ impl Client {
     /// # use tikv_client::{Key, Value, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let val = "TiKV".to_owned();
     /// let req = client.put(key, val);
@@ -208,11 +232,11 @@ impl Client {
     /// # });
     /// ```
     pub async fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
+        debug!(self.logger, "invoking raw put request");
         let request = new_raw_put_request(key.into(), value.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .single_region()
-            .await?
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectSingle)
             .extract_error()
             .plan();
         plan.execute().await?;
@@ -228,7 +252,7 @@ impl Client {
     /// # use tikv_client::{Result, KvPair, Key, Value, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let kvpair1 = ("PD".to_owned(), "Go".to_owned());
     /// let kvpair2 = ("TiKV".to_owned(), "Rust".to_owned());
     /// let iterable = vec![kvpair1, kvpair2];
@@ -240,14 +264,14 @@ impl Client {
         &self,
         pairs: impl IntoIterator<Item = impl Into<KvPair>>,
     ) -> Result<()> {
+        debug!(self.logger, "invoking raw batch_put request");
         let request = new_raw_batch_put_request(
             pairs.into_iter().map(Into::into),
             self.cf.clone(),
             self.atomic,
         );
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .multi_region()
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
         plan.execute().await?;
@@ -265,18 +289,18 @@ impl Client {
     /// # use tikv_client::{Key, Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let req = client.delete(key);
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
     pub async fn delete(&self, key: impl Into<Key>) -> Result<()> {
+        debug!(self.logger, "invoking raw delete request");
         let request = new_raw_delete_request(key.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .single_region()
-            .await?
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectSingle)
             .extract_error()
             .plan();
         plan.execute().await?;
@@ -294,19 +318,19 @@ impl Client {
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let req = client.batch_delete(keys);
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
     pub async fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
+        debug!(self.logger, "invoking raw batch_delete request");
         self.assert_non_atomic()?;
         let request =
             new_raw_batch_delete_request(keys.into_iter().map(Into::into), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .multi_region()
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
         plan.execute().await?;
@@ -322,18 +346,18 @@ impl Client {
     /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = client.delete_range(inclusive_range.into_owned());
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
     pub async fn delete_range(&self, range: impl Into<BoundRange>) -> Result<()> {
+        debug!(self.logger, "invoking raw delete_range request");
         self.assert_non_atomic()?;
         let request = new_raw_delete_range_request(range.into(), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .multi_region()
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
         plan.execute().await?;
@@ -353,13 +377,14 @@ impl Client {
     /// # use tikv_client::{KvPair, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = client.scan(inclusive_range.into_owned(), 2);
     /// let result: Vec<KvPair> = req.await.unwrap();
     /// # });
     /// ```
     pub async fn scan(&self, range: impl Into<BoundRange>, limit: u32) -> Result<Vec<KvPair>> {
+        debug!(self.logger, "invoking raw scan request");
         self.scan_inner(range.into(), limit, false).await
     }
 
@@ -376,13 +401,14 @@ impl Client {
     /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = client.scan_keys(inclusive_range.into_owned(), 2);
     /// let result: Vec<Key> = req.await.unwrap();
     /// # });
     /// ```
     pub async fn scan_keys(&self, range: impl Into<BoundRange>, limit: u32) -> Result<Vec<Key>> {
+        debug!(self.logger, "invoking raw scan_keys request");
         Ok(self
             .scan_inner(range, limit, true)
             .await?
@@ -406,7 +432,7 @@ impl Client {
     /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let inclusive_range1 = "TiDB"..="TiKV";
     /// let inclusive_range2 = "TiKV"..="TiSpark";
     /// let iterable = vec![inclusive_range1.into_owned(), inclusive_range2.into_owned()];
@@ -419,6 +445,7 @@ impl Client {
         ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
         each_limit: u32,
     ) -> Result<Vec<KvPair>> {
+        debug!(self.logger, "invoking raw batch_scan request");
         self.batch_scan_inner(ranges, each_limit, false).await
     }
 
@@ -437,7 +464,7 @@ impl Client {
     /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
     /// let inclusive_range1 = "TiDB"..="TiKV";
     /// let inclusive_range2 = "TiKV"..="TiSpark";
     /// let iterable = vec![inclusive_range1.into_owned(), inclusive_range2.into_owned()];
@@ -450,6 +477,7 @@ impl Client {
         ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
         each_limit: u32,
     ) -> Result<Vec<Key>> {
+        debug!(self.logger, "invoking raw batch_scan_keys request");
         Ok(self
             .batch_scan_inner(ranges, each_limit, true)
             .await?
@@ -476,6 +504,7 @@ impl Client {
         previous_value: impl Into<Option<Value>>,
         new_value: impl Into<Value>,
     ) -> Result<(Option<Value>, bool)> {
+        debug!(self.logger, "invoking raw compare_and_swap request");
         self.assert_atomic()?;
         let req = new_cas_request(
             key.into(),
@@ -484,9 +513,8 @@ impl Client {
             self.cf.clone(),
         );
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), req)
-            .single_region()
-            .await?
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectSingle)
             .post_process_default()
             .plan();
         plan.execute().await
@@ -497,7 +525,7 @@ impl Client {
         copr_name: String,
         copr_version_req: String,
         ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
-        request_builder: impl Fn(Vec<Range<Key>>, Region) -> Vec<u8> + Send + Sync + 'static,
+        request_builder: impl Fn(Vec<Range<Key>>, metapb::Region) -> Vec<u8> + Send + Sync + 'static,
     ) -> Result<Vec<(Vec<u8>, Vec<Range<Key>>)>> {
         semver::VersionReq::from_str(&copr_version_req)?;
         let req = new_raw_coprocessor_request(
@@ -508,8 +536,7 @@ impl Client {
         );
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), req)
             .preserve_shard()
-            .multi_region()
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .post_process_default()
             .plan();
         plan.execute().await
@@ -530,8 +557,7 @@ impl Client {
 
         let request = new_raw_scan_request(range.into(), limit, key_only, self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .multi_region()
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
         let res = plan.execute().await;
@@ -561,8 +587,7 @@ impl Client {
             self.cf.clone(),
         );
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .multi_region()
-            .retry_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
         plan.execute().await

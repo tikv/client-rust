@@ -33,6 +33,10 @@ pub enum Error {
         "The operation is not supported in current mode, please consider using RawClient with or without atomic mode"
     )]
     UnsupportedMode,
+    #[error("There is no current_regions in the EpochNotMatch error")]
+    NoCurrentRegions,
+    #[error("The specified entry is not found in the region cache")]
+    EntryNotFoundInRegionCache,
     /// Wraps a `std::io::Error`.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -51,18 +55,24 @@ pub enum Error {
     /// Wraps `tikv_client_proto::kvrpcpb::KeyError`
     #[error("{0:?}")]
     KeyError(tikv_client_proto::kvrpcpb::KeyError),
-    /// Multiple errors
+    /// Multiple errors generated from the ExtractError plan.
     #[error("Multiple errors: {0:?}")]
-    MultipleErrors(Vec<Error>),
+    ExtractedErrors(Vec<Error>),
+    /// Multiple key errors
+    #[error("Multiple key errors: {0:?}")]
+    MultipleKeyErrors(Vec<Error>),
     /// Invalid ColumnFamily
     #[error("Unsupported column family {}", _0)]
     ColumnFamilyError(String),
+    /// Can't join tokio tasks
+    #[error("Failed to join tokio tasks")]
+    JoinError(#[from] tokio::task::JoinError),
     /// No region is found for the given key.
     #[error("Region is not found for key: {:?}", key)]
     RegionForKeyNotFound { key: Vec<u8> },
-    /// No region is found for the given id.
-    #[error("Region {} is not found", region_id)]
-    RegionNotFound { region_id: u64 },
+    /// No region is found for the given id. note: distinguish it with the RegionNotFound error in errorpb.
+    #[error("Region {} is not found in the response", region_id)]
+    RegionNotFoundInResponse { region_id: u64 },
     /// No leader is found for the given id.
     #[error("Leader of region {} is not found", region_id)]
     LeaderNotFound { region_id: u64 },
