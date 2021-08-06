@@ -527,7 +527,7 @@ impl<PdC: PdClient> Client<PdC> {
         copr_name: impl Into<String>,
         copr_version_req: impl Into<String>,
         ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
-        request_builder: impl Fn(Vec<Range<Key>>, metapb::Region) -> Vec<u8> + Send + Sync + 'static,
+        request_builder: impl Fn(metapb::Region, Vec<Range<Key>>) -> Vec<u8> + Send + Sync + 'static,
     ) -> Result<Vec<(Vec<u8>, Vec<Range<Key>>)>> {
         let copr_version_req = copr_version_req.into();
         semver::VersionReq::from_str(&copr_version_req)?;
@@ -651,7 +651,7 @@ mod tests {
                 "example",
                 "0.1.0",
                 vec![vec![5]..vec![15], vec![20]..vec![]],
-                |ranges, region| format!("{:?}:{:?}", region.id, ranges).into_bytes(),
+                |region, ranges| format!("{:?}:{:?}", region.id, ranges).into_bytes(),
             )
             .await?;
         let resps: Vec<_> = resps

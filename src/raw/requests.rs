@@ -335,7 +335,7 @@ impl Process<kvrpcpb::RawCasResponse> for DefaultProcessor {
 }
 
 type RawCoprocessorRequestDataBuilder =
-    Arc<dyn Fn(Vec<kvrpcpb::KeyRange>, metapb::Region) -> Vec<u8> + Send + Sync>;
+    Arc<dyn Fn(metapb::Region, Vec<kvrpcpb::KeyRange>) -> Vec<u8> + Send + Sync>;
 
 pub fn new_raw_coprocessor_request(
     copr_name: String,
@@ -396,8 +396,8 @@ impl Shardable for RawCoprocessorRequest {
         self.inner.set_context(store.region_with_leader.context()?);
         self.inner.set_ranges(shard.clone());
         self.inner.set_data((self.data_builder)(
-            shard,
             store.region_with_leader.region.clone(),
+            shard,
         ));
         Ok(())
     }

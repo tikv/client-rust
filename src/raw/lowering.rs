@@ -99,19 +99,19 @@ pub fn new_raw_coprocessor_request(
     copr_name: String,
     copr_version_req: String,
     ranges: impl Iterator<Item = BoundRange>,
-    request_builder: impl Fn(Vec<Range<Key>>, metapb::Region) -> Vec<u8> + Send + Sync + 'static,
+    request_builder: impl Fn(metapb::Region, Vec<Range<Key>>) -> Vec<u8> + Send + Sync + 'static,
 ) -> requests::RawCoprocessorRequest {
     requests::new_raw_coprocessor_request(
         copr_name,
         copr_version_req,
         ranges.map(Into::into).collect(),
-        Arc::new(move |ranges, region| {
+        Arc::new(move |region, ranges| {
             request_builder(
+                region,
                 ranges
                     .into_iter()
                     .map(|range| range.start_key.into()..range.end_key.into())
                     .collect(),
-                region,
             )
         }),
     )
