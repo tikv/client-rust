@@ -10,7 +10,7 @@ use tikv_client_proto::metapb;
 use crate::{
     backoff::DEFAULT_REGION_BACKOFF,
     config::Config,
-    pd::PdRpcClient,
+    pd::{PdClient, PdRpcClient},
     raw::lowering::*,
     request::{Collect, CollectSingle, Plan},
     BoundRange, ColumnFamily, Key, KvPair, Result, Value,
@@ -26,15 +26,15 @@ const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 /// The returned results of raw request methods are [`Future`](std::future::Future)s that must be
 /// awaited to execute.
 #[derive(Clone)]
-pub struct Client {
-    rpc: Arc<PdRpcClient>,
+pub struct Client<PdC: PdClient = PdRpcClient> {
+    rpc: Arc<PdC>,
     cf: Option<ColumnFamily>,
     /// Whether to use the [`atomic mode`](Client::with_atomic_for_cas).
     atomic: bool,
     logger: Logger,
 }
 
-impl Client {
+impl Client<PdRpcClient> {
     /// Create a raw [`Client`] and connect to the TiKV cluster.
     ///
     /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for
@@ -53,7 +53,7 @@ impl Client {
     pub async fn new<S: Into<String>>(
         pd_endpoints: Vec<S>,
         logger: Option<Logger>,
-    ) -> Result<Client> {
+    ) -> Result<Self> {
         Self::new_with_config(pd_endpoints, Config::default(), logger).await
     }
 
@@ -81,7 +81,7 @@ impl Client {
         pd_endpoints: Vec<S>,
         config: Config,
         optional_logger: Option<Logger>,
-    ) -> Result<Client> {
+    ) -> Result<Self> {
         let logger = optional_logger.unwrap_or_else(|| {
             let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
             Logger::root(
@@ -128,7 +128,7 @@ impl Client {
     /// let get_request = client.get("foo".to_owned());
     /// # });
     /// ```
-    pub fn with_cf(&self, cf: ColumnFamily) -> Client {
+    pub fn with_cf(&self, cf: ColumnFamily) -> Self {
         Client {
             rpc: self.rpc.clone(),
             cf: Some(cf),
@@ -144,7 +144,7 @@ impl Client {
     /// the atomicity of CAS, write operations like [`put`](Client::put) or
     /// [`delete`](Client::delete) in atomic mode are more expensive. Some
     /// operations are not supported in the mode.
-    pub fn with_atomic_for_cas(&self) -> Client {
+    pub fn with_atomic_for_cas(&self) -> Self {
         Client {
             rpc: self.rpc.clone(),
             cf: self.cf.clone(),
@@ -152,7 +152,9 @@ impl Client {
             logger: self.logger.clone(),
         }
     }
+}
 
+impl<PdC: PdClient> Client<PdC> {
     /// Create a new 'get' request.
     ///
     /// Once resolved this request will result in the fetching of the value associated with the
@@ -522,14 +524,15 @@ impl Client {
 
     pub async fn coprocessor(
         &self,
-        copr_name: String,
-        copr_version_req: String,
+        copr_name: impl Into<String>,
+        copr_version_req: impl Into<String>,
         ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
         request_builder: impl Fn(Vec<Range<Key>>, metapb::Region) -> Vec<u8> + Send + Sync + 'static,
     ) -> Result<Vec<(Vec<u8>, Vec<Range<Key>>)>> {
+        let copr_version_req = copr_version_req.into();
         semver::VersionReq::from_str(&copr_version_req)?;
         let req = new_raw_coprocessor_request(
-            copr_name,
+            copr_name.into(),
             copr_version_req,
             ranges.into_iter().map(Into::into),
             request_builder,
@@ -599,5 +602,82 @@ impl Client {
 
     fn assert_atomic(&self) -> Result<()> {
         self.atomic.then(|| ()).ok_or(Error::UnsupportedMode)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        mock::{MockKvClient, MockPdClient},
+        Result,
+    };
+    use std::{any::Any, sync::Arc};
+    use tikv_client_proto::kvrpcpb;
+
+    #[tokio::test]
+    async fn test_raw_coprocessor() -> Result<()> {
+        let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
+        let logger = Logger::root(
+            slog_term::FullFormat::new(plain)
+                .build()
+                .filter_level(slog::Level::Info)
+                .fuse(),
+            o!(),
+        );
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::RawCoprocessorRequest>() {
+                    assert_eq!(req.copr_name, "example");
+                    assert_eq!(req.copr_version_req, "0.1.0");
+                    let resp = kvrpcpb::RawCoprocessorResponse {
+                        data: req.data.clone(),
+                        ..Default::default()
+                    };
+                    Ok(Box::new(resp) as Box<dyn Any>)
+                } else {
+                    unreachable!()
+                }
+            },
+        )));
+        let client = Client {
+            rpc: pd_client,
+            cf: Some(ColumnFamily::Default),
+            atomic: false,
+            logger,
+        };
+        let resps = client
+            .coprocessor(
+                "example",
+                "0.1.0",
+                vec![vec![5]..vec![15], vec![20]..vec![]],
+                |ranges, region| format!("{:?}:{:?}", region.id, ranges).into_bytes(),
+            )
+            .await?;
+        let resps: Vec<_> = resps
+            .into_iter()
+            .map(|(data, ranges)| (String::from_utf8(data).unwrap(), ranges))
+            .collect();
+        assert_eq!(
+            resps,
+            vec![
+                (
+                    "1:[Key(05)..Key(0A)]".to_string(),
+                    vec![Key::from(vec![5])..Key::from(vec![10])]
+                ),
+                (
+                    "2:[Key(0A)..Key(0F), Key(14)..Key(FAFA)]".to_string(),
+                    vec![
+                        Key::from(vec![10])..Key::from(vec![15]),
+                        Key::from(vec![20])..Key::from(vec![250, 250])
+                    ]
+                ),
+                (
+                    "3:[Key(FAFA)..Key()]".to_string(),
+                    vec![Key::from(vec![250, 250])..Key::from(vec![])]
+                )
+            ]
+        );
+        Ok(())
     }
 }

@@ -107,7 +107,7 @@ impl MockPdClient {
     pub fn region1() -> RegionWithLeader {
         let mut region = RegionWithLeader::default();
         region.region.id = 1;
-        region.region.set_start_key(vec![0]);
+        region.region.set_start_key(vec![]);
         region.region.set_end_key(vec![10]);
 
         let leader = metapb::Peer {
@@ -133,6 +133,21 @@ impl MockPdClient {
 
         region
     }
+
+    pub fn region3() -> RegionWithLeader {
+        let mut region = RegionWithLeader::default();
+        region.region.id = 3;
+        region.region.set_start_key(vec![250, 250]);
+        region.region.set_end_key(vec![]);
+
+        let leader = metapb::Peer {
+            store_id: 43,
+            ..Default::default()
+        };
+        region.leader = Some(leader);
+
+        region
+    }
 }
 
 #[async_trait]
@@ -145,10 +160,12 @@ impl PdClient for MockPdClient {
 
     async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
         let bytes: &[_] = key.into();
-        let region = if bytes.is_empty() || bytes[0] < 10 {
+        let region = if bytes.is_empty() || bytes < &[10][..] {
             Self::region1()
-        } else {
+        } else if bytes >= &[10][..] && bytes < &[250, 250][..] {
             Self::region2()
+        } else {
+            Self::region3()
         };
 
         Ok(region)
@@ -158,6 +175,7 @@ impl PdClient for MockPdClient {
         match id {
             1 => Ok(Self::region1()),
             2 => Ok(Self::region2()),
+            3 => Ok(Self::region3()),
             _ => Err(Error::RegionNotFoundInResponse { region_id: id }),
         }
     }
@@ -179,11 +197,4 @@ impl PdClient for MockPdClient {
     }
 
     async fn invalidate_region_cache(&self, _ver_id: crate::region::RegionVerId) {}
-}
-
-pub fn mock_store() -> RegionStore {
-    RegionStore {
-        region_with_leader: RegionWithLeader::default(),
-        client: Arc::new(MockKvClient::new("foo".to_owned(), None)),
-    }
 }
