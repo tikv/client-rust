@@ -4,7 +4,7 @@ use crate::{
     config::Config, raw::client::Client, BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
 use futures::executor::block_on;
-use slog::{Drain, Logger};
+use slog::Logger;
 use std::u32;
 
 #[derive(Clone)]
@@ -47,7 +47,7 @@ impl SyncClient {
         logger: Option<Logger>,
     ) -> Result<SyncClient> {
         let client = block_on(Client::new_with_config(pd_endpoints, config, logger)).unwrap();
-        Ok(SyncClient { client: client })
+        Ok(SyncClient { client })
     }
 
     pub fn with_cf(&self, cf: ColumnFamily) -> SyncClient {
