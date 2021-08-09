@@ -385,7 +385,7 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
                 let values = resp.take_values();
                 let values_len = values.len();
                 let not_founds = resp.take_not_founds();
-                let kvparis = mutations
+                let kvpairs = mutations
                     .into_iter()
                     .map(|m| m.key)
                     .zip(values)
