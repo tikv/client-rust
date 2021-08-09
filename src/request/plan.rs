@@ -1,5 +1,14 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::{marker::PhantomData, sync::Arc};
+
+use async_recursion::async_recursion;
+use async_trait::async_trait;
+use futures::{future::try_join_all, prelude::*};
+use tikv_client_proto::{errorpb, errorpb::EpochNotMatch, kvrpcpb};
+use tikv_client_store::{HasKeyErrors, HasRegionError, HasRegionErrors, KvClient};
+use tokio::sync::Semaphore;
+
 use crate::{
     backoff::Backoff,
     pd::PdClient,
@@ -7,16 +16,8 @@ use crate::{
     stats::tikv_stats,
     store::RegionStore,
     transaction::{resolve_locks, HasLocks},
-    util::iter::FlatMapOkIterExt,
-    Error, Key, KvPair, Result, Value,
+    Error, Result,
 };
-use async_recursion::async_recursion;
-use async_trait::async_trait;
-use futures::{future::try_join_all, stream::StreamExt};
-use std::{marker::PhantomData, sync::Arc};
-use tikv_client_proto::{errorpb::EpochNotMatch, kvrpcpb};
-use tikv_client_store::{HasKeyErrors, HasRegionError, HasRegionErrors, KvClient};
-use tokio::sync::Semaphore;
 
 /// A plan for how to execute a request. A user builds up a plan with various
 /// options, then exectutes it.
@@ -45,11 +46,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
         let result = self
             .kv_client
             .as_ref()
-            .ok_or_else(|| {
-                Error::StringError(
-                    "Unreachable: kv_client has not been initialised in Dispatch".to_owned(),
-                )
-            })?
+            .expect("Unreachable: kv_client has not been initialised in Dispatch")
             .dispatch(&self.request)
             .await;
         let result = stats.done(result);
@@ -57,12 +54,6 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             *r.downcast()
                 .expect("Downcast failed: request and response type mismatch")
         })
-    }
-}
-
-impl<Req: KvRequest + HasKeys> HasKeys for Dispatch<Req> {
-    fn get_keys(&self) -> Vec<Key> {
-        self.request.get_keys()
     }
 }
 
@@ -149,7 +140,7 @@ where
     // 3. Err(Error): can't be resolved, return the error to upper level
     async fn handle_region_error(
         pd_client: Arc<PdC>,
-        mut e: tikv_client_proto::errorpb::Error,
+        mut e: errorpb::Error,
         region_store: RegionStore,
     ) -> Result<bool> {
         let ver_id = region_store.region_with_leader.ver_id();
@@ -326,10 +317,10 @@ macro_rules! collect_first {
 }
 
 /// A merge strategy to be used with
-/// [`preserve_keys`](super::plan_builder::PlanBuilder::preserve_keys).
-/// It matches the keys preserved before and the values returned in the response.
+/// [`preserve_shard`](super::plan_builder::PlanBuilder::preserve_shard).
+/// It matches the shards preserved before and the values returned in the response.
 #[derive(Clone, Debug)]
-pub struct CollectAndMatchKey;
+pub struct CollectWithShard;
 
 /// A merge strategy which returns an error if any response is an error and
 /// otherwise returns a Vec of the results.
@@ -352,16 +343,13 @@ pub trait Process<In>: Sized + Clone + Send + Sync + 'static {
 }
 
 #[derive(Clone)]
-pub struct ProcessResponse<P: Plan, In, Pr: Process<In>> {
+pub struct ProcessResponse<P: Plan, Pr: Process<P::Result>> {
     pub inner: P,
     pub processor: Pr,
-    pub phantom: PhantomData<In>,
 }
 
 #[async_trait]
-impl<In: Clone + Sync + Send + 'static, P: Plan<Result = In>, Pr: Process<In>> Plan
-    for ProcessResponse<P, In, Pr>
-{
+impl<P: Plan, Pr: Process<P::Result>> Plan for ProcessResponse<P, Pr> {
     type Result = Pr::Out;
 
     async fn execute(&self) -> Result<Self::Result> {
@@ -424,12 +412,6 @@ where
     }
 }
 
-impl<P: Plan + HasKeys, PdC: PdClient> HasKeys for ResolveLock<P, PdC> {
-    fn get_keys(&self) -> Vec<Key> {
-        self.inner.get_keys()
-    }
-}
-
 /// When executed, the plan extracts errors from its inner plan, and returns an
 /// `Err` wrapping the error.
 ///
@@ -471,106 +453,70 @@ where
     }
 }
 
-/// When executed, the plan clones the keys and execute its inner plan, then
-/// returns `(keys, response)`.
+/// When executed, the plan clones the shard and execute its inner plan, then
+/// returns `(shard, response)`.
 ///
-/// It's useful when the information of keys are lost in the response but needed
+/// It's useful when the information of shard are lost in the response but needed
 /// for processing.
-pub struct PreserveKey<P: Plan + HasKeys> {
+pub struct PreserveShard<P: Plan + Shardable> {
     pub inner: P,
+    pub shard: Option<P::Shard>,
 }
 
-impl<P: Plan + HasKeys> Clone for PreserveKey<P> {
+impl<P: Plan + Shardable> Clone for PreserveShard<P> {
     fn clone(&self) -> Self {
-        PreserveKey {
+        PreserveShard {
             inner: self.inner.clone(),
+            shard: None,
         }
     }
 }
 
 #[async_trait]
-impl<P> Plan for PreserveKey<P>
+impl<P> Plan for PreserveShard<P>
 where
-    P: Plan + HasKeys,
+    P: Plan + Shardable,
 {
-    type Result = ResponseAndKeys<P::Result>;
+    type Result = ResponseWithShard<P::Result, P::Shard>;
 
     async fn execute(&self) -> Result<Self::Result> {
-        let keys = self.inner.get_keys();
         let res = self.inner.execute().await?;
-        Ok(ResponseAndKeys(res, keys))
+        let shard = self
+            .shard
+            .as_ref()
+            .expect("Unreachable: Shardable::apply_shard() is not called before executing PreserveShard")
+            .clone();
+        Ok(ResponseWithShard(res, shard))
     }
 }
 
-pub trait HasKeys {
-    fn get_keys(&self) -> Vec<Key>;
-}
-
-// contains a response and the corresponding keys
-// currently only used for matching keys and values in pessimistic lock requests
+// contains a response and the corresponding shards
 #[derive(Debug, Clone)]
-pub struct ResponseAndKeys<Resp>(Resp, Vec<Key>);
+pub struct ResponseWithShard<Resp, Shard>(pub Resp, pub Shard);
 
-impl<Resp: HasKeyErrors> HasKeyErrors for ResponseAndKeys<Resp> {
+impl<Resp: HasKeyErrors, Shard> HasKeyErrors for ResponseWithShard<Resp, Shard> {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
         self.0.key_errors()
     }
 }
 
-impl<Resp: HasLocks> HasLocks for ResponseAndKeys<Resp> {
-    fn take_locks(&mut self) -> Vec<tikv_client_proto::kvrpcpb::LockInfo> {
+impl<Resp: HasLocks, Shard> HasLocks for ResponseWithShard<Resp, Shard> {
+    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
         self.0.take_locks()
     }
 }
 
-impl<Resp: HasRegionError> HasRegionError for ResponseAndKeys<Resp> {
-    fn region_error(&mut self) -> Option<tikv_client_proto::errorpb::Error> {
+impl<Resp: HasRegionError, Shard> HasRegionError for ResponseWithShard<Resp, Shard> {
+    fn region_error(&mut self) -> Option<errorpb::Error> {
         self.0.region_error()
-    }
-}
-
-impl Merge<ResponseAndKeys<kvrpcpb::PessimisticLockResponse>> for CollectAndMatchKey {
-    type Out = Vec<KvPair>;
-
-    fn merge(
-        &self,
-        input: Vec<Result<ResponseAndKeys<kvrpcpb::PessimisticLockResponse>>>,
-    ) -> Result<Self::Out> {
-        input
-            .into_iter()
-            .flat_map_ok(|ResponseAndKeys(mut resp, keys)| {
-                let values = resp.take_values();
-                let not_founds = resp.take_not_founds();
-                let v: Vec<_> = if not_founds.is_empty() {
-                    // Legacy TiKV does not distiguish not existing key and existing key
-                    // that with empty value. We assume that key does not exist if value
-                    // is empty.
-                    let values: Vec<Value> = values.into_iter().filter(|v| v.is_empty()).collect();
-                    keys.into_iter().zip(values).map(From::from).collect()
-                } else {
-                    assert_eq!(values.len(), not_founds.len());
-                    let values: Vec<Value> = values
-                        .into_iter()
-                        .zip(not_founds.into_iter())
-                        .filter_map(|(v, not_found)| if not_found { None } else { Some(v) })
-                        .collect();
-                    keys.into_iter().zip(values).map(From::from).collect()
-                };
-                // FIXME sucks to collect and re-iterate, but the iterators have different types
-                v.into_iter()
-            })
-            .collect()
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::mock::{mock_store, MockPdClient};
-    use futures::{
-        stream::{self, BoxStream},
-        TryStreamExt,
-    };
+    use crate::mock::MockPdClient;
+    use futures::stream::{self, BoxStream};
     use tikv_client_proto::kvrpcpb::BatchGetResponse;
 
     #[derive(Clone)]
@@ -586,15 +532,13 @@ mod test {
     }
 
     impl Shardable for ErrPlan {
-        type Shard = u8;
+        type Shard = ();
 
         fn shards(
             &self,
             _: &Arc<impl crate::pd::PdClient>,
         ) -> BoxStream<'static, crate::Result<(Self::Shard, crate::store::RegionStore)>> {
-            Box::pin(stream::iter(1..=3).map(|_| Err(Error::Unimplemented)))
-                .map_ok(|_: u8| (42, mock_store()))
-                .boxed()
+            Box::pin(stream::iter(1..=3).map(|_| Err(Error::Unimplemented))).boxed()
         }
 
         fn apply_shard(&mut self, _: Self::Shard, _: &crate::store::RegionStore) -> Result<()> {

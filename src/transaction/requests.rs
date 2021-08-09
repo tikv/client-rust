@@ -4,8 +4,8 @@ use crate::{
     collect_first,
     pd::PdClient,
     request::{
-        Collect, CollectSingle, DefaultProcessor, HasKeys, KvRequest, Merge, Process, Shardable,
-        SingleKey,
+        Collect, CollectSingle, CollectWithShard, DefaultProcessor, KvRequest, Merge, Process,
+        ResponseWithShard, Shardable, SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_range_by_start_key, RegionStore},
     timestamp::TimestampExt,
@@ -13,6 +13,7 @@ use crate::{
     util::iter::FlatMapOkIterExt,
     Key, KvPair, Result, Value,
 };
+use either::Either;
 use futures::stream::BoxStream;
 use std::{collections::HashMap, iter, sync::Arc};
 use tikv_client_proto::{
@@ -262,15 +263,6 @@ impl Shardable for kvrpcpb::PrewriteRequest {
     }
 }
 
-impl HasLocks for kvrpcpb::PrewriteResponse {
-    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
-        self.errors
-            .iter_mut()
-            .filter_map(|error| error.locked.take())
-            .collect()
-    }
-}
-
 pub fn new_commit_request(
     keys: Vec<Vec<u8>>,
     start_version: u64,
@@ -374,46 +366,46 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
     }
 }
 
-impl HasKeys for kvrpcpb::PessimisticLockRequest {
-    fn get_keys(&self) -> Vec<Key> {
-        self.mutations
-            .iter()
-            .map(|m| m.key.clone().into())
-            .collect()
-    }
-}
+// PessimisticLockResponse returns values that preserves the order with keys in request, thus the
+// kvpair result should be produced by zipping the keys in request and the values in respponse.
+impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>
+    for CollectWithShard
+{
+    type Out = Vec<KvPair>;
 
-impl Merge<kvrpcpb::PessimisticLockResponse> for Collect {
-    // FIXME: PessimisticLockResponse only contains values.
-    // We need to pair keys and values returned somewhere.
-    // But it's blocked by the structure of the program that `map_result` only accepts the response as input
-    // Before we fix this `batch_get_for_update` is problematic.
-    type Out = Vec<Option<Value>>;
-
-    fn merge(&self, input: Vec<Result<kvrpcpb::PessimisticLockResponse>>) -> Result<Self::Out> {
+    fn merge(
+        &self,
+        input: Vec<
+            Result<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>,
+        >,
+    ) -> Result<Self::Out> {
         input
             .into_iter()
-            .flat_map_ok(|mut resp| {
+            .flat_map_ok(|ResponseWithShard(mut resp, mutations)| {
                 let values = resp.take_values();
+                let values_len = values.len();
                 let not_founds = resp.take_not_founds();
-                let v: Vec<_> = if not_founds.is_empty() {
+                let kvpairs = mutations
+                    .into_iter()
+                    .map(|m| m.key)
+                    .zip(values)
+                    .map(KvPair::from);
+                assert_eq!(kvparis.len(), values_len);
+                if not_founds.is_empty() {
                     // Legacy TiKV does not distiguish not existing key and existing key
                     // that with empty value. We assume that key does not exist if value
                     // is empty.
-                    values
-                        .into_iter()
-                        .map(|v| if v.is_empty() { None } else { Some(v) })
-                        .collect()
+                    Either::Left(kvparis.filter(|kvpair| !kvpair.value().is_empty()))
                 } else {
-                    assert_eq!(values.len(), not_founds.len());
-                    values
-                        .into_iter()
-                        .zip(not_founds.into_iter())
-                        .map(|(v, not_found)| if not_found { None } else { Some(v) })
-                        .collect()
-                };
-                // FIXME sucks to collect and re-iterate, but the iterators have different types
-                v.into_iter()
+                    assert_eq!(kvparis.len(), not_founds.len());
+                    Either::Right(kvparis.zip(not_founds).filter_map(|(kvpair, not_found)| {
+                        if not_found {
+                            None
+                        } else {
+                            Some(kvpair)
+                        }
+                    }))
+                }
             })
             .collect()
     }
@@ -622,6 +614,19 @@ pub struct SecondaryLocksStatus {
     pub commit_ts: Option<Timestamp>,
 }
 
+pair_locks!(kvrpcpb::BatchGetResponse);
+pair_locks!(kvrpcpb::ScanResponse);
+error_locks!(kvrpcpb::GetResponse);
+error_locks!(kvrpcpb::ResolveLockResponse);
+error_locks!(kvrpcpb::CommitResponse);
+error_locks!(kvrpcpb::BatchRollbackResponse);
+error_locks!(kvrpcpb::TxnHeartBeatResponse);
+error_locks!(kvrpcpb::CheckTxnStatusResponse);
+error_locks!(kvrpcpb::CheckSecondaryLocksResponse);
+
+impl HasLocks for kvrpcpb::CleanupResponse {}
+impl HasLocks for kvrpcpb::ScanLockResponse {}
+
 impl HasLocks for kvrpcpb::PessimisticRollbackResponse {
     fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
         self.errors
@@ -640,14 +645,11 @@ impl HasLocks for kvrpcpb::PessimisticLockResponse {
     }
 }
 
-pair_locks!(kvrpcpb::BatchGetResponse);
-pair_locks!(kvrpcpb::ScanResponse);
-error_locks!(kvrpcpb::GetResponse);
-error_locks!(kvrpcpb::ResolveLockResponse);
-error_locks!(kvrpcpb::CommitResponse);
-error_locks!(kvrpcpb::BatchRollbackResponse);
-error_locks!(kvrpcpb::TxnHeartBeatResponse);
-error_locks!(kvrpcpb::CheckTxnStatusResponse);
-error_locks!(kvrpcpb::CheckSecondaryLocksResponse);
-impl HasLocks for kvrpcpb::CleanupResponse {}
-impl HasLocks for kvrpcpb::ScanLockResponse {}
+impl HasLocks for kvrpcpb::PrewriteResponse {
+    fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+        self.errors
+            .iter_mut()
+            .filter_map(|error| error.locked.take())
+            .collect()
+    }
+}

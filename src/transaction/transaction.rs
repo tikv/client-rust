@@ -4,7 +4,7 @@ use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF},
     pd::{PdClient, PdRpcClient},
     request::{
-        Collect, CollectAndMatchKey, CollectError, CollectSingle, Plan, PlanBuilder, RetryOptions,
+        Collect, CollectError, CollectSingle, CollectWithShard, Plan, PlanBuilder, RetryOptions,
     },
     timestamp::TimestampExt,
     transaction::{buffer::Buffer, lowering::*},
@@ -747,9 +747,9 @@ impl<PdC: PdClient> Transaction<PdC> {
         );
         let plan = PlanBuilder::new(self.rpc.clone(), request)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
-            .preserve_keys()
+            .preserve_shard()
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
-            .merge(CollectAndMatchKey)
+            .merge(CollectWithShard)
             .plan();
         let pairs = plan.execute().await;
 
@@ -851,12 +851,10 @@ impl<PdC: PdClient> Drop for Transaction<PdC> {
                 CheckLevel::Panic => {
                     panic!("Dropping an active transaction. Consider commit or rollback it.")
                 }
-                CheckLevel::Warn => {
-                    warn!(
-                        self.logger,
-                        "Dropping an active transaction. Consider commit or rollback it."
-                    )
-                }
+                CheckLevel::Warn => warn!(
+                    self.logger,
+                    "Dropping an active transaction. Consider commit or rollback it."
+                ),
 
                 CheckLevel::None => {}
             }

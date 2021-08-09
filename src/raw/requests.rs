@@ -1,20 +1,26 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::{any::Any, ops::Range, sync::Arc};
+
+use async_trait::async_trait;
+use futures::stream::BoxStream;
+use grpcio::CallOption;
+use tikv_client_proto::{kvrpcpb, metapb, tikvpb::TikvClient};
+use tikv_client_store::Request;
+
 use super::RawRpcRequest;
 use crate::{
     collect_first,
     pd::PdClient,
     request::{
-        Collect, CollectSingle, DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey,
+        plan::ResponseWithShard, Collect, CollectSingle, DefaultProcessor, KvRequest, Merge,
+        Process, Shardable, SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_ranges, RegionStore},
     transaction::HasLocks,
     util::iter::FlatMapOkIterExt,
-    ColumnFamily, KvPair, Result, Value,
+    ColumnFamily, Key, KvPair, Result, Value,
 };
-use futures::stream::BoxStream;
-use std::sync::Arc;
-use tikv_client_proto::kvrpcpb;
 
 pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::RawGetRequest {
     let mut req = kvrpcpb::RawGetRequest::default();
@@ -328,6 +334,105 @@ impl Process<kvrpcpb::RawCasResponse> for DefaultProcessor {
     }
 }
 
+type RawCoprocessorRequestDataBuilder =
+    Arc<dyn Fn(metapb::Region, Vec<kvrpcpb::KeyRange>) -> Vec<u8> + Send + Sync>;
+
+pub fn new_raw_coprocessor_request(
+    copr_name: String,
+    copr_version_req: String,
+    ranges: Vec<kvrpcpb::KeyRange>,
+    data_builder: RawCoprocessorRequestDataBuilder,
+) -> RawCoprocessorRequest {
+    let mut inner = kvrpcpb::RawCoprocessorRequest::default();
+    inner.set_copr_name(copr_name);
+    inner.set_copr_version_req(copr_version_req);
+    inner.set_ranges(ranges);
+    RawCoprocessorRequest {
+        inner,
+        data_builder,
+    }
+}
+
+#[derive(Clone)]
+pub struct RawCoprocessorRequest {
+    inner: kvrpcpb::RawCoprocessorRequest,
+    data_builder: RawCoprocessorRequestDataBuilder,
+}
+
+#[async_trait]
+impl Request for RawCoprocessorRequest {
+    async fn dispatch(&self, client: &TikvClient, options: CallOption) -> Result<Box<dyn Any>> {
+        self.inner.dispatch(client, options).await
+    }
+
+    fn label(&self) -> &'static str {
+        self.inner.label()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self.inner.as_any()
+    }
+
+    fn set_context(&mut self, context: kvrpcpb::Context) {
+        self.inner.set_context(context);
+    }
+}
+
+impl KvRequest for RawCoprocessorRequest {
+    type Response = kvrpcpb::RawCoprocessorResponse;
+}
+
+impl Shardable for RawCoprocessorRequest {
+    type Shard = Vec<kvrpcpb::KeyRange>;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+        store_stream_for_ranges(self.inner.ranges.clone(), pd_client.clone())
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
+        self.inner.set_context(store.region_with_leader.context()?);
+        self.inner.set_ranges(shard.clone());
+        self.inner.set_data((self.data_builder)(
+            store.region_with_leader.region.clone(),
+            shard,
+        ));
+        Ok(())
+    }
+}
+
+#[allow(clippy::type_complexity)]
+impl
+    Process<Vec<Result<ResponseWithShard<kvrpcpb::RawCoprocessorResponse, Vec<kvrpcpb::KeyRange>>>>>
+    for DefaultProcessor
+{
+    type Out = Vec<(Vec<u8>, Vec<Range<Key>>)>;
+
+    fn process(
+        &self,
+        input: Result<
+            Vec<Result<ResponseWithShard<kvrpcpb::RawCoprocessorResponse, Vec<kvrpcpb::KeyRange>>>>,
+        >,
+    ) -> Result<Self::Out> {
+        input?
+            .into_iter()
+            .map(|shard_resp| {
+                shard_resp.map(|ResponseWithShard(mut resp, ranges)| {
+                    (
+                        resp.take_data(),
+                        ranges
+                            .into_iter()
+                            .map(|range| range.start_key.into()..range.end_key.into())
+                            .collect(),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>>>()
+    }
+}
+
 macro_rules! impl_raw_rpc_request {
     ($name: ident) => {
         impl RawRpcRequest for kvrpcpb::$name {
@@ -359,6 +464,7 @@ impl HasLocks for kvrpcpb::RawScanResponse {}
 impl HasLocks for kvrpcpb::RawBatchScanResponse {}
 impl HasLocks for kvrpcpb::RawDeleteRangeResponse {}
 impl HasLocks for kvrpcpb::RawCasResponse {}
+impl HasLocks for kvrpcpb::RawCoprocessorResponse {}
 
 #[cfg(test)]
 mod test {

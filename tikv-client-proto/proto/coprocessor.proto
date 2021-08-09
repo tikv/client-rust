@@ -78,4 +78,5 @@ message BatchResponse {
     bytes data = 1 [(gogoproto.customtype) = "github.com/pingcap/kvproto/pkg/sharedbytes.SharedBytes", (gogoproto.nullable) = false];
     string other_error = 2;
     kvrpcpb.ExecDetails exec_details = 3;
+    repeated metapb.Region retry_regions = 4;
 }

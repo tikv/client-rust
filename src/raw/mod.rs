@@ -48,7 +48,6 @@ pub enum ColumnFamily {
     Default,
     Lock,
     Write,
-    VersionDefault,
 }
 
 impl TryFrom<&str> for ColumnFamily {
@@ -59,7 +58,6 @@ impl TryFrom<&str> for ColumnFamily {
             "default" => Ok(ColumnFamily::Default),
             "lock" => Ok(ColumnFamily::Lock),
             "write" => Ok(ColumnFamily::Write),
-            "ver_default" => Ok(ColumnFamily::VersionDefault),
             s => Err(Error::ColumnFamilyError(s.to_owned())),
         }
     }
@@ -79,7 +77,6 @@ impl fmt::Display for ColumnFamily {
             ColumnFamily::Default => f.write_str("default"),
             ColumnFamily::Lock => f.write_str("lock"),
             ColumnFamily::Write => f.write_str("write"),
-            ColumnFamily::VersionDefault => f.write_str("ver_default"),
         }
     }
 }

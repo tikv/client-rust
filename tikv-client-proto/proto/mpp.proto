@@ -3,6 +3,7 @@ package mpp;
 
 import "gogoproto/gogo.proto";
 import "coprocessor.proto";
+import "metapb.proto";
 
 option (gogoproto.marshaler_all) = true;
 option (gogoproto.sizer_all) = true;
@@ -31,6 +32,7 @@ message DispatchTaskRequest {
 // Get response of DispatchTaskRequest.
 message DispatchTaskResponse {
 	Error error = 1;
+	repeated metapb.Region retry_regions = 2;
 }
 
 // CancelTaskRequest closes the execution of a task.
