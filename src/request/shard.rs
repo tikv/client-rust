@@ -1,8 +1,9 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
+use super::plan::PreserveShard;
 use crate::{
     pd::PdClient,
-    request::{Dispatch, HasKeys, KvRequest, Plan, PreserveKey, ResolveLock},
+    request::{Dispatch, KvRequest, Plan, ResolveLock},
     store::RegionStore,
     Result,
 };
@@ -27,7 +28,7 @@ macro_rules! impl_inner_shardable {
 }
 
 pub trait Shardable {
-    type Shard: Send;
+    type Shard: Clone + Send + Sync;
 
     fn shards(
         &self,
@@ -53,11 +54,23 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
     }
 }
 
-impl<P: Plan + Shardable, PdC: PdClient> Shardable for ResolveLock<P, PdC> {
-    impl_inner_shardable!();
+impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
+    type Shard = P::Shard;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+        self.inner.shards(pd_client)
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
+        self.shard = Some(shard.clone());
+        self.inner.apply_shard(shard, store)
+    }
 }
 
-impl<P: Plan + HasKeys + Shardable> Shardable for PreserveKey<P> {
+impl<P: Plan + Shardable, PdC: PdClient> Shardable for ResolveLock<P, PdC> {
     impl_inner_shardable!();
 }
 

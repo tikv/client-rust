@@ -10,15 +10,15 @@ use tikv_client_store::{HasKeyErrors, Request};
 
 pub use self::{
     plan::{
-        Collect, CollectAndMatchKey, CollectError, CollectSingle, DefaultProcessor, Dispatch,
-        ExtractError, HasKeys, Merge, MergeResponse, Plan, PreserveKey, Process, ProcessResponse,
-        ResolveLock, RetryableMultiRegion,
+        Collect, CollectError, CollectSingle, CollectWithShard, DefaultProcessor, Dispatch,
+        ExtractError, Merge, MergeResponse, Plan, Process, ProcessResponse, ResolveLock,
+        ResponseWithShard, RetryableMultiRegion,
     },
     plan_builder::{PlanBuilder, SingleKey},
     shard::Shardable,
 };
 
-mod plan;
+pub mod plan;
 mod plan_builder;
 #[macro_use]
 mod shard;

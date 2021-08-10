@@ -253,15 +253,11 @@ impl Buffer {
             Some(BufferEntry::Cached(v)) | Some(BufferEntry::Locked(Some(v))) => {
                 assert!(&value == v);
             }
-            Some(BufferEntry::Put(v)) => {
-                assert!(value.as_ref() == Some(v))
-            }
+            Some(BufferEntry::Put(v)) => assert!(value.as_ref() == Some(v)),
             Some(BufferEntry::Del) => {
                 assert!(value.is_none());
             }
-            Some(BufferEntry::Insert(v)) => {
-                assert!(value.as_ref() == Some(v))
-            }
+            Some(BufferEntry::Insert(v)) => assert!(value.as_ref() == Some(v)),
             Some(BufferEntry::CheckNotExist) => {
                 assert!(value.is_none());
             }
