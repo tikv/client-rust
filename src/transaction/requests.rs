@@ -390,15 +390,15 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
                     .map(|m| m.key)
                     .zip(values)
                     .map(KvPair::from);
-                assert_eq!(kvparis.len(), values_len);
+                assert_eq!(kvpairs.len(), values_len);
                 if not_founds.is_empty() {
                     // Legacy TiKV does not distiguish not existing key and existing key
                     // that with empty value. We assume that key does not exist if value
                     // is empty.
-                    Either::Left(kvparis.filter(|kvpair| !kvpair.value().is_empty()))
+                    Either::Left(kvpairs.filter(|kvpair| !kvpair.value().is_empty()))
                 } else {
-                    assert_eq!(kvparis.len(), not_founds.len());
-                    Either::Right(kvparis.zip(not_founds).filter_map(|(kvpair, not_found)| {
+                    assert_eq!(kvpairs.len(), not_founds.len());
+                    Either::Right(kvpairs.zip(not_founds).filter_map(|(kvpair, not_found)| {
                         if not_found {
                             None
                         } else {
