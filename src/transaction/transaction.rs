@@ -15,7 +15,10 @@ use fail::fail_point;
 use futures::{prelude::*, stream::BoxStream};
 use slog::Logger;
 use std::{iter, ops::RangeBounds, sync::Arc, time::Instant};
-use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use tikv_client_proto::{
+    kvrpcpb::{self, Op},
+    pdpb::Timestamp,
+};
 use tokio::{sync::RwLock, time::Duration};
 
 /// An undo-able set of actions on the dataset.
@@ -1055,6 +1058,11 @@ struct Committer<PdC: PdClient = PdRpcClient> {
 }
 
 impl<PdC: PdClient> Committer<PdC> {
+    // CheckNotExists is checked in the prewrite phase and should not appear in the commit phase.
+    fn filter_out_check_not_exists_mutations(&mut self) {
+        self.mutations.retain(|m| m.op() != Op::CheckNotExists)
+    }
+
     async fn commit(mut self) -> Result<Option<Timestamp>> {
         debug!(self.logger, "committing");
 
@@ -1066,6 +1074,8 @@ impl<PdC: PdClient> Committer<PdC> {
         if self.options.try_one_pc {
             return Ok(min_commit_ts);
         }
+
+        self.filter_out_check_not_exists_mutations();
 
         let commit_ts = if self.options.async_commit {
             // FIXME: min_commit_ts == 0 => fallback to normal 2PC
