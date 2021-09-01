@@ -6,6 +6,6 @@ edition = "2018"
 [dependencies]
 derive-new = "0.5"
 futures = "0.3"
-grpcio = { version = "0.9", features = [ "secure", "prost-codec", "use-bindgen" ], default-features = false }
+grpcio = { git = "https://github.com/tikv/grpc-rs.git", branch = "master", features = [ "secure", "prost-codec", "use-bindgen", "openssl-vendored" ], default-features = false }
 log = "0.4"
 tikv-client-proto = { path = "../tikv-client-proto"}

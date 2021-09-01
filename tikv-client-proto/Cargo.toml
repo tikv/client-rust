@@ -16,5 +16,5 @@ protobuf = "2.8"
 prost = { version = "0.7" }
 prost-derive = { version = "0.7" }
 futures = "0.3"
-grpcio = { version = "0.9", features = [ "secure", "prost-codec", "use-bindgen" ], default-features = false }
+grpcio = { git = "https://github.com/tikv/grpc-rs.git", branch = "master", features = [ "secure", "prost-codec", "use-bindgen", "openssl-vendored" ], default-features = false }
 lazy_static = { version = "1" }

@@ -11,7 +11,7 @@ description = "Low level TiKV node components of the TiKV Rust client"
 async-trait = "0.1"
 derive-new = "0.5"
 futures = { version = "0.3", features = ["compat", "async-await", "thread-pool"] }
-grpcio = { version = "0.9", features = [ "secure", "prost-codec", "use-bindgen" ], default-features = false }
+grpcio = { git = "https://github.com/tikv/grpc-rs.git", branch = "master", features = [ "secure", "prost-codec", "use-bindgen", "openssl-vendored" ], default-features = false }
 log = "0.4"
 tikv-client-common = { version = "0.1.0", path = "../tikv-client-common" }
 tikv-client-proto = { version = "0.1.0", path = "../tikv-client-proto" }
