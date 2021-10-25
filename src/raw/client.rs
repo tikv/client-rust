@@ -74,7 +74,9 @@ impl Client<PdRpcClient> {
     ///     vec!["192.168.0.100"],
     ///     Config::default().with_timeout(Duration::from_secs(60)),
     ///     None,
-    /// ).await.unwrap();
+    /// )
+    /// .await
+    /// .unwrap();
     /// # });
     /// ```
     pub async fn new_with_config<S: Into<String>>(

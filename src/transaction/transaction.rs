@@ -49,7 +49,9 @@ use tokio::{sync::RwLock, time::Duration};
 /// # use tikv_client::{Config, TransactionClient};
 /// # use futures::prelude::*;
 /// # futures::executor::block_on(async {
-/// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
+/// let client = TransactionClient::new(vec!["192.168.0.100"], None)
+///     .await
+///     .unwrap();
 /// let mut txn = client.begin_optimistic().await.unwrap();
 /// let foo = txn.get("foo".to_owned()).await.unwrap().unwrap();
 /// txn.put("bar".to_owned(), foo).await.unwrap();

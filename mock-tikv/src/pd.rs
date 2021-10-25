@@ -9,13 +9,11 @@ use tikv_client_proto::pdpb::*;
 pub const MOCK_PD_PORT: u16 = 50021;
 /// This is mock pd server, used with mock tikv server.
 #[derive(Debug, Clone)]
-pub struct MockPd {
-    ts: i64,
-}
+pub struct MockPd {}
 
 impl MockPd {
     fn new() -> MockPd {
-        MockPd { ts: 0 }
+        MockPd {}
     }
 
     fn region() -> tikv_client_proto::metapb::Region {

@@ -105,6 +105,6 @@ jobs:
       - name: install tiup
         run: curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
       - name: start tiup playground
-        run: /home/runner/.tiup/bin/tiup playground nightly --mode tikv-slim --kv 3 --monitor false --kv.config /home/runner/work/client-rust/client-rust/config/tikv.toml --pd.config /home/runner/work/client-rust/client-rust/config/pd.toml &
+        run: /home/runner/.tiup/bin/tiup playground nightly --mode tikv-slim --kv 3 --without-monitor --kv.config /home/runner/work/client-rust/client-rust/config/tikv.toml --pd.config /home/runner/work/client-rust/client-rust/config/pd.toml &
       - name: integration test
         run: make integration-test
