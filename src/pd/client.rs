@@ -195,8 +195,8 @@ pub trait PdClient: Send + Sync + 'static {
 
     fn decode_region(mut region: RegionWithLeader, enable_codec: bool) -> Result<RegionWithLeader> {
         if enable_codec {
-            codec::decode_bytes_in_place(&mut region.region.mut_start_key(), false)?;
-            codec::decode_bytes_in_place(&mut region.region.mut_end_key(), false)?;
+            codec::decode_bytes_in_place(region.region.mut_start_key(), false)?;
+            codec::decode_bytes_in_place(region.region.mut_end_key(), false)?;
         }
         Ok(region)
     }

@@ -137,6 +137,8 @@ Please follow PingCAP's  [Rust style guide](https://pingcap.github.io/style-guid
 
 ## Getting help
 
-If you need help, either to find something to work on, or with any technical problem, the easiest way to get it is via Slack. We monitor the client-rust (better for general client questions) and sig-transaction (better for technical questions about TiKV's transaction protocol) channels on the [tikv-wg slack](https://tikv.org/chat).
+If you need help, either to find something to work on, or with any technical problem, the easiest way to get it is via internals.tidb.io, the forum for TiDB developers. 
 
-You can also get help on GitHub issues or PRs directly. You can just ask a question; if you don't get a response, you should ping @nrc or @ekexium.
+You can also ask in Slack. We monitor the #client-rust channel on the [tikv-wg slack](https://tikv.org/chat).
+
+You can just ask a question on GitHub issues or PRs directly; if you don't get a response, you should ping @ekexium or @andylokandy.

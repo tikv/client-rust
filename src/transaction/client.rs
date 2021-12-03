@@ -51,7 +51,9 @@ impl Client {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], None)
+    ///     .await
+    ///     .unwrap();
     /// # });
     /// ```
     pub async fn new<S: Into<String>>(
@@ -79,7 +81,9 @@ impl Client {
     ///     vec!["192.168.0.100"],
     ///     Config::default().with_timeout(Duration::from_secs(60)),
     ///     None,
-    /// ).await.unwrap();
+    /// )
+    /// .await
+    /// .unwrap();
     /// # });
     /// ```
     pub async fn new_with_config<S: Into<String>>(
@@ -117,7 +121,9 @@ impl Client {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], None)
+    ///     .await
+    ///     .unwrap();
     /// let mut transaction = client.begin_optimistic().await.unwrap();
     /// // ... Issue some commands.
     /// transaction.commit().await.unwrap();
@@ -140,7 +146,9 @@ impl Client {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], None)
+    ///     .await
+    ///     .unwrap();
     /// let mut transaction = client.begin_pessimistic().await.unwrap();
     /// // ... Issue some commands.
     /// transaction.commit().await.unwrap();
@@ -160,7 +168,9 @@ impl Client {
     /// # use tikv_client::{Config, TransactionClient, TransactionOptions};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], None)
+    ///     .await
+    ///     .unwrap();
     /// let mut transaction = client
     ///     .begin_with_options(TransactionOptions::default().use_async_commit())
     ///     .await
@@ -190,7 +200,9 @@ impl Client {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], None)
+    ///     .await
+    ///     .unwrap();
     /// let timestamp = client.current_timestamp().await.unwrap();
     /// # });
     /// ```
