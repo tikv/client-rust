@@ -57,6 +57,7 @@ has_region_error!(kvrpcpb::DeleteRangeResponse);
 has_region_error!(kvrpcpb::GcResponse);
 has_region_error!(kvrpcpb::RawGetResponse);
 has_region_error!(kvrpcpb::RawBatchGetResponse);
+has_region_error!(kvrpcpb::RawGetKeyTtlResponse);
 has_region_error!(kvrpcpb::RawPutResponse);
 has_region_error!(kvrpcpb::RawBatchPutResponse);
 has_region_error!(kvrpcpb::RawDeleteResponse);
@@ -109,6 +110,7 @@ macro_rules! has_str_error {
 }
 
 has_str_error!(kvrpcpb::RawGetResponse);
+has_str_error!(kvrpcpb::RawGetKeyTtlResponse);
 has_str_error!(kvrpcpb::RawPutResponse);
 has_str_error!(kvrpcpb::RawBatchPutResponse);
 has_str_error!(kvrpcpb::RawDeleteResponse);

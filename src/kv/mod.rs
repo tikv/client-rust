@@ -9,7 +9,7 @@ mod value;
 
 pub use bound_range::{BoundRange, IntoOwnedRange};
 pub use key::Key;
-pub use kvpair::KvPair;
+pub use kvpair::{KvPair, KvPairWithTTL};
 pub use value::Value;
 
 struct HexRepr<'a>(pub &'a [u8]);

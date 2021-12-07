@@ -1,7 +1,7 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{
-    collect_first,
+    collect_single,
     pd::PdClient,
     request::{
         Collect, CollectSingle, CollectWithShard, DefaultProcessor, KvRequest, Merge, Process,
@@ -75,7 +75,7 @@ impl KvRequest for kvrpcpb::GetRequest {
 }
 
 shardable_key!(kvrpcpb::GetRequest);
-collect_first!(kvrpcpb::GetResponse);
+collect_single!(kvrpcpb::GetResponse);
 impl SingleKey for kvrpcpb::GetRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -191,7 +191,7 @@ impl KvRequest for kvrpcpb::CleanupRequest {
 }
 
 shardable_key!(kvrpcpb::CleanupRequest);
-collect_first!(kvrpcpb::CleanupResponse);
+collect_single!(kvrpcpb::CleanupResponse);
 impl SingleKey for kvrpcpb::CleanupRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -515,7 +515,7 @@ impl Shardable for kvrpcpb::TxnHeartBeatRequest {
     }
 }
 
-collect_first!(TxnHeartBeatResponse);
+collect_single!(TxnHeartBeatResponse);
 
 impl SingleKey for kvrpcpb::TxnHeartBeatRequest {
     fn key(&self) -> &Vec<u8> {

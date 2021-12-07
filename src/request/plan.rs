@@ -333,7 +333,7 @@ pub struct Collect;
 pub struct CollectSingle;
 
 #[macro_export]
-macro_rules! collect_first {
+macro_rules! collect_single {
     ($type_: ty) => {
         impl Merge<$type_> for CollectSingle {
             type Out = $type_;

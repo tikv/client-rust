@@ -6,6 +6,25 @@ use proptest_derive::Arbitrary;
 use std::{fmt, str};
 use tikv_client_proto::kvrpcpb;
 
+/// A key/value pair with TTL (in seconds).
+///
+/// # Examples
+/// ```rust
+/// # use tikv_client::{Key, Value, KvPair};
+/// let key = "key".to_owned();
+/// let value = "value".to_owned();
+/// let pair = KvPair::new(key, value);
+/// let pair_with_ttl = pair.with_ttl(60);
+/// ```
+pub struct KvPairWithTTL(pub KvPair, pub u64);
+
+/// Convert `Into<KvPair>` to a `KvPairWithTTL` with no TTL.
+impl<K: Into<KvPair>> From<K> for KvPairWithTTL {
+    fn from(pair: K) -> Self {
+        Self(pair.into(), 0)
+    }
+}
+
 /// A key/value pair.
 ///
 /// # Examples
@@ -77,6 +96,12 @@ impl KvPair {
     #[inline]
     pub fn set_value(&mut self, v: impl Into<Value>) {
         self.1 = v.into();
+    }
+
+    /// Convert the `KvPair` into a `KvPairWithTTL` with the given TTL (in seconds).
+    #[inline]
+    pub fn with_ttl(self, ttl: u64) -> KvPairWithTTL {
+        KvPairWithTTL(self, ttl)
     }
 }
 

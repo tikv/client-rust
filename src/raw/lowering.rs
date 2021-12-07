@@ -8,7 +8,7 @@ use std::{iter::Iterator, ops::Range, sync::Arc};
 
 use tikv_client_proto::{kvrpcpb, metapb};
 
-use crate::{raw::requests, BoundRange, ColumnFamily, Key, KvPair, Value};
+use crate::{kv::KvPairWithTTL, raw::requests, BoundRange, ColumnFamily, Key, Value};
 
 pub fn new_raw_get_request(key: Key, cf: Option<ColumnFamily>) -> kvrpcpb::RawGetRequest {
     requests::new_raw_get_request(key.into(), cf)
@@ -21,21 +21,33 @@ pub fn new_raw_batch_get_request(
     requests::new_raw_batch_get_request(keys.map(Into::into).collect(), cf)
 }
 
+pub fn new_raw_get_key_ttl_request(
+    key: Key,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawGetKeyTtlRequest {
+    requests::new_raw_get_key_ttl_request(key.into(), cf)
+}
+
 pub fn new_raw_put_request(
     key: Key,
     value: Value,
     cf: Option<ColumnFamily>,
+    ttl: u64,
     atomic: bool,
 ) -> kvrpcpb::RawPutRequest {
-    requests::new_raw_put_request(key.into(), value, cf, atomic)
+    requests::new_raw_put_request(key.into(), value, cf, ttl, atomic)
 }
 
 pub fn new_raw_batch_put_request(
-    pairs: impl Iterator<Item = KvPair>,
+    pairs_with_ttl: impl Iterator<Item = KvPairWithTTL>,
     cf: Option<ColumnFamily>,
     atomic: bool,
 ) -> kvrpcpb::RawBatchPutRequest {
-    requests::new_raw_batch_put_request(pairs.map(Into::into).collect(), cf, atomic)
+    let (pairs, ttls) = pairs_with_ttl
+        .into_iter()
+        .map(|pair_with_ttl| (pair_with_ttl.0.into(), pair_with_ttl.1))
+        .unzip();
+    requests::new_raw_batch_put_request(pairs, cf, ttls, atomic)
 }
 
 pub fn new_raw_delete_request(

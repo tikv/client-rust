@@ -47,6 +47,11 @@ macro_rules! impl_request {
 
 impl_request!(RawGetRequest, raw_get_async_opt, "raw_get");
 impl_request!(RawBatchGetRequest, raw_batch_get_async_opt, "raw_batch_get");
+impl_request!(
+    RawGetKeyTtlRequest,
+    raw_get_key_ttl_async_opt,
+    "raw_get_key_ttl"
+);
 impl_request!(RawPutRequest, raw_put_async_opt, "raw_put");
 impl_request!(RawBatchPutRequest, raw_batch_put_async_opt, "raw_batch_put");
 impl_request!(RawDeleteRequest, raw_delete_async_opt, "raw_delete");
