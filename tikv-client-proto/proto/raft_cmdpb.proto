@@ -172,6 +172,7 @@ message CompactLogResponse {}
 
 message TransferLeaderRequest {
     metapb.Peer peer = 1;
+    repeated metapb.Peer peers = 2;
 }
 
 message TransferLeaderResponse {}

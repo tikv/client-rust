@@ -3,6 +3,7 @@ package pdpb;
 
 import "metapb.proto";
 import "eraftpb.proto";
+import "raft_serverpb.proto";
 import "replication_modepb.proto";
 
 import "gogoproto/gogo.proto";
@@ -79,6 +80,8 @@ service PD {
     rpc SyncMaxTS(SyncMaxTSRequest) returns (SyncMaxTSResponse) {}
 
     rpc SplitRegions(SplitRegionsRequest) returns (SplitRegionsResponse) {}
+
+    rpc SplitAndScatterRegions(SplitAndScatterRegionsRequest) returns (SplitAndScatterRegionsResponse) {}
 
     rpc GetDCLocationInfo(GetDCLocationInfoRequest) returns (GetDCLocationInfoResponse) {}
 }
@@ -336,6 +339,11 @@ message RegionHeartbeatRequest {
     // Term is the term of raft group.
     uint64 term = 14;
     replication_modepb.RegionReplicationStatus replication_status = 15;
+    // QueryStats reported write query stats, and there are read query stats in store heartbeat
+    QueryStats query_stats = 16;
+    // cpu_usage is the CPU time usage of the leader region since the last heartbeat,
+    // which is calculated by cpu_time_delta/heartbeat_reported_interval.
+    uint64 cpu_usage = 17;
 }
 
 message ChangePeer {
@@ -350,6 +358,7 @@ message ChangePeerV2 {
 
 message TransferLeader {
     metapb.Peer peer = 1;
+    repeated metapb.Peer peers = 2;
 }
 
 message Merge {
@@ -474,6 +483,7 @@ message PeerStat {
     uint64 region_id = 1;
     uint64 read_keys = 2;
     uint64 read_bytes = 3;
+    QueryStats query_stats = 4;
 }
 
 message StoreStats {
@@ -516,18 +526,43 @@ message StoreStats {
     repeated RecordPair op_latencies = 19;
     // Hot peer stat in the store
     repeated PeerStat peer_stats = 20;
+    // Store query stats
+    QueryStats query_stats = 21;
+    // Score that represents the speed of the store, ranges in [1, 100], lower is better.
+    uint64 slow_score = 22;
+    // Damaged regions on the store that need to be removed by PD.
+    repeated uint64 damaged_regions_id = 23;
+}
+
+message PeerReport {
+    raft_serverpb.RaftLocalState raft_state = 1;
+    raft_serverpb.RegionLocalState region_state = 2;
+}
+
+message StoreReport {
+    repeated PeerReport peer_reports = 1;
 }
 
 message StoreHeartbeatRequest {
     RequestHeader header = 1;
 
     StoreStats stats = 2;
+    // Detailed store report that is only filled up on PD's demand for online unsafe recover.
+    StoreReport store_report = 3;
+}
+
+message RecoveryPlan {
+    repeated metapb.Region creates = 1;
+    repeated metapb.Region updates = 2;
+    repeated uint64 deletes = 3;
 }
 
 message StoreHeartbeatResponse {
     ResponseHeader header = 1;
     replication_modepb.ReplicationStatus replication_status = 2;
     string cluster_version = 3;
+    bool require_detailed_report = 4;
+    RecoveryPlan plan = 5;
 }
 
 message ScatterRegionRequest {
@@ -643,12 +678,14 @@ message GetOperatorResponse {
 message SyncMaxTSRequest {
     RequestHeader header = 1;
     Timestamp max_ts = 2;
+    // If skip_check is true, the sync will try to write the max_ts without checking whether it's bigger.
+    bool skip_check = 3;
 }
 
 message SyncMaxTSResponse {
     ResponseHeader header = 1;
     Timestamp max_local_ts = 2;
-    repeated string dcs = 3;
+    repeated string synced_dcs = 3;
 }
 
 message SplitRegionsRequest {
@@ -663,6 +700,20 @@ message SplitRegionsResponse {
     repeated uint64 regions_id = 3;
 }
 
+message SplitAndScatterRegionsRequest {
+    RequestHeader header = 1;
+    repeated bytes split_keys = 2;
+    string group = 3;
+    uint64 retry_limit = 4;
+}
+
+message SplitAndScatterRegionsResponse {
+    ResponseHeader header = 1;
+    uint64 split_finished_percentage = 2;
+    uint64 scatter_finished_percentage = 3;
+    repeated uint64 regions_id = 4;
+}
+
 message GetDCLocationInfoRequest {
     RequestHeader header = 1;
     string dc_location = 2;
@@ -675,4 +726,33 @@ message GetDCLocationInfoResponse {
     // max_ts will be included into this response if PD leader think the receiver needs,
     // which it's set when the number of the max suffix bits changes.
     Timestamp max_ts = 3;
+}
+
+message QueryStats {
+    uint64 GC = 1;
+    uint64 Get = 2;
+    uint64 Scan = 3;
+    uint64 Coprocessor = 4;
+    uint64 Delete = 5;
+    uint64 DeleteRange = 6;
+    uint64 Put = 7;
+    uint64 Prewrite = 8;
+    uint64 AcquirePessimisticLock = 9;
+    uint64 Commit = 10;
+    uint64 Rollback = 11;
+}
+
+enum QueryKind {
+    Others = 0;
+    GC = 1;
+    Get = 2;
+    Scan = 3;
+    Coprocessor = 4;
+    Delete = 5;
+    DeleteRange = 6;
+    Put = 7;
+    Prewrite = 8;
+    AcquirePessimisticLock = 9;
+    Commit = 10;
+    Rollback = 11;
 }

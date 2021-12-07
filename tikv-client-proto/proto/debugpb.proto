@@ -70,6 +70,9 @@ service Debug {
 
     // Get cluster ID
     rpc GetClusterInfo(GetClusterInfoRequest) returns (GetClusterInfoResponse) {}
+
+    // Get all region IDs in the store
+    rpc GetAllRegionsInStore(GetAllRegionsInStoreRequest) returns (GetAllRegionsInStoreResponse) {}
 }
 
 enum DB {
@@ -240,6 +243,7 @@ message GetStoreInfoRequest {
 
 message GetStoreInfoResponse {
     uint64 store_id = 1;
+    kvrpcpb.APIVersion api_version = 2;
 }
 
 message GetClusterInfoRequest {
@@ -247,4 +251,11 @@ message GetClusterInfoRequest {
 
 message GetClusterInfoResponse {
     uint64 cluster_id = 1;
+}
+
+message GetAllRegionsInStoreRequest {
+}
+
+message GetAllRegionsInStoreResponse {
+    repeated uint64 regions = 1;
 }

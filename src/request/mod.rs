@@ -182,17 +182,7 @@ mod test {
             |_: &dyn Any| {
                 Ok(Box::new(kvrpcpb::CommitResponse {
                     region_error: None,
-                    error: Some(kvrpcpb::KeyError {
-                        locked: None,
-                        retryable: String::new(),
-                        abort: String::new(),
-                        conflict: None,
-                        already_exist: None,
-                        deadlock: None,
-                        commit_ts_expired: None,
-                        txn_not_found: None,
-                        commit_ts_too_large: None,
-                    }),
+                    error: Some(kvrpcpb::KeyError::default()),
                     commit_version: 0,
                 }) as Box<dyn Any>)
             },

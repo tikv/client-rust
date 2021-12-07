@@ -5,9 +5,10 @@ package import_sstpb;
 import "metapb.proto";
 import "errorpb.proto";
 import "kvrpcpb.proto";
+import "raft_serverpb.proto";
 import "gogoproto/gogo.proto";
 import "rustproto.proto";
-import "backup.proto";
+import "brpb.proto";
 
 option (gogoproto.sizer_all) = true;
 option (gogoproto.marshaler_all) = true;
@@ -48,9 +49,13 @@ service ImportSST {
 
     // Open a write stream to generate sst files
     rpc Write(stream WriteRequest) returns (WriteResponse) {}
-    
+    rpc RawWrite(stream RawWriteRequest) returns (RawWriteResponse) {}
+
     // Ingest Multiple files in one request
     rpc MultiIngest(MultiIngestRequest) returns (IngestResponse) {}
+
+    // Collect duplicate data from TiKV.
+    rpc DuplicateDetect(DuplicateDetectRequest) returns (stream DuplicateDetectResponse) {}
 }
 
 enum SwitchMode {
@@ -79,11 +84,14 @@ message SSTMeta {
     uint64 region_id = 6;
     metapb.RegionEpoch region_epoch = 7;
     bool end_key_exclusive = 8;
-
     // total_kvs and total_bytes is equivalent to PD's approximate_keys and approximate_size
     // set these values can save time from tikv upload keys and size to PD through Heartbeat.
     uint64 total_kvs = 9;
     uint64 total_bytes = 10;
+    // API version implies the encode of the key and value.
+    kvrpcpb.APIVersion api_version = 11;
+    // cipher_iv is used to encrypt/decrypt sst
+    bytes cipher_iv = 12;
 }
 
 // A rewrite rule is applied on the *encoded* keys (the internal storage
@@ -160,6 +168,8 @@ message DownloadRequest {
     backup.StorageBackend storage_backend = 14;
 
     bool is_raw_kv = 15;
+    // cipher_info is used to decrypt sst when download sst 
+    backup.CipherInfo cipher_info = 16;
 }
 
 // For now it is just used for distinguishing the error of the request with the error
@@ -220,4 +230,53 @@ message WriteRequest {
 message WriteResponse {
     Error error = 1;
     repeated SSTMeta metas = 2;
+}
+
+message RawWriteBatch {
+    uint64 ttl = 1;
+    repeated Pair pairs = 2;
+}
+
+message RawWriteRequest {
+    oneof chunk {
+        SSTMeta meta = 1;
+        RawWriteBatch batch = 2;
+    }
+}
+
+message RawWriteResponse {
+    Error error = 1;
+    repeated SSTMeta metas = 2;
+}
+
+message DuplicateDetectRequest {
+    kvrpcpb.Context context = 1;
+    bytes start_key = 2;
+    bytes end_key = 3;
+    // Return only the keys found by scanning, not their values.
+    bool key_only = 4;
+    // We only check the data whose timestamp is larger than `min_commit_ts`. `min_commit_ts` is exclueded.
+    uint64 min_commit_ts = 5;
+}
+
+message KvPair {
+    bytes key = 1;
+    bytes value = 2;
+    uint64 commit_ts = 3;
+}
+
+message DuplicateDetectResponse {
+    errorpb.Error region_error = 1;
+    Error key_error = 2;
+    // The these keys will be in asc order (but commit time is in desc order),
+    //  and the content is just like following:
+    // [
+    //   {key: "key1", value: "value11", commit_ts: 1005},
+    //   {key: "key1", value: "value12", commit_ts: 1004},
+    //   {key: "key1", value: "value13", commit_ts: 1001},
+    //   {key: "key2", value: "value21", commit_ts: 1004},
+    //   {key: "key2", value: "value22", commit_ts: 1002},
+    //   ...
+    // ]
+    repeated KvPair pairs = 3;
 }
