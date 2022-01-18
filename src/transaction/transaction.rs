@@ -945,42 +945,49 @@ impl TransactionOptions {
     }
 
     /// Try to use async commit.
+    #[must_use]
     pub fn use_async_commit(mut self) -> TransactionOptions {
         self.async_commit = true;
         self
     }
 
     /// Try to use 1pc.
+    #[must_use]
     pub fn try_one_pc(mut self) -> TransactionOptions {
         self.try_one_pc = true;
         self
     }
 
     /// Make the transaction read only.
+    #[must_use]
     pub fn read_only(mut self) -> TransactionOptions {
         self.read_only = true;
         self
     }
 
     /// Don't automatically resolve locks and retry if keys are locked.
+    #[must_use]
     pub fn no_resolve_locks(mut self) -> TransactionOptions {
         self.retry_options.lock_backoff = Backoff::no_backoff();
         self
     }
 
     /// Don't automatically resolve regions with PD if we have outdated region information.
+    #[must_use]
     pub fn no_resolve_regions(mut self) -> TransactionOptions {
         self.retry_options.region_backoff = Backoff::no_backoff();
         self
     }
 
     /// Set RetryOptions.
+    #[must_use]
     pub fn retry_options(mut self, options: RetryOptions) -> TransactionOptions {
         self.retry_options = options;
         self
     }
 
     /// Set the behavior when dropping a transaction without an attempt to commit or rollback it.
+    #[must_use]
     pub fn drop_check(mut self, level: CheckLevel) -> TransactionOptions {
         self.check_level = level;
         self
@@ -998,6 +1005,7 @@ impl TransactionOptions {
         }
     }
 
+    #[must_use]
     pub fn heartbeat_option(mut self, heartbeat_option: HeartbeatOption) -> TransactionOptions {
         self.heartbeat_option = heartbeat_option;
         self

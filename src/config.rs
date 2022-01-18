@@ -48,6 +48,7 @@ impl Config {
     /// # use tikv_client::Config;
     /// let config = Config::default().with_security("root.ca", "internal.cert", "internal.key");
     /// ```
+    #[must_use]
     pub fn with_security(
         mut self,
         ca_path: impl Into<PathBuf>,
@@ -74,6 +75,7 @@ impl Config {
     /// # use std::time::Duration;
     /// let config = Config::default().with_timeout(Duration::from_secs(10));
     /// ```
+    #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self

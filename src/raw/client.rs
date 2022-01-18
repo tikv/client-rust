@@ -130,6 +130,7 @@ impl Client<PdRpcClient> {
     /// let get_request = client.get("foo".to_owned());
     /// # });
     /// ```
+    #[must_use]
     pub fn with_cf(&self, cf: ColumnFamily) -> Self {
         Client {
             rpc: self.rpc.clone(),
@@ -146,6 +147,7 @@ impl Client<PdRpcClient> {
     /// the atomicity of CAS, write operations like [`put`](Client::put) or
     /// [`delete`](Client::delete) in atomic mode are more expensive. Some
     /// operations are not supported in the mode.
+    #[must_use]
     pub fn with_atomic_for_cas(&self) -> Self {
         Client {
             rpc: self.rpc.clone(),
