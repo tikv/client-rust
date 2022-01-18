@@ -743,7 +743,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             keys.clone().into_iter(),
             primary_lock,
             self.timestamp.clone(),
-            DEFAULT_LOCK_TTL,
+            MAX_TTL,
             for_update_ts,
             need_value,
         );
