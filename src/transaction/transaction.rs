@@ -664,7 +664,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let request = new_heart_beat_request(
             self.timestamp.clone(),
             primary_key,
-            self.start_instant.elapsed().as_millis() as u64 + DEFAULT_LOCK_TTL,
+            self.start_instant.elapsed().as_millis() as u64 + MAX_TTL,
         );
         let plan = PlanBuilder::new(self.rpc.clone(), request)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
@@ -822,7 +822,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 let request = new_heart_beat_request(
                     start_ts.clone(),
                     primary_key.clone(),
-                    start_instant.elapsed().as_millis() as u64 + DEFAULT_LOCK_TTL,
+                    start_instant.elapsed().as_millis() as u64 + MAX_TTL,
                 );
                 let plan = PlanBuilder::new(rpc.clone(), request)
                     .retry_multi_region(region_backoff.clone())
