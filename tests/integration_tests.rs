@@ -742,7 +742,7 @@ async fn txn_pessimistic_heartbeat() -> Result<()> {
         .await
         .unwrap();
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(23)).await;
 
     // use other txns to check these locks
     let mut t3 = client

@@ -120,6 +120,7 @@ impl Key {
 
     /// Return the MVCC-encoded representation of the key.
     #[inline]
+    #[must_use]
     pub fn to_encoded(&self) -> Key {
         let len = codec::max_encoded_bytes_size(self.0.len());
         let mut encoded = Vec::with_capacity(len);
