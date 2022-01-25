@@ -29,12 +29,22 @@ message Compatibility {
     string required_version = 1;
 }
 
+// ClusterIDMismatch is an error variable that
+// tells people that the cluster ID of the request does not match the TiKV cluster ID.
+message ClusterIDMismatch {
+    // The current tikv cluster ID.
+    uint64 current = 1;
+    // The cluster ID of the TiCDC request.
+    uint64 request = 2;
+}
+
 message Error {
     errorpb.NotLeader not_leader = 1;
     errorpb.RegionNotFound region_not_found = 2;
     errorpb.EpochNotMatch epoch_not_match = 3;
     DuplicateRequest duplicate_request = 4;
     Compatibility compatibility = 5;
+    ClusterIDMismatch cluster_id_mismatch = 6;
 }
 
 message TxnInfo {

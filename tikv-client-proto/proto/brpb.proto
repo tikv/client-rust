@@ -3,7 +3,7 @@ package backup;
 
 import "kvrpcpb.proto";
 import "errorpb.proto";
-
+import "encryptionpb.proto";
 import "gogoproto/gogo.proto";
 import "rustproto.proto";
 
@@ -19,11 +19,19 @@ message BackupMeta {
     // ID and version of backuped cluster.
     uint64 cluster_id = 1;
     string cluster_version = 2;
+    // Save the version of BR running backup jobs.
+    string br_version = 11;
+    // The backupmeta scheme version.
+    int32 version = 12;
 
     // path field is no longer used.
     reserved 3; reserved "path";
     // A set of files that compose a backup.
+    // Note: `files` is deprecated, as it bloats backupmeta. It is kept for
+    //       compatibility, so new BR can restore older backups.
     repeated File files = 4;
+    // An index to files contains data files.
+    MetaFile file_index = 13;
 
     // A pair of timestamp specifies a time range of a backup.
     // For full backup, the start_version equals to the end_version,
@@ -33,19 +41,34 @@ message BackupMeta {
     uint64 start_version = 5;
     uint64 end_version = 6;
 
-    // Additional metadata describes database and table info.
+    // Table metadata describes database and table info.
+    // Note: `schemas` is deprecated, as it bloats backupmeta. It is kept for
+    //       compatibility, so new BR can restore older backups.
     repeated Schema schemas = 7;
+    // An index to files contains Schemas.
+    MetaFile schema_index = 14;
 
-    // If in raw kv mode, `start_versions`, `end_versions` and `schemas` will be ignored, and the
-    // backup data's range is represented by raw_ranges.
+    // If in raw kv mode, `start_versions`, `end_versions` and `schemas` will be
+    // ignored, and the backup data's range is represented by raw_ranges.
     bool is_raw_kv = 8;
+    // Note: `raw_ranges` is deprecated, as it bloats backupmeta. It is kept for
+    //       compatibility, so new BR can restore older backups.
     repeated RawRange raw_ranges = 9;
+    // An index to files contains RawRanges.
+    MetaFile raw_range_index = 15;
 
-    // In incremental backup, DDLs which are completed in (lastBackupTS, backupTS] will be stored here.
+    // In incremental backup, DDLs which are completed in
+    // (lastBackupTS, backupTS] will be stored here.
+    // Note: `raw_ranges` is deprecated, as it bloats backupmeta. It is kept for
+    //       compatibility, so new BR can restore older backups.
     bytes ddls = 10;
+    // An index to files contains DDLs.
+    MetaFile ddl_indexes = 16;
+    // the backup result into `backupmeta` file
+    string backup_result = 17;
 
-    // Save the version of BR running backup jobs.
-    string br_version = 11;
+    // API version implies the encode of the key and value.
+    kvrpcpb.APIVersion api_version = 18;
 }
 
 message File {
@@ -64,6 +87,23 @@ message File {
     string cf = 10;
 
     uint64 size = 11;
+    // cipher_iv is used for AES cipher
+    bytes  cipher_iv = 12;
+}
+
+// MetaFile describes a multi-level index of data used in backup.
+message MetaFile {
+    // A set of files that contains a MetaFile.
+    // It is used as a multi-level index.
+    repeated File meta_files = 1;
+    // A set of files that contains user data.
+    repeated File data_files = 2;
+    // A set of files that contains Schemas.
+    repeated Schema schemas = 3;
+    // A set of files that contains RawRanges.
+    repeated RawRange raw_ranges = 4;
+    // A set of files that contains DDLs.
+    repeated bytes ddls = 5;
 }
 
 message Schema {
@@ -109,6 +149,11 @@ enum CompressionType {
     ZSTD = 3;
 }
 
+message CipherInfo {
+    encryptionpb.EncryptionMethod cipher_type = 1;
+    bytes cipher_key = 2;
+}
+
 message BackupRequest {
     uint64 cluster_id = 1;
 
@@ -135,6 +180,8 @@ message BackupRequest {
     CompressionType compression_type = 12;
     // sst compression level, some algorithms support negative compression levels
     int32 compression_level = 13;
+    // The cipher_info is Used to encrypt sst
+    CipherInfo cipher_info = 14;
 }
 
 message StorageBackend {
@@ -144,6 +191,8 @@ message StorageBackend {
         S3 s3 = 3;
         GCS gcs = 4;
         CloudDynamic cloud_dynamic = 5;
+        HDFS hdfs = 6;
+        AzureBlobStorage azure_blob_storage = 7;
     }
 }
 
@@ -188,6 +237,29 @@ message GCS {
     string credentials_blob = 6;
 }
 
+// AzureBlobStorage storage backend saves files into azure blob storage.
+message AzureBlobStorage {
+    string endpoint = 1;
+    // Alias: container
+    string bucket = 2;
+    // Notice: prefix starts without `/`, otherwise the first directory's name is empty.
+    string prefix = 3;
+    // Alias: access_tier.
+    // See https://docs.microsoft.com/en-us/azure/storage/blobs/access-tiers-overview
+    string storage_class = 4;
+
+    // if empty, try to read account_name from the node's environment variable $AZURE_STORAGE_ACCOUNT.
+    string account_name = 5;
+    // Use shared key to access the azure blob
+    // If the node's environment variables($AZURE_CLIENT_ID, $AZURE_TENANT_ID, $AZURE_CLIENT_SECRET) exist,
+    // prefer to use token to access the azure blob.
+    //
+    //   See https://docs.microsoft.com/en-us/azure/storage/common/identity-library-acquire-token?toc=/azure/storage/blobs/toc.json
+    // 
+    // Otherwise, if empty, try to read shared key from the node's environment variable $AZURE_STORAGE_KEY.
+    string shared_key = 6;
+}
+
 message Bucket {
     string endpoint = 1;
     string region = 3;
@@ -199,8 +271,14 @@ message Bucket {
 // CloudDynamic allows testing new cloud providers and new fields without changing protobuf definitions
 message CloudDynamic {
     Bucket bucket = 1;
-    string provider_name = 2; // s3 and gcs are supported
+    string provider_name = 2; // s3, gcs and azureBlobStorage are supported
     map<string, string> attrs = 3;
+}
+
+// HDFS storage backend saves file into HDFS compatible storages
+message HDFS {
+    //  a URL: hdfs:///some/path or hdfs://host:port/some/path
+    string remote = 1;
 }
 
 

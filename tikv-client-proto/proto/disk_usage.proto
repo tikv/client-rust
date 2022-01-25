@@ -1,0 +1,14 @@
+syntax = "proto3";
+package disk_usage;
+
+import "rustproto.proto";
+
+option (rustproto.lite_runtime_all) = true;
+
+option java_package = "org.tikv.kvproto";
+
+enum DiskUsage {
+    Normal = 0;
+    AlmostFull = 1;
+    AlreadyFull = 2;
+}

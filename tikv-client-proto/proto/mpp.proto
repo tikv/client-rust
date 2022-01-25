@@ -19,6 +19,13 @@ message TaskMeta {
 	string address = 4; // target address of this task.
 }
 
+message IsAliveRequest {
+}
+
+message IsAliveResponse {
+        bool available = 1;
+}
+
 // Dipsatch the task request to different tiflash servers.
 message DispatchTaskRequest {
 	TaskMeta meta = 1;
@@ -51,10 +58,12 @@ message EstablishMPPConnectionRequest {
 	TaskMeta receiver_meta = 2; // node closer to the tidb mpp gather.
 }
 
-// Data packets wrap tipb.SelectResponse.
+// when TiFlash sends data to TiDB, Data packets wrap tipb.SelectResponse, i.e., serialize tipb.SelectResponse into data;
+// when TiFlash sends data to TiFlash, data blocks are serialized into chunks, and the execution_summaries in tipb.SelectResponse are serialized into data only for the last packet.
 message MPPDataPacket {
         bytes data = 1;
 	Error error = 2;
+	repeated bytes chunks = 3;
 }
 
 message Error {
