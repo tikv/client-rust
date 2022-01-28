@@ -96,7 +96,7 @@ impl Client {
             Logger::root(
                 slog_term::FullFormat::new(plain)
                     .build()
-                    .filter_level(slog::Level::Info)
+                    .filter_level(slog::Level::Debug)
                     .fuse(),
                 o!(),
             )
