@@ -755,17 +755,16 @@ impl<PdC: PdClient> Transaction<PdC> {
             .plan();
         let pairs = plan.execute().await;
 
-        // if let Err(ref err) = pairs {
-        //     match err {
-        //         Error::ResolveLockError if keys.len() > 1 => {
-        //             let keys = keys.into_iter().map(|lock| lock.key());
-        //             self.pessimistic_rollback(keys, self.timestamp.clone(), for_update_ts).await?;
-        //         }
-        //         _ => ()
-        //     }
-        //
-        //     self.buffer.unset_primary_key();
-        // } else {
+        if let Err(ref err) = pairs {
+            match err {
+                Error::ResolveLockError if keys.len() > 1 => {
+                    let keys = keys.into_iter().map(|lock| lock.key());
+                    self.pessimistic_lock_rollback(keys, self.timestamp.clone(), for_update_ts)
+                        .await?;
+                }
+                _ => (),
+            }
+        } else {
             // primary key will be set here if needed
             self.buffer.primary_key_or(&first_key);
 
@@ -774,14 +773,19 @@ impl<PdC: PdClient> Transaction<PdC> {
             for key in keys {
                 self.buffer.lock(key.key());
             }
-        // }
+        }
 
         pairs
     }
 
-    /// Rollback pessimistic transaction
-    async fn pessimistic_rollback(&self, keys: impl Iterator<Item = Key>, start_version: Timestamp, for_update_ts: Timestamp) -> Result<()> {
-        debug!(self.logger, "rollback pessimistic locks");
+    /// Rollback pessimistic lock
+    async fn pessimistic_lock_rollback(
+        &self,
+        keys: impl Iterator<Item = Key>,
+        start_version: Timestamp,
+        for_update_ts: Timestamp,
+    ) -> Result<()> {
+        debug!(self.logger, "rollback pessimistic lock");
         let req = new_pessimistic_rollback_request(keys, start_version, for_update_ts);
         let plan = PlanBuilder::new(self.rpc.clone(), req)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
@@ -1262,7 +1266,6 @@ impl<PdC: PdClient> Committer<PdC> {
                 plan.execute().await?;
             }
             TransactionKind::Pessimistic(for_update_ts) => {
-                debug!(self.logger, "do pessimistic_rollback_request");
                 let req = new_pessimistic_rollback_request(keys, self.start_version, for_update_ts);
                 let plan = PlanBuilder::new(self.rpc, req)
                     .resolve_lock(self.options.retry_options.lock_backoff)

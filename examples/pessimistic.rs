@@ -3,6 +3,7 @@
 mod common;
 
 use crate::common::parse_args;
+use slog::Drain;
 use tikv_client::{Config, Key, TransactionClient as Client, TransactionOptions, Value};
 
 #[tokio::main]
@@ -10,6 +11,17 @@ async fn main() {
     // You can try running this example by passing your pd endpoints
     // (and SSL options if necessary) through command line arguments.
     let args = parse_args("txn");
+
+    let logger = {
+        let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
+        slog::Logger::root(
+            slog_term::FullFormat::new(plain)
+                .build()
+                .filter_level(slog::Level::Debug)
+                .fuse(),
+            slog::o!(),
+        )
+    };
 
     // Create a configuration to use for the example.
     // Optionally encrypt the traffic.
@@ -20,21 +32,28 @@ async fn main() {
     };
 
     // init
-    let client = Client::new_with_config(args.pd, config, None)
+    let client = Client::new_with_config(args.pd, config, Some(logger))
         .await
         .expect("Could not connect to tikv");
 
-    let key0: Key = b"key00".to_vec().into();
+    // let key0: Key = b"key00".to_vec().into();
+    let key0: Key = 0x00000000_u32.to_be_bytes().to_vec().into();
     let value0: Value = b"value0".to_vec();
-    let key1: Key = b"key01".to_vec().into();
+    // let key1: Key = b"key01".to_vec().into();
+    let key1: Key = 0x40000000_u32.to_be_bytes().to_vec().into();
     let value1: Value = b"value1".to_vec();
-    let key2: Key = b"key02".to_vec().into();
+    // let key2: Key = b"key02".to_vec().into();
+    let key2: Key = 0x80000000_u32.to_be_bytes().to_vec().into();
     let value2: Value = b"value2".to_vec();
     let mut txn0 = client
         .begin_optimistic()
         .await
         .expect("Could not begin a transaction");
-    for (key, value) in vec![(key1.clone(), value1), (key2.clone(), value2), (key0.clone(), value0)] {
+    for (key, value) in vec![
+        (key1.clone(), value1),
+        (key2.clone(), value2),
+        (key0.clone(), value0),
+    ] {
         txn0.put(key, value).await.expect("Could not set key value");
     }
     txn0.commit().await.expect("Could not commit");
@@ -67,7 +86,9 @@ async fn main() {
         .begin_with_options(TransactionOptions::new_pessimistic().no_resolve_locks())
         .await
         .expect("Could not begin a transaction");
-    let result = txn4.lock_keys(vec![key0.clone(), key2.clone(), key1.clone()]).await;
+    let result = txn4
+        .lock_keys(vec![key0.clone(), key2.clone(), key1.clone()])
+        .await;
     println!("txn4: {:?}", result);
     // assert!(result.is_err());
     // txn4.rollback().await.unwrap();
