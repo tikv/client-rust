@@ -16,6 +16,7 @@ use crate::{
 use either::Either;
 use futures::stream::BoxStream;
 use std::{collections::HashMap, iter, sync::Arc};
+use tikv_client_common::Error::PessimisticLockError;
 use tikv_client_proto::{
     kvrpcpb::{self, TxnHeartBeatResponse},
     pdpb::Timestamp,
@@ -379,35 +380,52 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
             Result<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>,
         >,
     ) -> Result<Self::Out> {
-        input
-            .into_iter()
-            .flat_map_ok(|ResponseWithShard(mut resp, mutations)| {
-                let values = resp.take_values();
-                let values_len = values.len();
-                let not_founds = resp.take_not_founds();
-                let kvpairs = mutations
-                    .into_iter()
-                    .map(|m| m.key)
-                    .zip(values)
-                    .map(KvPair::from);
-                assert_eq!(kvpairs.len(), values_len);
-                if not_founds.is_empty() {
-                    // Legacy TiKV does not distiguish not existing key and existing key
-                    // that with empty value. We assume that key does not exist if value
-                    // is empty.
-                    Either::Left(kvpairs.filter(|kvpair| !kvpair.value().is_empty()))
-                } else {
-                    assert_eq!(kvpairs.len(), not_founds.len());
-                    Either::Right(kvpairs.zip(not_founds).filter_map(|(kvpair, not_found)| {
-                        if not_found {
-                            None
-                        } else {
-                            Some(kvpair)
-                        }
-                    }))
-                }
+        println!("merge input: {:?}", input);
+        let (success, mut errors): (Vec<_>, Vec<_>) = input.into_iter().partition(Result::is_ok);
+        if let Some(first_err) = errors.pop() {
+            let success_keys = success
+                .into_iter()
+                .filter_map(|x| x.ok())
+                .flat_map(|ResponseWithShard(_resp, mutations)| {
+                    mutations.into_iter().map(|m| m.key)
+                })
+                .collect();
+            Err(PessimisticLockError {
+                inner: Box::new(first_err.unwrap_err()),
+                success_keys,
             })
-            .collect()
+        } else {
+            Ok(success
+                .into_iter()
+                .map(Result::unwrap)
+                .flat_map(|ResponseWithShard(mut resp, mutations)| {
+                    let values = resp.take_values();
+                    let values_len = values.len();
+                    let not_founds = resp.take_not_founds();
+                    let kvpairs = mutations
+                        .into_iter()
+                        .map(|m| m.key)
+                        .zip(values)
+                        .map(KvPair::from);
+                    assert_eq!(kvpairs.len(), values_len);
+                    if not_founds.is_empty() {
+                        // Legacy TiKV does not distiguish not existing key and existing key
+                        // that with empty value. We assume that key does not exist if value
+                        // is empty.
+                        Either::Left(kvpairs.filter(|kvpair| !kvpair.value().is_empty()))
+                    } else {
+                        assert_eq!(kvpairs.len(), not_founds.len());
+                        Either::Right(kvpairs.zip(not_founds).filter_map(|(kvpair, not_found)| {
+                            if not_found {
+                                None
+                            } else {
+                                Some(kvpair)
+                            }
+                        }))
+                    }
+                })
+                .collect())
+        }
     }
 }
 
