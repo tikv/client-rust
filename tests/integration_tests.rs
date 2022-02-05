@@ -676,6 +676,38 @@ async fn txn_lock_keys() -> Result<()> {
 
 #[tokio::test]
 #[serial]
+async fn txn_lock_keys_error_handle() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
+    let mut rng = thread_rng();
+
+    let k = gen_u32_keys(4, &mut rng)
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let mut t1 = client.begin_pessimistic().await?;
+    let mut t2 = client.begin_pessimistic().await?;
+    let mut t3 = client.begin_pessimistic().await?;
+
+    t1.lock_keys(vec![k[0].clone(), k[1].clone()]).await?;
+    assert!(t2
+        .lock_keys(vec![k[0].clone(), k[2].clone()])
+        .await
+        .is_err());
+    t3.lock_keys(vec![k[2].clone(), k[3].clone()]).await?;
+
+    t1.rollback().await?;
+    t3.rollback().await?;
+
+    t2.lock_keys(vec![k[0].clone(), k[2].clone()]).await?;
+    t2.commit().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
 async fn txn_get_for_update() -> Result<()> {
     init().await?;
     let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;

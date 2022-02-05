@@ -755,14 +755,18 @@ impl<PdC: PdClient> Transaction<PdC> {
             .plan();
         let pairs = plan.execute().await;
 
-        if let Err(ref err) = pairs {
+        if let Err(err) = pairs {
             match err {
-                Error::ResolveLockError if keys.len() > 1 => {
-                    let keys = keys.into_iter().map(|lock| lock.key());
+                Error::PessimisticLockError {
+                    inner,
+                    success_keys,
+                } if !success_keys.is_empty() => {
+                    let keys = success_keys.into_iter().map(Key::from);
                     self.pessimistic_lock_rollback(keys, self.timestamp.clone(), for_update_ts)
                         .await?;
+                    Err(*inner)
                 }
-                _ => (),
+                _ => Err(err),
             }
         } else {
             // primary key will be set here if needed
@@ -773,9 +777,9 @@ impl<PdC: PdClient> Transaction<PdC> {
             for key in keys {
                 self.buffer.lock(key.key());
             }
-        }
 
-        pairs
+            pairs
+        }
     }
 
     /// Rollback pessimistic lock

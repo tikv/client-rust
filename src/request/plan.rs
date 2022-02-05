@@ -97,17 +97,19 @@ where
             handles.push(handle);
         }
 
-        let iter = try_join_all(handles).await?.into_iter();
+        let results = try_join_all(handles).await?;
         if preserve_results {
-            Ok(iter
-                .flat_map_ok(|x| x.into_iter())
+            Ok(results
+                .into_iter()
+                .flat_map_ok(|x| x)
                 .map(|x| match x {
                     Ok(r) => r,
                     Err(e) => Err(e),
                 })
                 .collect())
         } else {
-            Ok(iter
+            Ok(results
+                .into_iter()
                 .collect::<Result<Vec<_>>>()?
                 .into_iter()
                 .flatten()
