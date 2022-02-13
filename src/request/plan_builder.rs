@@ -129,7 +129,7 @@ where
     fn make_retry_multi_region(
         self,
         backoff: Backoff,
-        preserve_results: bool,
+        preserve_region_results: bool,
     ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC>, Targetted> {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
@@ -137,7 +137,7 @@ where
                 inner: self.plan,
                 pd_client: self.pd_client,
                 backoff,
-                preserve_results,
+                preserve_region_results,
             },
             phantom: PhantomData,
         }

@@ -784,19 +784,33 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     /// Rollback pessimistic lock
     async fn pessimistic_lock_rollback(
-        &self,
+        &mut self,
         keys: impl Iterator<Item = Key>,
         start_version: Timestamp,
         for_update_ts: Timestamp,
     ) -> Result<()> {
         debug!(self.logger, "rollback pessimistic lock");
-        let req = new_pessimistic_rollback_request(keys, start_version, for_update_ts);
+
+        let keys: Vec<_> = keys.into_iter().collect();
+        if keys.is_empty() {
+            return Ok(());
+        }
+
+        let req = new_pessimistic_rollback_request(
+            keys.clone().into_iter(),
+            start_version,
+            for_update_ts,
+        );
         let plan = PlanBuilder::new(self.rpc.clone(), req)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .extract_error()
             .plan();
         plan.execute().await?;
+
+        for key in keys {
+            self.buffer.unlock(&key);
+        }
         Ok(())
     }
 

@@ -174,6 +174,19 @@ impl Buffer {
         }
     }
 
+    /// Unlock the given key if locked.
+    pub fn unlock(&mut self, key: &Key) {
+        if let Some(value) = self.entry_map.get_mut(key) {
+            if let BufferEntry::Locked(v) = value {
+                if let Some(v) = v {
+                    *value = BufferEntry::Cached(v.take());
+                } else {
+                    self.entry_map.remove(key);
+                }
+            }
+        }
+    }
+
     /// Put a value into the buffer (does not write through).
     pub fn put(&mut self, key: Key, value: Value) {
         let mut entry = self.entry_map.entry(key.clone());
@@ -485,6 +498,12 @@ mod tests {
             };
         }
 
+        macro_rules! assert_entry_none {
+            ($key: ident) => {
+                assert!(matches!(buffer.entry_map.get(&$key), None,))
+            };
+        }
+
         // Insert + Delete = CheckNotExists
         let key: Key = b"key1".to_vec().into();
         buffer.insert(key.clone(), b"value1".to_vec());
@@ -510,5 +529,27 @@ mod tests {
         buffer.delete(key.clone());
         buffer.insert(key.clone(), b"value1".to_vec());
         assert_entry!(key, BufferEntry::Put(_));
+
+        // Lock + Unlock = None
+        let key: Key = b"key4".to_vec().into();
+        buffer.lock(key.clone());
+        buffer.unlock(&key);
+        assert_entry_none!(key);
+
+        // Cached + Lock + Unlock = Cached
+        let key: Key = b"key5".to_vec().into();
+        let val: Value = b"value5".to_vec();
+        let val_ = val.clone();
+        let r = block_on(buffer.get_or_else(key.clone(), move |_| ready(Ok(Some(val_)))));
+        assert_eq!(r.unwrap().unwrap(), val);
+        buffer.lock(key.clone());
+        buffer.unlock(&key);
+        assert_entry!(key, BufferEntry::Cached(Some(_)));
+        assert_eq!(
+            block_on(buffer.get_or_else(key, move |_| ready(Err(internal_err!("")))))
+                .unwrap()
+                .unwrap(),
+            val
+        );
     }
 }

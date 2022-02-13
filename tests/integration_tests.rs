@@ -679,12 +679,17 @@ async fn txn_lock_keys() -> Result<()> {
 async fn txn_lock_keys_error_handle() -> Result<()> {
     init().await?;
     let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
-    let mut rng = thread_rng();
 
-    let k = gen_u32_keys(4, &mut rng)
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>();
+    // Keys in `k` should locate in different regions. See `init()` for boundary of regions.
+    let k: Vec<Key> = vec![
+        0x00000000_u32,
+        0x40000000_u32,
+        0x80000000_u32,
+        0xC0000000_u32,
+    ]
+    .into_iter()
+    .map(|x| x.to_be_bytes().to_vec().into())
+    .collect();
 
     let mut t1 = client.begin_pessimistic().await?;
     let mut t2 = client.begin_pessimistic().await?;

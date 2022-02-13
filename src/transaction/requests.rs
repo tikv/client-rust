@@ -380,8 +380,10 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
             Result<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>,
         >,
     ) -> Result<Self::Out> {
-        let (success, mut errors): (Vec<_>, Vec<_>) = input.into_iter().partition(Result::is_ok);
-        if let Some(first_err) = errors.pop() {
+        if input.iter().any(Result::is_err) {
+            let (success, mut errors): (Vec<_>, Vec<_>) =
+                input.into_iter().partition(Result::is_ok);
+            let first_err = errors.pop().unwrap();
             let success_keys = success
                 .into_iter()
                 .map(Result::unwrap)
@@ -394,7 +396,7 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
                 success_keys,
             })
         } else {
-            Ok(success
+            Ok(input
                 .into_iter()
                 .map(Result::unwrap)
                 .flat_map(|ResponseWithShard(mut resp, mutations)| {
@@ -739,7 +741,6 @@ mod tests {
                 Ok(resp_not_found.clone()),
             ];
             let result = merger.merge(input);
-            println!("result: {:?}", result);
 
             assert_eq!(
                 result.unwrap(),
@@ -757,7 +758,6 @@ mod tests {
                 Ok(resp_not_found),
             ];
             let result = merger.merge(input);
-            println!("result: {:?}", result);
 
             if let PessimisticLockError {
                 inner,
