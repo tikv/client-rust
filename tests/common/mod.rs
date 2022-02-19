@@ -16,6 +16,7 @@ pub async fn clear_tikv() {
         ColumnFamily::Lock,
         ColumnFamily::Write,
     ];
+    // DEFAULT_REGION_BACKOFF is not long enough for CI environment. So set a longer backoff.
     let backoff = tikv_client::Backoff::no_jitter_backoff(100, 10000, 10);
     for cf in cfs {
         let raw_client = RawClient::new(pd_addrs(), None).await.unwrap().with_cf(cf);
