@@ -16,9 +16,13 @@ pub async fn clear_tikv() {
         ColumnFamily::Lock,
         ColumnFamily::Write,
     ];
+    let backoff = tikv_client::Backoff::no_jitter_backoff(100, 10000, 10);
     for cf in cfs {
         let raw_client = RawClient::new(pd_addrs(), None).await.unwrap().with_cf(cf);
-        raw_client.delete_range(vec![]..).await.unwrap();
+        raw_client
+            .delete_range_opt(vec![].., backoff.clone())
+            .await
+            .unwrap();
     }
 }
 
