@@ -16,6 +16,7 @@ use crate::{
 use either::Either;
 use futures::stream::BoxStream;
 use std::{collections::HashMap, iter, sync::Arc};
+use tikv_client_common::Error::PessimisticLockError;
 use tikv_client_proto::{
     kvrpcpb::{self, TxnHeartBeatResponse},
     pdpb::Timestamp,
@@ -379,35 +380,53 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
             Result<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>,
         >,
     ) -> Result<Self::Out> {
-        input
-            .into_iter()
-            .flat_map_ok(|ResponseWithShard(mut resp, mutations)| {
-                let values = resp.take_values();
-                let values_len = values.len();
-                let not_founds = resp.take_not_founds();
-                let kvpairs = mutations
-                    .into_iter()
-                    .map(|m| m.key)
-                    .zip(values)
-                    .map(KvPair::from);
-                assert_eq!(kvpairs.len(), values_len);
-                if not_founds.is_empty() {
-                    // Legacy TiKV does not distiguish not existing key and existing key
-                    // that with empty value. We assume that key does not exist if value
-                    // is empty.
-                    Either::Left(kvpairs.filter(|kvpair| !kvpair.value().is_empty()))
-                } else {
-                    assert_eq!(kvpairs.len(), not_founds.len());
-                    Either::Right(kvpairs.zip(not_founds).filter_map(|(kvpair, not_found)| {
-                        if not_found {
-                            None
-                        } else {
-                            Some(kvpair)
-                        }
-                    }))
-                }
+        if input.iter().any(Result::is_err) {
+            let (success, mut errors): (Vec<_>, Vec<_>) =
+                input.into_iter().partition(Result::is_ok);
+            let first_err = errors.pop().unwrap();
+            let success_keys = success
+                .into_iter()
+                .map(Result::unwrap)
+                .flat_map(|ResponseWithShard(_resp, mutations)| {
+                    mutations.into_iter().map(|m| m.key)
+                })
+                .collect();
+            Err(PessimisticLockError {
+                inner: Box::new(first_err.unwrap_err()),
+                success_keys,
             })
-            .collect()
+        } else {
+            Ok(input
+                .into_iter()
+                .map(Result::unwrap)
+                .flat_map(|ResponseWithShard(mut resp, mutations)| {
+                    let values = resp.take_values();
+                    let values_len = values.len();
+                    let not_founds = resp.take_not_founds();
+                    let kvpairs = mutations
+                        .into_iter()
+                        .map(|m| m.key)
+                        .zip(values)
+                        .map(KvPair::from);
+                    assert_eq!(kvpairs.len(), values_len);
+                    if not_founds.is_empty() {
+                        // Legacy TiKV does not distinguish not existing key and existing key
+                        // that with empty value. We assume that key does not exist if value
+                        // is empty.
+                        Either::Left(kvpairs.filter(|kvpair| !kvpair.value().is_empty()))
+                    } else {
+                        assert_eq!(kvpairs.len(), not_founds.len());
+                        Either::Right(kvpairs.zip(not_founds).filter_map(|(kvpair, not_found)| {
+                            if not_found {
+                                None
+                            } else {
+                                Some(kvpair)
+                            }
+                        }))
+                    }
+                })
+                .collect())
+        }
     }
 }
 
@@ -651,5 +670,108 @@ impl HasLocks for kvrpcpb::PrewriteResponse {
             .iter_mut()
             .filter_map(|error| error.locked.take())
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        request::{plan::Merge, CollectWithShard, ResponseWithShard},
+        KvPair,
+    };
+    use tikv_client_common::Error::{PessimisticLockError, ResolveLockError};
+    use tikv_client_proto::kvrpcpb;
+
+    #[tokio::test]
+    async fn test_merge_pessimistic_lock_response() {
+        let (key1, key2, key3, key4) = (b"key1", b"key2", b"key3", b"key4");
+        let (value1, value4) = (b"value1", b"value4");
+        let value_empty = b"";
+
+        let resp1 = ResponseWithShard(
+            kvrpcpb::PessimisticLockResponse {
+                values: vec![value1.to_vec()],
+                ..Default::default()
+            },
+            vec![kvrpcpb::Mutation {
+                op: kvrpcpb::Op::PessimisticLock as i32,
+                key: key1.to_vec(),
+                ..Default::default()
+            }],
+        );
+
+        let resp_empty_value = ResponseWithShard(
+            kvrpcpb::PessimisticLockResponse {
+                values: vec![value_empty.to_vec()],
+                ..Default::default()
+            },
+            vec![kvrpcpb::Mutation {
+                op: kvrpcpb::Op::PessimisticLock as i32,
+                key: key2.to_vec(),
+                ..Default::default()
+            }],
+        );
+
+        let resp_not_found = ResponseWithShard(
+            kvrpcpb::PessimisticLockResponse {
+                values: vec![value_empty.to_vec(), value4.to_vec()],
+                not_founds: vec![true, false],
+                ..Default::default()
+            },
+            vec![
+                kvrpcpb::Mutation {
+                    op: kvrpcpb::Op::PessimisticLock as i32,
+                    key: key3.to_vec(),
+                    ..Default::default()
+                },
+                kvrpcpb::Mutation {
+                    op: kvrpcpb::Op::PessimisticLock as i32,
+                    key: key4.to_vec(),
+                    ..Default::default()
+                },
+            ],
+        );
+
+        let merger = CollectWithShard {};
+        {
+            // empty values & not founds are filtered.
+            let input = vec![
+                Ok(resp1.clone()),
+                Ok(resp_empty_value.clone()),
+                Ok(resp_not_found.clone()),
+            ];
+            let result = merger.merge(input);
+
+            assert_eq!(
+                result.unwrap(),
+                vec![
+                    KvPair::new(key1.to_vec(), value1.to_vec()),
+                    KvPair::new(key4.to_vec(), value4.to_vec()),
+                ]
+            );
+        }
+        {
+            let input = vec![
+                Ok(resp1),
+                Ok(resp_empty_value),
+                Err(ResolveLockError),
+                Ok(resp_not_found),
+            ];
+            let result = merger.merge(input);
+
+            if let PessimisticLockError {
+                inner,
+                success_keys,
+            } = result.unwrap_err()
+            {
+                assert!(matches!(*inner, ResolveLockError));
+                assert_eq!(
+                    success_keys,
+                    vec![key1.to_vec(), key2.to_vec(), key3.to_vec(), key4.to_vec()]
+                );
+            } else {
+                panic!();
+            }
+        }
     }
 }

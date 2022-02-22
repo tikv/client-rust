@@ -744,27 +744,74 @@ impl<PdC: PdClient> Transaction<PdC> {
             primary_lock,
             self.timestamp.clone(),
             MAX_TTL,
-            for_update_ts,
+            for_update_ts.clone(),
             need_value,
         );
         let plan = PlanBuilder::new(self.rpc.clone(), request)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .preserve_shard()
-            .retry_multi_region(self.options.retry_options.region_backoff.clone())
+            .retry_multi_region_preserve_results(self.options.retry_options.region_backoff.clone())
             .merge(CollectWithShard)
             .plan();
         let pairs = plan.execute().await;
 
-        // primary key will be set here if needed
-        self.buffer.primary_key_or(&first_key);
+        if let Err(err) = pairs {
+            match err {
+                Error::PessimisticLockError {
+                    inner,
+                    success_keys,
+                } if !success_keys.is_empty() => {
+                    let keys = success_keys.into_iter().map(Key::from);
+                    self.pessimistic_lock_rollback(keys, self.timestamp.clone(), for_update_ts)
+                        .await?;
+                    Err(*inner)
+                }
+                _ => Err(err),
+            }
+        } else {
+            // primary key will be set here if needed
+            self.buffer.primary_key_or(&first_key);
 
-        self.start_auto_heartbeat().await;
+            self.start_auto_heartbeat().await;
 
-        for key in keys {
-            self.buffer.lock(key.key());
+            for key in keys {
+                self.buffer.lock(key.key());
+            }
+
+            pairs
+        }
+    }
+
+    /// Rollback pessimistic lock
+    async fn pessimistic_lock_rollback(
+        &mut self,
+        keys: impl Iterator<Item = Key>,
+        start_version: Timestamp,
+        for_update_ts: Timestamp,
+    ) -> Result<()> {
+        debug!(self.logger, "rollback pessimistic lock");
+
+        let keys: Vec<_> = keys.into_iter().collect();
+        if keys.is_empty() {
+            return Ok(());
         }
 
-        pairs
+        let req = new_pessimistic_rollback_request(
+            keys.clone().into_iter(),
+            start_version,
+            for_update_ts,
+        );
+        let plan = PlanBuilder::new(self.rpc.clone(), req)
+            .resolve_lock(self.options.retry_options.lock_backoff.clone())
+            .retry_multi_region(self.options.retry_options.region_backoff.clone())
+            .extract_error()
+            .plan();
+        plan.execute().await?;
+
+        for key in keys {
+            self.buffer.unlock(&key);
+        }
+        Ok(())
     }
 
     /// Checks if the transaction can perform arbitrary operations.

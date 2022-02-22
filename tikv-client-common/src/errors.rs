@@ -88,6 +88,11 @@ pub enum Error {
     InternalError { message: String },
     #[error("{0}")]
     StringError(String),
+    #[error("PessimisticLock error: {:?}", inner)]
+    PessimisticLockError {
+        inner: Box<Error>,
+        success_keys: Vec<Vec<u8>>,
+    },
 }
 
 impl From<tikv_client_proto::errorpb::Error> for Error {

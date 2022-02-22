@@ -16,6 +16,7 @@ use crate::{
     stats::tikv_stats,
     store::RegionStore,
     transaction::{resolve_locks, HasLocks},
+    util::iter::FlatMapOkIterExt,
     Error, Result,
 };
 
@@ -63,6 +64,11 @@ pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
     pub(super) inner: P,
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
+
+    /// Preserve all regions' results for other downstream plans to handle.
+    /// If true, return Ok and preserve all regions' results, even if some of them are Err.
+    /// Otherwise, return the first Err if there is any.
+    pub preserve_region_results: bool,
 }
 
 impl<P: Plan + Shardable, PdC: PdClient> RetryableMultiRegion<P, PdC>
@@ -76,6 +82,7 @@ where
         current_plan: P,
         backoff: Backoff,
         permits: Arc<Semaphore>,
+        preserve_region_results: bool,
     ) -> Result<<Self as Plan>::Result> {
         let shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
         let mut handles = Vec::new();
@@ -89,16 +96,29 @@ where
                 region_store,
                 backoff.clone(),
                 permits.clone(),
+                preserve_region_results,
             ));
             handles.push(handle);
         }
-        Ok(try_join_all(handles)
-            .await?
-            .into_iter()
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .flatten()
-            .collect())
+
+        let results = try_join_all(handles).await?;
+        if preserve_region_results {
+            Ok(results
+                .into_iter()
+                .flat_map_ok(|x| x)
+                .map(|x| match x {
+                    Ok(r) => r,
+                    Err(e) => Err(e),
+                })
+                .collect())
+        } else {
+            Ok(results
+                .into_iter()
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
+                .flatten()
+                .collect())
+        }
     }
 
     #[async_recursion]
@@ -108,6 +128,7 @@ where
         region_store: RegionStore,
         mut backoff: Backoff,
         permits: Arc<Semaphore>,
+        preserve_region_results: bool,
     ) -> Result<<Self as Plan>::Result> {
         // limit concurrent requests
         let permit = permits.acquire().await.unwrap();
@@ -125,7 +146,14 @@ where
                     if !region_error_resolved {
                         futures_timer::Delay::new(duration).await;
                     }
-                    Self::single_plan_handler(pd_client, plan, backoff, permits).await
+                    Self::single_plan_handler(
+                        pd_client,
+                        plan,
+                        backoff,
+                        permits,
+                        preserve_region_results,
+                    )
+                    .await
                 }
                 None => Err(Error::RegionError(e)),
             }
@@ -242,6 +270,7 @@ impl<P: Plan, PdC: PdClient> Clone for RetryableMultiRegion<P, PdC> {
             inner: self.inner.clone(),
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
+            preserve_region_results: self.preserve_region_results,
         }
     }
 }
@@ -263,6 +292,7 @@ where
             self.inner.clone(),
             self.backoff.clone(),
             concurrency_permits.clone(),
+            self.preserve_region_results,
         )
         .await
     }
@@ -556,6 +586,7 @@ mod test {
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),
+            preserve_region_results: false,
         };
         assert!(plan.execute().await.is_err())
     }

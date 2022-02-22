@@ -114,12 +114,30 @@ where
         self,
         backoff: Backoff,
     ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC>, Targetted> {
+        self.make_retry_multi_region(backoff, false)
+    }
+
+    /// Preserve all results, even some of them are Err.
+    /// To pass all responses to merge, and handle partial successful results correctly.
+    pub fn retry_multi_region_preserve_results(
+        self,
+        backoff: Backoff,
+    ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC>, Targetted> {
+        self.make_retry_multi_region(backoff, true)
+    }
+
+    fn make_retry_multi_region(
+        self,
+        backoff: Backoff,
+        preserve_region_results: bool,
+    ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC>, Targetted> {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: RetryableMultiRegion {
                 inner: self.plan,
                 pd_client: self.pd_client,
                 backoff,
+                preserve_region_results,
             },
             phantom: PhantomData,
         }

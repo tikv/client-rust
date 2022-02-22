@@ -107,4 +107,4 @@ jobs:
       - name: start tiup playground
         run: /home/runner/.tiup/bin/tiup playground nightly --mode tikv-slim --kv 3 --without-monitor --kv.config /home/runner/work/client-rust/client-rust/config/tikv.toml --pd.config /home/runner/work/client-rust/client-rust/config/pd.toml &
       - name: integration test
-        run: make integration-test
+        run: MULTI_REGION=1 make integration-test

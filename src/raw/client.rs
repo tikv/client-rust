@@ -13,7 +13,7 @@ use crate::{
     pd::{PdClient, PdRpcClient},
     raw::lowering::*,
     request::{Collect, CollectSingle, Plan},
-    BoundRange, ColumnFamily, Key, KvPair, Result, Value,
+    Backoff, BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
@@ -359,11 +359,19 @@ impl<PdC: PdClient> Client<PdC> {
     /// # });
     /// ```
     pub async fn delete_range(&self, range: impl Into<BoundRange>) -> Result<()> {
+        self.delete_range_opt(range, DEFAULT_REGION_BACKOFF).await
+    }
+
+    pub async fn delete_range_opt(
+        &self,
+        range: impl Into<BoundRange>,
+        backoff: Backoff,
+    ) -> Result<()> {
         debug!(self.logger, "invoking raw delete_range request");
         self.assert_non_atomic()?;
         let request = new_raw_delete_range_request(range.into(), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region(backoff)
             .extract_error()
             .plan();
         plan.execute().await?;

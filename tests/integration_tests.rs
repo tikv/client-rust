@@ -676,6 +676,43 @@ async fn txn_lock_keys() -> Result<()> {
 
 #[tokio::test]
 #[serial]
+async fn txn_lock_keys_error_handle() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
+
+    // Keys in `k` should locate in different regions. See `init()` for boundary of regions.
+    let k: Vec<Key> = vec![
+        0x00000000_u32,
+        0x40000000_u32,
+        0x80000000_u32,
+        0xC0000000_u32,
+    ]
+    .into_iter()
+    .map(|x| x.to_be_bytes().to_vec().into())
+    .collect();
+
+    let mut t1 = client.begin_pessimistic().await?;
+    let mut t2 = client.begin_pessimistic().await?;
+    let mut t3 = client.begin_pessimistic().await?;
+
+    t1.lock_keys(vec![k[0].clone(), k[1].clone()]).await?;
+    assert!(t2
+        .lock_keys(vec![k[0].clone(), k[2].clone()])
+        .await
+        .is_err());
+    t3.lock_keys(vec![k[2].clone(), k[3].clone()]).await?;
+
+    t1.rollback().await?;
+    t3.rollback().await?;
+
+    t2.lock_keys(vec![k[0].clone(), k[2].clone()]).await?;
+    t2.commit().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
 async fn txn_get_for_update() -> Result<()> {
     init().await?;
     let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
