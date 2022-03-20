@@ -151,6 +151,8 @@ impl BoundRange {
 }
 
 impl RangeBounds<Key> for BoundRange {
+    // clippy will act differently on nightly and stable, so we allow `needless_match` here.
+    #[allow(clippy::needless_match)]
     fn start_bound(&self) -> Bound<&Key> {
         match &self.from {
             Bound::Included(f) => Bound::Included(f),
