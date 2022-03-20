@@ -13,8 +13,8 @@ protobuf-build = { version = "0.12", default-features = false, features = ["grpc
 
 [dependencies]
 protobuf = "2.8"
-prost = { version = "0.7" }
-prost-derive = { version = "0.7" }
+prost = { version = "0.9" }
+prost-derive = { version = "0.9" }
 futures = "0.3"
-grpcio = { version = "0.9", default-features = false, features = ["secure", "prost-codec", "use-bindgen"] }
+grpcio = { version = "0.10", features = [ "prost-codec" ], default-features = false }
 lazy_static = { version = "1" }
