@@ -39,7 +39,7 @@ macro_rules! impl_request {
             }
 
             fn set_context(&mut self, context: kvrpcpb::Context) {
-                self.set_context(context);
+                kvrpcpb::$name::set_context(self, context)
             }
         }
     };
