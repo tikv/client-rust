@@ -23,7 +23,7 @@ Raw mode:
 ```rust
 use tikv_client::RawClient;
 
-let client = RawClient::new(vec!["127.0.0.1:2379"], None).await?;
+let client = RawClient::new(vec!["127.0.0.1:2379"]).await?;
 client.put("key".to_owned(), "value".to_owned()).await?;
 let value = client.get("key".to_owned()).await?;
 ```
@@ -33,7 +33,7 @@ Transactional mode:
 ```rust
 use tikv_client::TransactionClient;
 
-let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"], None).await?;
+let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"]).await?;
 let mut txn = txn_client.begin_optimistic().await?;
 txn.put("key".to_owned(), "value".to_owned()).await?;
 let value = txn.get("key".to_owned()).await?;
@@ -46,12 +46,15 @@ To make an example which builds and runs,
 use tikv_client::{TransactionClient, Error};
 
 async fn run() -> Result<(), Error> {
-    let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"], None).await?;
+    let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"]).await?;
     let mut txn = txn_client.begin_optimistic().await?;
+
     txn.put("key".to_owned(), "value".to_owned()).await?;
     let value = txn.get("key".to_owned()).await?;
     println!("value: {:?}", value);
+
     txn.commit().await?;
+
     Ok(())
 }
 
