@@ -20,9 +20,10 @@ The TiKV client is a Rust library (crate). To use this crate in your project, ad
 ```toml
 [dependencies]
 tikv-client = "0.1.0"
+tokio = { version = "1.5", features = ["full"] }
 ```
 
-The minimum supported version of Rust is 1.40. The minimum supported version of TiKV is 5.0.
+The minimum supported version of Rust is 1.40. The minimum supported version of TiKV is 5.0. You also need CMake >= 3.8.0, test with: `$ cmake --version`
 
 The general flow of using the client crate is to create either a raw or transaction client object (which can be configured) then send commands using the client object, or use it to create transactions objects. In the latter case, the transaction is built up using various commands and then committed (or rolled back).
 
@@ -33,7 +34,7 @@ Raw mode:
 ```rust
 use tikv_client::RawClient;
 
-let client = RawClient::new(vec!["127.0.0.1:2379"], None).await?;
+let client = RawClient::new(vec!["127.0.0.1:2379"]).await?;
 client.put("key".to_owned(), "value".to_owned()).await?;
 let value = client.get("key".to_owned()).await?;
 ```
@@ -43,7 +44,7 @@ Transactional mode:
 ```rust
 use tikv_client::TransactionClient;
 
-let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"], None).await?;
+let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"]).await?;
 let mut txn = txn_client.begin_optimistic().await?;
 txn.put("key".to_owned(), "value".to_owned()).await?;
 let value = txn.get("key".to_owned()).await?;
