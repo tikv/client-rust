@@ -110,6 +110,7 @@ impl Buffer {
         &mut self,
         range: BoundRange,
         limit: u32,
+        update_cache: bool,
         f: F,
     ) -> Result<impl Iterator<Item = KvPair>>
     where
@@ -147,8 +148,10 @@ impl Buffer {
         }
 
         // update local buffer
-        for (k, v) in &results {
-            self.update_cache(k.clone(), Some(v.clone()));
+        if update_cache {
+            for (k, v) in &results {
+                self.update_cache(k.clone(), Some(v.clone()));
+            }
         }
 
         let mut res = results

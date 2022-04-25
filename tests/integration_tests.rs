@@ -860,6 +860,29 @@ async fn raw_cas() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+#[serial]
+async fn txn_scan() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
+
+    let k1 = b"a".to_vec();
+    let v = b"b".to_vec();
+
+    // pessimistic
+    let option = TransactionOptions::new_pessimistic().drop_check(tikv_client::CheckLevel::Warn);
+    let mut t = client.begin_with_options(option.clone()).await?;
+    t.put(k1.clone(), v).await?;
+    t.commit().await?;
+
+    let mut t2 = client.begin_with_options(option).await?;
+    t2.get(k1.clone()).await?;
+    t2.key_exists(k1).await?;
+    t2.commit().await?;
+
+    Ok(())
+}
+
 // helper function
 async fn get_u32(client: &RawClient, key: Vec<u8>) -> Result<u32> {
     let x = client.get(key).await?.unwrap();

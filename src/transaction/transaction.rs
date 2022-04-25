@@ -690,6 +690,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             .scan_and_fetch(
                 range.into(),
                 limit,
+                !key_only,
                 move |new_range, new_limit| async move {
                     let request = new_scan_request(new_range, timestamp, new_limit, key_only);
                     let plan = PlanBuilder::new(rpc, request)
