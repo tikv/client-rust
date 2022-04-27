@@ -82,12 +82,12 @@ macro_rules! shardable_key {
 
             fn shards(
                 &self,
-                pd_client: &std::sync::Arc<impl crate::pd::PdClient>,
+                pd_client: &std::sync::Arc<impl $crate::pd::PdClient>,
             ) -> futures::stream::BoxStream<
                 'static,
-                crate::Result<(Self::Shard, crate::store::RegionStore)>,
+                $crate::Result<(Self::Shard, $crate::store::RegionStore)>,
             > {
-                crate::store::store_stream_for_keys(
+                $crate::store::store_stream_for_keys(
                     std::iter::once(self.key.clone()),
                     pd_client.clone(),
                 )
@@ -96,8 +96,8 @@ macro_rules! shardable_key {
             fn apply_shard(
                 &mut self,
                 mut shard: Self::Shard,
-                store: &crate::store::RegionStore,
-            ) -> crate::Result<()> {
+                store: &$crate::store::RegionStore,
+            ) -> $crate::Result<()> {
                 self.set_context(store.region_with_leader.context()?);
                 assert!(shard.len() == 1);
                 self.set_key(shard.pop().unwrap());
@@ -115,21 +115,21 @@ macro_rules! shardable_keys {
 
             fn shards(
                 &self,
-                pd_client: &std::sync::Arc<impl crate::pd::PdClient>,
+                pd_client: &std::sync::Arc<impl $crate::pd::PdClient>,
             ) -> futures::stream::BoxStream<
                 'static,
-                crate::Result<(Self::Shard, crate::store::RegionStore)>,
+                $crate::Result<(Self::Shard, $crate::store::RegionStore)>,
             > {
                 let mut keys = self.keys.clone();
                 keys.sort();
-                crate::store::store_stream_for_keys(keys.into_iter(), pd_client.clone())
+                $crate::store::store_stream_for_keys(keys.into_iter(), pd_client.clone())
             }
 
             fn apply_shard(
                 &mut self,
                 shard: Self::Shard,
-                store: &crate::store::RegionStore,
-            ) -> crate::Result<()> {
+                store: &$crate::store::RegionStore,
+            ) -> $crate::Result<()> {
                 self.set_context(store.region_with_leader.context()?);
                 self.set_keys(shard.into_iter().map(Into::into).collect());
                 Ok(())
@@ -146,18 +146,18 @@ macro_rules! shardable_range {
 
             fn shards(
                 &self,
-                pd_client: &Arc<impl crate::pd::PdClient>,
-            ) -> BoxStream<'static, crate::Result<(Self::Shard, crate::store::RegionStore)>> {
+                pd_client: &Arc<impl $crate::pd::PdClient>,
+            ) -> BoxStream<'static, $crate::Result<(Self::Shard, $crate::store::RegionStore)>> {
                 let start_key = self.start_key.clone().into();
                 let end_key = self.end_key.clone().into();
-                crate::store::store_stream_for_range((start_key, end_key), pd_client.clone())
+                $crate::store::store_stream_for_range((start_key, end_key), pd_client.clone())
             }
 
             fn apply_shard(
                 &mut self,
                 shard: Self::Shard,
-                store: &crate::store::RegionStore,
-            ) -> crate::Result<()> {
+                store: &$crate::store::RegionStore,
+            ) -> $crate::Result<()> {
                 self.set_context(store.region_with_leader.context()?);
 
                 self.set_start_key(shard.0.into());
