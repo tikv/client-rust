@@ -100,10 +100,11 @@ impl<C: RetryClientTrait> RegionCache<C> {
 
             // check concurrent requests
             let notify = region_cache_guard.on_my_way_id.get(&id).cloned();
+            let notified = notify.as_ref().map(|notify| notify.notified());
             drop(region_cache_guard);
 
-            if let Some(n) = notify {
-                n.notified().await;
+            if let Some(n) = notified {
+                n.await;
                 continue;
             } else {
                 return self.read_through_region_by_id(id).await;
