@@ -395,7 +395,7 @@ async fn raw_req() -> Result<()> {
     assert_eq!(res[1].1, "v2".as_bytes());
 
     // k1,k2; batch_put then batch_get
-    let _ = client
+    client
         .batch_put(vec![
             ("k3".to_owned(), "v3".to_owned()),
             ("k4".to_owned(), "v4".to_owned()),
@@ -437,7 +437,7 @@ async fn raw_req() -> Result<()> {
     assert_eq!(res.len(), 0);
 
     // empty; batch_put then scan
-    let _ = client
+    client
         .batch_put(vec![
             ("k3".to_owned(), "v3".to_owned()),
             ("k5".to_owned(), "v5".to_owned()),
