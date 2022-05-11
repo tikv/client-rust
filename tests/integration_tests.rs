@@ -395,7 +395,7 @@ async fn raw_req() -> Result<()> {
     assert_eq!(res[1].1, "v2".as_bytes());
 
     // k1,k2; batch_put then batch_get
-    let _ = client
+    client
         .batch_put(vec![
             ("k3".to_owned(), "v3".to_owned()),
             ("k4".to_owned(), "v4".to_owned()),
@@ -437,7 +437,7 @@ async fn raw_req() -> Result<()> {
     assert_eq!(res.len(), 0);
 
     // empty; batch_put then scan
-    let _ = client
+    client
         .batch_put(vec![
             ("k3".to_owned(), "v3".to_owned()),
             ("k5".to_owned(), "v5".to_owned()),
@@ -856,6 +856,29 @@ async fn raw_cas() -> Result<()> {
             .unwrap(),
         Error::UnsupportedMode
     ));
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn txn_scan() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
+
+    let k1 = b"a".to_vec();
+    let v = b"b".to_vec();
+
+    // pessimistic
+    let option = TransactionOptions::new_pessimistic().drop_check(tikv_client::CheckLevel::Warn);
+    let mut t = client.begin_with_options(option.clone()).await?;
+    t.put(k1.clone(), v).await?;
+    t.commit().await?;
+
+    let mut t2 = client.begin_with_options(option).await?;
+    t2.get(k1.clone()).await?;
+    t2.key_exists(k1).await?;
+    t2.commit().await?;
 
     Ok(())
 }
