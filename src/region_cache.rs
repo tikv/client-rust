@@ -207,9 +207,7 @@ impl<C: RetryClientTrait> RegionCache<C> {
         leader: metapb::Peer,
     ) -> Result<()> {
         let mut cache = self.region_cache.write().await;
-        let region_entry = cache
-            .ver_id_to_region
-            .get_mut(&ver_id);
+        let region_entry = cache.ver_id_to_region.get_mut(&ver_id);
         if let Some(region) = region_entry {
             region.leader = Some(leader);
         }
