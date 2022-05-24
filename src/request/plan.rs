@@ -2,6 +2,9 @@
 
 use std::{marker::PhantomData, sync::Arc};
 
+use lazy_static::lazy_static;
+use regex::Regex;
+
 use async_recursion::async_recursion;
 use async_trait::async_trait;
 use futures::{future::try_join_all, prelude::*};
@@ -19,6 +22,11 @@ use crate::{
     util::iter::FlatMapOkIterExt,
     Error, Result,
 };
+
+lazy_static! {
+    static ref KEY_NOT_IN_REGION_ERR_REG: Regex =
+        Regex::new(r"Key \w+ is out of \[region \d+\]").unwrap();
+}
 
 /// A plan for how to execute a request. A user builds up a plan with various
 /// options, then exectutes it.
@@ -135,8 +143,27 @@ where
         let mut resp = plan.execute().await?;
         drop(permit);
 
-        if let Some(e) = resp.key_errors() {
-            Ok(vec![Err(Error::MultipleKeyErrors(e))])
+        if let Some(err) = resp.key_errors() {
+            for e in &err {
+                // TODO `Key xxx is out of [region xxx]` should be kind of region error
+                if let Error::KeyError(key_err) = e {
+                    if KEY_NOT_IN_REGION_ERR_REG.is_match(key_err.get_abort())
+                        && backoff.next_delay_duration().is_some()
+                    {
+                        let ver_id = region_store.region_with_leader.ver_id();
+                        pd_client.invalidate_region_cache(ver_id).await;
+                        return Self::single_plan_handler(
+                            pd_client,
+                            plan,
+                            backoff,
+                            permits,
+                            preserve_region_results,
+                        )
+                        .await;
+                    }
+                }
+            }
+            Ok(vec![Err(Error::MultipleKeyErrors(err))])
         } else if let Some(e) = resp.region_error() {
             match backoff.next_delay_duration() {
                 Some(duration) => {
