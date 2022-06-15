@@ -953,7 +953,7 @@ pub struct TransactionOptions {
     heartbeat_option: HeartbeatOption,
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum HeartbeatOption {
     NoHeartbeat,
     FixedTime(Duration),
@@ -1308,7 +1308,7 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 enum TransactionStatus {
     /// The transaction is read-only [`Snapshot`](super::Snapshot), no need to commit or rollback or panic on drop.
     ReadOnly,

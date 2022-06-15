@@ -17,6 +17,8 @@ jobs:
           profile: minimal
           toolchain: nightly
           override: true
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v1.4.0
       - uses: actions-rs/cargo@v1
         with:
           command: check
@@ -47,6 +49,8 @@ jobs:
           toolchain: nightly
           components: clippy
           override: true
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v1.4.0
       - uses: actions-rs/clippy-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -64,18 +68,8 @@ jobs:
           profile: minimal
           toolchain: nightly
           override: true
-      - run: cargo generate-lockfile
-      - name: Cache dependencies
-        uses: actions/cache@v2
-        env:
-          cache-name: cache-dependencies
-        with:
-          path: |
-            ~/.cargo/.crates.toml
-            ~/.cargo/.crates2.json
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v1.4.0
       - name: unit test
         run: make unit-test
   integration-test:
@@ -90,18 +84,8 @@ jobs:
           profile: minimal
           toolchain: nightly
           override: true
-      - run: cargo generate-lockfile
-      - name: Cache dependencies
-        uses: actions/cache@v2
-        env:
-          cache-name: cache-dependencies
-        with:
-          path: |
-            ~/.cargo/.crates.toml
-            ~/.cargo/.crates2.json
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v1.4.0
       - name: install tiup
         run: curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
       - name: start tiup playground
