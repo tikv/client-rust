@@ -38,6 +38,15 @@ pub struct Client {
     logger: Logger,
 }
 
+impl Clone for Client {
+    fn clone(&self) -> Self {
+        Self {
+            pd: self.pd.clone(),
+            logger: self.logger.clone(),
+        }
+    }
+}
+
 impl Client {
     /// Create a transactional [`Client`] and connect to the TiKV cluster.
     ///

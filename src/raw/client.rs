@@ -25,13 +25,23 @@ const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 ///
 /// The returned results of raw request methods are [`Future`](std::future::Future)s that must be
 /// awaited to execute.
-#[derive(Clone)]
 pub struct Client<PdC: PdClient = PdRpcClient> {
     rpc: Arc<PdC>,
     cf: Option<ColumnFamily>,
     /// Whether to use the [`atomic mode`](Client::with_atomic_for_cas).
     atomic: bool,
     logger: Logger,
+}
+
+impl Clone for Client {
+    fn clone(&self) -> Self {
+        Self {
+            rpc: self.rpc.clone(),
+            cf: self.cf.clone(),
+            atomic: self.atomic,
+            logger: self.logger.clone(),
+        }
+    }
 }
 
 impl Client<PdRpcClient> {
