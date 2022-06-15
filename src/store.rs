@@ -39,10 +39,10 @@ where
     pd_client
         .clone()
         .group_keys_by_region(key_data)
-        .and_then(move |(region_id, key)| {
+        .and_then(move |(region, key)| {
             pd_client
                 .clone()
-                .store_for_id(region_id)
+                .map_region_to_store(region)
                 .map_ok(move |store| (key, store))
         })
         .boxed()
@@ -106,10 +106,10 @@ pub fn store_stream_for_ranges<PdC: PdClient>(
     pd_client
         .clone()
         .group_ranges_by_region(ranges)
-        .and_then(move |(region_id, range)| {
+        .and_then(move |(region, range)| {
             pd_client
                 .clone()
-                .store_for_id(region_id)
+                .map_region_to_store(region)
                 .map_ok(move |store| (range, store))
         })
         .boxed()
