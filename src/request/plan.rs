@@ -5,20 +5,22 @@ use std::{marker::PhantomData, sync::Arc};
 use async_recursion::async_recursion;
 use async_trait::async_trait;
 use futures::{future::try_join_all, prelude::*};
+use tokio::sync::Semaphore;
+
 use tikv_client_proto::{errorpb, errorpb::EpochNotMatch, kvrpcpb};
 use tikv_client_store::{HasKeyErrors, HasRegionError, HasRegionErrors, KvClient};
-use tokio::sync::Semaphore;
 
 use crate::{
     backoff::Backoff,
+    Error,
     pd::PdClient,
     request::{KvRequest, Shardable},
+    Result,
     stats::tikv_stats,
     store::RegionStore,
-    transaction::{resolve_locks, HasLocks},
-    util::iter::FlatMapOkIterExt,
-    Error, Result,
+    transaction::{HasLocks, resolve_locks}, util::iter::FlatMapOkIterExt,
 };
+use crate::request::request_codec::RequestCodec;
 
 /// A plan for how to execute a request. A user builds up a plan with various
 /// options, then exectutes it.
@@ -33,27 +35,39 @@ pub trait Plan: Sized + Clone + Sync + Send + 'static {
 
 /// The simplest plan which just dispatches a request to a specific kv server.
 #[derive(Clone)]
-pub struct Dispatch<Req: KvRequest> {
+pub struct Dispatch<C, Req: KvRequest<C>> {
     pub request: Req,
     pub kv_client: Option<Arc<dyn KvClient + Send + Sync>>,
+    codec: C,
+}
+
+impl<C, Req: KvRequest<C>> Dispatch<C, Req> {
+    pub fn new(request: Req, kv_client: Option<Arc<dyn KvClient + Send + Sync>>, codec: C) -> Self {
+        Self {
+            request,
+            kv_client,
+            codec,
+        }
+    }
 }
 
 #[async_trait]
-impl<Req: KvRequest> Plan for Dispatch<Req> {
+impl<C: RequestCodec, Req: KvRequest<C>> Plan for Dispatch<C, Req> {
     type Result = Req::Response;
 
     async fn execute(&self) -> Result<Self::Result> {
+        let req = self.request.encode_request(&self.codec);
         let stats = tikv_stats(self.request.label());
         let result = self
             .kv_client
             .as_ref()
             .expect("Unreachable: kv_client has not been initialised in Dispatch")
-            .dispatch(&self.request)
+            .dispatch(req.as_ref())
             .await;
         let result = stats.done(result);
-        result.map(|r| {
-            *r.downcast()
-                .expect("Downcast failed: request and response type mismatch")
+        result.and_then(|r| {
+            req.decode_response(&self.codec, *r.downcast()
+                .expect("Downcast failed: request and response type mismatch"))
         })
     }
 }
@@ -72,8 +86,8 @@ pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
 }
 
 impl<P: Plan + Shardable, PdC: PdClient> RetryableMultiRegion<P, PdC>
-where
-    P::Result: HasKeyErrors + HasRegionError,
+    where
+        P::Result: HasKeyErrors + HasRegionError,
 {
     // A plan may involve multiple shards
     #[async_recursion]
@@ -153,7 +167,7 @@ where
                         permits,
                         preserve_region_results,
                     )
-                    .await
+                        .await
                 }
                 None => Err(Error::RegionError(e)),
             }
@@ -205,7 +219,7 @@ where
                 region_store,
                 e.take_epoch_not_match(),
             )
-            .await
+                .await
         } else if e.has_stale_command() || e.has_region_not_found() {
             pd_client.invalidate_region_cache(ver_id).await;
             Ok(false)
@@ -277,8 +291,8 @@ impl<P: Plan, PdC: PdClient> Clone for RetryableMultiRegion<P, PdC> {
 
 #[async_trait]
 impl<P: Plan + Shardable, PdC: PdClient> Plan for RetryableMultiRegion<P, PdC>
-where
-    P::Result: HasKeyErrors + HasRegionError,
+    where
+        P::Result: HasKeyErrors + HasRegionError,
 {
     type Result = Vec<Result<P::Result>>;
 
@@ -294,7 +308,7 @@ where
             concurrency_permits.clone(),
             self.preserve_region_results,
         )
-        .await
+            .await
     }
 }
 
@@ -313,8 +327,8 @@ pub struct MergeResponse<P: Plan, In, M: Merge<In>> {
 }
 
 #[async_trait]
-impl<In: Clone + Send + Sync + 'static, P: Plan<Result = Vec<Result<In>>>, M: Merge<In>> Plan
-    for MergeResponse<P, In, M>
+impl<In: Clone + Send + Sync + 'static, P: Plan<Result=Vec<Result<In>>>, M: Merge<In>> Plan
+for MergeResponse<P, In, M>
 {
     type Result = M::Out;
 
@@ -408,8 +422,8 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
 
 #[async_trait]
 impl<P: Plan, PdC: PdClient> Plan for ResolveLock<P, PdC>
-where
-    P::Result: HasLocks,
+    where
+        P::Result: HasLocks,
 {
     type Result = P::Result;
 
@@ -464,8 +478,8 @@ impl<P: Plan> Clone for ExtractError<P> {
 
 #[async_trait]
 impl<P: Plan> Plan for ExtractError<P>
-where
-    P::Result: HasKeyErrors + HasRegionErrors,
+    where
+        P::Result: HasKeyErrors + HasRegionErrors,
 {
     type Result = P::Result;
 
@@ -504,8 +518,8 @@ impl<P: Plan + Shardable> Clone for PreserveShard<P> {
 
 #[async_trait]
 impl<P> Plan for PreserveShard<P>
-where
-    P: Plan + Shardable,
+    where
+        P: Plan + Shardable,
 {
     type Result = ResponseWithShard<P::Result, P::Shard>;
 
@@ -544,10 +558,13 @@ impl<Resp: HasRegionError, Shard> HasRegionError for ResponseWithShard<Resp, Sha
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use crate::mock::MockPdClient;
     use futures::stream::{self, BoxStream};
+
     use tikv_client_proto::kvrpcpb::BatchGetResponse;
+
+    use crate::mock::MockPdClient;
+
+    use super::*;
 
     #[derive(Clone)]
     struct ErrPlan;

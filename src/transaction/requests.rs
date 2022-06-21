@@ -1,26 +1,31 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
+use std::{collections::HashMap, iter, sync::Arc};
+use std::borrow::Cow;
 
-use crate::{
-    collect_first,
-    pd::PdClient,
-    request::{
-        Collect, CollectSingle, CollectWithShard, DefaultProcessor, KvRequest, Merge, Process,
-        ResponseWithShard, Shardable, SingleKey,
-    },
-    store::{store_stream_for_keys, store_stream_for_range_by_start_key, RegionStore},
-    timestamp::TimestampExt,
-    transaction::HasLocks,
-    util::iter::FlatMapOkIterExt,
-    Key, KvPair, Result, Value,
-};
 use either::Either;
 use futures::stream::BoxStream;
-use std::{collections::HashMap, iter, sync::Arc};
+
 use tikv_client_common::Error::PessimisticLockError;
 use tikv_client_proto::{
     kvrpcpb::{self, TxnHeartBeatResponse},
     pdpb::Timestamp,
 };
+use tikv_client_store::HasRegionErrors;
+
+use crate::{
+    collect_first,
+    Key,
+    KvPair,
+    pd::PdClient,
+    request::{
+        Collect, CollectSingle, CollectWithShard, DefaultProcessor, KvRequest, Merge, Process,
+        ResponseWithShard, Shardable, SingleKey,
+    },
+    Result,
+    store::{RegionStore, store_stream_for_keys, store_stream_for_range_by_start_key},
+    timestamp::TimestampExt, transaction::HasLocks, util::iter::FlatMapOkIterExt, Value,
+};
+use crate::request::request_codec::{RequestCodec, TxnApiV1};
 
 // implement HasLocks for a response type that has a `pairs` field,
 // where locks can be extracted from both the `pairs` and `error` fields
@@ -63,15 +68,25 @@ macro_rules! error_locks {
     };
 }
 
-pub fn new_get_request(key: Vec<u8>, timestamp: u64) -> kvrpcpb::GetRequest {
+pub fn new_get_request<C: RequestCodec>(key: Vec<u8>, timestamp: u64) -> kvrpcpb::GetRequest
+    where kvrpcpb::GetRequest: KvRequest<C>
+{
     let mut req = kvrpcpb::GetRequest::default();
     req.set_key(key);
     req.set_version(timestamp);
     req
 }
 
-impl KvRequest for kvrpcpb::GetRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::GetRequest {
     type Response = kvrpcpb::GetResponse;
+
+    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+        todo!()
+    }
+
+    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+        todo!()
+    }
 }
 
 shardable_key!(kvrpcpb::GetRequest);
@@ -95,15 +110,25 @@ impl Process<kvrpcpb::GetResponse> for DefaultProcessor {
     }
 }
 
-pub fn new_batch_get_request(keys: Vec<Vec<u8>>, timestamp: u64) -> kvrpcpb::BatchGetRequest {
+pub fn new_batch_get_request<C: RequestCodec>(keys: Vec<Vec<u8>>, timestamp: u64) -> kvrpcpb::BatchGetRequest
+    where kvrpcpb::BatchGetRequest: KvRequest<C>
+{
     let mut req = kvrpcpb::BatchGetRequest::default();
     req.set_keys(keys);
     req.set_version(timestamp);
     req
 }
 
-impl KvRequest for kvrpcpb::BatchGetRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::BatchGetRequest {
     type Response = kvrpcpb::BatchGetResponse;
+
+    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+        todo!()
+    }
+
+    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+        todo!()
+    }
 }
 
 shardable_keys!(kvrpcpb::BatchGetRequest);
@@ -119,13 +144,15 @@ impl Merge<kvrpcpb::BatchGetResponse> for Collect {
     }
 }
 
-pub fn new_scan_request(
+pub fn new_scan_request<C: RequestCodec>(
     start_key: Vec<u8>,
     end_key: Vec<u8>,
     timestamp: u64,
     limit: u32,
     key_only: bool,
-) -> kvrpcpb::ScanRequest {
+) -> kvrpcpb::ScanRequest
+    where kvrpcpb::ScanRequest: KvRequest<C>
+{
     let mut req = kvrpcpb::ScanRequest::default();
     req.set_start_key(start_key);
     req.set_end_key(end_key);
@@ -135,8 +162,16 @@ pub fn new_scan_request(
     req
 }
 
-impl KvRequest for kvrpcpb::ScanRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ScanRequest {
     type Response = kvrpcpb::ScanResponse;
+
+    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+        todo!()
+    }
+
+    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+        todo!()
+    }
 }
 
 shardable_range!(kvrpcpb::ScanRequest);
@@ -152,10 +187,12 @@ impl Merge<kvrpcpb::ScanResponse> for Collect {
     }
 }
 
-pub fn new_resolve_lock_request(
+pub fn new_resolve_lock_request<C: RequestCodec>(
     start_version: u64,
     commit_version: u64,
-) -> kvrpcpb::ResolveLockRequest {
+) -> kvrpcpb::ResolveLockRequest where
+    kvrpcpb::ResolveLockRequest: KvRequest<C>,
+{
     let mut req = kvrpcpb::ResolveLockRequest::default();
     req.set_start_version(start_version);
     req.set_commit_version(commit_version);
@@ -167,11 +204,33 @@ pub fn new_resolve_lock_request(
 // region without keys. So it's not Shardable. And we don't automatically retry
 // on its region errors (in the Plan level). The region error must be manually
 // handled (in the upper level).
-impl KvRequest for kvrpcpb::ResolveLockRequest {
+impl KvRequest<TxnApiV1> for kvrpcpb::ResolveLockRequest {
     type Response = kvrpcpb::ResolveLockResponse;
+
+    fn encode_request(&self, _codec: &TxnApiV1) -> Cow<Self> {
+        todo!()
+    }
+
+    fn decode_response(&self, _codec: &TxnApiV1, _resp: Self::Response) -> Result<Self::Response> {
+        todo!()
+    }
 }
 
-pub fn new_cleanup_request(key: Vec<u8>, start_version: u64) -> kvrpcpb::CleanupRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ResolveLockRequest {
+    default type Response = kvrpcpb::ResolveLockResponse;
+
+    default fn encode_request(&self, _codec: &C) -> Cow<Self> {
+        todo!()
+    }
+
+    default fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+        todo!()
+    }
+}
+
+pub fn new_cleanup_request<C: RequestCodec>(key: Vec<u8>, start_version: u64) -> kvrpcpb::CleanupRequest
+    where kvrpcpb::CleanupRequest: KvRequest<C>
+{
     let mut req = kvrpcpb::CleanupRequest::default();
     req.set_key(key);
     req.set_start_version(start_version);
@@ -179,8 +238,16 @@ pub fn new_cleanup_request(key: Vec<u8>, start_version: u64) -> kvrpcpb::Cleanup
     req
 }
 
-impl KvRequest for kvrpcpb::CleanupRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CleanupRequest {
     type Response = kvrpcpb::CleanupResponse;
+
+    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+        todo!()
+    }
+
+    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+        todo!()
+    }
 }
 
 shardable_key!(kvrpcpb::CleanupRequest);
@@ -199,12 +266,12 @@ impl Process<kvrpcpb::CleanupResponse> for DefaultProcessor {
     }
 }
 
-pub fn new_prewrite_request(
+pub fn new_prewrite_request<C: RequestCodec>(
     mutations: Vec<kvrpcpb::Mutation>,
     primary_lock: Vec<u8>,
     start_version: u64,
     lock_ttl: u64,
-) -> kvrpcpb::PrewriteRequest {
+) -> kvrpcpb::PrewriteRequest where kvrpcpb::PrewriteRequest: KvRequest<C> {
     let mut req = kvrpcpb::PrewriteRequest::default();
     req.set_mutations(mutations);
     req.set_primary_lock(primary_lock);
@@ -216,13 +283,13 @@ pub fn new_prewrite_request(
     req
 }
 
-pub fn new_pessimistic_prewrite_request(
+pub fn new_pessimistic_prewrite_request<C: RequestCodec>(
     mutations: Vec<kvrpcpb::Mutation>,
     primary_lock: Vec<u8>,
     start_version: u64,
     lock_ttl: u64,
     for_update_ts: u64,
-) -> kvrpcpb::PrewriteRequest {
+) -> kvrpcpb::PrewriteRequest where kvrpcpb::PrewriteRequest: KvRequest<C> {
     let len = mutations.len();
     let mut req = new_prewrite_request(mutations, primary_lock, start_version, lock_ttl);
     req.set_for_update_ts(for_update_ts);
@@ -230,8 +297,16 @@ pub fn new_pessimistic_prewrite_request(
     req
 }
 
-impl KvRequest for kvrpcpb::PrewriteRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PrewriteRequest {
     type Response = kvrpcpb::PrewriteResponse;
+
+    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+        todo!()
+    }
+
+    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+        todo!()
+    }
 }
 
 impl Shardable for kvrpcpb::PrewriteRequest {
@@ -264,29 +339,37 @@ impl Shardable for kvrpcpb::PrewriteRequest {
     }
 }
 
-pub fn new_commit_request(
+pub fn new_commit_request<C: RequestCodec>(
     keys: Vec<Vec<u8>>,
     start_version: u64,
     commit_version: u64,
-) -> kvrpcpb::CommitRequest {
-    let mut req = kvrpcpb::CommitRequest::default();
-    req.set_keys(keys);
-    req.set_start_version(start_version);
-    req.set_commit_version(commit_version);
+) -> kvrpcpb::CommitRequest where kvrpcpb::CommitRequest: KvRequest<C> {
+let mut req = kvrpcpb::CommitRequest::default();
+req.set_keys(keys);
+req.set_start_version(start_version);
+req.set_commit_version(commit_version);
 
-    req
+req
 }
 
-impl KvRequest for kvrpcpb::CommitRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CommitRequest {
     type Response = kvrpcpb::CommitResponse;
+
+    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+        todo!()
+    }
+
+    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+        todo!()
+    }
 }
 
 shardable_keys!(kvrpcpb::CommitRequest);
 
-pub fn new_batch_rollback_request(
+pub fn new_batch_rollback_request<C: RequestCodec>(
     keys: Vec<Vec<u8>>,
     start_version: u64,
-) -> kvrpcpb::BatchRollbackRequest {
+) -> kvrpcpb::BatchRollbackRequest where kvrpcpb::BatchRollbackRequest: KvRequest<C> {
     let mut req = kvrpcpb::BatchRollbackRequest::default();
     req.set_keys(keys);
     req.set_start_version(start_version);
@@ -294,17 +377,25 @@ pub fn new_batch_rollback_request(
     req
 }
 
-impl KvRequest for kvrpcpb::BatchRollbackRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::BatchRollbackRequest {
     type Response = kvrpcpb::BatchRollbackResponse;
+
+    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+        todo!()
+    }
+
+    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+        todo!()
+    }
 }
 
 shardable_keys!(kvrpcpb::BatchRollbackRequest);
 
-pub fn new_pessimistic_rollback_request(
+pub fn new_pessimistic_rollback_request<C: RequestCodec>(
     keys: Vec<Vec<u8>>,
     start_version: u64,
     for_update_ts: u64,
-) -> kvrpcpb::PessimisticRollbackRequest {
+) -> kvrpcpb::PessimisticRollbackRequest where kvrpcpb::PessimisticRollbackRequest: KvRequest<C> {
     let mut req = kvrpcpb::PessimisticRollbackRequest::default();
     req.set_keys(keys);
     req.set_start_version(start_version);
@@ -313,20 +404,28 @@ pub fn new_pessimistic_rollback_request(
     req
 }
 
-impl KvRequest for kvrpcpb::PessimisticRollbackRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PessimisticRollbackRequest {
     type Response = kvrpcpb::PessimisticRollbackResponse;
+
+    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+        todo!()
+    }
+
+    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+        todo!()
+    }
 }
 
 shardable_keys!(kvrpcpb::PessimisticRollbackRequest);
 
-pub fn new_pessimistic_lock_request(
+pub fn new_pessimistic_lock_request<C: RequestCodec>(
     mutations: Vec<kvrpcpb::Mutation>,
     primary_lock: Vec<u8>,
     start_version: u64,
     lock_ttl: u64,
     for_update_ts: u64,
     need_value: bool,
-) -> kvrpcpb::PessimisticLockRequest {
+) -> kvrpcpb::PessimisticLockRequest where kvrpcpb::PessimisticLockRequest: KvRequest<C> {
     let mut req = kvrpcpb::PessimisticLockRequest::default();
     req.set_mutations(mutations);
     req.set_primary_lock(primary_lock);
@@ -344,8 +443,16 @@ pub fn new_pessimistic_lock_request(
     req
 }
 
-impl KvRequest for kvrpcpb::PessimisticLockRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PessimisticLockRequest {
     type Response = kvrpcpb::PessimisticLockResponse;
+
+    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+        todo!()
+    }
+
+    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+        todo!()
+    }
 }
 
 impl Shardable for kvrpcpb::PessimisticLockRequest {
@@ -370,7 +477,7 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
 // PessimisticLockResponse returns values that preserves the order with keys in request, thus the
 // kvpair result should be produced by zipping the keys in request and the values in respponse.
 impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>
-    for CollectWithShard
+for CollectWithShard
 {
     type Out = Vec<KvPair>;
 
@@ -430,11 +537,11 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
     }
 }
 
-pub fn new_scan_lock_request(
+pub fn new_scan_lock_request<C: RequestCodec>(
     start_key: Vec<u8>,
     safepoint: u64,
     limit: u32,
-) -> kvrpcpb::ScanLockRequest {
+) -> kvrpcpb::ScanLockRequest where kvrpcpb::ScanLockRequest: KvRequest<C> {
     let mut req = kvrpcpb::ScanLockRequest::default();
     req.set_start_key(start_key);
     req.set_max_version(safepoint);
@@ -442,8 +549,16 @@ pub fn new_scan_lock_request(
     req
 }
 
-impl KvRequest for kvrpcpb::ScanLockRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ScanLockRequest {
     type Response = kvrpcpb::ScanLockResponse;
+
+    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+        todo!()
+    }
+
+    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+        todo!()
+    }
 }
 
 impl Shardable for kvrpcpb::ScanLockRequest {
@@ -474,11 +589,11 @@ impl Merge<kvrpcpb::ScanLockResponse> for Collect {
     }
 }
 
-pub fn new_heart_beat_request(
+pub fn new_heart_beat_request<C: RequestCodec>(
     start_ts: u64,
     primary_lock: Vec<u8>,
     ttl: u64,
-) -> kvrpcpb::TxnHeartBeatRequest {
+) -> kvrpcpb::TxnHeartBeatRequest where kvrpcpb::TxnHeartBeatRequest: KvRequest<C> {
     let mut req = kvrpcpb::TxnHeartBeatRequest::default();
     req.set_start_version(start_ts);
     req.set_primary_lock(primary_lock);
@@ -486,8 +601,16 @@ pub fn new_heart_beat_request(
     req
 }
 
-impl KvRequest for kvrpcpb::TxnHeartBeatRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::TxnHeartBeatRequest {
     type Response = kvrpcpb::TxnHeartBeatResponse;
+
+    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+        todo!()
+    }
+
+    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+        todo!()
+    }
 }
 
 impl Shardable for kvrpcpb::TxnHeartBeatRequest {
@@ -524,8 +647,16 @@ impl Process<kvrpcpb::TxnHeartBeatResponse> for DefaultProcessor {
     }
 }
 
-impl KvRequest for kvrpcpb::CheckTxnStatusRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CheckTxnStatusRequest {
     type Response = kvrpcpb::CheckTxnStatusResponse;
+
+    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+        todo!()
+    }
+
+    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+        todo!()
+    }
 }
 
 impl Shardable for kvrpcpb::CheckTxnStatusRequest {
@@ -593,8 +724,16 @@ impl From<(u64, u64, Option<kvrpcpb::LockInfo>)> for TransactionStatusKind {
     }
 }
 
-impl KvRequest for kvrpcpb::CheckSecondaryLocksRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CheckSecondaryLocksRequest {
     type Response = kvrpcpb::CheckSecondaryLocksResponse;
+
+    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+        todo!()
+    }
+
+    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+        todo!()
+    }
 }
 
 shardable_keys!(kvrpcpb::CheckSecondaryLocksRequest);
@@ -644,6 +783,7 @@ error_locks!(kvrpcpb::CheckTxnStatusResponse);
 error_locks!(kvrpcpb::CheckSecondaryLocksResponse);
 
 impl HasLocks for kvrpcpb::CleanupResponse {}
+
 impl HasLocks for kvrpcpb::ScanLockResponse {}
 
 impl HasLocks for kvrpcpb::PessimisticRollbackResponse {
@@ -675,12 +815,13 @@ impl HasLocks for kvrpcpb::PrewriteResponse {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        request::{plan::Merge, CollectWithShard, ResponseWithShard},
-        KvPair,
-    };
     use tikv_client_common::Error::{PessimisticLockError, ResolveLockError};
     use tikv_client_proto::kvrpcpb;
+
+    use crate::{
+        KvPair,
+        request::{CollectWithShard, plan::Merge, ResponseWithShard},
+    };
 
     #[tokio::test]
     async fn test_merge_pessimistic_lock_response() {

@@ -1,12 +1,17 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::borrow::Cow;
+
+use async_trait::async_trait;
+use derive_new::new;
+
+use tikv_client_store::{HasKeyErrors, HasRegionError, Request};
+
 use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF, PESSIMISTIC_BACKOFF},
     transaction::HasLocks,
 };
-use async_trait::async_trait;
-use derive_new::new;
-use tikv_client_store::{HasKeyErrors, Request};
+use crate::pd::PdClient;
 
 pub use self::{
     plan::{
@@ -22,12 +27,15 @@ pub mod plan;
 mod plan_builder;
 #[macro_use]
 mod shard;
+pub mod request_codec;
 
 /// Abstracts any request sent to a TiKV server.
 #[async_trait]
-pub trait KvRequest: Request + Sized + Clone + Sync + Send + 'static {
+pub trait KvRequest<C>: Request + Sized + Clone + Sync + Send + 'static {
     /// The expected response to the request.
-    type Response: HasKeyErrors + HasLocks + Clone + Send + 'static;
+    type Response: HasKeyErrors + HasLocks + HasRegionError + Clone + Send + 'static;
+    fn encode_request(&self, _codec: &C) -> Cow<Self>;
+    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> crate::Result<Self::Response>;
 }
 
 #[derive(Clone, Debug, new, Eq, PartialEq)]
@@ -63,21 +71,25 @@ impl RetryOptions {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use crate::{
-        mock::{MockKvClient, MockPdClient},
-        store::store_stream_for_keys,
-        transaction::lowering::new_commit_request,
-        Error, Key, Result,
-    };
-    use grpcio::CallOption;
     use std::{
         any::Any,
         iter,
-        sync::{atomic::AtomicUsize, Arc},
+        sync::{Arc, atomic::AtomicUsize},
     };
+
+    use grpcio::CallOption;
+
     use tikv_client_proto::{kvrpcpb, pdpb::Timestamp, tikvpb::TikvClient};
     use tikv_client_store::HasRegionError;
+
+    use crate::{
+        Error,
+        Key,
+        mock::{MockKvClient, MockPdClient},
+        Result, store::store_stream_for_keys, transaction::lowering::new_commit_request,
+    };
+
+    use super::*;
 
     #[tokio::test]
     async fn test_region_retry() {

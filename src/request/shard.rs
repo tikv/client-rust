@@ -38,7 +38,7 @@ pub trait Shardable {
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()>;
 }
 
-impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
+impl<C, Req: KvRequest<C> + Shardable> Shardable for Dispatch<C, Req> {
     type Shard = Req::Shard;
 
     fn shards(

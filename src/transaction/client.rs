@@ -1,18 +1,24 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::{requests::new_scan_lock_request, resolve_locks};
+use std::{mem, sync::Arc};
+use std::marker::PhantomData;
+
+use slog::{Drain, Logger};
+
+use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+
 use crate::{
     backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     config::Config,
     pd::{PdClient, PdRpcClient},
     request::Plan,
+    Result,
     timestamp::TimestampExt,
     transaction::{Snapshot, Transaction, TransactionOptions},
-    Result,
 };
-use slog::{Drain, Logger};
-use std::{mem, sync::Arc};
-use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use crate::request::request_codec::RequestCodec;
+
+use super::{requests::new_scan_lock_request, resolve_locks};
 
 // FIXME: cargo-culted value
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
@@ -33,12 +39,16 @@ const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
 ///
 /// The returned results of transactional requests are [`Future`](std::future::Future)s that must be
 /// awaited to execute.
-pub struct Client {
-    pd: Arc<PdRpcClient>,
+pub struct Client<C> {
+    pd: Arc<PdRpcClient<C>>,
     logger: Logger,
+    _phantom: PhantomData<C>,
 }
 
-impl Client {
+impl<C> Client<C>
+    where
+        C: RequestCodec,
+{
     /// Create a transactional [`Client`] and connect to the TiKV cluster.
     ///
     /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for
@@ -59,7 +69,7 @@ impl Client {
     pub async fn new<S: Into<String>>(
         pd_endpoints: Vec<S>,
         logger: Option<Logger>,
-    ) -> Result<Client> {
+    ) -> Result<Client<C>> {
         // debug!(self.logger, "creating transactional client");
         Self::new_with_config(pd_endpoints, Config::default(), logger).await
     }
@@ -90,7 +100,7 @@ impl Client {
         pd_endpoints: Vec<S>,
         config: Config,
         optional_logger: Option<Logger>,
-    ) -> Result<Client> {
+    ) -> Result<Client<C>> {
         let logger = optional_logger.unwrap_or_else(|| {
             let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
             Logger::root(
@@ -104,7 +114,7 @@ impl Client {
         debug!(logger, "creating new transactional client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config, true, logger.clone()).await?);
-        Ok(Client { pd, logger })
+        Ok(Client { pd, logger, _phantom: PhantomData })
     }
 
     /// Creates a new optimistic [`Transaction`].
@@ -129,7 +139,7 @@ impl Client {
     /// transaction.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn begin_optimistic(&self) -> Result<Transaction> {
+    pub async fn begin_optimistic(&self) -> Result<Transaction<PdRpcClient<C>>> {
         debug!(self.logger, "creating new optimistic transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, TransactionOptions::new_optimistic()))
@@ -154,7 +164,7 @@ impl Client {
     /// transaction.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn begin_pessimistic(&self) -> Result<Transaction> {
+    pub async fn begin_pessimistic(&self) -> Result<Transaction<PdRpcClient<C>>> {
         debug!(self.logger, "creating new pessimistic transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, TransactionOptions::new_pessimistic()))
@@ -179,14 +189,14 @@ impl Client {
     /// transaction.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn begin_with_options(&self, options: TransactionOptions) -> Result<Transaction> {
+    pub async fn begin_with_options(&self, options: TransactionOptions) -> Result<Transaction<PdRpcClient<C>>> {
         debug!(self.logger, "creating new customized transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, options))
     }
 
     /// Create a new [`Snapshot`](Snapshot) at the given [`Timestamp`](Timestamp).
-    pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> Snapshot {
+    pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> Snapshot<PdRpcClient<C>> {
         debug!(self.logger, "creating new snapshot");
         let logger = self.logger.new(o!("child" => 1));
         Snapshot::new(self.new_transaction(timestamp, options.read_only()), logger)
@@ -230,7 +240,7 @@ impl Client {
         let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
         let mut start_key = vec![];
         loop {
-            let req = new_scan_lock_request(
+            let req = new_scan_lock_request::<C>(
                 mem::take(&mut start_key),
                 safepoint.version(),
                 SCAN_LOCK_BATCH_SIZE,
@@ -267,7 +277,7 @@ impl Client {
         Ok(res)
     }
 
-    fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
+    fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction<PdRpcClient<C>> {
         let logger = self.logger.new(o!("child" => 1));
         Transaction::new(timestamp, self.pd.clone(), options, logger)
     }

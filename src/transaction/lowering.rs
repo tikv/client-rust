@@ -6,26 +6,27 @@
 use crate::{timestamp::TimestampExt, transaction::requests, BoundRange, Key};
 use std::iter::Iterator;
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use crate::request::request_codec::RequestCodec;
 
-pub fn new_get_request(key: Key, timestamp: Timestamp) -> kvrpcpb::GetRequest {
-    requests::new_get_request(key.into(), timestamp.version())
+pub fn new_get_request<C: RequestCodec>(key: Key, timestamp: Timestamp) -> kvrpcpb::GetRequest {
+    requests::new_get_request::<C>(key.into(), timestamp.version())
 }
 
-pub fn new_batch_get_request(
+pub fn new_batch_get_request<C:RequestCodec>(
     keys: impl Iterator<Item = Key>,
     timestamp: Timestamp,
 ) -> kvrpcpb::BatchGetRequest {
-    requests::new_batch_get_request(keys.map(Into::into).collect(), timestamp.version())
+    requests::new_batch_get_request::<C>(keys.map(Into::into).collect(), timestamp.version())
 }
 
-pub fn new_scan_request(
+pub fn new_scan_request<C:RequestCodec>(
     range: BoundRange,
     timestamp: Timestamp,
     limit: u32,
     key_only: bool,
 ) -> kvrpcpb::ScanRequest {
     let (start_key, end_key) = range.into_keys();
-    requests::new_scan_request(
+    requests::new_scan_request::<C>(
         start_key.into(),
         end_key.unwrap_or_default().into(),
         timestamp.version(),
@@ -34,24 +35,24 @@ pub fn new_scan_request(
     )
 }
 
-pub fn new_resolve_lock_request(
+pub fn new_resolve_lock_request<C:RequestCodec>(
     start_version: Timestamp,
     commit_version: Timestamp,
 ) -> kvrpcpb::ResolveLockRequest {
-    requests::new_resolve_lock_request(start_version.version(), commit_version.version())
+    requests::new_resolve_lock_request::<C>(start_version.version(), commit_version.version())
 }
 
-pub fn new_cleanup_request(key: Key, start_version: Timestamp) -> kvrpcpb::CleanupRequest {
-    requests::new_cleanup_request(key.into(), start_version.version())
+pub fn new_cleanup_request<C:RequestCodec>(key: Key, start_version: Timestamp) -> kvrpcpb::CleanupRequest {
+    requests::new_cleanup_request::<C>(key.into(), start_version.version())
 }
 
-pub fn new_prewrite_request(
+pub fn new_prewrite_request<C:RequestCodec>(
     mutations: Vec<kvrpcpb::Mutation>,
     primary_lock: Key,
     start_version: Timestamp,
     lock_ttl: u64,
 ) -> kvrpcpb::PrewriteRequest {
-    requests::new_prewrite_request(
+    requests::new_prewrite_request::<C>(
         mutations,
         primary_lock.into(),
         start_version.version(),
@@ -59,14 +60,14 @@ pub fn new_prewrite_request(
     )
 }
 
-pub fn new_pessimistic_prewrite_request(
+pub fn new_pessimistic_prewrite_request<C:RequestCodec>(
     mutations: Vec<kvrpcpb::Mutation>,
     primary_lock: Key,
     start_version: Timestamp,
     lock_ttl: u64,
     for_update_ts: Timestamp,
 ) -> kvrpcpb::PrewriteRequest {
-    requests::new_pessimistic_prewrite_request(
+    requests::new_pessimistic_prewrite_request::<C>(
         mutations,
         primary_lock.into(),
         start_version.version(),
@@ -75,31 +76,31 @@ pub fn new_pessimistic_prewrite_request(
     )
 }
 
-pub fn new_commit_request(
+pub fn new_commit_request<C:RequestCodec>(
     keys: impl Iterator<Item = Key>,
     start_version: Timestamp,
     commit_version: Timestamp,
 ) -> kvrpcpb::CommitRequest {
-    requests::new_commit_request(
+    requests::new_commit_request::<C>(
         keys.map(Into::into).collect(),
         start_version.version(),
         commit_version.version(),
     )
 }
 
-pub fn new_batch_rollback_request(
+pub fn new_batch_rollback_request<C:RequestCodec>(
     keys: impl Iterator<Item = Key>,
     start_version: Timestamp,
 ) -> kvrpcpb::BatchRollbackRequest {
-    requests::new_batch_rollback_request(keys.map(Into::into).collect(), start_version.version())
+    requests::new_batch_rollback_request::<C>(keys.map(Into::into).collect(), start_version.version())
 }
 
-pub fn new_pessimistic_rollback_request(
+pub fn new_pessimistic_rollback_request<C:RequestCodec>(
     keys: impl Iterator<Item = Key>,
     start_version: Timestamp,
     for_update_ts: Timestamp,
 ) -> kvrpcpb::PessimisticRollbackRequest {
-    requests::new_pessimistic_rollback_request(
+    requests::new_pessimistic_rollback_request::<C>(
         keys.map(Into::into).collect(),
         start_version.version(),
         for_update_ts.version(),
@@ -132,7 +133,7 @@ impl PessimisticLock for (Key, kvrpcpb::Assertion) {
     }
 }
 
-pub fn new_pessimistic_lock_request(
+pub fn new_pessimistic_lock_request<C:RequestCodec>(
     locks: impl Iterator<Item = impl PessimisticLock>,
     primary_lock: Key,
     start_version: Timestamp,
@@ -140,7 +141,7 @@ pub fn new_pessimistic_lock_request(
     for_update_ts: Timestamp,
     need_value: bool,
 ) -> kvrpcpb::PessimisticLockRequest {
-    requests::new_pessimistic_lock_request(
+    requests::new_pessimistic_lock_request::<C>(
         locks
             .map(|pl| {
                 let mut mutation = kvrpcpb::Mutation::default();
@@ -158,18 +159,18 @@ pub fn new_pessimistic_lock_request(
     )
 }
 
-pub fn new_scan_lock_request(
+pub fn new_scan_lock_request<C:RequestCodec>(
     start_key: Key,
     safepoint: Timestamp,
     limit: u32,
 ) -> kvrpcpb::ScanLockRequest {
-    requests::new_scan_lock_request(start_key.into(), safepoint.version(), limit)
+    requests::new_scan_lock_request::<C>(start_key.into(), safepoint.version(), limit)
 }
 
-pub fn new_heart_beat_request(
+pub fn new_heart_beat_request<C:RequestCodec>(
     start_ts: Timestamp,
     primary_lock: Key,
     ttl: u64,
 ) -> kvrpcpb::TxnHeartBeatRequest {
-    requests::new_heart_beat_request(start_ts.version(), primary_lock.into(), ttl)
+    requests::new_heart_beat_request::<C>(start_ts.version(), primary_lock.into(), ttl)
 }

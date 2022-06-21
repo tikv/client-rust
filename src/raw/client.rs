@@ -2,6 +2,7 @@
 
 use core::ops::Range;
 use std::{str::FromStr, sync::Arc, u32};
+use std::marker::PhantomData;
 
 use slog::{Drain, Logger};
 use tikv_client_common::Error;
@@ -15,6 +16,7 @@ use crate::{
     request::{Collect, CollectSingle, Plan},
     Backoff, BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
+use crate::request::request_codec::RequestCodec;
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
@@ -26,15 +28,16 @@ const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 /// The returned results of raw request methods are [`Future`](std::future::Future)s that must be
 /// awaited to execute.
 #[derive(Clone)]
-pub struct Client<PdC: PdClient = PdRpcClient> {
+pub struct Client<C, PdC: PdClient = PdRpcClient<C>> {
     rpc: Arc<PdC>,
     cf: Option<ColumnFamily>,
     /// Whether to use the [`atomic mode`](Client::with_atomic_for_cas).
     atomic: bool,
     logger: Logger,
+    _phantom: std::marker::PhantomData<C>,
 }
 
-impl Client<PdRpcClient> {
+impl<C: RequestCodec> Client<C, PdRpcClient<C>> {
     /// Create a raw [`Client`] and connect to the TiKV cluster.
     ///
     /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for
@@ -103,6 +106,7 @@ impl Client<PdRpcClient> {
             cf: None,
             atomic: false,
             logger,
+            _phantom: PhantomData
         })
     }
 
@@ -137,6 +141,7 @@ impl Client<PdRpcClient> {
             cf: Some(cf),
             atomic: self.atomic,
             logger: self.logger.clone(),
+            _phantom: PhantomData
         }
     }
 
@@ -154,11 +159,12 @@ impl Client<PdRpcClient> {
             cf: self.cf.clone(),
             atomic: true,
             logger: self.logger.clone(),
+            _phantom: PhantomData
         }
     }
 }
 
-impl<PdC: PdClient> Client<PdC> {
+impl<C:RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// Create a new 'get' request.
     ///
     /// Once resolved this request will result in the fetching of the value associated with the
@@ -179,7 +185,7 @@ impl<PdC: PdClient> Client<PdC> {
     /// ```
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
         debug!(self.logger, "invoking raw get request");
-        let request = new_raw_get_request(key.into(), self.cf.clone());
+        let request = new_raw_get_request::<C>(key.into(), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(CollectSingle)
@@ -211,7 +217,7 @@ impl<PdC: PdClient> Client<PdC> {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
         debug!(self.logger, "invoking raw batch_get request");
-        let request = new_raw_batch_get_request(keys.into_iter().map(Into::into), self.cf.clone());
+        let request = new_raw_batch_get_request::<C>(keys.into_iter().map(Into::into), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
@@ -239,7 +245,7 @@ impl<PdC: PdClient> Client<PdC> {
     /// ```
     pub async fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
         debug!(self.logger, "invoking raw put request");
-        let request = new_raw_put_request(key.into(), value.into(), self.cf.clone(), self.atomic);
+        let request = new_raw_put_request::<C>(key.into(), value.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(CollectSingle)
@@ -271,7 +277,7 @@ impl<PdC: PdClient> Client<PdC> {
         pairs: impl IntoIterator<Item = impl Into<KvPair>>,
     ) -> Result<()> {
         debug!(self.logger, "invoking raw batch_put request");
-        let request = new_raw_batch_put_request(
+        let request = new_raw_batch_put_request::<C>(
             pairs.into_iter().map(Into::into),
             self.cf.clone(),
             self.atomic,
@@ -303,7 +309,7 @@ impl<PdC: PdClient> Client<PdC> {
     /// ```
     pub async fn delete(&self, key: impl Into<Key>) -> Result<()> {
         debug!(self.logger, "invoking raw delete request");
-        let request = new_raw_delete_request(key.into(), self.cf.clone(), self.atomic);
+        let request = new_raw_delete_request::<C>(key.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(CollectSingle)
@@ -334,7 +340,7 @@ impl<PdC: PdClient> Client<PdC> {
         debug!(self.logger, "invoking raw batch_delete request");
         self.assert_non_atomic()?;
         let request =
-            new_raw_batch_delete_request(keys.into_iter().map(Into::into), self.cf.clone());
+            new_raw_batch_delete_request::<C>(keys.into_iter().map(Into::into), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
@@ -369,7 +375,7 @@ impl<PdC: PdClient> Client<PdC> {
     ) -> Result<()> {
         debug!(self.logger, "invoking raw delete_range request");
         self.assert_non_atomic()?;
-        let request = new_raw_delete_range_request(range.into(), self.cf.clone());
+        let request = new_raw_delete_range_request::<C>(range.into(), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(backoff)
             .extract_error()
@@ -520,7 +526,7 @@ impl<PdC: PdClient> Client<PdC> {
     ) -> Result<(Option<Value>, bool)> {
         debug!(self.logger, "invoking raw compare_and_swap request");
         self.assert_atomic()?;
-        let req = new_cas_request(
+        let req = new_cas_request::<C>(
             key.into(),
             new_value.into(),
             previous_value.into(),
@@ -543,7 +549,7 @@ impl<PdC: PdClient> Client<PdC> {
     ) -> Result<Vec<(Vec<u8>, Vec<Range<Key>>)>> {
         let copr_version_req = copr_version_req.into();
         semver::VersionReq::from_str(&copr_version_req)?;
-        let req = new_raw_coprocessor_request(
+        let req = new_raw_coprocessor_request::<C>(
             copr_name.into(),
             copr_version_req,
             ranges.into_iter().map(Into::into),
@@ -570,7 +576,7 @@ impl<PdC: PdClient> Client<PdC> {
             });
         }
 
-        let request = new_raw_scan_request(range.into(), limit, key_only, self.cf.clone());
+        let request = new_raw_scan_request::<C>(range.into(), limit, key_only, self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
@@ -595,7 +601,7 @@ impl<PdC: PdClient> Client<PdC> {
             });
         }
 
-        let request = new_raw_batch_scan_request(
+        let request = new_raw_batch_scan_request::<C>(
             ranges.into_iter().map(Into::into),
             each_limit,
             key_only,

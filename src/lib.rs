@@ -90,6 +90,8 @@
 //! # })}
 //! ```
 
+#![feature(specialization)]
+#![feature(explicit_generic_args_with_impl_trait)]
 #[macro_use]
 pub mod request;
 #[macro_use]

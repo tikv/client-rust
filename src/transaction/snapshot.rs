@@ -5,6 +5,7 @@ use derive_new::new;
 use futures::stream::BoxStream;
 use slog::Logger;
 use std::ops::RangeBounds;
+use crate::pd::PdClient;
 
 /// A read-only transaction which reads at the given timestamp.
 ///
@@ -14,12 +15,12 @@ use std::ops::RangeBounds;
 ///
 /// See the [Transaction](struct@crate::Transaction) docs for more information on the methods.
 #[derive(new)]
-pub struct Snapshot {
-    transaction: Transaction,
+pub struct Snapshot<PdC: PdClient> {
+    transaction: Transaction<PdC>,
     logger: Logger,
 }
 
-impl Snapshot {
+impl<PdC: PdClient> Snapshot<PdC> {
     /// Get the value associated with the given key.
     pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         debug!(self.logger, "invoking get request on snapshot");
