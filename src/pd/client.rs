@@ -1,7 +1,6 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{collections::HashMap, sync::Arc, thread};
-use std::marker::PhantomData;
+use std::{collections::HashMap, marker::PhantomData, sync::Arc, thread};
 
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
@@ -14,15 +13,15 @@ use tikv_client_proto::{kvrpcpb, metapb};
 use tikv_client_store::{KvClient, KvConnect, TikvConnect};
 
 use crate::{
-    BoundRange,
     compat::stream_fn,
-    Config,
-    Key,
     kv::codec,
     pd::{retry::RetryClientTrait, RetryClient},
-    region::{RegionId, RegionVerId, RegionWithLeader}, region_cache::RegionCache, Result, SecurityManager, store::RegionStore, Timestamp,
+    region::{RegionId, RegionVerId, RegionWithLeader},
+    region_cache::RegionCache,
+    request::request_codec::RequestCodec,
+    store::RegionStore,
+    BoundRange, Config, Key, Result, SecurityManager, Timestamp,
 };
-use crate::request::request_codec::RequestCodec;
 
 const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";
@@ -75,11 +74,11 @@ pub trait PdClient: Send + Sync + 'static {
 
     fn group_keys_by_region<K, K2>(
         self: Arc<Self>,
-        keys: impl Iterator<Item=K> + Send + Sync + 'static,
+        keys: impl Iterator<Item = K> + Send + Sync + 'static,
     ) -> BoxStream<'static, Result<(RegionId, Vec<K2>)>>
-        where
-            K: AsRef<Key> + Into<K2> + Send + Sync + 'static,
-            K2: Send + Sync + 'static,
+    where
+        K: AsRef<Key> + Into<K2> + Send + Sync + 'static,
+        K2: Send + Sync + 'static,
     {
         let keys = keys.peekable();
         stream_fn(keys, move |mut keys| {
@@ -101,7 +100,7 @@ pub trait PdClient: Send + Sync + 'static {
                 }
             }
         })
-            .boxed()
+        .boxed()
     }
 
     /// Returns a Stream which iterates over the contexts for each region covered by range.
@@ -132,7 +131,7 @@ pub trait PdClient: Send + Sync + 'static {
                 Ok(Some((Some(region_end), store)))
             }
         })
-            .boxed()
+        .boxed()
     }
 
     /// Returns a Stream which iterates over the contexts for ranges in the same region.
@@ -196,7 +195,7 @@ pub trait PdClient: Send + Sync + 'static {
                 }
             }
         })
-            .boxed()
+        .boxed()
     }
 
     fn decode_region(mut region: RegionWithLeader, enable_codec: bool) -> Result<RegionWithLeader> {
@@ -293,7 +292,7 @@ impl<C> PdRpcClient<C, TikvConnect, Cluster> {
             enable_codec,
             logger,
         )
-            .await
+        .await
     }
 }
 
@@ -314,10 +313,10 @@ impl<C, KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<C, KvC, Cl> {
         enable_codec: bool,
         logger: Logger,
     ) -> Result<PdRpcClient<C, KvC, Cl>>
-        where
-            PdFut: Future<Output=Result<RetryClient<Cl>>>,
-            MakeKvC: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> KvC,
-            MakePd: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> PdFut,
+    where
+        PdFut: Future<Output = Result<RetryClient<Cl>>>,
+        MakeKvC: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> KvC,
+        MakePd: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> PdFut,
     {
         let env = Arc::new(
             EnvBuilder::new()
@@ -327,7 +326,7 @@ impl<C, KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<C, KvC, Cl> {
         );
         let security_mgr = Arc::new(
             if let (Some(ca_path), Some(cert_path), Some(key_path)) =
-            (&config.ca_path, &config.cert_path, &config.key_path)
+                (&config.ca_path, &config.cert_path, &config.key_path)
             {
                 SecurityManager::load(ca_path, cert_path, key_path)?
             } else {

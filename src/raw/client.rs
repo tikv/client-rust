@@ -1,8 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use core::ops::Range;
-use std::{str::FromStr, sync::Arc, u32};
-use std::marker::PhantomData;
+use std::{marker::PhantomData, str::FromStr, sync::Arc, u32};
 
 use slog::{Drain, Logger};
 use tikv_client_common::Error;
@@ -13,10 +12,9 @@ use crate::{
     config::Config,
     pd::{PdClient, PdRpcClient},
     raw::lowering::*,
-    request::{Collect, CollectSingle, Plan},
+    request::{request_codec::RequestCodec, Collect, CollectSingle, Plan},
     Backoff, BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
-use crate::request::request_codec::RequestCodec;
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
@@ -106,7 +104,7 @@ impl<C: RequestCodec> Client<C, PdRpcClient<C>> {
             cf: None,
             atomic: false,
             logger,
-            _phantom: PhantomData
+            _phantom: PhantomData,
         })
     }
 
@@ -141,7 +139,7 @@ impl<C: RequestCodec> Client<C, PdRpcClient<C>> {
             cf: Some(cf),
             atomic: self.atomic,
             logger: self.logger.clone(),
-            _phantom: PhantomData
+            _phantom: PhantomData,
         }
     }
 
@@ -159,12 +157,12 @@ impl<C: RequestCodec> Client<C, PdRpcClient<C>> {
             cf: self.cf.clone(),
             atomic: true,
             logger: self.logger.clone(),
-            _phantom: PhantomData
+            _phantom: PhantomData,
         }
     }
 }
 
-impl<C:RequestCodec, PdC: PdClient> Client<C, PdC> {
+impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// Create a new 'get' request.
     ///
     /// Once resolved this request will result in the fetching of the value associated with the
@@ -217,7 +215,8 @@ impl<C:RequestCodec, PdC: PdClient> Client<C, PdC> {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
         debug!(self.logger, "invoking raw batch_get request");
-        let request = new_raw_batch_get_request::<C>(keys.into_iter().map(Into::into), self.cf.clone());
+        let request =
+            new_raw_batch_get_request::<C>(keys.into_iter().map(Into::into), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
@@ -245,7 +244,8 @@ impl<C:RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```
     pub async fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
         debug!(self.logger, "invoking raw put request");
-        let request = new_raw_put_request::<C>(key.into(), value.into(), self.cf.clone(), self.atomic);
+        let request =
+            new_raw_put_request::<C>(key.into(), value.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(CollectSingle)

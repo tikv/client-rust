@@ -12,15 +12,15 @@ use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
 use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF},
-    BoundRange,
-    Error,
-    Key,
-    KvPair,
-    pd::{PdClient, PdRpcClient}, request::{
-        Collect, CollectError, CollectSingle, CollectWithShard, Plan, PlanBuilder, RetryOptions,
-    }, Result, timestamp::TimestampExt, transaction::{buffer::Buffer, lowering::*}, Value,
+    pd::{PdClient, PdRpcClient},
+    request::{
+        Collect, CollectError, CollectSingle, CollectWithShard, KvRequest, Plan, PlanBuilder,
+        RetryOptions,
+    },
+    timestamp::TimestampExt,
+    transaction::{buffer::Buffer, lowering::*},
+    BoundRange, Error, Key, KvPair, Result, Value,
 };
-use crate::request::KvRequest;
 
 /// An undo-able set of actions on the dataset.
 ///
@@ -246,8 +246,8 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```
     pub async fn batch_get(
         &mut self,
-        keys: impl IntoIterator<Item=impl Into<Key>>,
-    ) -> Result<impl Iterator<Item=KvPair>> {
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> Result<impl Iterator<Item = KvPair>> {
         debug!(self.logger, "invoking transactional batch_get request");
         self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
@@ -298,7 +298,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```
     pub async fn batch_get_for_update(
         &mut self,
-        keys: impl IntoIterator<Item=impl Into<Key>>,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
         debug!(
             self.logger,
@@ -346,7 +346,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         &mut self,
         range: impl Into<BoundRange>,
         limit: u32,
-    ) -> Result<impl Iterator<Item=KvPair>> {
+    ) -> Result<impl Iterator<Item = KvPair>> {
         debug!(self.logger, "invoking transactional scan request");
         self.scan_inner(range, limit, false).await
     }
@@ -382,7 +382,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         &mut self,
         range: impl Into<BoundRange>,
         limit: u32,
-    ) -> Result<impl Iterator<Item=Key>> {
+    ) -> Result<impl Iterator<Item = Key>> {
         debug!(self.logger, "invoking transactional scan_keys request");
         Ok(self
             .scan_inner(range, limit, true)
@@ -457,7 +457,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 iter::once((key.clone(), kvrpcpb::Assertion::NotExist)),
                 false,
             )
-                .await?;
+            .await?;
         }
         self.buffer.insert(key, value.into());
         Ok(())
@@ -517,7 +517,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```
     pub async fn lock_keys(
         &mut self,
-        keys: impl IntoIterator<Item=impl Into<Key>>,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<()> {
         debug!(self.logger, "invoking transactional lock_keys request");
         self.check_allow_operation().await?;
@@ -582,8 +582,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.start_instant,
             self.logger.new(o!("child" => 1)),
         )
-            .commit()
-            .await;
+        .commit()
+        .await;
 
         if res.is_ok() {
             let mut status = self.status.write().await;
@@ -639,8 +639,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.start_instant,
             self.logger.new(o!("child" => 1)),
         )
-            .rollback()
-            .await;
+        .rollback()
+        .await;
 
         if res.is_ok() {
             let mut status = self.status.write().await;
@@ -684,7 +684,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
         key_only: bool,
-    ) -> Result<impl Iterator<Item=KvPair>> {
+    ) -> Result<impl Iterator<Item = KvPair>> {
         self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
@@ -696,7 +696,9 @@ impl<PdC: PdClient> Transaction<PdC> {
                 limit,
                 !key_only,
                 move |new_range, new_limit| async move {
-                    let request = new_scan_request::<PdC::RequestCodec>(new_range, timestamp, new_limit, key_only);
+                    let request = new_scan_request::<PdC::RequestCodec>(
+                        new_range, timestamp, new_limit, key_only,
+                    );
                     let plan = PlanBuilder::new(rpc, request)
                         .resolve_lock(retry_options.lock_backoff)
                         .retry_multi_region(retry_options.region_backoff)
@@ -721,7 +723,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Only valid for pessimistic transactions, panics if called on an optimistic transaction.
     async fn pessimistic_lock(
         &mut self,
-        keys: impl IntoIterator<Item=impl PessimisticLock>,
+        keys: impl IntoIterator<Item = impl PessimisticLock>,
         need_value: bool,
     ) -> Result<Vec<KvPair>> {
         debug!(self.logger, "acquiring pessimistic lock");
@@ -790,7 +792,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Rollback pessimistic lock
     async fn pessimistic_lock_rollback(
         &mut self,
-        keys: impl Iterator<Item=Key>,
+        keys: impl Iterator<Item = Key>,
         start_version: Timestamp,
         for_update_ts: Timestamp,
     ) -> Result<()> {
@@ -1164,13 +1166,15 @@ impl<PdC: PdClient> Committer<PdC> {
                 self.start_version.clone(),
                 lock_ttl + elapsed,
             ),
-            TransactionKind::Pessimistic(for_update_ts) => new_pessimistic_prewrite_request::<PdC::RequestCodec>(
-                self.mutations.clone(),
-                primary_lock,
-                self.start_version.clone(),
-                lock_ttl + elapsed,
-                for_update_ts.clone(),
-            ),
+            TransactionKind::Pessimistic(for_update_ts) => {
+                new_pessimistic_prewrite_request::<PdC::RequestCodec>(
+                    self.mutations.clone(),
+                    primary_lock,
+                    self.start_version.clone(),
+                    lock_ttl + elapsed,
+                    for_update_ts.clone(),
+                )
+            }
         };
 
         request.use_async_commit = self.options.async_commit;
@@ -1289,7 +1293,11 @@ impl<PdC: PdClient> Committer<PdC> {
                 plan.execute().await?;
             }
             TransactionKind::Pessimistic(for_update_ts) => {
-                let req = new_pessimistic_rollback_request::<PdC::RequestCodec>(keys, self.start_version, for_update_ts);
+                let req = new_pessimistic_rollback_request::<PdC::RequestCodec>(
+                    keys,
+                    self.start_version,
+                    for_update_ts,
+                );
                 let plan = PlanBuilder::new(self.rpc, req)
                     .resolve_lock(self.options.retry_options.lock_backoff)
                     .retry_multi_region(self.options.retry_options.region_backoff)
@@ -1336,8 +1344,8 @@ mod tests {
         any::Any,
         io,
         sync::{
-            Arc,
             atomic::{AtomicUsize, Ordering},
+            Arc,
         },
         time::Duration,
     };
@@ -1349,8 +1357,8 @@ mod tests {
 
     use crate::{
         mock::{MockKvClient, MockPdClient},
-        Transaction,
-        transaction::HeartbeatOption, TransactionOptions,
+        transaction::HeartbeatOption,
+        Transaction, TransactionOptions,
     };
 
     #[tokio::test]

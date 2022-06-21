@@ -4,7 +4,7 @@ use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     pd::PdClient,
     region::RegionVerId,
-    request::{CollectSingle, Plan},
+    request::{request_codec::RequestCodec, CollectSingle, Plan},
     timestamp::TimestampExt,
     transaction::requests,
     Error, Result,
@@ -15,7 +15,6 @@ use std::{
     sync::Arc,
 };
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
-use crate::request::request_codec::RequestCodec;
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 
@@ -62,7 +61,10 @@ pub async fn resolve_locks<T: PdClient>(
         let commit_version = match commit_versions.get(&lock.lock_version) {
             Some(&commit_version) => commit_version,
             None => {
-                let request = requests::new_cleanup_request::<T::RequestCodec>(lock.primary_lock, lock.lock_version);
+                let request = requests::new_cleanup_request::<T::RequestCodec>(
+                    lock.primary_lock,
+                    lock.lock_version,
+                );
                 let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
                     .resolve_lock(OPTIMISTIC_BACKOFF)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
@@ -90,7 +92,7 @@ pub async fn resolve_locks<T: PdClient>(
     Ok(!has_live_locks)
 }
 
-async fn resolve_lock_with_retry<T:PdClient>(
+async fn resolve_lock_with_retry<T: PdClient>(
     #[allow(clippy::ptr_arg)] key: &Vec<u8>,
     start_version: u64,
     commit_version: u64,
@@ -103,7 +105,8 @@ async fn resolve_lock_with_retry<T:PdClient>(
         debug!("resolving locks: attempt {}", (i + 1));
         let store = pd_client.clone().store_for_key(key.into()).await?;
         let ver_id = store.region_with_leader.ver_id();
-        let request = requests::new_resolve_lock_request::<T::RequestCodec>(start_version, commit_version);
+        let request =
+            requests::new_resolve_lock_request::<T::RequestCodec>(start_version, commit_version);
         // The only place where single-region is used
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
             .single_region_with_store(store)

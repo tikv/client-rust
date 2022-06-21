@@ -4,27 +4,31 @@
 //! types (i.e., the types from the client crate) and converts these to the types used in the
 //! generated protobuf code, then calls the low-level ctor functions in the requests module.
 
-use std::{iter::Iterator, ops::Range, sync::Arc};
-use std::marker::PhantomData;
+use std::{iter::Iterator, marker::PhantomData, ops::Range, sync::Arc};
 
 use tikv_client_proto::{kvrpcpb, metapb};
 
-use crate::{BoundRange, ColumnFamily, Key, KvPair, raw::requests, Value};
-use crate::request::KvRequest;
-use crate::request::request_codec::RequestCodec;
+use crate::{
+    raw::requests,
+    request::{request_codec::RequestCodec, KvRequest},
+    BoundRange, ColumnFamily, Key, KvPair, Value,
+};
 
-pub fn new_raw_get_request<C:RequestCodec>(key: Key, cf: Option<ColumnFamily>) -> kvrpcpb::RawGetRequest {
+pub fn new_raw_get_request<C: RequestCodec>(
+    key: Key,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawGetRequest {
     requests::new_raw_get_request::<C>(key.into(), cf)
 }
 
-pub fn new_raw_batch_get_request<C:RequestCodec>(
-    keys: impl Iterator<Item=Key>,
+pub fn new_raw_batch_get_request<C: RequestCodec>(
+    keys: impl Iterator<Item = Key>,
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawBatchGetRequest {
     requests::new_raw_batch_get_request::<C>(keys.map(Into::into).collect(), cf)
 }
 
-pub fn new_raw_put_request<C:RequestCodec>(
+pub fn new_raw_put_request<C: RequestCodec>(
     key: Key,
     value: Value,
     cf: Option<ColumnFamily>,
@@ -33,15 +37,15 @@ pub fn new_raw_put_request<C:RequestCodec>(
     requests::new_raw_put_request::<C>(key.into(), value, cf, atomic)
 }
 
-pub fn new_raw_batch_put_request<C:RequestCodec>(
-    pairs: impl Iterator<Item=KvPair>,
+pub fn new_raw_batch_put_request<C: RequestCodec>(
+    pairs: impl Iterator<Item = KvPair>,
     cf: Option<ColumnFamily>,
     atomic: bool,
 ) -> kvrpcpb::RawBatchPutRequest {
     requests::new_raw_batch_put_request::<C>(pairs.map(Into::into).collect(), cf, atomic)
 }
 
-pub fn new_raw_delete_request<C:RequestCodec>(
+pub fn new_raw_delete_request<C: RequestCodec>(
     key: Key,
     cf: Option<ColumnFamily>,
     atomic: bool,
@@ -49,27 +53,31 @@ pub fn new_raw_delete_request<C:RequestCodec>(
     requests::new_raw_delete_request::<C>(key.into(), cf, atomic)
 }
 
-pub fn new_raw_batch_delete_request<C:RequestCodec>(
-    keys: impl Iterator<Item=Key>,
+pub fn new_raw_batch_delete_request<C: RequestCodec>(
+    keys: impl Iterator<Item = Key>,
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawBatchDeleteRequest {
     requests::new_raw_batch_delete_request::<C>(keys.map(Into::into).collect(), cf)
 }
 
-pub fn new_raw_delete_range_request<C:RequestCodec>(
+pub fn new_raw_delete_range_request<C: RequestCodec>(
     range: BoundRange,
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawDeleteRangeRequest {
     let (start_key, end_key) = range.into_keys();
-    requests::new_raw_delete_range_request::<C>(start_key.into(), end_key.unwrap_or_default().into(), cf)
+    requests::new_raw_delete_range_request::<C>(
+        start_key.into(),
+        end_key.unwrap_or_default().into(),
+        cf,
+    )
 }
 
-pub fn new_raw_scan_request<C:RequestCodec>(
+pub fn new_raw_scan_request<C: RequestCodec>(
     range: BoundRange,
     limit: u32,
     key_only: bool,
     cf: Option<ColumnFamily>,
-) -> kvrpcpb::RawScanRequest  {
+) -> kvrpcpb::RawScanRequest {
     let (start_key, end_key) = range.into_keys();
     requests::new_raw_scan_request::<C>(
         start_key.into(),
@@ -80,16 +88,21 @@ pub fn new_raw_scan_request<C:RequestCodec>(
     )
 }
 
-pub fn new_raw_batch_scan_request<C:RequestCodec>(
-    ranges: impl Iterator<Item=BoundRange>,
+pub fn new_raw_batch_scan_request<C: RequestCodec>(
+    ranges: impl Iterator<Item = BoundRange>,
     each_limit: u32,
     key_only: bool,
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawBatchScanRequest {
-    requests::new_raw_batch_scan_request::<C>(ranges.map(Into::into).collect(), each_limit, key_only, cf)
+    requests::new_raw_batch_scan_request::<C>(
+        ranges.map(Into::into).collect(),
+        each_limit,
+        key_only,
+        cf,
+    )
 }
 
-pub fn new_cas_request<C:RequestCodec>(
+pub fn new_cas_request<C: RequestCodec>(
     key: Key,
     value: Value,
     previous_value: Option<Value>,
@@ -98,10 +111,10 @@ pub fn new_cas_request<C:RequestCodec>(
     requests::new_cas_request::<C>(key.into(), value, previous_value, cf)
 }
 
-pub fn new_raw_coprocessor_request<C:RequestCodec>(
+pub fn new_raw_coprocessor_request<C: RequestCodec>(
     copr_name: String,
     copr_version_req: String,
-    ranges: impl Iterator<Item=BoundRange>,
+    ranges: impl Iterator<Item = BoundRange>,
     request_builder: impl Fn(metapb::Region, Vec<Range<Key>>) -> Vec<u8> + Send + Sync + 'static,
 ) -> requests::RawCoprocessorRequest {
     requests::new_raw_coprocessor_request::<C>(

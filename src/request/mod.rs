@@ -9,9 +9,9 @@ use tikv_client_store::{HasKeyErrors, HasRegionError, Request};
 
 use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF, PESSIMISTIC_BACKOFF},
+    pd::PdClient,
     transaction::HasLocks,
 };
-use crate::pd::PdClient;
 
 pub use self::{
     plan::{
@@ -74,7 +74,7 @@ mod test {
     use std::{
         any::Any,
         iter,
-        sync::{Arc, atomic::AtomicUsize},
+        sync::{atomic::AtomicUsize, Arc},
     };
 
     use grpcio::CallOption;
@@ -83,10 +83,10 @@ mod test {
     use tikv_client_store::HasRegionError;
 
     use crate::{
-        Error,
-        Key,
         mock::{MockKvClient, MockPdClient},
-        Result, store::store_stream_for_keys, transaction::lowering::new_commit_request,
+        store::store_stream_for_keys,
+        transaction::lowering::new_commit_request,
+        Error, Key, Result,
     };
 
     use super::*;

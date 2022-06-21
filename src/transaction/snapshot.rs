@@ -1,11 +1,10 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{BoundRange, Key, KvPair, Result, Transaction, Value};
+use crate::{pd::PdClient, BoundRange, Key, KvPair, Result, Transaction, Value};
 use derive_new::new;
 use futures::stream::BoxStream;
 use slog::Logger;
 use std::ops::RangeBounds;
-use crate::pd::PdClient;
 
 /// A read-only transaction which reads at the given timestamp.
 ///

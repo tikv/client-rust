@@ -1,7 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{any::Any, ops::Range, sync::Arc};
-use std::borrow::Cow;
+use std::{any::Any, borrow::Cow, ops::Range, sync::Arc};
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -14,17 +13,23 @@ use crate::{
     collect_first,
     pd::PdClient,
     request::{
-        plan::ResponseWithShard, Collect, CollectSingle, DefaultProcessor, KvRequest, Merge,
-        Process, Shardable, SingleKey,
+        plan::ResponseWithShard,
+        request_codec::{RawApiV1, RequestCodec},
+        Collect, CollectSingle, DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_ranges, RegionStore},
     transaction::HasLocks,
     util::iter::FlatMapOkIterExt,
     ColumnFamily, Key, KvPair, Result, Value,
 };
-use crate::request::request_codec::{RawApiV1, RequestCodec};
 
-pub fn new_raw_get_request<C:RequestCodec>(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::RawGetRequest where kvrpcpb::RawGetRequest: KvRequest<C> {
+pub fn new_raw_get_request<C: RequestCodec>(
+    key: Vec<u8>,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawGetRequest
+where
+    kvrpcpb::RawGetRequest: KvRequest<C>,
+{
     let mut req = kvrpcpb::RawGetRequest::default();
     req.set_key(key);
     req.maybe_set_cf(cf);
@@ -32,7 +37,7 @@ pub fn new_raw_get_request<C:RequestCodec>(key: Vec<u8>, cf: Option<ColumnFamily
     req
 }
 
-impl<C:RequestCodec> KvRequest<C> for kvrpcpb::RawGetRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawGetRequest {
     type Response = kvrpcpb::RawGetResponse;
 
     fn encode_request(&self, _codec: &C) -> Cow<Self> {
@@ -69,7 +74,10 @@ impl Process<kvrpcpb::RawGetResponse> for DefaultProcessor {
 pub fn new_raw_batch_get_request<C: RequestCodec>(
     keys: Vec<Vec<u8>>,
     cf: Option<ColumnFamily>,
-) -> kvrpcpb::RawBatchGetRequest where kvrpcpb::RawBatchGetRequest: KvRequest<C>{
+) -> kvrpcpb::RawBatchGetRequest
+where
+    kvrpcpb::RawBatchGetRequest: KvRequest<C>,
+{
     let mut req = kvrpcpb::RawBatchGetRequest::default();
     req.set_keys(keys);
     req.maybe_set_cf(cf);
@@ -77,7 +85,7 @@ pub fn new_raw_batch_get_request<C: RequestCodec>(
     req
 }
 
-impl<C:RequestCodec> KvRequest<C> for kvrpcpb::RawBatchGetRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchGetRequest {
     type Response = kvrpcpb::RawBatchGetResponse;
 
     fn encode_request(&self, _codec: &C) -> Cow<Self> {
@@ -102,12 +110,15 @@ impl Merge<kvrpcpb::RawBatchGetResponse> for Collect {
     }
 }
 
-pub fn new_raw_put_request<C:RequestCodec>(
+pub fn new_raw_put_request<C: RequestCodec>(
     key: Vec<u8>,
     value: Vec<u8>,
     cf: Option<ColumnFamily>,
     atomic: bool,
-) -> kvrpcpb::RawPutRequest where kvrpcpb::RawPutRequest: KvRequest<C> {
+) -> kvrpcpb::RawPutRequest
+where
+    kvrpcpb::RawPutRequest: KvRequest<C>,
+{
     let mut req = kvrpcpb::RawPutRequest::default();
     req.set_key(key);
     req.set_value(value);
@@ -117,7 +128,7 @@ pub fn new_raw_put_request<C:RequestCodec>(
     req
 }
 
-impl<C:RequestCodec> KvRequest<C> for kvrpcpb::RawPutRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawPutRequest {
     type Response = kvrpcpb::RawPutResponse;
 
     fn encode_request(&self, _codec: &C) -> Cow<Self> {
@@ -141,7 +152,10 @@ pub fn new_raw_batch_put_request<C: RequestCodec>(
     pairs: Vec<kvrpcpb::KvPair>,
     cf: Option<ColumnFamily>,
     atomic: bool,
-) -> kvrpcpb::RawBatchPutRequest where kvrpcpb::RawBatchPutRequest: KvRequest<C> {
+) -> kvrpcpb::RawBatchPutRequest
+where
+    kvrpcpb::RawBatchPutRequest: KvRequest<C>,
+{
     let mut req = kvrpcpb::RawBatchPutRequest::default();
     req.set_pairs(pairs);
     req.maybe_set_cf(cf);
@@ -150,7 +164,7 @@ pub fn new_raw_batch_put_request<C: RequestCodec>(
     req
 }
 
-impl<C:RequestCodec> KvRequest<C> for kvrpcpb::RawBatchPutRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchPutRequest {
     type Response = kvrpcpb::RawBatchPutResponse;
 
     fn encode_request(&self, _codec: &C) -> Cow<Self> {
@@ -188,7 +202,10 @@ pub fn new_raw_delete_request<C: RequestCodec>(
     key: Vec<u8>,
     cf: Option<ColumnFamily>,
     atomic: bool,
-) -> kvrpcpb::RawDeleteRequest where kvrpcpb::RawDeleteRequest: KvRequest<C> {
+) -> kvrpcpb::RawDeleteRequest
+where
+    kvrpcpb::RawDeleteRequest: KvRequest<C>,
+{
     let mut req = kvrpcpb::RawDeleteRequest::default();
     req.set_key(key);
     req.maybe_set_cf(cf);
@@ -197,7 +214,7 @@ pub fn new_raw_delete_request<C: RequestCodec>(
     req
 }
 
-impl<C:RequestCodec> KvRequest<C> for kvrpcpb::RawDeleteRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawDeleteRequest {
     type Response = kvrpcpb::RawDeleteResponse;
 
     fn encode_request(&self, _codec: &C) -> Cow<Self> {
@@ -217,10 +234,13 @@ impl SingleKey for kvrpcpb::RawDeleteRequest {
     }
 }
 
-pub fn new_raw_batch_delete_request<C:RequestCodec>(
+pub fn new_raw_batch_delete_request<C: RequestCodec>(
     keys: Vec<Vec<u8>>,
     cf: Option<ColumnFamily>,
-) -> kvrpcpb::RawBatchDeleteRequest where kvrpcpb::RawBatchDeleteRequest: KvRequest<C> {
+) -> kvrpcpb::RawBatchDeleteRequest
+where
+    kvrpcpb::RawBatchDeleteRequest: KvRequest<C>,
+{
     let mut req = kvrpcpb::RawBatchDeleteRequest::default();
     req.set_keys(keys);
     req.maybe_set_cf(cf);
@@ -228,7 +248,7 @@ pub fn new_raw_batch_delete_request<C:RequestCodec>(
     req
 }
 
-impl<C:RequestCodec> KvRequest<C> for kvrpcpb::RawBatchDeleteRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchDeleteRequest {
     type Response = kvrpcpb::RawBatchDeleteResponse;
 
     fn encode_request(&self, _codec: &C) -> Cow<Self> {
@@ -242,11 +262,14 @@ impl<C:RequestCodec> KvRequest<C> for kvrpcpb::RawBatchDeleteRequest {
 
 shardable_keys!(kvrpcpb::RawBatchDeleteRequest);
 
-pub fn new_raw_delete_range_request<C:RequestCodec>(
+pub fn new_raw_delete_range_request<C: RequestCodec>(
     start_key: Vec<u8>,
     end_key: Vec<u8>,
     cf: Option<ColumnFamily>,
-) -> kvrpcpb::RawDeleteRangeRequest where kvrpcpb::RawDeleteRangeRequest: KvRequest<C> {
+) -> kvrpcpb::RawDeleteRangeRequest
+where
+    kvrpcpb::RawDeleteRangeRequest: KvRequest<C>,
+{
     let mut req = kvrpcpb::RawDeleteRangeRequest::default();
     req.set_start_key(start_key);
     req.set_end_key(end_key);
@@ -255,7 +278,7 @@ pub fn new_raw_delete_range_request<C:RequestCodec>(
     req
 }
 
-impl<C:RequestCodec> KvRequest<C> for kvrpcpb::RawDeleteRangeRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawDeleteRangeRequest {
     type Response = kvrpcpb::RawDeleteRangeResponse;
 
     fn encode_request(&self, _codec: &C) -> Cow<Self> {
@@ -269,13 +292,16 @@ impl<C:RequestCodec> KvRequest<C> for kvrpcpb::RawDeleteRangeRequest {
 
 shardable_range!(kvrpcpb::RawDeleteRangeRequest);
 
-pub fn new_raw_scan_request<C:RequestCodec>(
+pub fn new_raw_scan_request<C: RequestCodec>(
     start_key: Vec<u8>,
     end_key: Vec<u8>,
     limit: u32,
     key_only: bool,
     cf: Option<ColumnFamily>,
-) -> kvrpcpb::RawScanRequest where kvrpcpb::RawScanRequest: KvRequest<C> {
+) -> kvrpcpb::RawScanRequest
+where
+    kvrpcpb::RawScanRequest: KvRequest<C>,
+{
     let mut req = kvrpcpb::RawScanRequest::default();
     req.set_start_key(start_key);
     req.set_end_key(end_key);
@@ -286,7 +312,7 @@ pub fn new_raw_scan_request<C:RequestCodec>(
     req
 }
 
-impl<C:RequestCodec> KvRequest<C> for kvrpcpb::RawScanRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawScanRequest {
     type Response = kvrpcpb::RawScanResponse;
 
     fn encode_request(&self, _codec: &C) -> Cow<Self> {
@@ -311,12 +337,15 @@ impl Merge<kvrpcpb::RawScanResponse> for Collect {
     }
 }
 
-pub fn new_raw_batch_scan_request<C:RequestCodec>(
+pub fn new_raw_batch_scan_request<C: RequestCodec>(
     ranges: Vec<kvrpcpb::KeyRange>,
     each_limit: u32,
     key_only: bool,
     cf: Option<ColumnFamily>,
-) -> kvrpcpb::RawBatchScanRequest where kvrpcpb::RawBatchScanRequest: KvRequest<C> {
+) -> kvrpcpb::RawBatchScanRequest
+where
+    kvrpcpb::RawBatchScanRequest: KvRequest<C>,
+{
     let mut req = kvrpcpb::RawBatchScanRequest::default();
     req.set_ranges(ranges);
     req.set_each_limit(each_limit);
@@ -326,7 +355,7 @@ pub fn new_raw_batch_scan_request<C:RequestCodec>(
     req
 }
 
-impl<C:RequestCodec> KvRequest<C> for kvrpcpb::RawBatchScanRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchScanRequest {
     type Response = kvrpcpb::RawBatchScanResponse;
 
     fn encode_request(&self, _codec: &C) -> Cow<Self> {
@@ -366,12 +395,15 @@ impl Merge<kvrpcpb::RawBatchScanResponse> for Collect {
     }
 }
 
-pub fn new_cas_request<C:RequestCodec>(
+pub fn new_cas_request<C: RequestCodec>(
     key: Vec<u8>,
     value: Vec<u8>,
     previous_value: Option<Vec<u8>>,
     cf: Option<ColumnFamily>,
-) -> kvrpcpb::RawCasRequest where kvrpcpb::RawCasRequest: KvRequest<C> {
+) -> kvrpcpb::RawCasRequest
+where
+    kvrpcpb::RawCasRequest: KvRequest<C>,
+{
     let mut req = kvrpcpb::RawCasRequest::default();
     req.set_key(key);
     req.set_value(value);
@@ -383,7 +415,7 @@ pub fn new_cas_request<C:RequestCodec>(
     req
 }
 
-impl<C:RequestCodec> KvRequest<C> for kvrpcpb::RawCasRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawCasRequest {
     type Response = kvrpcpb::RawCasResponse;
 
     fn encode_request(&self, _codec: &C) -> Cow<Self> {
@@ -419,12 +451,15 @@ impl Process<kvrpcpb::RawCasResponse> for DefaultProcessor {
 type RawCoprocessorRequestDataBuilder =
     Arc<dyn Fn(metapb::Region, Vec<kvrpcpb::KeyRange>) -> Vec<u8> + Send + Sync>;
 
-pub fn new_raw_coprocessor_request<C:RequestCodec>(
+pub fn new_raw_coprocessor_request<C: RequestCodec>(
     copr_name: String,
     copr_version_req: String,
     ranges: Vec<kvrpcpb::KeyRange>,
     data_builder: RawCoprocessorRequestDataBuilder,
-) -> RawCoprocessorRequest where RawCoprocessorRequest: KvRequest<C> {
+) -> RawCoprocessorRequest
+where
+    RawCoprocessorRequest: KvRequest<C>,
+{
     let mut inner = kvrpcpb::RawCoprocessorRequest::default();
     inner.set_copr_name(copr_name);
     inner.set_copr_version_req(copr_version_req);
@@ -460,7 +495,7 @@ impl Request for RawCoprocessorRequest {
     }
 }
 
-impl<C:RequestCodec> KvRequest<C> for RawCoprocessorRequest {
+impl<C: RequestCodec> KvRequest<C> for RawCoprocessorRequest {
     type Response = kvrpcpb::RawCoprocessorResponse;
 
     fn encode_request(&self, _codec: &C) -> Cow<Self> {

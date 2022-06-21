@@ -8,14 +8,14 @@ use crate::{
     backoff::Backoff,
     pd::PdClient,
     request::{
-        DefaultProcessor, Dispatch, ExtractError, KvRequest, Merge, MergeResponse, Plan, Process,
-        ProcessResponse, ResolveLock, RetryableMultiRegion, Shardable,
+        request_codec::RequestCodec, DefaultProcessor, Dispatch, ExtractError, KvRequest, Merge,
+        MergeResponse, Plan, Process, ProcessResponse, ResolveLock, RetryableMultiRegion,
+        Shardable,
     },
-    Result,
     store::RegionStore,
     transaction::HasLocks,
+    Result,
 };
-use crate::request::request_codec::RequestCodec;
 
 use super::plan::PreserveShard;
 
@@ -38,10 +38,12 @@ pub struct Targetted;
 
 impl PlanBuilderPhase for Targetted {}
 
-impl<C, PdC, Req> PlanBuilder<PdC, Dispatch<C, Req>, NoTarget> where
+impl<C, PdC, Req> PlanBuilder<PdC, Dispatch<C, Req>, NoTarget>
+where
     C: RequestCodec,
     Req: KvRequest<C>,
-    PdC: PdClient<RequestCodec=C> {
+    PdC: PdClient<RequestCodec = C>,
+{
     pub fn new(pd_client: Arc<PdC>, request: Req) -> Self {
         let codec = pd_client.get_request_codec().clone();
         PlanBuilder {
@@ -63,8 +65,8 @@ impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted> {
 impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     /// If there is a lock error, then resolve the lock and retry the request.
     pub fn resolve_lock(self, backoff: Backoff) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
-        where
-            P::Result: HasLocks,
+    where
+        P::Result: HasLocks,
     {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
@@ -80,9 +82,9 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     /// Merge the results of a request. Usually used where a request is sent to multiple regions
     /// to combine the responses from each region.
     pub fn merge<In, M: Merge<In>>(self, merge: M) -> PlanBuilder<PdC, MergeResponse<P, In, M>, Ph>
-        where
-            In: Clone + Send + Sync + 'static,
-            P: Plan<Result=Vec<Result<In>>>,
+    where
+        In: Clone + Send + Sync + 'static,
+        P: Plan<Result = Vec<Result<In>>>,
     {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
@@ -99,9 +101,9 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     /// to a single region because post-porcessing can be incorporated in the merge step for
     /// multi-region requests).
     pub fn post_process_default(self) -> PlanBuilder<PdC, ProcessResponse<P, DefaultProcessor>, Ph>
-        where
-            P: Plan,
-            DefaultProcessor: Process<P::Result>,
+    where
+        P: Plan,
+        DefaultProcessor: Process<P::Result>,
     {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
@@ -115,8 +117,8 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
 }
 
 impl<PdC: PdClient, P: Plan + Shardable> PlanBuilder<PdC, P, NoTarget>
-    where
-        P::Result: HasKeyErrors + HasRegionError,
+where
+    P::Result: HasKeyErrors + HasRegionError,
 {
     /// Split the request into shards sending a request to the region of each shard.
     pub fn retry_multi_region(
@@ -153,7 +155,9 @@ impl<PdC: PdClient, P: Plan + Shardable> PlanBuilder<PdC, P, NoTarget>
     }
 }
 
-impl<C: RequestCodec, PdC: PdClient, R: KvRequest<C> + SingleKey> PlanBuilder<PdC, Dispatch<C, R>, NoTarget> {
+impl<C: RequestCodec, PdC: PdClient, R: KvRequest<C> + SingleKey>
+    PlanBuilder<PdC, Dispatch<C, R>, NoTarget>
+{
     /// Target the request at a single region. *Note*: single region plan will
     /// cannot automatically retry on region errors. It's only used for requests
     /// that target at a specific region but not keys (e.g. ResolveLockRequest).
@@ -176,8 +180,8 @@ impl<C: RequestCodec, PdC: PdClient, R: KvRequest<C>> PlanBuilder<PdC, Dispatch<
 }
 
 impl<PdC: PdClient, P: Plan + Shardable> PlanBuilder<PdC, P, NoTarget>
-    where
-        P::Result: HasKeyErrors,
+where
+    P::Result: HasKeyErrors,
 {
     pub fn preserve_shard(self) -> PlanBuilder<PdC, PreserveShard<P>, NoTarget> {
         PlanBuilder {
@@ -192,8 +196,8 @@ impl<PdC: PdClient, P: Plan + Shardable> PlanBuilder<PdC, P, NoTarget>
 }
 
 impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted>
-    where
-        P::Result: HasKeyErrors + HasRegionErrors,
+where
+    P::Result: HasKeyErrors + HasRegionErrors,
 {
     pub fn extract_error(self) -> PlanBuilder<PdC, ExtractError<P>, Targetted> {
         PlanBuilder {

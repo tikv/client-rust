@@ -12,15 +12,14 @@ use tikv_client_store::{HasKeyErrors, HasRegionError, HasRegionErrors, KvClient}
 
 use crate::{
     backoff::Backoff,
-    Error,
     pd::PdClient,
-    request::{KvRequest, Shardable},
-    Result,
+    request::{request_codec::RequestCodec, KvRequest, Shardable},
     stats::tikv_stats,
     store::RegionStore,
-    transaction::{HasLocks, resolve_locks}, util::iter::FlatMapOkIterExt,
+    transaction::{resolve_locks, HasLocks},
+    util::iter::FlatMapOkIterExt,
+    Error, Result,
 };
-use crate::request::request_codec::RequestCodec;
 
 /// A plan for how to execute a request. A user builds up a plan with various
 /// options, then exectutes it.
@@ -66,8 +65,11 @@ impl<C: RequestCodec, Req: KvRequest<C>> Plan for Dispatch<C, Req> {
             .await;
         let result = stats.done(result);
         result.and_then(|r| {
-            req.decode_response(&self.codec, *r.downcast()
-                .expect("Downcast failed: request and response type mismatch"))
+            req.decode_response(
+                &self.codec,
+                *r.downcast()
+                    .expect("Downcast failed: request and response type mismatch"),
+            )
         })
     }
 }
@@ -86,8 +88,8 @@ pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
 }
 
 impl<P: Plan + Shardable, PdC: PdClient> RetryableMultiRegion<P, PdC>
-    where
-        P::Result: HasKeyErrors + HasRegionError,
+where
+    P::Result: HasKeyErrors + HasRegionError,
 {
     // A plan may involve multiple shards
     #[async_recursion]
@@ -167,7 +169,7 @@ impl<P: Plan + Shardable, PdC: PdClient> RetryableMultiRegion<P, PdC>
                         permits,
                         preserve_region_results,
                     )
-                        .await
+                    .await
                 }
                 None => Err(Error::RegionError(e)),
             }
@@ -219,7 +221,7 @@ impl<P: Plan + Shardable, PdC: PdClient> RetryableMultiRegion<P, PdC>
                 region_store,
                 e.take_epoch_not_match(),
             )
-                .await
+            .await
         } else if e.has_stale_command() || e.has_region_not_found() {
             pd_client.invalidate_region_cache(ver_id).await;
             Ok(false)
@@ -291,8 +293,8 @@ impl<P: Plan, PdC: PdClient> Clone for RetryableMultiRegion<P, PdC> {
 
 #[async_trait]
 impl<P: Plan + Shardable, PdC: PdClient> Plan for RetryableMultiRegion<P, PdC>
-    where
-        P::Result: HasKeyErrors + HasRegionError,
+where
+    P::Result: HasKeyErrors + HasRegionError,
 {
     type Result = Vec<Result<P::Result>>;
 
@@ -308,7 +310,7 @@ impl<P: Plan + Shardable, PdC: PdClient> Plan for RetryableMultiRegion<P, PdC>
             concurrency_permits.clone(),
             self.preserve_region_results,
         )
-            .await
+        .await
     }
 }
 
@@ -327,8 +329,8 @@ pub struct MergeResponse<P: Plan, In, M: Merge<In>> {
 }
 
 #[async_trait]
-impl<In: Clone + Send + Sync + 'static, P: Plan<Result=Vec<Result<In>>>, M: Merge<In>> Plan
-for MergeResponse<P, In, M>
+impl<In: Clone + Send + Sync + 'static, P: Plan<Result = Vec<Result<In>>>, M: Merge<In>> Plan
+    for MergeResponse<P, In, M>
 {
     type Result = M::Out;
 
@@ -422,8 +424,8 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
 
 #[async_trait]
 impl<P: Plan, PdC: PdClient> Plan for ResolveLock<P, PdC>
-    where
-        P::Result: HasLocks,
+where
+    P::Result: HasLocks,
 {
     type Result = P::Result;
 
@@ -478,8 +480,8 @@ impl<P: Plan> Clone for ExtractError<P> {
 
 #[async_trait]
 impl<P: Plan> Plan for ExtractError<P>
-    where
-        P::Result: HasKeyErrors + HasRegionErrors,
+where
+    P::Result: HasKeyErrors + HasRegionErrors,
 {
     type Result = P::Result;
 
@@ -518,8 +520,8 @@ impl<P: Plan + Shardable> Clone for PreserveShard<P> {
 
 #[async_trait]
 impl<P> Plan for PreserveShard<P>
-    where
-        P: Plan + Shardable,
+where
+    P: Plan + Shardable,
 {
     type Result = ResponseWithShard<P::Result, P::Shard>;
 
