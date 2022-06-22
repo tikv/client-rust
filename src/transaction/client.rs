@@ -10,10 +10,10 @@ use crate::{
     backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     config::Config,
     pd::{PdClient, PdRpcClient},
-    request::{Plan, request_codec::RequestCodec},
-    Result,
+    request::{request_codec::RequestCodec, Plan},
     timestamp::TimestampExt,
     transaction::{Snapshot, Transaction, TransactionOptions},
+    Result,
 };
 
 use super::{requests::new_scan_lock_request, resolve_locks};
@@ -44,8 +44,8 @@ pub struct Client<C> {
 }
 
 impl<C> Client<C>
-    where
-        C: RequestCodec,
+where
+    C: RequestCodec,
 {
     /// Create a transactional [`Client`] and connect to the TiKV cluster.
     ///
@@ -113,7 +113,8 @@ impl<C> Client<C>
         });
         debug!(logger, "creating new transactional client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config, codec, logger.clone()).await?);
+        let pd =
+            Arc::new(PdRpcClient::connect(&pd_endpoints, config, codec, logger.clone()).await?);
         Ok(Client {
             pd,
             logger,

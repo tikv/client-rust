@@ -4,7 +4,7 @@ use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     pd::PdClient,
     region::RegionVerId,
-    request::{request_codec::RequestCodec, CollectSingle, Plan},
+    request::{CollectSingle, Plan},
     timestamp::TimestampExt,
     transaction::requests,
     Error, Result,
@@ -144,10 +144,13 @@ pub trait HasLocks {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::mock::{MockKvClient, MockPdClient};
     use std::any::Any;
+
     use tikv_client_proto::errorpb;
+
+    use crate::mock::{MockKvClient, MockPdClient};
+
+    use super::*;
 
     #[tokio::test]
     async fn test_resolve_lock_with_retry() {

@@ -45,7 +45,7 @@ where
     PdC: PdClient<RequestCodec = C>,
 {
     pub fn new(pd_client: Arc<PdC>, request: Req) -> Self {
-        let codec = pd_client.get_request_codec().clone();
+        let codec = pd_client.get_request_codec();
         PlanBuilder {
             pd_client,
             plan: Dispatch::new(request, None, codec),

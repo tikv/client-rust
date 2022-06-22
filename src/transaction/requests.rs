@@ -9,15 +9,14 @@ use tikv_client_proto::{
     kvrpcpb::{self, TxnHeartBeatResponse},
     pdpb::Timestamp,
 };
-use tikv_client_store::HasRegionErrors;
 
 use crate::{
     collect_first,
     pd::PdClient,
+    plain_request, plain_response,
     request::{
-        request_codec::{RequestCodec, TxnApiV1},
-        Collect, CollectSingle, CollectWithShard, DefaultProcessor, KvRequest, Merge, Process,
-        ResponseWithShard, Shardable, SingleKey,
+        request_codec::RequestCodec, Collect, CollectSingle, CollectWithShard, DefaultProcessor,
+        KvRequest, Merge, Process, ResponseWithShard, Shardable, SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_range_by_start_key, RegionStore},
     timestamp::TimestampExt,
@@ -80,11 +79,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::GetRequest {
     type Response = kvrpcpb::GetResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -126,11 +127,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::BatchGetRequest {
     type Response = kvrpcpb::BatchGetResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -170,11 +173,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ScanRequest {
     type Response = kvrpcpb::ScanResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -210,26 +215,16 @@ where
 // region without keys. So it's not Shardable. And we don't automatically retry
 // on its region errors (in the Plan level). The region error must be manually
 // handled (in the upper level).
-impl KvRequest<TxnApiV1> for kvrpcpb::ResolveLockRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ResolveLockRequest {
     type Response = kvrpcpb::ResolveLockResponse;
 
-    fn encode_request(&self, _codec: &TxnApiV1) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &TxnApiV1, _resp: Self::Response) -> Result<Self::Response> {
-        todo!()
-    }
-}
-
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ResolveLockRequest {
-    default type Response = kvrpcpb::ResolveLockResponse;
-
-    default fn encode_request(&self, _codec: &C) -> Cow<Self> {
-        todo!()
-    }
-
-    default fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -251,11 +246,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CleanupRequest {
     type Response = kvrpcpb::CleanupResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -316,11 +313,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PrewriteRequest {
     type Response = kvrpcpb::PrewriteResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -374,11 +373,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CommitRequest {
     type Response = kvrpcpb::CommitResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -402,11 +403,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::BatchRollbackRequest {
     type Response = kvrpcpb::BatchRollbackResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -432,11 +435,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PessimisticRollbackRequest {
     type Response = kvrpcpb::PessimisticRollbackResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -474,11 +479,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PessimisticLockRequest {
     type Response = kvrpcpb::PessimisticLockResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -583,11 +590,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ScanLockRequest {
     type Response = kvrpcpb::ScanLockResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -637,12 +646,13 @@ where
 
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::TxnHeartBeatRequest {
     type Response = kvrpcpb::TxnHeartBeatResponse;
-
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -684,11 +694,13 @@ impl Process<kvrpcpb::TxnHeartBeatResponse> for DefaultProcessor {
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CheckTxnStatusRequest {
     type Response = kvrpcpb::CheckTxnStatusResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -761,11 +773,13 @@ impl From<(u64, u64, Option<kvrpcpb::LockInfo>)> for TransactionStatusKind {
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CheckSecondaryLocksRequest {
     type Response = kvrpcpb::CheckSecondaryLocksResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }

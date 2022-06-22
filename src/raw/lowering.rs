@@ -4,14 +4,13 @@
 //! types (i.e., the types from the client crate) and converts these to the types used in the
 //! generated protobuf code, then calls the low-level ctor functions in the requests module.
 
-use std::{iter::Iterator, marker::PhantomData, ops::Range, sync::Arc};
+use std::{iter::Iterator, ops::Range, sync::Arc};
 
 use tikv_client_proto::{kvrpcpb, metapb};
 
 use crate::{
-    raw::requests,
-    request::{request_codec::RequestCodec, KvRequest},
-    BoundRange, ColumnFamily, Key, KvPair, Value,
+    raw::requests, request::request_codec::RequestCodec, BoundRange, ColumnFamily, Key, KvPair,
+    Value,
 };
 
 pub fn new_raw_get_request<C: RequestCodec>(

@@ -9,12 +9,12 @@ use tikv_client_common::Error;
 use tikv_client_proto::metapb;
 
 use crate::{
-    Backoff,
     backoff::DEFAULT_REGION_BACKOFF,
-    BoundRange,
-    ColumnFamily,
     config::Config,
-    Key, KvPair, pd::{PdClient, PdRpcClient}, raw::lowering::*, request::{Collect, CollectSingle, Plan, request_codec::RequestCodec}, Result, Value,
+    pd::{PdClient, PdRpcClient},
+    raw::lowering::*,
+    request::{request_codec::RequestCodec, Collect, CollectSingle, Plan},
+    Backoff, BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
@@ -215,7 +215,7 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```
     pub async fn batch_get(
         &self,
-        keys: impl IntoIterator<Item=impl Into<Key>>,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
         debug!(self.logger, "invoking raw batch_get request");
         let request =
@@ -277,7 +277,7 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```
     pub async fn batch_put(
         &self,
-        pairs: impl IntoIterator<Item=impl Into<KvPair>>,
+        pairs: impl IntoIterator<Item = impl Into<KvPair>>,
     ) -> Result<()> {
         debug!(self.logger, "invoking raw batch_put request");
         let request = new_raw_batch_put_request::<C>(
@@ -339,7 +339,7 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
-    pub async fn batch_delete(&self, keys: impl IntoIterator<Item=impl Into<Key>>) -> Result<()> {
+    pub async fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
         debug!(self.logger, "invoking raw batch_delete request");
         self.assert_non_atomic()?;
         let request =
@@ -465,7 +465,7 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```
     pub async fn batch_scan(
         &self,
-        ranges: impl IntoIterator<Item=impl Into<BoundRange>>,
+        ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
         each_limit: u32,
     ) -> Result<Vec<KvPair>> {
         debug!(self.logger, "invoking raw batch_scan request");
@@ -497,7 +497,7 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```
     pub async fn batch_scan_keys(
         &self,
-        ranges: impl IntoIterator<Item=impl Into<BoundRange>>,
+        ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
         each_limit: u32,
     ) -> Result<Vec<Key>> {
         debug!(self.logger, "invoking raw batch_scan_keys request");
@@ -547,7 +547,7 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
         &self,
         copr_name: impl Into<String>,
         copr_version_req: impl Into<String>,
-        ranges: impl IntoIterator<Item=impl Into<BoundRange>>,
+        ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
         request_builder: impl Fn(metapb::Region, Vec<Range<Key>>) -> Vec<u8> + Send + Sync + 'static,
     ) -> Result<Vec<(Vec<u8>, Vec<Range<Key>>)>> {
         let copr_version_req = copr_version_req.into();
@@ -593,7 +593,7 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
 
     async fn batch_scan_inner(
         &self,
-        ranges: impl IntoIterator<Item=impl Into<BoundRange>>,
+        ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
         each_limit: u32,
         key_only: bool,
     ) -> Result<Vec<KvPair>> {

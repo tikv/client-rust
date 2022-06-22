@@ -13,9 +13,8 @@ use crate::{
     collect_first,
     pd::PdClient,
     request::{
-        plan::ResponseWithShard,
-        request_codec::{RawApiV1, RequestCodec},
-        Collect, CollectSingle, DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey,
+        plan::ResponseWithShard, request_codec::RequestCodec, Collect, CollectSingle,
+        DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_ranges, RegionStore},
     transaction::HasLocks,

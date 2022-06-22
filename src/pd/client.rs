@@ -1,6 +1,6 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{collections::HashMap, marker::PhantomData, sync::Arc, thread};
+use std::{collections::HashMap, sync::Arc, thread};
 
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
@@ -14,7 +14,6 @@ use tikv_client_store::{KvClient, KvConnect, TikvConnect};
 
 use crate::{
     compat::stream_fn,
-    kv::codec,
     pd::{retry::RetryClientTrait, RetryClient},
     region::{RegionId, RegionVerId, RegionWithLeader},
     region_cache::RegionCache,
@@ -198,14 +197,6 @@ pub trait PdClient: Send + Sync + 'static {
         .boxed()
     }
 
-    fn decode_region(mut region: RegionWithLeader, enable_codec: bool) -> Result<RegionWithLeader> {
-        if enable_codec {
-            codec::decode_bytes_in_place(region.region.mut_start_key(), false)?;
-            codec::decode_bytes_in_place(region.region.mut_end_key(), false)?;
-        }
-        Ok(region)
-    }
-
     async fn update_leader(&self, ver_id: RegionVerId, leader: metapb::Peer) -> Result<()>;
 
     async fn invalidate_region_cache(&self, ver_id: RegionVerId);
@@ -219,9 +210,8 @@ pub struct PdRpcClient<C, KvC: KvConnect + Send + Sync + 'static = TikvConnect, 
     pd: Arc<RetryClient<Cl>>,
     kv_connect: KvC,
     kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
-    region_cache: RegionCache<RetryClient<Cl>>,
+    region_cache: RegionCache<C, RetryClient<Cl>>,
     logger: Logger,
-    codec: C,
 }
 
 #[async_trait]
@@ -237,20 +227,11 @@ impl<C: RequestCodec, KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpc
     }
 
     async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
-        let enable_codec = self.enable_codec;
-        let key = if enable_codec {
-            key.to_encoded()
-        } else {
-            key.clone()
-        };
-
-        let region = self.region_cache.get_region_by_key(&key).await?;
-        Self::decode_region(region, enable_codec)
+        self.region_cache.get_region_by_key(&key).await
     }
 
     async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {
-        let region = self.region_cache.get_region_by_id(id).await?;
-        Self::decode_region(region, self.enable_codec)
+        self.region_cache.get_region_by_id(id).await
     }
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
@@ -270,7 +251,7 @@ impl<C: RequestCodec, KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpc
     }
 
     fn get_request_codec(&self) -> Self::RequestCodec {
-        todo!()
+        self.region_cache.get_request_codec()
     }
 }
 
@@ -338,9 +319,8 @@ impl<C, KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<C, KvC, Cl> {
             pd: pd.clone(),
             kv_client_cache,
             kv_connect: kv_connect(env, security_mgr),
-            region_cache: RegionCache::new(pd),
+            region_cache: RegionCache::new(codec, pd),
             logger,
-            codec
         })
     }
 

@@ -12,10 +12,9 @@ use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
 use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF},
-    pd::{PdClient, PdRpcClient},
+    pd::PdClient,
     request::{
-        Collect, CollectError, CollectSingle, CollectWithShard, KvRequest, Plan, PlanBuilder,
-        RetryOptions,
+        Collect, CollectError, CollectSingle, CollectWithShard, Plan, PlanBuilder, RetryOptions,
     },
     timestamp::TimestampExt,
     transaction::{buffer::Buffer, lowering::*},

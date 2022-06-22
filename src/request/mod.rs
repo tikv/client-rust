@@ -9,7 +9,6 @@ use tikv_client_store::{HasKeyErrors, HasRegionError, Request};
 
 use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF, PESSIMISTIC_BACKOFF},
-    pd::PdClient,
     transaction::HasLocks,
 };
 
