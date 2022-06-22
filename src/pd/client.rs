@@ -219,11 +219,9 @@ pub struct PdRpcClient<C, KvC: KvConnect + Send + Sync + 'static = TikvConnect, 
     pd: Arc<RetryClient<Cl>>,
     kv_connect: KvC,
     kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
-    enable_codec: bool,
     region_cache: RegionCache<RetryClient<Cl>>,
     logger: Logger,
-    // TODO: change to a real codec.
-    _phantom: PhantomData<C>,
+    codec: C,
 }
 
 #[async_trait]
@@ -280,7 +278,7 @@ impl<C> PdRpcClient<C, TikvConnect, Cluster> {
     pub async fn connect(
         pd_endpoints: &[String],
         config: Config,
-        enable_codec: bool,
+        codec: C,
         logger: Logger,
     ) -> Result<PdRpcClient<C, TikvConnect, Cluster>> {
         PdRpcClient::new(
@@ -289,7 +287,7 @@ impl<C> PdRpcClient<C, TikvConnect, Cluster> {
             |env, security_mgr| {
                 RetryClient::connect(env, pd_endpoints, security_mgr, config.timeout)
             },
-            enable_codec,
+            codec,
             logger,
         )
         .await
@@ -310,7 +308,7 @@ impl<C, KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<C, KvC, Cl> {
         config: Config,
         kv_connect: MakeKvC,
         pd: MakePd,
-        enable_codec: bool,
+        codec: C,
         logger: Logger,
     ) -> Result<PdRpcClient<C, KvC, Cl>>
     where
@@ -340,11 +338,9 @@ impl<C, KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<C, KvC, Cl> {
             pd: pd.clone(),
             kv_client_cache,
             kv_connect: kv_connect(env, security_mgr),
-            enable_codec,
             region_cache: RegionCache::new(pd),
             logger,
-            // TODO
-            _phantom: PhantomData,
+            codec
         })
     }
 

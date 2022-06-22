@@ -10,10 +10,10 @@ use crate::{
     backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     config::Config,
     pd::{PdClient, PdRpcClient},
-    request::{request_codec::RequestCodec, Plan},
+    request::{Plan, request_codec::RequestCodec},
+    Result,
     timestamp::TimestampExt,
     transaction::{Snapshot, Transaction, TransactionOptions},
-    Result,
 };
 
 use super::{requests::new_scan_lock_request, resolve_locks};
@@ -44,8 +44,8 @@ pub struct Client<C> {
 }
 
 impl<C> Client<C>
-where
-    C: RequestCodec,
+    where
+        C: RequestCodec,
 {
     /// Create a transactional [`Client`] and connect to the TiKV cluster.
     ///
@@ -66,10 +66,11 @@ where
     /// ```
     pub async fn new<S: Into<String>>(
         pd_endpoints: Vec<S>,
+        codec: C,
         logger: Option<Logger>,
     ) -> Result<Client<C>> {
         // debug!(self.logger, "creating transactional client");
-        Self::new_with_config(pd_endpoints, Config::default(), logger).await
+        Self::new_with_config(pd_endpoints, Config::default(), codec, logger).await
     }
 
     /// Create a transactional [`Client`] with a custom configuration, and connect to the TiKV cluster.
@@ -97,6 +98,7 @@ where
     pub async fn new_with_config<S: Into<String>>(
         pd_endpoints: Vec<S>,
         config: Config,
+        codec: C,
         optional_logger: Option<Logger>,
     ) -> Result<Client<C>> {
         let logger = optional_logger.unwrap_or_else(|| {
@@ -111,7 +113,7 @@ where
         });
         debug!(logger, "creating new transactional client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config, true, logger.clone()).await?);
+        let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config, codec, logger.clone()).await?);
         Ok(Client {
             pd,
             logger,

@@ -4,16 +4,17 @@ use core::ops::Range;
 use std::{marker::PhantomData, str::FromStr, sync::Arc, u32};
 
 use slog::{Drain, Logger};
+
 use tikv_client_common::Error;
 use tikv_client_proto::metapb;
 
 use crate::{
+    Backoff,
     backoff::DEFAULT_REGION_BACKOFF,
+    BoundRange,
+    ColumnFamily,
     config::Config,
-    pd::{PdClient, PdRpcClient},
-    raw::lowering::*,
-    request::{request_codec::RequestCodec, Collect, CollectSingle, Plan},
-    Backoff, BoundRange, ColumnFamily, Key, KvPair, Result, Value,
+    Key, KvPair, pd::{PdClient, PdRpcClient}, raw::lowering::*, request::{Collect, CollectSingle, Plan, request_codec::RequestCodec}, Result, Value,
 };
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
@@ -53,9 +54,10 @@ impl<C: RequestCodec> Client<C, PdRpcClient<C>> {
     /// ```
     pub async fn new<S: Into<String>>(
         pd_endpoints: Vec<S>,
+        codec: C,
         logger: Option<Logger>,
     ) -> Result<Self> {
-        Self::new_with_config(pd_endpoints, Config::default(), logger).await
+        Self::new_with_config(pd_endpoints, Config::default(), codec, logger).await
     }
 
     /// Create a raw [`Client`] with a custom configuration, and connect to the TiKV cluster.
@@ -83,6 +85,7 @@ impl<C: RequestCodec> Client<C, PdRpcClient<C>> {
     pub async fn new_with_config<S: Into<String>>(
         pd_endpoints: Vec<S>,
         config: Config,
+        codec: C,
         optional_logger: Option<Logger>,
     ) -> Result<Self> {
         let logger = optional_logger.unwrap_or_else(|| {
@@ -98,7 +101,7 @@ impl<C: RequestCodec> Client<C, PdRpcClient<C>> {
         debug!(logger, "creating new raw client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let rpc =
-            Arc::new(PdRpcClient::connect(&pd_endpoints, config, false, logger.clone()).await?);
+            Arc::new(PdRpcClient::connect(&pd_endpoints, config, codec, logger.clone()).await?);
         Ok(Client {
             rpc,
             cf: None,
@@ -212,7 +215,7 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```
     pub async fn batch_get(
         &self,
-        keys: impl IntoIterator<Item = impl Into<Key>>,
+        keys: impl IntoIterator<Item=impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
         debug!(self.logger, "invoking raw batch_get request");
         let request =
@@ -274,7 +277,7 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```
     pub async fn batch_put(
         &self,
-        pairs: impl IntoIterator<Item = impl Into<KvPair>>,
+        pairs: impl IntoIterator<Item=impl Into<KvPair>>,
     ) -> Result<()> {
         debug!(self.logger, "invoking raw batch_put request");
         let request = new_raw_batch_put_request::<C>(
@@ -336,7 +339,7 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// let result: () = req.await.unwrap();
     /// # });
     /// ```
-    pub async fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
+    pub async fn batch_delete(&self, keys: impl IntoIterator<Item=impl Into<Key>>) -> Result<()> {
         debug!(self.logger, "invoking raw batch_delete request");
         self.assert_non_atomic()?;
         let request =
@@ -462,7 +465,7 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```
     pub async fn batch_scan(
         &self,
-        ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
+        ranges: impl IntoIterator<Item=impl Into<BoundRange>>,
         each_limit: u32,
     ) -> Result<Vec<KvPair>> {
         debug!(self.logger, "invoking raw batch_scan request");
@@ -494,7 +497,7 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```
     pub async fn batch_scan_keys(
         &self,
-        ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
+        ranges: impl IntoIterator<Item=impl Into<BoundRange>>,
         each_limit: u32,
     ) -> Result<Vec<Key>> {
         debug!(self.logger, "invoking raw batch_scan_keys request");
@@ -544,7 +547,7 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
         &self,
         copr_name: impl Into<String>,
         copr_version_req: impl Into<String>,
-        ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
+        ranges: impl IntoIterator<Item=impl Into<BoundRange>>,
         request_builder: impl Fn(metapb::Region, Vec<Range<Key>>) -> Vec<u8> + Send + Sync + 'static,
     ) -> Result<Vec<(Vec<u8>, Vec<Range<Key>>)>> {
         let copr_version_req = copr_version_req.into();
@@ -590,7 +593,7 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
 
     async fn batch_scan_inner(
         &self,
-        ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
+        ranges: impl IntoIterator<Item=impl Into<BoundRange>>,
         each_limit: u32,
         key_only: bool,
     ) -> Result<Vec<KvPair>> {
@@ -625,13 +628,16 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::{any::Any, sync::Arc};
+
+    use tikv_client_proto::kvrpcpb;
+
     use crate::{
         mock::{MockKvClient, MockPdClient},
         Result,
     };
-    use std::{any::Any, sync::Arc};
-    use tikv_client_proto::kvrpcpb;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_raw_coprocessor() -> Result<()> {
@@ -687,13 +693,13 @@ mod tests {
                     "2:[Key(0A)..Key(0F), Key(14)..Key(FAFA)]".to_string(),
                     vec![
                         Key::from(vec![10])..Key::from(vec![15]),
-                        Key::from(vec![20])..Key::from(vec![250, 250])
+                        Key::from(vec![20])..Key::from(vec![250, 250]),
                     ]
                 ),
                 (
                     "3:[Key(FAFA)..Key()]".to_string(),
                     vec![Key::from(vec![250, 250])..Key::from(vec![])]
-                )
+                ),
             ]
         );
         Ok(())
