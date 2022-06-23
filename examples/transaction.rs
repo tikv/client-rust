@@ -4,14 +4,11 @@ mod common;
 
 use crate::common::parse_args;
 use tikv_client::{
-    request::request_codec::{RequestCodec, TxnApiV1},
+    request::request_codec::{TxnApiV1, TxnCodec},
     BoundRange, Config, Key, KvPair, TransactionClient as Client, Value,
 };
 
-async fn puts<C: RequestCodec>(
-    client: &Client<C>,
-    pairs: impl IntoIterator<Item = impl Into<KvPair>>,
-) {
+async fn puts<C: TxnCodec>(client: &Client<C>, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
     let mut txn = client
         .begin_optimistic()
         .await
@@ -23,7 +20,7 @@ async fn puts<C: RequestCodec>(
     txn.commit().await.expect("Could not commit transaction");
 }
 
-async fn get<C: RequestCodec>(client: &Client<C>, key: Key) -> Option<Value> {
+async fn get<C: TxnCodec>(client: &Client<C>, key: Key) -> Option<Value> {
     let mut txn = client
         .begin_optimistic()
         .await
@@ -35,7 +32,7 @@ async fn get<C: RequestCodec>(client: &Client<C>, key: Key) -> Option<Value> {
     res
 }
 
-async fn key_exists<C: RequestCodec>(client: &Client<C>, key: Key) -> bool {
+async fn key_exists<C: TxnCodec>(client: &Client<C>, key: Key) -> bool {
     let mut txn = client
         .begin_optimistic()
         .await
@@ -50,7 +47,7 @@ async fn key_exists<C: RequestCodec>(client: &Client<C>, key: Key) -> bool {
     res
 }
 
-async fn scan<C: RequestCodec>(client: &Client<C>, range: impl Into<BoundRange>, limit: u32) {
+async fn scan<C: TxnCodec>(client: &Client<C>, range: impl Into<BoundRange>, limit: u32) {
     let mut txn = client
         .begin_optimistic()
         .await
@@ -62,7 +59,7 @@ async fn scan<C: RequestCodec>(client: &Client<C>, range: impl Into<BoundRange>,
     txn.commit().await.expect("Could not commit transaction");
 }
 
-async fn dels<C: RequestCodec>(client: &Client<C>, keys: impl IntoIterator<Item = Key>) {
+async fn dels<C: TxnCodec>(client: &Client<C>, keys: impl IntoIterator<Item = Key>) {
     let mut txn = client
         .begin_optimistic()
         .await

@@ -8,6 +8,7 @@
 use crate::{
     pd::{PdClient, PdRpcClient, RetryClient},
     region::{RegionId, RegionWithLeader},
+    request::request_codec::RawApiV1,
     store::RegionStore,
     Config, Error, Key, Result, Timestamp,
 };
@@ -20,7 +21,7 @@ use tikv_client_store::{KvClient, KvConnect, Request};
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
-pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
+pub async fn pd_rpc_client() -> PdRpcClient<RawApiV1, MockKvConnect, MockCluster> {
     let config = Config::default();
     let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
     let logger = Logger::root(
@@ -41,7 +42,7 @@ pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
                 MockCluster,
             ))
         },
-        false,
+        RawApiV1,
         logger,
     )
     .await
@@ -153,6 +154,7 @@ impl MockPdClient {
 #[async_trait]
 impl PdClient for MockPdClient {
     type KvClient = MockKvClient;
+    type RequestCodec = RawApiV1;
 
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
         Ok(RegionStore::new(region, Arc::new(self.client.clone())))
@@ -197,4 +199,8 @@ impl PdClient for MockPdClient {
     }
 
     async fn invalidate_region_cache(&self, _ver_id: crate::region::RegionVerId) {}
+
+    fn get_request_codec(&self) -> Self::RequestCodec {
+        RawApiV1
+    }
 }

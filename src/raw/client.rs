@@ -13,7 +13,7 @@ use crate::{
     config::Config,
     pd::{PdClient, PdRpcClient},
     raw::lowering::*,
-    request::{request_codec::RequestCodec, Collect, CollectSingle, Plan},
+    request::{request_codec::RawCodec, Collect, CollectSingle, Plan},
     Backoff, BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
 
@@ -33,10 +33,10 @@ pub struct Client<C, PdC: PdClient = PdRpcClient<C>> {
     /// Whether to use the [`atomic mode`](Client::with_atomic_for_cas).
     atomic: bool,
     logger: Logger,
-    _phantom: std::marker::PhantomData<C>,
+    _phantom: PhantomData<C>,
 }
 
-impl<C: RequestCodec> Client<C, PdRpcClient<C>> {
+impl<C: RawCodec> Client<C, PdRpcClient<C>> {
     /// Create a raw [`Client`] and connect to the TiKV cluster.
     ///
     /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for
@@ -48,8 +48,11 @@ impl<C: RequestCodec> Client<C, PdRpcClient<C>> {
     /// ```rust,no_run
     /// # use tikv_client::RawClient;
     /// # use futures::prelude::*;
+    /// use tikv_client::request::request_codec::RawApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// let client = RawClient::new(vec!["192.168.0.100"], RawApiV1, None)
+    ///     .await
+    ///     .unwrap();
     /// # });
     /// ```
     pub async fn new<S: Into<String>>(
@@ -72,10 +75,12 @@ impl<C: RequestCodec> Client<C, PdRpcClient<C>> {
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
     /// # use std::time::Duration;
+    /// use tikv_client::request::request_codec::RawApiV1;
     /// # futures::executor::block_on(async {
     /// let client = RawClient::new_with_config(
     ///     vec!["192.168.0.100"],
     ///     Config::default().with_timeout(Duration::from_secs(60)),
+    ///     RawApiV1,
     ///     None,
     /// )
     /// .await
@@ -126,8 +131,9 @@ impl<C: RequestCodec> Client<C, PdRpcClient<C>> {
     /// # use tikv_client::{Config, RawClient, ColumnFamily};
     /// # use futures::prelude::*;
     /// # use std::convert::TryInto;
+    /// use tikv_client::request::request_codec::RawApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(vec!["192.168.0.100"], None)
+    /// let client = RawClient::new(vec!["192.168.0.100"], RawApiV1, None)
     ///     .await
     ///     .unwrap()
     ///     .with_cf(ColumnFamily::Write);
@@ -165,7 +171,7 @@ impl<C: RequestCodec> Client<C, PdRpcClient<C>> {
     }
 }
 
-impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
+impl<C: RawCodec, PdC: PdClient> Client<C, PdC> {
     /// Create a new 'get' request.
     ///
     /// Once resolved this request will result in the fetching of the value associated with the
@@ -177,8 +183,9 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Value, Config, RawClient};
     /// # use futures::prelude::*;
+    /// use tikv_client::request::request_codec::RawApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], RawApiV1, None).await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let req = client.get(key);
     /// let result: Option<Value> = req.await.unwrap();
@@ -206,8 +213,9 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{KvPair, Config, RawClient};
     /// # use futures::prelude::*;
+    /// use tikv_client::request::request_codec::RawApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], RawApiV1, None).await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let req = client.batch_get(keys);
     /// let result: Vec<KvPair> = req.await.unwrap();
@@ -237,8 +245,9 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, RawClient};
     /// # use futures::prelude::*;
+    /// use tikv_client::request::request_codec::RawApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], RawApiV1, None).await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let val = "TiKV".to_owned();
     /// let req = client.put(key, val);
@@ -266,8 +275,9 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Result, KvPair, Key, Value, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
+    /// use tikv_client::request::request_codec::RawApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], RawApiV1, None).await.unwrap();
     /// let kvpair1 = ("PD".to_owned(), "Go".to_owned());
     /// let kvpair2 = ("TiKV".to_owned(), "Rust".to_owned());
     /// let iterable = vec![kvpair1, kvpair2];
@@ -303,8 +313,9 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, RawClient};
     /// # use futures::prelude::*;
+    /// use tikv_client::request::request_codec::RawApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], RawApiV1, None).await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let req = client.delete(key);
     /// let result: () = req.await.unwrap();
@@ -332,8 +343,9 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
+    /// use tikv_client::request::request_codec::RawApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], RawApiV1, None).await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let req = client.batch_delete(keys);
     /// let result: () = req.await.unwrap();
@@ -360,8 +372,9 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
+    /// use tikv_client::request::request_codec::RawApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], RawApiV1, None).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = client.delete_range(inclusive_range.into_owned());
     /// let result: () = req.await.unwrap();
@@ -399,8 +412,9 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{KvPair, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
+    /// use tikv_client::request::request_codec::RawApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], RawApiV1, None).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = client.scan(inclusive_range.into_owned(), 2);
     /// let result: Vec<KvPair> = req.await.unwrap();
@@ -423,8 +437,9 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
+    /// use tikv_client::request::request_codec::RawApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], RawApiV1, None).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = client.scan_keys(inclusive_range.into_owned(), 2);
     /// let result: Vec<Key> = req.await.unwrap();
@@ -454,8 +469,9 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
+    /// use tikv_client::request::request_codec::RawApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], RawApiV1, None).await.unwrap();
     /// let inclusive_range1 = "TiDB"..="TiKV";
     /// let inclusive_range2 = "TiKV"..="TiSpark";
     /// let iterable = vec![inclusive_range1.into_owned(), inclusive_range2.into_owned()];
@@ -486,8 +502,9 @@ impl<C: RequestCodec, PdC: PdClient> Client<C, PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
     /// # use futures::prelude::*;
+    /// use tikv_client::request::request_codec::RawApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// # let client = RawClient::new(vec!["192.168.0.100"], RawApiV1, None).await.unwrap();
     /// let inclusive_range1 = "TiDB"..="TiKV";
     /// let inclusive_range2 = "TiKV"..="TiSpark";
     /// let iterable = vec![inclusive_range1.into_owned(), inclusive_range2.into_owned()];
@@ -634,6 +651,7 @@ mod tests {
 
     use crate::{
         mock::{MockKvClient, MockPdClient},
+        request::request_codec::RawApiV1,
         Result,
     };
 
@@ -669,6 +687,7 @@ mod tests {
             cf: Some(ColumnFamily::Default),
             atomic: false,
             logger,
+            _phantom: PhantomData::<RawApiV1>,
         };
         let resps = client
             .coprocessor(

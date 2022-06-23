@@ -33,8 +33,12 @@ pub mod request_codec;
 pub trait KvRequest<C>: Request + Sized + Clone + Sync + Send + 'static {
     /// The expected response to the request.
     type Response: HasKeyErrors + HasLocks + HasRegionError + Clone + Send + 'static;
-    fn encode_request(&self, _codec: &C) -> Cow<Self>;
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> crate::Result<Self::Response>;
+    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+        Cow::Borrowed(self)
+    }
+    fn decode_response(&self, _codec: &C, resp: Self::Response) -> crate::Result<Self::Response> {
+        Ok(resp)
+    }
 }
 
 #[derive(Clone, Debug, new, Eq, PartialEq)]
@@ -83,6 +87,10 @@ mod test {
 
     use crate::{
         mock::{MockKvClient, MockPdClient},
+        request::{
+            request_codec::{RequestCodec, TxnApiV1},
+            KvRequest,
+        },
         store::store_stream_for_keys,
         transaction::lowering::new_commit_request,
         Error, Key, Result,
@@ -134,8 +142,16 @@ mod test {
         }
 
         #[async_trait]
-        impl KvRequest for MockKvRequest {
+        impl<C: RequestCodec> KvRequest<C> for MockKvRequest {
             type Response = MockRpcResponse;
+
+            fn encode_request(&self, _codec: &C) -> Cow<Self> {
+                Cow::Borrowed(self)
+            }
+
+            fn decode_response(&self, _codec: &C, resp: Self::Response) -> Result<Self::Response> {
+                Ok(resp)
+            }
         }
 
         impl Shardable for MockKvRequest {
@@ -200,7 +216,11 @@ mod test {
         )));
 
         let key: Key = "key".to_owned().into();
-        let req = new_commit_request(iter::once(key), Timestamp::default(), Timestamp::default());
+        let req = new_commit_request::<TxnApiV1>(
+            iter::once(key),
+            Timestamp::default(),
+            Timestamp::default(),
+        );
 
         // does not extract error
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), req.clone())

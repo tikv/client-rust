@@ -57,6 +57,13 @@ impl RequestCodec for TxnApiV1 {
     fn decode_region(&self, mut region: Region) -> Result<Region> {
         decode_bytes_in_place(region.mut_start_key(), false)?;
         decode_bytes_in_place(region.mut_end_key(), false)?;
+
         Ok(region)
     }
 }
+
+pub trait RawCodec: RequestCodec {}
+pub trait TxnCodec: RequestCodec {}
+
+impl RawCodec for RawApiV1 {}
+impl TxnCodec for TxnApiV1 {}

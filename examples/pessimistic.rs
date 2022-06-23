@@ -3,7 +3,10 @@
 mod common;
 
 use crate::common::parse_args;
-use tikv_client::{Config, Key, TransactionClient as Client, TransactionOptions, Value};
+use tikv_client::{
+    request::request_codec::TxnApiV1, Config, Key, TransactionClient as Client, TransactionOptions,
+    Value,
+};
 
 #[tokio::main]
 async fn main() {
@@ -20,7 +23,7 @@ async fn main() {
     };
 
     // init
-    let client = Client::new_with_config(args.pd, config, None)
+    let client = Client::new_with_config(args.pd, config, TxnApiV1, None)
         .await
         .expect("Could not connect to tikv");
 

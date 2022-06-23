@@ -496,14 +496,6 @@ impl Request for RawCoprocessorRequest {
 
 impl<C: RequestCodec> KvRequest<C> for RawCoprocessorRequest {
     type Response = kvrpcpb::RawCoprocessorResponse;
-
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
-        todo!()
-    }
-
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
-        todo!()
-    }
 }
 
 impl Shardable for RawCoprocessorRequest {
