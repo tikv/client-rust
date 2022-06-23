@@ -12,6 +12,7 @@ use super::RawRpcRequest;
 use crate::{
     collect_first,
     pd::PdClient,
+    plain_request, plain_response,
     request::{
         plan::ResponseWithShard, request_codec::RequestCodec, Collect, CollectSingle,
         DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey,
@@ -39,11 +40,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawGetRequest {
     type Response = kvrpcpb::RawGetResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -87,11 +90,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchGetRequest {
     type Response = kvrpcpb::RawBatchGetResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -130,11 +135,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawPutRequest {
     type Response = kvrpcpb::RawPutResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -166,11 +173,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchPutRequest {
     type Response = kvrpcpb::RawBatchPutResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -216,11 +225,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawDeleteRequest {
     type Response = kvrpcpb::RawDeleteResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -250,11 +261,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchDeleteRequest {
     type Response = kvrpcpb::RawBatchDeleteResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -280,11 +293,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawDeleteRangeRequest {
     type Response = kvrpcpb::RawDeleteRangeResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -314,11 +329,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawScanRequest {
     type Response = kvrpcpb::RawScanResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -357,11 +374,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchScanRequest {
     type Response = kvrpcpb::RawBatchScanResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
@@ -417,11 +436,13 @@ where
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawCasRequest {
     type Response = kvrpcpb::RawCasResponse;
 
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
+    fn encode_request(&self, codec: &C) -> Cow<Self> {
+        plain_request!(self, codec);
         todo!()
     }
 
-    fn decode_response(&self, _codec: &C, _resp: Self::Response) -> Result<Self::Response> {
+    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
+        plain_response!(resp, codec);
         todo!()
     }
 }
