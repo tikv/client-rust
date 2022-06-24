@@ -225,7 +225,7 @@ impl<C: RequestCodec, KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpc
     }
 
     async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
-        self.region_cache.get_region_by_key(&key).await
+        self.region_cache.get_region_by_key(key).await
     }
 
     async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {

@@ -126,7 +126,7 @@ impl<PdC: PdClient> Transaction<PdC> {
 
         self.buffer
             .get_or_else(key, |key| async move {
-                let request = new_get_request::<PdC::RequestCodec>(key, timestamp);
+                let request = new_get_request(key, timestamp);
                 let plan = PlanBuilder::new(rpc, request)
                     .resolve_lock(retry_options.lock_backoff)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
@@ -260,7 +260,7 @@ impl<PdC: PdClient> Transaction<PdC> {
 
         self.buffer
             .batch_get_or_else(keys.into_iter().map(|k| k.into()), move |keys| async move {
-                let request = new_batch_get_request::<PdC::RequestCodec>(keys, timestamp);
+                let request = new_batch_get_request(keys, timestamp);
                 let plan = PlanBuilder::new(rpc, request)
                     .resolve_lock(retry_options.lock_backoff)
                     .retry_multi_region(retry_options.region_backoff)
@@ -678,7 +678,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             Some(k) => k,
             None => return Err(Error::NoPrimaryKey),
         };
-        let request = new_heart_beat_request::<PdC::RequestCodec>(
+        let request = new_heart_beat_request(
             self.timestamp.clone(),
             primary_key,
             self.start_instant.elapsed().as_millis() as u64 + MAX_TTL,
@@ -709,9 +709,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 limit,
                 !key_only,
                 move |new_range, new_limit| async move {
-                    let request = new_scan_request::<PdC::RequestCodec>(
-                        new_range, timestamp, new_limit, key_only,
-                    );
+                    let request = new_scan_request(new_range, timestamp, new_limit, key_only);
                     let plan = PlanBuilder::new(rpc, request)
                         .resolve_lock(retry_options.lock_backoff)
                         .retry_multi_region(retry_options.region_backoff)
@@ -759,7 +757,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             .unwrap_or_else(|| first_key.clone());
         let for_update_ts = self.rpc.clone().get_timestamp().await?;
         self.options.push_for_update_ts(for_update_ts.clone());
-        let request = new_pessimistic_lock_request::<PdC::RequestCodec>(
+        let request = new_pessimistic_lock_request(
             keys.clone().into_iter(),
             primary_lock,
             self.timestamp.clone(),
@@ -816,7 +814,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             return Ok(());
         }
 
-        let req = new_pessimistic_rollback_request::<PdC::RequestCodec>(
+        let req = new_pessimistic_rollback_request(
             keys.clone().into_iter(),
             start_version,
             for_update_ts,
@@ -886,7 +884,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                         break;
                     }
                 }
-                let request = new_heart_beat_request::<PdC::RequestCodec>(
+                let request = new_heart_beat_request(
                     start_ts.clone(),
                     primary_key.clone(),
                     start_instant.elapsed().as_millis() as u64 + MAX_TTL,
@@ -1173,21 +1171,19 @@ impl<PdC: PdClient> Committer<PdC> {
         let elapsed = self.start_instant.elapsed().as_millis() as u64;
         let lock_ttl = self.calc_txn_lock_ttl();
         let mut request = match &self.options.kind {
-            TransactionKind::Optimistic => new_prewrite_request::<PdC::RequestCodec>(
+            TransactionKind::Optimistic => new_prewrite_request(
                 self.mutations.clone(),
                 primary_lock,
                 self.start_version.clone(),
                 lock_ttl + elapsed,
             ),
-            TransactionKind::Pessimistic(for_update_ts) => {
-                new_pessimistic_prewrite_request::<PdC::RequestCodec>(
-                    self.mutations.clone(),
-                    primary_lock,
-                    self.start_version.clone(),
-                    lock_ttl + elapsed,
-                    for_update_ts.clone(),
-                )
-            }
+            TransactionKind::Pessimistic(for_update_ts) => new_pessimistic_prewrite_request(
+                self.mutations.clone(),
+                primary_lock,
+                self.start_version.clone(),
+                lock_ttl + elapsed,
+                for_update_ts.clone(),
+            ),
         };
 
         request.use_async_commit = self.options.async_commit;
@@ -1235,7 +1231,7 @@ impl<PdC: PdClient> Committer<PdC> {
         debug!(self.logger, "committing primary");
         let primary_key = self.primary_key.clone().into_iter();
         let commit_version = self.rpc.clone().get_timestamp().await?;
-        let req = new_commit_request::<PdC::RequestCodec>(
+        let req = new_commit_request(
             primary_key,
             self.start_version.clone(),
             commit_version.clone(),
@@ -1267,7 +1263,7 @@ impl<PdC: PdClient> Committer<PdC> {
 
         let req = if self.options.async_commit {
             let keys = mutations.map(|m| m.key.into());
-            new_commit_request::<PdC::RequestCodec>(keys, self.start_version, commit_version)
+            new_commit_request(keys, self.start_version, commit_version)
         } else if primary_only {
             return Ok(());
         } else {
@@ -1275,7 +1271,7 @@ impl<PdC: PdClient> Committer<PdC> {
             let keys = mutations
                 .map(|m| m.key.into())
                 .filter(|key| &primary_key != key);
-            new_commit_request::<PdC::RequestCodec>(keys, self.start_version, commit_version)
+            new_commit_request(keys, self.start_version, commit_version)
         };
         let plan = PlanBuilder::new(self.rpc, req)
             .resolve_lock(self.options.retry_options.lock_backoff)
@@ -1297,7 +1293,7 @@ impl<PdC: PdClient> Committer<PdC> {
             .map(|mutation| mutation.key.into());
         match self.options.kind {
             TransactionKind::Optimistic => {
-                let req = new_batch_rollback_request::<PdC::RequestCodec>(keys, self.start_version);
+                let req = new_batch_rollback_request(keys, self.start_version);
                 let plan = PlanBuilder::new(self.rpc, req)
                     .resolve_lock(self.options.retry_options.lock_backoff)
                     .retry_multi_region(self.options.retry_options.region_backoff)
@@ -1306,11 +1302,7 @@ impl<PdC: PdClient> Committer<PdC> {
                 plan.execute().await?;
             }
             TransactionKind::Pessimistic(for_update_ts) => {
-                let req = new_pessimistic_rollback_request::<PdC::RequestCodec>(
-                    keys,
-                    self.start_version,
-                    for_update_ts,
-                );
+                let req = new_pessimistic_rollback_request(keys, self.start_version, for_update_ts);
                 let plan = PlanBuilder::new(self.rpc, req)
                     .resolve_lock(self.options.retry_options.lock_backoff)
                     .retry_multi_region(self.options.retry_options.region_backoff)

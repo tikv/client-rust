@@ -45,10 +45,10 @@ pub struct Client<C> {
 
 impl<C> Clone for Client<C> {
     fn clone(&self) -> Self {
-        Self { 
+        Self {
             pd: self.pd.clone(),
             logger: self.logger.clone(),
-             _phantom: PhantomData,
+            _phantom: PhantomData,
         }
     }
 }
@@ -269,7 +269,7 @@ where
         let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
         let mut start_key = vec![];
         loop {
-            let req = new_scan_lock_request::<C>(
+            let req = new_scan_lock_request(
                 mem::take(&mut start_key),
                 safepoint.version(),
                 SCAN_LOCK_BATCH_SIZE,

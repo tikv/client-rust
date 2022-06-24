@@ -185,7 +185,11 @@ impl<C: RawCodec> Client<C> {
     }
 }
 
-impl<C: RawCodec> Client<C> {
+impl<C, PdC> Client<C, PdC>
+where
+    C: RawCodec,
+    PdC: PdClient<RequestCodec = C>,
+{
     /// Create a new 'get' request.
     ///
     /// Once resolved this request will result in the fetching of the value associated with the
@@ -212,7 +216,7 @@ impl<C: RawCodec> Client<C> {
     /// Same as [`get`](Client::get) but with custom [`backoff`](crate::Backoff) strategy.
     pub async fn get_opt(&self, key: impl Into<Key>, backoff: Backoff) -> Result<Option<Value>> {
         debug!(self.logger, "invoking raw get request");
-        let request = new_raw_get_request::<C>(key.into(), self.cf.clone());
+        let request = new_raw_get_request(key.into(), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(backoff)
             .merge(CollectSingle)
@@ -254,8 +258,7 @@ impl<C: RawCodec> Client<C> {
         backoff: Backoff,
     ) -> Result<Vec<KvPair>> {
         debug!(self.logger, "invoking raw batch_get request");
-        let request =
-            new_raw_batch_get_request::<C>(keys.into_iter().map(Into::into), self.cf.clone());
+        let request = new_raw_batch_get_request(keys.into_iter().map(Into::into), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(backoff)
             .merge(Collect)
@@ -294,8 +297,7 @@ impl<C: RawCodec> Client<C> {
         backoff: Backoff,
     ) -> Result<()> {
         debug!(self.logger, "invoking raw put request");
-        let request =
-            new_raw_put_request::<C>(key.into(), value.into(), self.cf.clone(), self.atomic);
+        let request = new_raw_put_request(key.into(), value.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(backoff)
             .merge(CollectSingle)
@@ -337,7 +339,7 @@ impl<C: RawCodec> Client<C> {
         backoff: Backoff,
     ) -> Result<()> {
         debug!(self.logger, "invoking raw batch_put request");
-        let request = new_raw_batch_put_request::<C>(
+        let request = new_raw_batch_put_request(
             pairs.into_iter().map(Into::into),
             self.cf.clone(),
             self.atomic,
@@ -375,7 +377,7 @@ impl<C: RawCodec> Client<C> {
     /// Same as [`delete`](Client::delete) but with custom [`backoff`](crate::Backoff) strategy.
     pub async fn delete_opt(&self, key: impl Into<Key>, backoff: Backoff) -> Result<()> {
         debug!(self.logger, "invoking raw delete request");
-        let request = new_raw_delete_request::<C>(key.into(), self.cf.clone(), self.atomic);
+        let request = new_raw_delete_request(key.into(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(backoff)
             .merge(CollectSingle)
@@ -416,7 +418,7 @@ impl<C: RawCodec> Client<C> {
         debug!(self.logger, "invoking raw batch_delete request");
         self.assert_non_atomic()?;
         let request =
-            new_raw_batch_delete_request::<C>(keys.into_iter().map(Into::into), self.cf.clone());
+            new_raw_batch_delete_request(keys.into_iter().map(Into::into), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(backoff)
             .extract_error()
@@ -453,7 +455,7 @@ impl<C: RawCodec> Client<C> {
     ) -> Result<()> {
         debug!(self.logger, "invoking raw delete_range request");
         self.assert_non_atomic()?;
-        let request = new_raw_delete_range_request::<C>(range.into(), self.cf.clone());
+        let request = new_raw_delete_range_request(range.into(), self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(backoff)
             .extract_error()
@@ -664,7 +666,7 @@ impl<C: RawCodec> Client<C> {
     ) -> Result<(Option<Value>, bool)> {
         debug!(self.logger, "invoking raw compare_and_swap request");
         self.assert_atomic()?;
-        let req = new_cas_request::<C>(
+        let req = new_cas_request(
             key.into(),
             new_value.into(),
             previous_value.into(),
@@ -706,7 +708,7 @@ impl<C: RawCodec> Client<C> {
     ) -> Result<Vec<(Vec<u8>, Vec<Range<Key>>)>> {
         let copr_version_req = copr_version_req.into();
         semver::VersionReq::from_str(&copr_version_req)?;
-        let req = new_raw_coprocessor_request::<C>(
+        let req = new_raw_coprocessor_request(
             copr_name.into(),
             copr_version_req,
             ranges.into_iter().map(Into::into),
@@ -734,7 +736,7 @@ impl<C: RawCodec> Client<C> {
             });
         }
 
-        let request = new_raw_scan_request::<C>(range.into(), limit, key_only, self.cf.clone());
+        let request = new_raw_scan_request(range.into(), limit, key_only, self.cf.clone());
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(backoff)
             .merge(Collect)
@@ -760,7 +762,7 @@ impl<C: RawCodec> Client<C> {
             });
         }
 
-        let request = new_raw_batch_scan_request::<C>(
+        let request = new_raw_batch_scan_request(
             ranges.into_iter().map(Into::into),
             each_limit,
             key_only,

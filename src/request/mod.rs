@@ -87,10 +87,7 @@ mod test {
 
     use crate::{
         mock::{MockKvClient, MockPdClient},
-        request::{
-            request_codec::{RequestCodec, TxnApiV1},
-            KvRequest,
-        },
+        request::{request_codec::RequestCodec, KvRequest},
         store::store_stream_for_keys,
         transaction::lowering::new_commit_request,
         Error, Key, Result,
@@ -216,11 +213,7 @@ mod test {
         )));
 
         let key: Key = "key".to_owned().into();
-        let req = new_commit_request::<TxnApiV1>(
-            iter::once(key),
-            Timestamp::default(),
-            Timestamp::default(),
-        );
+        let req = new_commit_request(iter::once(key), Timestamp::default(), Timestamp::default());
 
         // does not extract error
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), req.clone())
