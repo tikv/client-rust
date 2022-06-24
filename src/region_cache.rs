@@ -219,11 +219,11 @@ impl<C: RequestCodec, R: RetryClientTrait> RegionCache<C, R> {
         leader: metapb::Peer,
     ) -> Result<()> {
         let mut cache = self.region_cache.write().await;
-        let region_entry = cache
-            .ver_id_to_region
-            .get_mut(&ver_id)
-            .ok_or(Error::EntryNotFoundInRegionCache)?;
-        region_entry.leader = Some(leader);
+        let region_entry = cache.ver_id_to_region.get_mut(&ver_id);
+        if let Some(region) = region_entry {
+            region.leader = Some(leader);
+        }
+
         Ok(())
     }
 

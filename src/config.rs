@@ -8,7 +8,7 @@ use std::{path::PathBuf, time::Duration};
 ///
 /// See also [`TransactionOptions`](crate::TransactionOptions) which provides more ways to configure
 /// requests.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {

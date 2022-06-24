@@ -43,6 +43,16 @@ pub struct Client<C> {
     _phantom: PhantomData<C>,
 }
 
+impl<C> Clone for Client<C> {
+    fn clone(&self) -> Self {
+        Self { 
+            pd: self.pd.clone(),
+            logger: self.logger.clone(),
+             _phantom: PhantomData,
+        }
+    }
+}
+
 impl<C> Client<C>
 where
     C: TxnCodec,
