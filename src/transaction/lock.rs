@@ -25,9 +25,9 @@ const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 /// the key. We first use `CleanupRequest` to let the status of the primary lock converge and get
 /// its status (committed or rolled back). Then, we use the status of its primary lock to determine
 /// the status of the other keys in the same transaction.
-pub async fn resolve_locks<T: PdClient>(
+pub async fn resolve_locks(
     locks: Vec<kvrpcpb::LockInfo>,
-    pd_client: Arc<T>,
+    pd_client: Arc<impl PdClient>,
 ) -> Result<bool> {
     debug!("resolving locks");
     let ts = pd_client.clone().get_timestamp().await?;
@@ -89,11 +89,11 @@ pub async fn resolve_locks<T: PdClient>(
     Ok(!has_live_locks)
 }
 
-async fn resolve_lock_with_retry<T: PdClient>(
+async fn resolve_lock_with_retry(
     #[allow(clippy::ptr_arg)] key: &Vec<u8>,
     start_version: u64,
     commit_version: u64,
-    pd_client: Arc<T>,
+    pd_client: Arc<impl PdClient>,
 ) -> Result<RegionVerId> {
     debug!("resolving locks with retry");
     // FIXME: Add backoff
