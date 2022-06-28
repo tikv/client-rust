@@ -8,6 +8,7 @@ use proptest::{arbitrary::any_with, collection::size_range};
 #[cfg(test)]
 use proptest_derive::Arbitrary;
 use std::{fmt, ops::Bound, u8};
+use std::ops::{Deref, DerefMut};
 use tikv_client_proto::kvrpcpb;
 
 const _PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
@@ -177,5 +178,19 @@ impl AsRef<Key> for Vec<u8> {
 impl fmt::Debug for Key {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Key({})", HexRepr(&self.0))
+    }
+}
+
+impl Deref for Key {
+    type Target = Vec<u8>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Key {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
