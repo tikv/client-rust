@@ -41,6 +41,36 @@ pub trait KvRequest<C>: Request + Sized + Clone + Sync + Send + 'static {
     }
 }
 
+#[macro_export]
+macro_rules! kv_request_with_key {
+    ($req: ty, $resp: ty) => {
+        impl<C> KvRequest<C> for $req
+        where
+            C: RequestCodec,
+        {
+            type Response = $resp;
+
+            fn encode_request(&self, codec: &C) -> Cow<Self> {
+                if codec.is_plain() {
+                    return Cow::Borrowed(self);
+                }
+                unimplemented!()
+            }
+
+            fn decode_response(
+                &self,
+                codec: &C,
+                resp: Self::Response,
+            ) -> crate::Result<Self::Response> {
+                if codec.is_plain() {
+                    return Ok(resp);
+                }
+                unimplemented!()
+            }
+        }
+    };
+}
+
 #[derive(Clone, Debug, new, Eq, PartialEq)]
 pub struct RetryOptions {
     /// How to retry when there is a region error and we need to resolve regions with PD.

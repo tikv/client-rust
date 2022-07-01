@@ -14,24 +14,6 @@ const RAW_MODE_MAX_KEY: Prefix = [RAW_MODE_PREFIX + 1, 0, 0, 0];
 const TXN_MODE_MIN_KEY: Prefix = [TXN_MODE_PREFIX, 0, 0, 0];
 const TXN_MODE_MAX_KEY: Prefix = [TXN_MODE_PREFIX + 1, 0, 0, 0];
 
-#[macro_export]
-macro_rules! plain_request {
-    ($req: ident, $codec: ident) => {
-        if $codec.is_plain() {
-            return ::std::borrow::Cow::Borrowed($req);
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! plain_response {
-    ($resp: ident, $codec: ident) => {
-        if $codec.is_plain() {
-            return Ok($resp);
-        }
-    };
-}
-
 pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
     fn encode_key(&self, key: Key) -> Key {
         key

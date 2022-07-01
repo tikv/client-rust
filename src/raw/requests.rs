@@ -12,10 +12,9 @@ use super::RawRpcRequest;
 use crate::{
     collect_first,
     pd::PdClient,
-    plain_request, plain_response,
     request::{
-        plan::ResponseWithShard, codec::RequestCodec, Collect, CollectSingle,
-        DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey,
+        codec::RequestCodec, plan::ResponseWithShard, Collect, CollectSingle, DefaultProcessor,
+        KvRequest, Merge, Process, Shardable, SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_ranges, RegionStore},
     transaction::HasLocks,
@@ -31,20 +30,7 @@ pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::R
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawGetRequest {
-    type Response = kvrpcpb::RawGetResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
-
+kv_request_with_key!(kvrpcpb::RawGetRequest, kvrpcpb::RawGetResponse);
 shardable_key!(kvrpcpb::RawGetRequest);
 collect_first!(kvrpcpb::RawGetResponse);
 
@@ -78,20 +64,7 @@ pub fn new_raw_batch_get_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchGetRequest {
-    type Response = kvrpcpb::RawBatchGetResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
-
+kv_request_with_key!(kvrpcpb::RawBatchGetRequest, kvrpcpb::RawBatchGetResponse);
 shardable_keys!(kvrpcpb::RawBatchGetRequest);
 
 impl Merge<kvrpcpb::RawBatchGetResponse> for Collect {
@@ -120,22 +93,10 @@ pub fn new_raw_put_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawPutRequest {
-    type Response = kvrpcpb::RawPutResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
-
+kv_request_with_key!(kvrpcpb::RawPutRequest, kvrpcpb::RawPutResponse);
 shardable_key!(kvrpcpb::RawPutRequest);
 collect_first!(kvrpcpb::RawPutResponse);
+
 impl SingleKey for kvrpcpb::RawPutRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
