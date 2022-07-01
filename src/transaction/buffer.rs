@@ -111,6 +111,7 @@ impl Buffer {
         range: BoundRange,
         limit: u32,
         update_cache: bool,
+        reverse: bool,
         f: F,
     ) -> Result<impl Iterator<Item = KvPair>>
     where
@@ -158,7 +159,12 @@ impl Buffer {
             .into_iter()
             .map(|(k, v)| KvPair::new(k, v))
             .collect::<Vec<_>>();
-        res.sort_by_cached_key(|x| x.key().clone());
+
+        if reverse {
+            res.sort_unstable_by(|a, b| b.key().cmp(a.key()));
+        } else {
+            res.sort_unstable_by(|a, b| a.key().cmp(b.key()));
+        }
 
         Ok(res.into_iter().take(limit as usize))
     }

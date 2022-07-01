@@ -125,13 +125,20 @@ pub fn new_scan_request(
     timestamp: u64,
     limit: u32,
     key_only: bool,
+    reverse: bool,
 ) -> kvrpcpb::ScanRequest {
     let mut req = kvrpcpb::ScanRequest::default();
-    req.set_start_key(start_key);
-    req.set_end_key(end_key);
+    if !reverse {
+        req.set_start_key(start_key);
+        req.set_end_key(end_key);
+    } else {
+        req.set_start_key(end_key);
+        req.set_end_key(start_key);
+    }
     req.set_limit(limit);
     req.set_key_only(key_only);
     req.set_version(timestamp);
+    req.set_reverse(reverse);
     req
 }
 
