@@ -17,7 +17,7 @@ use crate::{
     pd::{retry::RetryClientTrait, RetryClient},
     region::{RegionId, RegionVerId, RegionWithLeader},
     region_cache::RegionCache,
-    request::request_codec::RequestCodec,
+    request::codec::RequestCodec,
     store::RegionStore,
     BoundRange, Config, Key, Result, SecurityManager, Timestamp,
 };

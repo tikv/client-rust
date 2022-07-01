@@ -14,7 +14,7 @@ use crate::{
     pd::{PdClient, PdRpcClient},
     raw::lowering::*,
     request::{
-        request_codec::{RawCodec, RequestCodec},
+        codec::{RawCodec, RequestCodec},
         Collect, CollectSingle, Plan,
     },
     Backoff, BoundRange, ColumnFamily, Key, KvPair, Result, Value,
@@ -792,7 +792,7 @@ mod tests {
 
     use crate::{
         mock::{MockKvClient, MockPdClient},
-        request::request_codec::RawApiV1,
+        request::codec::RawApiV1,
         Result,
     };
 

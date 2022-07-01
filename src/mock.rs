@@ -8,7 +8,7 @@
 use crate::{
     pd::{PdClient, PdRpcClient, RetryClient},
     region::{RegionId, RegionWithLeader},
-    request::request_codec::RawApiV1,
+    request::codec::RawApiV1,
     store::RegionStore,
     Config, Error, Key, Result, Timestamp,
 };

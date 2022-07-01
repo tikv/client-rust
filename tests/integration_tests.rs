@@ -22,7 +22,7 @@ use std::{
     iter,
 };
 use tikv_client::{
-    request::request_codec::{RawApiV1, RawCodec, TxnApiV1},
+    request::codec::{RawApiV1, RawCodec, TxnApiV1},
     transaction::HeartbeatOption,
     Error, Key, KvPair, PdClient, RawClient, Result, Transaction, TransactionClient,
     TransactionOptions, Value,

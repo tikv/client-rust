@@ -4,7 +4,7 @@ mod common;
 
 use crate::common::parse_args;
 use tikv_client::{
-    request::request_codec::{TxnApiV1, TxnCodec},
+    request::codec::{TxnApiV1, TxnCodec},
     BoundRange, Config, Key, KvPair, TransactionClient as Client, Value,
 };
 

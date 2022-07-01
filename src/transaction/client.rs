@@ -10,7 +10,7 @@ use crate::{
     backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     config::Config,
     pd::{PdClient, PdRpcClient},
-    request::{request_codec::TxnCodec, Plan},
+    request::{codec::TxnCodec, Plan},
     timestamp::TimestampExt,
     transaction::{Snapshot, Transaction, TransactionOptions},
     Result,

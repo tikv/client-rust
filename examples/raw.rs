@@ -6,7 +6,7 @@ mod common;
 
 use crate::common::parse_args;
 use tikv_client::{
-    request::request_codec::RawApiV1, Config, IntoOwnedRange, Key, KvPair, RawClient as Client,
+    request::codec::RawApiV1, Config, IntoOwnedRange, Key, KvPair, RawClient as Client,
     Result, Value,
 };
 

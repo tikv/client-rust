@@ -14,7 +14,7 @@ use tikv_client_proto::metapb::{self, Store};
 use crate::{
     pd::{RetryClient, RetryClientTrait},
     region::{RegionId, RegionVerId, RegionWithLeader, StoreId},
-    request::request_codec::RequestCodec,
+    request::codec::RequestCodec,
     Key, Result,
 };
 
@@ -263,7 +263,7 @@ mod test {
     use crate::{
         pd::RetryClientTrait,
         region::{RegionId, RegionWithLeader},
-        request::request_codec::{RawApiV1, RequestCodec},
+        request::codec::{RawApiV1, RequestCodec},
         Key, Result,
     };
 

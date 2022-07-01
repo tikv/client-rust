@@ -26,7 +26,7 @@ pub mod plan;
 mod plan_builder;
 #[macro_use]
 mod shard;
-pub mod request_codec;
+pub mod codec;
 
 /// Abstracts any request sent to a TiKV server.
 #[async_trait]
@@ -87,7 +87,7 @@ mod test {
 
     use crate::{
         mock::{MockKvClient, MockPdClient},
-        request::{request_codec::RequestCodec, KvRequest},
+        request::{codec::RequestCodec, KvRequest},
         store::store_stream_for_keys,
         transaction::lowering::new_commit_request,
         Error, Key, Result,

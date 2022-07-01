@@ -4,7 +4,7 @@ mod test {
     use log::debug;
     use mock_tikv::{start_mock_pd_server, start_mock_tikv_server, MOCK_PD_PORT};
     use simple_logger::SimpleLogger;
-    use tikv_client::{request::request_codec::RawApiV1, KvPair, RawClient};
+    use tikv_client::{request::codec::RawApiV1, KvPair, RawClient};
 
     #[tokio::test]
     #[ignore]

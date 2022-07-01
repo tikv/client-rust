@@ -14,7 +14,7 @@ use crate::{
     pd::PdClient,
     plain_request, plain_response,
     request::{
-        plan::ResponseWithShard, request_codec::RequestCodec, Collect, CollectSingle,
+        plan::ResponseWithShard, codec::RequestCodec, Collect, CollectSingle,
         DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_ranges, RegionStore},

@@ -13,7 +13,7 @@ use tikv_client_store::{HasKeyErrors, HasRegionError, HasRegionErrors, KvClient}
 use crate::{
     backoff::Backoff,
     pd::PdClient,
-    request::{request_codec::RequestCodec, KvRequest, Shardable},
+    request::{codec::RequestCodec, KvRequest, Shardable},
     stats::tikv_stats,
     store::RegionStore,
     transaction::{resolve_locks, HasLocks},

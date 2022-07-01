@@ -6,7 +6,7 @@ use fail::FailScenario;
 use serial_test::serial;
 use std::time::Duration;
 use tikv_client::{
-    request::request_codec::TxnApiV1, transaction::HeartbeatOption, Result, TransactionClient,
+    request::codec::TxnApiV1, transaction::HeartbeatOption, Result, TransactionClient,
     TransactionOptions,
 };
 

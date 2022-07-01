@@ -4,7 +4,7 @@ use futures_timer::Delay;
 use log::{info, warn};
 use std::{env, time::Duration};
 use tikv_client::{
-    request::request_codec::{RawApiV1, TxnApiV1},
+    request::codec::{RawApiV1, TxnApiV1},
     ColumnFamily, Key, RawClient, Result, TransactionClient,
 };
 

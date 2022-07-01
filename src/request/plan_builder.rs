@@ -8,7 +8,7 @@ use crate::{
     backoff::Backoff,
     pd::PdClient,
     request::{
-        request_codec::RequestCodec, DefaultProcessor, Dispatch, ExtractError, KvRequest, Merge,
+        codec::RequestCodec, DefaultProcessor, Dispatch, ExtractError, KvRequest, Merge,
         MergeResponse, Plan, Process, ProcessResponse, ResolveLock, RetryableMultiRegion,
         Shardable,
     },
