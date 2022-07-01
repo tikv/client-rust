@@ -93,11 +93,16 @@ pub enum Error {
         inner: Box<Error>,
         success_keys: Vec<Vec<u8>>,
     },
-    #[error("Corrupted keyspace: expected: {:?}, actual: {:?}, key: {:?}" , expected, actual, key)]
+    #[error(
+        "Corrupted keyspace: expected: {:?}, actual: {:?}, key: {:?}",
+        expected,
+        actual,
+        key
+    )]
     CorruptedKeyspace {
         expected: Vec<u8>,
         actual: Vec<u8>,
-        key: Vec<u8>
+        key: Vec<u8>,
     },
 }
 
