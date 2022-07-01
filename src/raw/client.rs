@@ -19,7 +19,6 @@ use crate::{
     },
     Backoff, BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
-use crate::request::request_codec::RawApiV1;
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
@@ -51,16 +50,6 @@ impl<C: RequestCodec> Clone for Client<C> {
     }
 }
 
-impl Client<RawApiV1> {
-    pub async fn new<S: Into<String>>(
-        pd_endpoints: Vec<S>,
-        logger: Option<Logger>,
-    ) -> Result<Self> {
-        Self::new_with_config(pd_endpoints, Config::default(), RawApiV1, logger).await
-    }
-}
-
-
 impl<C: RawCodec> Client<C> {
     /// Create a raw [`Client`] and connect to the TiKV cluster.
     ///
@@ -80,7 +69,7 @@ impl<C: RawCodec> Client<C> {
     ///     .unwrap();
     /// # });
     /// ```
-    pub async fn new_with_codec<S: Into<String>>(
+    pub async fn new<S: Into<String>>(
         pd_endpoints: Vec<S>,
         codec: C,
         logger: Option<Logger>,

@@ -1,15 +1,18 @@
 use tikv_client_common::Error;
 use tikv_client_proto::metapb::Region;
-use tikv_client_store::Request;
 
-use crate::{Key, kv::codec::decode_bytes_in_place, Result};
+use crate::{kv::codec::decode_bytes_in_place, Key, Result};
 
-const KEYSPACE_PREFIX_LEN: usize = 4;
 const RAW_MODE_PREFIX: u8 = b'r';
 const TXN_MODE_PREFIX: u8 = b'x';
+
+const KEYSPACE_PREFIX_LEN: usize = 4;
+
+const RAW_MODE_MIN_KEY: Prefix = [RAW_MODE_PREFIX, 0, 0, 0];
 const RAW_MODE_MAX_KEY: Prefix = [RAW_MODE_PREFIX + 1, 0, 0, 0];
+
+const TXN_MODE_MIN_KEY: Prefix = [TXN_MODE_PREFIX, 0, 0, 0];
 const TXN_MODE_MAX_KEY: Prefix = [TXN_MODE_PREFIX + 1, 0, 0, 0];
-const MAX_KEYSPACE_ID: KeySpaceId = [0xff, 0xff, 0xff];
 
 #[macro_export]
 macro_rules! plain_request {
@@ -50,6 +53,34 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
     }
 }
 
+#[derive(Clone)]
+pub struct TxnApiV1;
+
+#[derive(Clone)]
+pub struct RawApiV1;
+
+pub trait RawCodec: RequestCodec {}
+
+pub trait TxnCodec: RequestCodec {}
+
+impl RequestCodec for RawApiV1 {}
+
+impl RequestCodec for TxnApiV1 {
+    fn encode_pd_query(&self, key: Key) -> Key {
+        key.to_encoded()
+    }
+
+    fn decode_region(&self, mut region: Region) -> Result<Region> {
+        decode_bytes_in_place(region.mut_start_key(), false)?;
+        decode_bytes_in_place(region.mut_end_key(), false)?;
+        Ok(region)
+    }
+}
+
+impl RawCodec for RawApiV1 {}
+
+impl TxnCodec for TxnApiV1 {}
+
 #[derive(Copy, Clone)]
 enum KeyMode {
     Raw,
@@ -61,6 +92,22 @@ impl From<KeyMode> for u8 {
         match mode {
             KeyMode::Raw => b'r',
             KeyMode::Txn => b'x',
+        }
+    }
+}
+
+impl KeyMode {
+    fn min_key(self) -> Key {
+        match self {
+            KeyMode::Raw => Key::from(RAW_MODE_MIN_KEY.to_vec()),
+            KeyMode::Txn => Key::from(TXN_MODE_MIN_KEY.to_vec()),
+        }
+    }
+
+    fn max_key(self) -> Key {
+        match self {
+            KeyMode::Raw => Key::from(RAW_MODE_MAX_KEY.to_vec()),
+            KeyMode::Txn => Key::from(TXN_MODE_MAX_KEY.to_vec()),
         }
     }
 }
@@ -110,43 +157,65 @@ impl RequestCodec for KeySpaceCodec {
     }
 
     fn encode_pd_query(&self, key: Key) -> Key {
-        todo!()
-    }
-
-    fn decode_region(&self, region: Region) -> Result<Region> {
-        todo!()
-    }
-
-    fn is_plain(&self) -> bool {
-        todo!()
-    }
-}
-
-#[derive(Clone)]
-pub struct TxnApiV1;
-
-#[derive(Clone)]
-pub struct RawApiV1;
-
-pub trait RawCodec: RequestCodec {}
-
-pub trait TxnCodec: RequestCodec {}
-
-impl RequestCodec for RawApiV1 {}
-
-impl RequestCodec for TxnApiV1 {
-    fn encode_pd_query(&self, key: Key) -> Key {
-        key.to_encoded()
+        self.encode_key(key).to_encoded()
     }
 
     fn decode_region(&self, mut region: Region) -> Result<Region> {
         decode_bytes_in_place(region.mut_start_key(), false)?;
         decode_bytes_in_place(region.mut_end_key(), false)?;
 
+        if region.get_start_key() < self.mode.min_key().as_slice() {
+            *region.mut_start_key() = vec![];
+        } else {
+            *region.mut_start_key() = self
+                .decode_key(region.get_start_key().to_vec().into())?
+                .into();
+        }
+
+        if region.get_end_key() > self.mode.max_key().as_slice() {
+            *region.mut_end_key() = vec![];
+        } else {
+            *region.mut_end_key() = self
+                .decode_key(region.get_end_key().to_vec().into())?
+                .into();
+        }
+
         Ok(region)
+    }
+
+    fn is_plain(&self) -> bool {
+        false
     }
 }
 
-impl RawCodec for RawApiV1 {}
+#[derive(Clone)]
+pub struct RawKeyspaceCodec(KeySpaceCodec);
 
-impl TxnCodec for TxnApiV1 {}
+impl RawKeyspaceCodec {
+    pub fn new(id: KeySpaceId) -> Self {
+        RawKeyspaceCodec(KeySpaceCodec {
+            mode: KeyMode::Raw,
+            id,
+        })
+    }
+}
+
+impl RequestCodec for RawKeyspaceCodec {}
+
+impl RawCodec for RawKeyspaceCodec {}
+
+#[derive(Clone)]
+pub struct TxnKeyspaceCodec(KeySpaceCodec);
+
+impl TxnKeyspaceCodec {
+    pub fn new(id: KeySpaceId) -> Self {
+        TxnKeyspaceCodec(KeySpaceCodec {
+            mode: KeyMode::Txn,
+            id,
+        })
+    }
+}
+
+impl RequestCodec for TxnKeyspaceCodec {}
+
+impl TxnCodec for TxnKeyspaceCodec {}
