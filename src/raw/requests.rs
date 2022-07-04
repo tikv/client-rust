@@ -5,22 +5,24 @@ use std::{any::Any, borrow::Cow, ops::Range, sync::Arc};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use grpcio::CallOption;
+
 use tikv_client_proto::{kvrpcpb, metapb, tikvpb::TikvClient};
 use tikv_client_store::Request;
 
-use super::RawRpcRequest;
 use crate::{
     collect_first,
+    ColumnFamily,
+    Key,
+    KvPair,
     pd::PdClient,
     request::{
-        codec::RequestCodec, plan::ResponseWithShard, Collect, CollectSingle, DefaultProcessor,
-        KvRequest, Merge, Process, Shardable, SingleKey,
+        codec::RequestCodec, Collect, CollectSingle, DefaultProcessor, KvRequest,
+        Merge, plan::ResponseWithShard, Process, Shardable, SingleKey,
     },
-    store::{store_stream_for_keys, store_stream_for_ranges, RegionStore},
-    transaction::HasLocks,
-    util::iter::FlatMapOkIterExt,
-    ColumnFamily, Key, KvPair, Result, Value,
+    Result, store::{RegionStore, store_stream_for_keys, store_stream_for_ranges}, transaction::HasLocks, util::iter::FlatMapOkIterExt, Value,
 };
+
+use super::RawRpcRequest;
 
 pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::RawGetRequest {
     let mut req = kvrpcpb::RawGetRequest::default();
@@ -30,7 +32,7 @@ pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::R
     req
 }
 
-kv_request_with_key!(kvrpcpb::RawGetRequest, kvrpcpb::RawGetResponse);
+impl_kv_request_for_single_key_op!(kvrpcpb::RawGetRequest, kvrpcpb::RawGetResponse);
 shardable_key!(kvrpcpb::RawGetRequest);
 collect_first!(kvrpcpb::RawGetResponse);
 
@@ -64,7 +66,8 @@ pub fn new_raw_batch_get_request(
     req
 }
 
-kv_request_with_key!(kvrpcpb::RawBatchGetRequest, kvrpcpb::RawBatchGetResponse);
+impl_kv_request_for_batch_get!(kvrpcpb::RawBatchGetRequest, kvrpcpb::RawBatchGetResponse);
+
 shardable_keys!(kvrpcpb::RawBatchGetRequest);
 
 impl Merge<kvrpcpb::RawBatchGetResponse> for Collect {
@@ -93,7 +96,7 @@ pub fn new_raw_put_request(
     req
 }
 
-kv_request_with_key!(kvrpcpb::RawPutRequest, kvrpcpb::RawPutResponse);
+impl_kv_request_for_single_key_op!(kvrpcpb::RawPutRequest, kvrpcpb::RawPutResponse);
 shardable_key!(kvrpcpb::RawPutRequest);
 collect_first!(kvrpcpb::RawPutResponse);
 
@@ -120,13 +123,15 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchPutRequest {
     type Response = kvrpcpb::RawBatchPutResponse;
 
     fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
+        if codec.is_plain() {
+            return Cow::Borrowed(self);
+        }
 
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
+        let mut req = self.clone();
+
+        *req.mut_pairs() = codec.encode_pairs(req.take_pairs());
+
+        Cow::Owned(req)
     }
 }
 
@@ -165,20 +170,7 @@ pub fn new_raw_delete_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawDeleteRequest {
-    type Response = kvrpcpb::RawDeleteResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
-
+impl_kv_request_for_single_key_op!(kvrpcpb::RawDeleteRequest, kvrpcpb::RawDeleteResponse);
 shardable_key!(kvrpcpb::RawDeleteRequest);
 collect_first!(kvrpcpb::RawDeleteResponse);
 impl SingleKey for kvrpcpb::RawDeleteRequest {
@@ -202,13 +194,15 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchDeleteRequest {
     type Response = kvrpcpb::RawBatchDeleteResponse;
 
     fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
+        if codec.is_plain() {
+            return Cow::Borrowed(self);
+        }
 
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
+        let mut req = self.clone();
+
+        *req.mut_keys() = codec.encode_keys(req.take_keys());
+
+        Cow::Owned(req)
     }
 }
 
@@ -231,13 +225,17 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawDeleteRangeRequest {
     type Response = kvrpcpb::RawDeleteRangeResponse;
 
     fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
+        if codec.is_plain() {
+            return Cow::Borrowed(self);
+        }
 
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
+        let mut req = self.clone();
+
+        let (start, end) = (req.take_start_key(), req.take_end_key());
+        *req.mut_start_key() = codec.encode_key(start);
+        *req.mut_end_key() = codec.encode_key(end);
+
+        Cow::Owned(req)
     }
 }
 
@@ -260,20 +258,7 @@ pub fn new_raw_scan_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawScanRequest {
-    type Response = kvrpcpb::RawScanResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
-
+impl_kv_request_for_scan_op!(kvrpcpb::RawScanRequest, kvrpcpb::RawScanResponse, kvs);
 shardable_range!(kvrpcpb::RawScanRequest);
 
 impl Merge<kvrpcpb::RawScanResponse> for Collect {
@@ -306,13 +291,15 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchScanRequest {
     type Response = kvrpcpb::RawBatchScanResponse;
 
     fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
+        if codec.is_plain() {
+            return Cow::Borrowed(self);
+        }
 
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
+        let mut req = self.clone();
+
+        *req.mut_ranges() = codec.encode_ranges(req.take_ranges());
+
+        Cow::Owned(req)
     }
 }
 
@@ -361,20 +348,7 @@ pub fn new_cas_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawCasRequest {
-    type Response = kvrpcpb::RawCasResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
-
+impl_kv_request_for_single_key_op!(kvrpcpb::RawCasRequest, kvrpcpb::RawCasResponse);
 shardable_key!(kvrpcpb::RawCasRequest);
 collect_first!(kvrpcpb::RawCasResponse);
 impl SingleKey for kvrpcpb::RawCasRequest {
@@ -397,7 +371,7 @@ impl Process<kvrpcpb::RawCasResponse> for DefaultProcessor {
 }
 
 type RawCoprocessorRequestDataBuilder =
-    Arc<dyn Fn(metapb::Region, Vec<kvrpcpb::KeyRange>) -> Vec<u8> + Send + Sync>;
+Arc<dyn Fn(metapb::Region, Vec<kvrpcpb::KeyRange>) -> Vec<u8> + Send + Sync>;
 
 pub fn new_raw_coprocessor_request(
     copr_name: String,
@@ -467,8 +441,8 @@ impl Shardable for RawCoprocessorRequest {
 
 #[allow(clippy::type_complexity)]
 impl
-    Process<Vec<Result<ResponseWithShard<kvrpcpb::RawCoprocessorResponse, Vec<kvrpcpb::KeyRange>>>>>
-    for DefaultProcessor
+Process<Vec<Result<ResponseWithShard<kvrpcpb::RawCoprocessorResponse, Vec<kvrpcpb::KeyRange>>>>>
+for DefaultProcessor
 {
     type Out = Vec<(Vec<u8>, Vec<Range<Key>>)>;
 
@@ -517,29 +491,43 @@ impl_raw_rpc_request!(RawDeleteRangeRequest);
 impl_raw_rpc_request!(RawCasRequest);
 
 impl HasLocks for kvrpcpb::RawGetResponse {}
+
 impl HasLocks for kvrpcpb::RawBatchGetResponse {}
+
 impl HasLocks for kvrpcpb::RawPutResponse {}
+
 impl HasLocks for kvrpcpb::RawBatchPutResponse {}
+
 impl HasLocks for kvrpcpb::RawDeleteResponse {}
+
 impl HasLocks for kvrpcpb::RawBatchDeleteResponse {}
+
 impl HasLocks for kvrpcpb::RawScanResponse {}
+
 impl HasLocks for kvrpcpb::RawBatchScanResponse {}
+
 impl HasLocks for kvrpcpb::RawDeleteRangeResponse {}
+
 impl HasLocks for kvrpcpb::RawCasResponse {}
+
 impl HasLocks for kvrpcpb::RawCoprocessorResponse {}
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use std::any::Any;
+
+    use futures::executor;
+
+    use tikv_client_proto::kvrpcpb;
+
     use crate::{
         backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
+        Key,
         mock::{MockKvClient, MockPdClient},
         request::Plan,
-        Key,
     };
-    use futures::executor;
-    use std::any::Any;
-    use tikv_client_proto::kvrpcpb;
+
+    use super::*;
 
     #[test]
     #[ignore]

@@ -13,7 +13,6 @@ use tikv_client_proto::{
 use crate::{
     collect_first,
     pd::PdClient,
-    plain_request, plain_response,
     request::{
         codec::RequestCodec, Collect, CollectSingle, CollectWithShard, DefaultProcessor,
         KvRequest, Merge, Process, ResponseWithShard, Shardable, SingleKey,
@@ -73,20 +72,7 @@ pub fn new_get_request(key: Vec<u8>, timestamp: u64) -> kvrpcpb::GetRequest {
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::GetRequest {
-    type Response = kvrpcpb::GetResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
-
+impl_kv_request_for_single_key_op!(kvrpcpb::GetRequest, kvrpcpb::GetResponse);
 shardable_key!(kvrpcpb::GetRequest);
 collect_first!(kvrpcpb::GetResponse);
 impl SingleKey for kvrpcpb::GetRequest {
@@ -115,20 +101,7 @@ pub fn new_batch_get_request(keys: Vec<Vec<u8>>, timestamp: u64) -> kvrpcpb::Bat
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::BatchGetRequest {
-    type Response = kvrpcpb::BatchGetResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
-
+impl_kv_request_for_batch_get!(kvrpcpb::BatchGetRequest, kvrpcpb::BatchGetResponse);
 shardable_keys!(kvrpcpb::BatchGetRequest);
 
 impl Merge<kvrpcpb::BatchGetResponse> for Collect {
@@ -158,20 +131,7 @@ pub fn new_scan_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ScanRequest {
-    type Response = kvrpcpb::ScanResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
-
+impl_kv_request_for_scan_op!(kvrpcpb::ScanRequest, kvrpcpb::ScanResponse, pairs);
 shardable_range!(kvrpcpb::ScanRequest);
 
 impl Merge<kvrpcpb::ScanResponse> for Collect {
@@ -200,19 +160,8 @@ pub fn new_resolve_lock_request(
 // region without keys. So it's not Shardable. And we don't automatically retry
 // on its region errors (in the Plan level). The region error must be manually
 // handled (in the upper level).
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ResolveLockRequest {
-    type Response = kvrpcpb::ResolveLockResponse;
 
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
+impl_kv_request_for_single_key_op!(kvrpcpb::ResolveLockRequest, kvrpcpb::ResolveLockResponse);
 
 pub fn new_cleanup_request(key: Vec<u8>, start_version: u64) -> kvrpcpb::CleanupRequest {
     let mut req = kvrpcpb::CleanupRequest::default();
@@ -222,20 +171,7 @@ pub fn new_cleanup_request(key: Vec<u8>, start_version: u64) -> kvrpcpb::Cleanup
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CleanupRequest {
-    type Response = kvrpcpb::CleanupResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
-
+impl_kv_request_for_single_key_op!(kvrpcpb::CleanupRequest, kvrpcpb::CleanupResponse);
 shardable_key!(kvrpcpb::CleanupRequest);
 collect_first!(kvrpcpb::CleanupResponse);
 impl SingleKey for kvrpcpb::CleanupRequest {
@@ -283,19 +219,7 @@ pub fn new_pessimistic_prewrite_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PrewriteRequest {
-    type Response = kvrpcpb::PrewriteResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
+impl_kv_request_for_single_key_op!(kvrpcpb::PrewriteRequest, kvrpcpb::PrewriteResponse);
 
 impl Shardable for kvrpcpb::PrewriteRequest {
     type Shard = Vec<kvrpcpb::Mutation>;
@@ -340,20 +264,7 @@ pub fn new_commit_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CommitRequest {
-    type Response = kvrpcpb::CommitResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
-
+impl_kv_request_for_single_key_op!(kvrpcpb::CommitRequest, kvrpcpb::CommitResponse);
 shardable_keys!(kvrpcpb::CommitRequest);
 
 pub fn new_batch_rollback_request(
@@ -367,20 +278,7 @@ pub fn new_batch_rollback_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::BatchRollbackRequest {
-    type Response = kvrpcpb::BatchRollbackResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
-
+impl_kv_request_for_single_key_op!(kvrpcpb::BatchRollbackRequest, kvrpcpb::BatchRollbackResponse);
 shardable_keys!(kvrpcpb::BatchRollbackRequest);
 
 pub fn new_pessimistic_rollback_request(
@@ -396,20 +294,7 @@ pub fn new_pessimistic_rollback_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PessimisticRollbackRequest {
-    type Response = kvrpcpb::PessimisticRollbackResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
-
+impl_kv_request_for_single_key_op!(kvrpcpb::PessimisticRollbackRequest, kvrpcpb::PessimisticRollbackResponse);
 shardable_keys!(kvrpcpb::PessimisticRollbackRequest);
 
 pub fn new_pessimistic_lock_request(
@@ -437,19 +322,7 @@ pub fn new_pessimistic_lock_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PessimisticLockRequest {
-    type Response = kvrpcpb::PessimisticLockResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
+impl_kv_request_for_single_key_op!(kvrpcpb::PessimisticLockRequest, kvrpcpb::PessimisticLockResponse);
 
 impl Shardable for kvrpcpb::PessimisticLockRequest {
     type Shard = Vec<kvrpcpb::Mutation>;
@@ -545,19 +418,7 @@ pub fn new_scan_lock_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ScanLockRequest {
-    type Response = kvrpcpb::ScanLockResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
+impl_kv_request_for_single_key_op!(kvrpcpb::ScanLockRequest, kvrpcpb::ScanLockResponse);
 
 impl Shardable for kvrpcpb::ScanLockRequest {
     type Shard = Vec<u8>;
@@ -599,18 +460,7 @@ pub fn new_heart_beat_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::TxnHeartBeatRequest {
-    type Response = kvrpcpb::TxnHeartBeatResponse;
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
+impl_kv_request_for_single_key_op!(kvrpcpb::TxnHeartBeatRequest, kvrpcpb::TxnHeartBeatResponse);
 
 impl Shardable for kvrpcpb::TxnHeartBeatRequest {
     type Shard = Vec<Vec<u8>>;
@@ -646,19 +496,7 @@ impl Process<kvrpcpb::TxnHeartBeatResponse> for DefaultProcessor {
     }
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CheckTxnStatusRequest {
-    type Response = kvrpcpb::CheckTxnStatusResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
+impl_kv_request_for_single_key_op!(kvrpcpb::CheckTxnStatusRequest, kvrpcpb::CheckTxnStatusResponse);
 
 impl Shardable for kvrpcpb::CheckTxnStatusRequest {
     type Shard = Vec<Vec<u8>>;
@@ -725,20 +563,7 @@ impl From<(u64, u64, Option<kvrpcpb::LockInfo>)> for TransactionStatusKind {
     }
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CheckSecondaryLocksRequest {
-    type Response = kvrpcpb::CheckSecondaryLocksResponse;
-
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        plain_request!(self, codec);
-        todo!()
-    }
-
-    fn decode_response(&self, codec: &C, resp: Self::Response) -> Result<Self::Response> {
-        plain_response!(resp, codec);
-        todo!()
-    }
-}
-
+impl_kv_request_for_single_key_op!(kvrpcpb::CheckSecondaryLocksRequest, kvrpcpb::CheckSecondaryLocksResponse);
 shardable_keys!(kvrpcpb::CheckSecondaryLocksRequest);
 
 impl Merge<kvrpcpb::CheckSecondaryLocksResponse> for Collect {

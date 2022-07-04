@@ -135,7 +135,7 @@ impl<C: RequestCodec, R: RetryClientTrait> RegionCache<C, R> {
         let mut r = self
             .inner_client
             .clone()
-            .get_region(self.codec.encode_pd_query(key).into())
+            .get_region(self.codec.encode_pd_query(key.into()))
             .await?;
         r.region = self.codec.decode_region(r.region)?;
         self.add_region(r.clone()).await;
