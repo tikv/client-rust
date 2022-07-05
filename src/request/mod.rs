@@ -11,7 +11,6 @@ use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF, PESSIMISTIC_BACKOFF},
     transaction::HasLocks,
 };
-use crate::request::codec::RequestCodec;
 
 pub use self::{
     plan::{
@@ -56,6 +55,7 @@ macro_rules! impl_kv_request_for_single_key_op {
                     return Cow::Borrowed(self);
                 }
                 let mut req = self.clone();
+
                 *req.mut_key() = codec.encode_key(req.take_key());
 
                 Cow::Owned(req)

@@ -1,8 +1,7 @@
 use tikv_client_common::Error;
-use tikv_client_proto::kvrpcpb;
-use tikv_client_proto::metapb::Region;
+use tikv_client_proto::{kvrpcpb, metapb::Region};
 
-use crate::{Key, kv::codec::decode_bytes_in_place, Result};
+use crate::{kv::codec::decode_bytes_in_place, Key, Result};
 
 const RAW_MODE_PREFIX: u8 = b'r';
 const TXN_MODE_PREFIX: u8 = b'x';
@@ -26,7 +25,9 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         keys
     }
 
-    fn encode_pairs(&self, pairs: Vec<kvrpcpb::KvPair>) -> Vec<kvrpcpb::KvPair> { pairs }
+    fn encode_pairs(&self, pairs: Vec<kvrpcpb::KvPair>) -> Vec<kvrpcpb::KvPair> {
+        pairs
+    }
 
     fn decode_key(&self, key: Vec<u8>) -> Result<Vec<u8>> {
         Ok(key)
@@ -40,7 +41,9 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         (start, end)
     }
 
-    fn encode_ranges(&self, ranges: Vec<kvrpcpb::KeyRange>) -> Vec<kvrpcpb::KeyRange> { ranges }
+    fn encode_ranges(&self, ranges: Vec<kvrpcpb::KeyRange>) -> Vec<kvrpcpb::KeyRange> {
+        ranges
+    }
 
     fn encode_pd_query(&self, key: Vec<u8>) -> Vec<u8> {
         key
@@ -204,16 +207,14 @@ impl RequestCodec for KeySpaceCodec {
         if region.get_start_key() < self.mode.min_key().as_slice() {
             *region.mut_start_key() = vec![];
         } else {
-            *region.mut_start_key() = self
-                .decode_key(region.get_start_key().to_vec())?;
+            *region.mut_start_key() = self.decode_key(region.get_start_key().to_vec())?;
         }
 
         // Map the region's end key to the keyspace's end key.
         if region.get_end_key() > self.mode.max_key().as_slice() {
             *region.mut_end_key() = vec![];
         } else {
-            *region.mut_end_key() = self
-                .decode_key(region.get_end_key().to_vec())?;
+            *region.mut_end_key() = self.decode_key(region.get_end_key().to_vec())?;
         }
 
         Ok(region)

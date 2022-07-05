@@ -6,8 +6,8 @@ mod common;
 
 use crate::common::parse_args;
 use tikv_client::{
-    request::codec::RawApiV1, Config, IntoOwnedRange, Key, KvPair, RawClient as Client,
-    Result, Value,
+    request::codec::RawApiV1, Config, IntoOwnedRange, Key, KvPair, RawClient as Client, Result,
+    Value,
 };
 
 const KEY: &str = "TiKV";

@@ -14,8 +14,8 @@ use crate::{
     collect_first,
     pd::PdClient,
     request::{
-        codec::RequestCodec, Collect, CollectSingle, CollectWithShard, DefaultProcessor,
-        KvRequest, Merge, Process, ResponseWithShard, Shardable, SingleKey,
+        codec::RequestCodec, Collect, CollectSingle, CollectWithShard, DefaultProcessor, KvRequest,
+        Merge, Process, ResponseWithShard, Shardable, SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_range_by_start_key, RegionStore},
     timestamp::TimestampExt,
@@ -278,7 +278,10 @@ pub fn new_batch_rollback_request(
     req
 }
 
-impl_kv_request_for_single_key_op!(kvrpcpb::BatchRollbackRequest, kvrpcpb::BatchRollbackResponse);
+impl_kv_request_for_single_key_op!(
+    kvrpcpb::BatchRollbackRequest,
+    kvrpcpb::BatchRollbackResponse
+);
 shardable_keys!(kvrpcpb::BatchRollbackRequest);
 
 pub fn new_pessimistic_rollback_request(
@@ -294,7 +297,10 @@ pub fn new_pessimistic_rollback_request(
     req
 }
 
-impl_kv_request_for_single_key_op!(kvrpcpb::PessimisticRollbackRequest, kvrpcpb::PessimisticRollbackResponse);
+impl_kv_request_for_single_key_op!(
+    kvrpcpb::PessimisticRollbackRequest,
+    kvrpcpb::PessimisticRollbackResponse
+);
 shardable_keys!(kvrpcpb::PessimisticRollbackRequest);
 
 pub fn new_pessimistic_lock_request(
@@ -322,7 +328,10 @@ pub fn new_pessimistic_lock_request(
     req
 }
 
-impl_kv_request_for_single_key_op!(kvrpcpb::PessimisticLockRequest, kvrpcpb::PessimisticLockResponse);
+impl_kv_request_for_single_key_op!(
+    kvrpcpb::PessimisticLockRequest,
+    kvrpcpb::PessimisticLockResponse
+);
 
 impl Shardable for kvrpcpb::PessimisticLockRequest {
     type Shard = Vec<kvrpcpb::Mutation>;
@@ -496,7 +505,10 @@ impl Process<kvrpcpb::TxnHeartBeatResponse> for DefaultProcessor {
     }
 }
 
-impl_kv_request_for_single_key_op!(kvrpcpb::CheckTxnStatusRequest, kvrpcpb::CheckTxnStatusResponse);
+impl_kv_request_for_single_key_op!(
+    kvrpcpb::CheckTxnStatusRequest,
+    kvrpcpb::CheckTxnStatusResponse
+);
 
 impl Shardable for kvrpcpb::CheckTxnStatusRequest {
     type Shard = Vec<Vec<u8>>;
@@ -563,7 +575,10 @@ impl From<(u64, u64, Option<kvrpcpb::LockInfo>)> for TransactionStatusKind {
     }
 }
 
-impl_kv_request_for_single_key_op!(kvrpcpb::CheckSecondaryLocksRequest, kvrpcpb::CheckSecondaryLocksResponse);
+impl_kv_request_for_single_key_op!(
+    kvrpcpb::CheckSecondaryLocksRequest,
+    kvrpcpb::CheckSecondaryLocksResponse
+);
 shardable_keys!(kvrpcpb::CheckSecondaryLocksRequest);
 
 impl Merge<kvrpcpb::CheckSecondaryLocksResponse> for Collect {

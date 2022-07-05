@@ -4,8 +4,7 @@ mod common;
 
 use crate::common::parse_args;
 use tikv_client::{
-    request::codec::TxnApiV1, Config, Key, TransactionClient as Client, TransactionOptions,
-    Value,
+    request::codec::TxnApiV1, Config, Key, TransactionClient as Client, TransactionOptions, Value,
 };
 
 #[tokio::main]

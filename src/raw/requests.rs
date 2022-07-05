@@ -11,15 +11,15 @@ use tikv_client_store::Request;
 
 use crate::{
     collect_first,
-    ColumnFamily,
-    Key,
-    KvPair,
     pd::PdClient,
     request::{
-        codec::RequestCodec, Collect, CollectSingle, DefaultProcessor, KvRequest,
-        Merge, plan::ResponseWithShard, Process, Shardable, SingleKey,
+        codec::RequestCodec, plan::ResponseWithShard, Collect, CollectSingle, DefaultProcessor,
+        KvRequest, Merge, Process, Shardable, SingleKey,
     },
-    Result, store::{RegionStore, store_stream_for_keys, store_stream_for_ranges}, transaction::HasLocks, util::iter::FlatMapOkIterExt, Value,
+    store::{store_stream_for_keys, store_stream_for_ranges, RegionStore},
+    transaction::HasLocks,
+    util::iter::FlatMapOkIterExt,
+    ColumnFamily, Key, KvPair, Result, Value,
 };
 
 use super::RawRpcRequest;
@@ -371,7 +371,7 @@ impl Process<kvrpcpb::RawCasResponse> for DefaultProcessor {
 }
 
 type RawCoprocessorRequestDataBuilder =
-Arc<dyn Fn(metapb::Region, Vec<kvrpcpb::KeyRange>) -> Vec<u8> + Send + Sync>;
+    Arc<dyn Fn(metapb::Region, Vec<kvrpcpb::KeyRange>) -> Vec<u8> + Send + Sync>;
 
 pub fn new_raw_coprocessor_request(
     copr_name: String,
@@ -441,8 +441,8 @@ impl Shardable for RawCoprocessorRequest {
 
 #[allow(clippy::type_complexity)]
 impl
-Process<Vec<Result<ResponseWithShard<kvrpcpb::RawCoprocessorResponse, Vec<kvrpcpb::KeyRange>>>>>
-for DefaultProcessor
+    Process<Vec<Result<ResponseWithShard<kvrpcpb::RawCoprocessorResponse, Vec<kvrpcpb::KeyRange>>>>>
+    for DefaultProcessor
 {
     type Out = Vec<(Vec<u8>, Vec<Range<Key>>)>;
 
@@ -522,9 +522,9 @@ mod test {
 
     use crate::{
         backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
-        Key,
         mock::{MockKvClient, MockPdClient},
         request::Plan,
+        Key,
     };
 
     use super::*;
