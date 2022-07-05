@@ -1,3 +1,4 @@
+use std::ops::{Deref, DerefMut};
 use tikv_client_common::Error;
 use tikv_client_proto::{kvrpcpb, metapb::Region};
 
@@ -14,7 +15,7 @@ const RAW_MODE_MAX_KEY: Prefix = [RAW_MODE_PREFIX + 1, 0, 0, 0];
 const TXN_MODE_MIN_KEY: Prefix = [TXN_MODE_PREFIX, 0, 0, 0];
 const TXN_MODE_MAX_KEY: Prefix = [TXN_MODE_PREFIX + 1, 0, 0, 0];
 
-const MAX_KEYSPACE_ID: KeySpaceId = [0xff, 0xff, 0xff];
+const MAX_KEYSPACE_ID: KeySpaceId = KeySpaceId([0xff, 0xff, 0xff]);
 
 pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
     fn encode_key(&self, key: Vec<u8>) -> Vec<u8> {
@@ -150,7 +151,22 @@ impl KeyMode {
 
 type Prefix = [u8; KEYSPACE_PREFIX_LEN];
 
-type KeySpaceId = [u8; 3];
+#[derive(Clone,Copy,Default,PartialEq)]
+pub struct KeySpaceId([u8; 3]);
+
+impl Deref for KeySpaceId {
+    type Target = [u8; 3];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for KeySpaceId {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 #[derive(Copy, Clone)]
 struct KeySpaceCodec {
