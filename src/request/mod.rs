@@ -1,7 +1,5 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::borrow::Cow;
-
 use async_trait::async_trait;
 use derive_new::new;
 
@@ -35,7 +33,7 @@ pub trait KvRequest<C>: Request + Sized + Clone + Sync + Send + 'static {
     type Response: HasKeyErrors + HasLocks + HasRegionError + Clone + Send + 'static;
 
     fn encode_request(self, _codec: &C) -> Self {
-        self.clone()
+        self
     }
 
     fn decode_response(&self, _codec: &C, resp: Self::Response) -> crate::Result<Self::Response> {
@@ -80,7 +78,7 @@ macro_rules! impl_kv_request_for_batch_get {
                 &self,
                 codec: &C,
                 mut resp: Self::Response,
-            ) -> crate::Result<Self::Response> {
+            ) -> $crate::Result<Self::Response> {
                 *resp.mut_pairs() = codec.decode_pairs(resp.take_pairs())?;
 
                 Ok(resp)
@@ -112,7 +110,7 @@ macro_rules! impl_kv_request_for_scan_op {
                 &self,
                 codec: &C,
                 mut resp: Self::Response,
-            ) -> crate::Result<Self::Response> {
+            ) -> $crate::Result<Self::Response> {
                 paste::paste! {
                     let pairs = resp.[<take_ $pairs>]();
 

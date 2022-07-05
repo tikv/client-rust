@@ -1,5 +1,5 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
-use std::{borrow::Cow, collections::HashMap, iter, sync::Arc};
+use std::{collections::HashMap, iter, sync::Arc};
 
 use either::Either;
 use futures::stream::BoxStream;
@@ -9,7 +9,6 @@ use tikv_client_proto::{
     kvrpcpb::{self, TxnHeartBeatResponse},
     pdpb::Timestamp,
 };
-use tikv_client_store::Request;
 
 use crate::{
     collect_first,
@@ -21,7 +20,6 @@ use crate::{
     store::{store_stream_for_keys, store_stream_for_range_by_start_key, RegionStore},
     timestamp::TimestampExt,
     transaction::HasLocks,
-    transaction_lowering::PessimisticLock,
     util::iter::FlatMapOkIterExt,
     Key, KvPair, Result, Value,
 };

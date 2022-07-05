@@ -1,6 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{any::Any, borrow::Cow, ops::Range, sync::Arc};
+use std::{any::Any, ops::Range, sync::Arc};
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;

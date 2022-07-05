@@ -49,10 +49,9 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
     }
 
     fn decode_keys(&self, keys: Vec<Vec<u8>>) -> Result<Vec<Vec<u8>>> {
-        Ok(keys
-            .into_iter()
+        keys.into_iter()
             .map(|key| self.decode_key(key))
-            .collect::<Result<Vec<Vec<u8>>>>()?)
+            .collect::<Result<Vec<Vec<u8>>>>()
     }
 
     fn decode_pairs(&self, mut pairs: Vec<kvrpcpb::KvPair>) -> Result<Vec<kvrpcpb::KvPair>> {
@@ -167,16 +166,15 @@ impl From<KeySpaceCodec> for Prefix {
 
 impl RequestCodec for KeySpaceCodec {
     fn encode_key(&self, mut key: Vec<u8>) -> Vec<u8> {
-        let this = self.clone();
         let mut encoded = Vec::with_capacity(key.len() + KEYSPACE_PREFIX_LEN);
-        let prefix: Prefix = this.into();
+        let prefix: Prefix = (*self).into();
         encoded.extend_from_slice(&prefix);
         encoded.append(&mut key);
         encoded
     }
 
     fn decode_key(&self, mut key: Vec<u8>) -> Result<Vec<u8>> {
-        let prefix: Prefix = self.clone().into();
+        let prefix: Prefix = (*self).into();
 
         if !key.starts_with(&prefix) {
             return Err(Error::CorruptedKeyspace {
