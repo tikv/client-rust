@@ -21,11 +21,26 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         key
     }
 
-    fn encode_keys(&self, keys: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
-        keys
+    fn encode_mutations(&self, mutations: Vec<kvrpcpb::Mutation>) -> Vec<kvrpcpb::Mutation> {
+        mutations
+            .into_iter()
+            .map(|mut m| {
+                let key = m.take_key();
+                m.set_key(self.encode_key(key));
+                m
+            })
+            .collect()
     }
 
-    fn encode_pairs(&self, pairs: Vec<kvrpcpb::KvPair>) -> Vec<kvrpcpb::KvPair> {
+    fn encode_keys(&self, keys: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+        keys.into_iter().map(|key| self.encode_key(key)).collect()
+    }
+
+    fn encode_pairs(&self, mut pairs: Vec<kvrpcpb::KvPair>) -> Vec<kvrpcpb::KvPair> {
+        for pair in pairs.iter_mut() {
+            *pair.mut_key() = self.encode_key(pair.take_key());
+        }
+
         pairs
     }
 
@@ -33,7 +48,18 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         Ok(key)
     }
 
-    fn decode_pairs(&self, pairs: Vec<kvrpcpb::KvPair>) -> Result<Vec<kvrpcpb::KvPair>> {
+    fn decode_keys(&self, keys: Vec<Vec<u8>>) -> Result<Vec<Vec<u8>>> {
+        Ok(keys
+            .into_iter()
+            .map(|key| self.decode_key(key))
+            .collect::<Result<Vec<Vec<u8>>>>()?)
+    }
+
+    fn decode_pairs(&self, mut pairs: Vec<kvrpcpb::KvPair>) -> Result<Vec<kvrpcpb::KvPair>> {
+        for pair in pairs.iter_mut() {
+            *pair.mut_key() = self.decode_key(pair.take_key())?;
+        }
+
         Ok(pairs)
     }
 
@@ -41,7 +67,13 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         (start, end)
     }
 
-    fn encode_ranges(&self, ranges: Vec<kvrpcpb::KeyRange>) -> Vec<kvrpcpb::KeyRange> {
+    fn encode_ranges(&self, mut ranges: Vec<kvrpcpb::KeyRange>) -> Vec<kvrpcpb::KeyRange> {
+        for range in ranges.iter_mut() {
+            let (start, end) = self.encode_range(range.take_start_key(), range.take_end_key());
+            *range.mut_start_key() = start;
+            *range.mut_end_key() = end;
+        }
+
         ranges
     }
 
@@ -143,18 +175,6 @@ impl RequestCodec for KeySpaceCodec {
         encoded
     }
 
-    fn encode_keys(&self, mut keys: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
-        keys.into_iter().map(|key| self.encode_key(key)).collect()
-    }
-
-    fn encode_pairs(&self, mut pairs: Vec<kvrpcpb::KvPair>) -> Vec<kvrpcpb::KvPair> {
-        for pair in pairs.iter_mut() {
-            *pair.mut_key() = self.encode_key(pair.take_key());
-        }
-
-        pairs
-    }
-
     fn decode_key(&self, mut key: Vec<u8>) -> Result<Vec<u8>> {
         let prefix: Prefix = self.clone().into();
 
@@ -169,30 +189,12 @@ impl RequestCodec for KeySpaceCodec {
         Ok(key.split_off(KEYSPACE_PREFIX_LEN))
     }
 
-    fn decode_pairs(&self, mut pairs: Vec<kvrpcpb::KvPair>) -> Result<Vec<kvrpcpb::KvPair>> {
-        for pair in pairs.iter_mut() {
-            *pair.mut_key() = self.decode_key(pair.take_key())?;
-        }
-
-        Ok(pairs)
-    }
-
     fn encode_range(&self, start: Vec<u8>, end: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
         if self.id == MAX_KEYSPACE_ID {
             (self.encode_key(start), self.mode.max_key())
         } else {
             (self.encode_key(start), self.encode_key(end))
         }
-    }
-
-    fn encode_ranges(&self, mut ranges: Vec<kvrpcpb::KeyRange>) -> Vec<kvrpcpb::KeyRange> {
-        for range in ranges.iter_mut() {
-            let (start, end) = self.encode_range(range.take_start_key(), range.take_end_key());
-            *range.mut_start_key() = start;
-            *range.mut_end_key() = end;
-        }
-
-        ranges
     }
 
     fn encode_pd_query(&self, key: Vec<u8>) -> Vec<u8> {

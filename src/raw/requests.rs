@@ -122,16 +122,10 @@ pub fn new_raw_batch_put_request(
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchPutRequest {
     type Response = kvrpcpb::RawBatchPutResponse;
 
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        if codec.is_plain() {
-            return Cow::Borrowed(self);
-        }
+    fn encode_request(mut self, codec: &C) -> Self {
+        *self.mut_pairs() = codec.encode_pairs(self.take_pairs());
 
-        let mut req = self.clone();
-
-        *req.mut_pairs() = codec.encode_pairs(req.take_pairs());
-
-        Cow::Owned(req)
+        self
     }
 }
 
@@ -193,16 +187,10 @@ pub fn new_raw_batch_delete_request(
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchDeleteRequest {
     type Response = kvrpcpb::RawBatchDeleteResponse;
 
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        if codec.is_plain() {
-            return Cow::Borrowed(self);
-        }
+    fn encode_request(mut self, codec: &C) -> Self {
+        *self.mut_keys() = codec.encode_keys(self.take_keys());
 
-        let mut req = self.clone();
-
-        *req.mut_keys() = codec.encode_keys(req.take_keys());
-
-        Cow::Owned(req)
+        self
     }
 }
 
@@ -224,18 +212,13 @@ pub fn new_raw_delete_range_request(
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawDeleteRangeRequest {
     type Response = kvrpcpb::RawDeleteRangeResponse;
 
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        if codec.is_plain() {
-            return Cow::Borrowed(self);
-        }
+    fn encode_request(mut self, codec: &C) -> Self {
+        let (start, end) = (self.take_start_key(), self.take_end_key());
 
-        let mut req = self.clone();
+        self.set_start_key(codec.encode_key(start));
+        self.set_end_key(codec.encode_key(end));
 
-        let (start, end) = (req.take_start_key(), req.take_end_key());
-        *req.mut_start_key() = codec.encode_key(start);
-        *req.mut_end_key() = codec.encode_key(end);
-
-        Cow::Owned(req)
+        self
     }
 }
 
@@ -290,16 +273,10 @@ pub fn new_raw_batch_scan_request(
 impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchScanRequest {
     type Response = kvrpcpb::RawBatchScanResponse;
 
-    fn encode_request(&self, codec: &C) -> Cow<Self> {
-        if codec.is_plain() {
-            return Cow::Borrowed(self);
-        }
+    fn encode_request(mut self, codec: &C) -> Self {
+        *self.mut_ranges() = codec.encode_ranges(self.take_ranges());
 
-        let mut req = self.clone();
-
-        *req.mut_ranges() = codec.encode_ranges(req.take_ranges());
-
-        Cow::Owned(req)
+        self
     }
 }
 

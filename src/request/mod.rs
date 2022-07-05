@@ -33,9 +33,11 @@ pub mod codec;
 pub trait KvRequest<C>: Request + Sized + Clone + Sync + Send + 'static {
     /// The expected response to the request.
     type Response: HasKeyErrors + HasLocks + HasRegionError + Clone + Send + 'static;
-    fn encode_request(&self, _codec: &C) -> Cow<Self> {
-        Cow::Borrowed(self)
+
+    fn encode_request(self, _codec: &C) -> Self {
+        self.clone()
     }
+
     fn decode_response(&self, _codec: &C, resp: Self::Response) -> crate::Result<Self::Response> {
         Ok(resp)
     }
@@ -50,15 +52,10 @@ macro_rules! impl_kv_request_for_single_key_op {
         {
             type Response = $resp;
 
-            fn encode_request(&self, codec: &C) -> Cow<Self> {
-                if codec.is_plain() {
-                    return Cow::Borrowed(self);
-                }
-                let mut req = self.clone();
+            fn encode_request(mut self, codec: &C) -> Self {
+                *self.mut_key() = codec.encode_key(self.take_key());
 
-                *req.mut_key() = codec.encode_key(req.take_key());
-
-                Cow::Owned(req)
+                self
             }
         }
     };
@@ -73,15 +70,10 @@ macro_rules! impl_kv_request_for_batch_get {
         {
             type Response = $resp;
 
-            fn encode_request(&self, codec: &C) -> Cow<Self> {
-                if codec.is_plain() {
-                    return Cow::Borrowed(self);
-                }
+            fn encode_request(mut self, codec: &C) -> Self {
+                *self.mut_keys() = codec.encode_keys(self.take_keys());
 
-                let mut req = self.clone();
-                *req.mut_keys() = codec.encode_keys(req.take_keys());
-
-                Cow::Owned(req)
+                self
             }
 
             fn decode_response(
@@ -89,10 +81,6 @@ macro_rules! impl_kv_request_for_batch_get {
                 codec: &C,
                 mut resp: Self::Response,
             ) -> crate::Result<Self::Response> {
-                if codec.is_plain() {
-                    return Ok(resp);
-                }
-
                 *resp.mut_pairs() = codec.decode_pairs(resp.take_pairs())?;
 
                 Ok(resp)
@@ -110,17 +98,14 @@ macro_rules! impl_kv_request_for_scan_op {
         {
             type Response = $resp;
 
-            fn encode_request(&self, codec: &C) -> Cow<Self> {
-                if codec.is_plain() {
-                    return Cow::Borrowed(self);
-                }
-                let mut req = self.clone();
+            fn encode_request(mut self, codec: &C) -> Self {
                 let (start, end) =
-                    codec.encode_range(req.take_start_key().into(), req.take_end_key().into());
+                    codec.encode_range(self.take_start_key().into(), self.take_end_key().into());
 
-                *req.mut_start_key() = start.into();
-                *req.mut_end_key() = end.into();
-                Cow::Owned(req)
+                self.set_start_key(start);
+                self.set_end_key(end);
+
+                self
             }
 
             fn decode_response(
@@ -128,10 +113,6 @@ macro_rules! impl_kv_request_for_scan_op {
                 codec: &C,
                 mut resp: Self::Response,
             ) -> crate::Result<Self::Response> {
-                if codec.is_plain() {
-                    return Ok(resp);
-                }
-
                 paste::paste! {
                     let pairs = resp.[<take_ $pairs>]();
 
@@ -245,8 +226,8 @@ mod test {
         impl<C: RequestCodec> KvRequest<C> for MockKvRequest {
             type Response = MockRpcResponse;
 
-            fn encode_request(&self, _codec: &C) -> Cow<Self> {
-                Cow::Borrowed(self)
+            fn encode_request(self, _codec: &C) -> Self {
+                self
             }
 
             fn decode_response(&self, _codec: &C, resp: Self::Response) -> Result<Self::Response> {

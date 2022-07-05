@@ -9,6 +9,7 @@ use tikv_client_proto::{
     kvrpcpb::{self, TxnHeartBeatResponse},
     pdpb::Timestamp,
 };
+use tikv_client_store::Request;
 
 use crate::{
     collect_first,
@@ -20,6 +21,7 @@ use crate::{
     store::{store_stream_for_keys, store_stream_for_range_by_start_key, RegionStore},
     timestamp::TimestampExt,
     transaction::HasLocks,
+    transaction_lowering::PessimisticLock,
     util::iter::FlatMapOkIterExt,
     Key, KvPair, Result, Value,
 };
@@ -161,7 +163,21 @@ pub fn new_resolve_lock_request(
 // on its region errors (in the Plan level). The region error must be manually
 // handled (in the upper level).
 
-impl_kv_request_for_single_key_op!(kvrpcpb::ResolveLockRequest, kvrpcpb::ResolveLockResponse);
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ResolveLockRequest {
+    type Response = kvrpcpb::ResolveLockResponse;
+
+    fn encode_request(mut self, codec: &C) -> Self {
+        *self.mut_keys() = codec.encode_keys(self.take_keys());
+
+        self
+    }
+
+    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
+        decode_key_error(codec, resp.mut_error())?;
+
+        Ok(resp)
+    }
+}
 
 pub fn new_cleanup_request(key: Vec<u8>, start_version: u64) -> kvrpcpb::CleanupRequest {
     let mut req = kvrpcpb::CleanupRequest::default();
@@ -219,7 +235,21 @@ pub fn new_pessimistic_prewrite_request(
     req
 }
 
-impl_kv_request_for_single_key_op!(kvrpcpb::PrewriteRequest, kvrpcpb::PrewriteResponse);
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PrewriteRequest {
+    type Response = kvrpcpb::PrewriteResponse;
+
+    fn encode_request(mut self, codec: &C) -> Self {
+        *self.mut_mutations() = codec.encode_mutations(self.take_mutations());
+
+        self
+    }
+
+    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
+        decode_key_errors(codec, resp.mut_errors())?;
+
+        Ok(resp)
+    }
+}
 
 impl Shardable for kvrpcpb::PrewriteRequest {
     type Shard = Vec<kvrpcpb::Mutation>;
@@ -264,7 +294,21 @@ pub fn new_commit_request(
     req
 }
 
-impl_kv_request_for_single_key_op!(kvrpcpb::CommitRequest, kvrpcpb::CommitResponse);
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CommitRequest {
+    type Response = kvrpcpb::CommitResponse;
+
+    fn encode_request(mut self, codec: &C) -> Self {
+        *self.mut_keys() = codec.encode_keys(self.take_keys());
+
+        self
+    }
+
+    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
+        decode_key_error(codec, resp.mut_error())?;
+
+        Ok(resp)
+    }
+}
 shardable_keys!(kvrpcpb::CommitRequest);
 
 pub fn new_batch_rollback_request(
@@ -278,10 +322,22 @@ pub fn new_batch_rollback_request(
     req
 }
 
-impl_kv_request_for_single_key_op!(
-    kvrpcpb::BatchRollbackRequest,
-    kvrpcpb::BatchRollbackResponse
-);
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::BatchRollbackRequest {
+    type Response = kvrpcpb::BatchRollbackResponse;
+
+    fn encode_request(mut self, codec: &C) -> Self {
+        *self.mut_keys() = codec.encode_keys(self.take_keys());
+
+        self
+    }
+
+    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
+        decode_key_error(codec, resp.mut_error())?;
+
+        Ok(resp)
+    }
+}
+
 shardable_keys!(kvrpcpb::BatchRollbackRequest);
 
 pub fn new_pessimistic_rollback_request(
@@ -297,10 +353,22 @@ pub fn new_pessimistic_rollback_request(
     req
 }
 
-impl_kv_request_for_single_key_op!(
-    kvrpcpb::PessimisticRollbackRequest,
-    kvrpcpb::PessimisticRollbackResponse
-);
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PessimisticRollbackRequest {
+    type Response = kvrpcpb::PessimisticRollbackResponse;
+
+    fn encode_request(mut self, codec: &C) -> Self {
+        *self.mut_keys() = codec.encode_keys(self.take_keys());
+
+        self
+    }
+
+    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
+        decode_key_errors(codec, resp.mut_errors())?;
+
+        Ok(resp)
+    }
+}
+
 shardable_keys!(kvrpcpb::PessimisticRollbackRequest);
 
 pub fn new_pessimistic_lock_request(
@@ -328,10 +396,22 @@ pub fn new_pessimistic_lock_request(
     req
 }
 
-impl_kv_request_for_single_key_op!(
-    kvrpcpb::PessimisticLockRequest,
-    kvrpcpb::PessimisticLockResponse
-);
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PessimisticLockRequest {
+    type Response = kvrpcpb::PessimisticLockResponse;
+
+    fn encode_request(mut self, codec: &C) -> Self {
+        *self.mut_mutations() = codec.encode_mutations(self.take_mutations());
+        *self.mut_primary_lock() = codec.encode_key(self.take_primary_lock());
+
+        self
+    }
+
+    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
+        decode_key_errors(codec, resp.mut_errors())?;
+
+        Ok(resp)
+    }
+}
 
 impl Shardable for kvrpcpb::PessimisticLockRequest {
     type Shard = Vec<kvrpcpb::Mutation>;
@@ -427,7 +507,23 @@ pub fn new_scan_lock_request(
     req
 }
 
-impl_kv_request_for_single_key_op!(kvrpcpb::ScanLockRequest, kvrpcpb::ScanLockResponse);
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ScanLockRequest {
+    type Response = kvrpcpb::ScanLockResponse;
+
+    fn encode_request(mut self, codec: &C) -> Self {
+        let (start, end) = codec.encode_range(self.take_start_key(), self.take_end_key());
+        self.set_start_key(start);
+        self.set_end_key(end);
+        self
+    }
+
+    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
+        decode_key_error(codec, resp.mut_error())?;
+        decode_lock_infos(codec, resp.mut_locks())?;
+
+        Ok(resp)
+    }
+}
 
 impl Shardable for kvrpcpb::ScanLockRequest {
     type Shard = Vec<u8>;
@@ -469,7 +565,20 @@ pub fn new_heart_beat_request(
     req
 }
 
-impl_kv_request_for_single_key_op!(kvrpcpb::TxnHeartBeatRequest, kvrpcpb::TxnHeartBeatResponse);
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::TxnHeartBeatRequest {
+    type Response = kvrpcpb::TxnHeartBeatResponse;
+
+    fn encode_request(mut self, codec: &C) -> Self {
+        *self.mut_primary_lock() = codec.encode_key(self.take_primary_lock());
+
+        self
+    }
+
+    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
+        decode_key_error(codec, resp.mut_error())?;
+        Ok(resp)
+    }
+}
 
 impl Shardable for kvrpcpb::TxnHeartBeatRequest {
     type Shard = Vec<Vec<u8>>;
@@ -505,10 +614,20 @@ impl Process<kvrpcpb::TxnHeartBeatResponse> for DefaultProcessor {
     }
 }
 
-impl_kv_request_for_single_key_op!(
-    kvrpcpb::CheckTxnStatusRequest,
-    kvrpcpb::CheckTxnStatusResponse
-);
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CheckTxnStatusRequest {
+    type Response = kvrpcpb::CheckTxnStatusResponse;
+
+    fn encode_request(mut self, codec: &C) -> Self {
+        *self.mut_primary_key() = codec.encode_key(self.take_primary_key());
+        self
+    }
+
+    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
+        decode_key_error(codec, resp.mut_error())?;
+        decode_lock_info(codec, resp.mut_lock_info())?;
+        Ok(resp)
+    }
+}
 
 impl Shardable for kvrpcpb::CheckTxnStatusRequest {
     type Shard = Vec<Vec<u8>>;
@@ -575,10 +694,21 @@ impl From<(u64, u64, Option<kvrpcpb::LockInfo>)> for TransactionStatusKind {
     }
 }
 
-impl_kv_request_for_single_key_op!(
-    kvrpcpb::CheckSecondaryLocksRequest,
-    kvrpcpb::CheckSecondaryLocksResponse
-);
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CheckSecondaryLocksRequest {
+    type Response = kvrpcpb::CheckSecondaryLocksResponse;
+
+    fn encode_request(mut self, codec: &C) -> Self {
+        *self.mut_keys() = codec.encode_keys(self.take_keys());
+        self
+    }
+
+    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
+        decode_key_error(codec, resp.mut_error())?;
+        decode_lock_infos(codec, resp.mut_locks())?;
+        Ok(resp)
+    }
+}
+
 shardable_keys!(kvrpcpb::CheckSecondaryLocksRequest);
 
 impl Merge<kvrpcpb::CheckSecondaryLocksResponse> for Collect {
@@ -654,6 +784,81 @@ impl HasLocks for kvrpcpb::PrewriteResponse {
             .filter_map(|error| error.locked.take())
             .collect()
     }
+}
+
+pub(crate) fn decode_lock_info<C: RequestCodec>(
+    codec: &C,
+    err: &mut kvrpcpb::LockInfo,
+) -> Result<()> {
+    *err.mut_primary_lock() = codec.decode_key(err.take_primary_lock())?;
+    *err.mut_key() = codec.decode_key(err.take_key())?;
+    *err.mut_secondaries() = codec.decode_keys(err.take_secondaries())?;
+
+    Ok(())
+}
+
+pub(crate) fn decode_lock_infos<C: RequestCodec>(
+    codec: &C,
+    errs: &mut [kvrpcpb::LockInfo],
+) -> Result<()> {
+    for err in errs.iter_mut() {
+        decode_lock_info(codec, err)?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn decode_key_errors<C: RequestCodec>(
+    codec: &C,
+    errs: &mut [kvrpcpb::KeyError],
+) -> Result<()> {
+    for err in errs.iter_mut() {
+        decode_key_error(codec, err)?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn decode_key_error<C: RequestCodec>(
+    codec: &C,
+    err: &mut kvrpcpb::KeyError,
+) -> Result<()> {
+    if err.has_locked() {
+        let locked = err.mut_locked();
+        decode_lock_info(codec, locked)?;
+    }
+
+    if err.has_conflict() {
+        let conflict = err.mut_conflict();
+        *conflict.mut_key() = codec.decode_key(conflict.take_key())?;
+        *conflict.mut_primary() = codec.decode_key(conflict.take_primary())?;
+    }
+
+    if err.has_already_exist() {
+        let already_exist = err.mut_already_exist();
+        *already_exist.mut_key() = codec.decode_key(already_exist.take_key())?;
+    }
+
+    // We do not decode key in `Deadlock` since there is no use for the key right now in client side.
+    // All we need is the key hash to detect deadlock.
+    // TODO: while we check the keys against the deadlock key hash, we need to encode the key.
+
+    if err.has_commit_ts_expired() {
+        let commit_ts_expired = err.mut_commit_ts_expired();
+        *commit_ts_expired.mut_key() = codec.decode_key(commit_ts_expired.take_key())?;
+    }
+
+    if err.has_txn_not_found() {
+        let txn_not_found = err.mut_txn_not_found();
+        *txn_not_found.mut_primary_key() = codec.decode_key(txn_not_found.take_primary_key())?;
+    }
+
+    if err.has_assertion_failed() {
+        let assertion_failed = err.mut_assertion_failed();
+        *assertion_failed.mut_key() = codec.decode_key(assertion_failed.take_key())?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
