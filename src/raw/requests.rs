@@ -96,7 +96,7 @@ pub fn new_raw_put_request(
     req
 }
 
-impl_kv_request_for_single_key_op!(kvrpcpb::RawPutRequest, kvrpcpb::RawPutResponse);
+impl_kv_request!(kvrpcpb::RawPutRequest, kvrpcpb::RawPutResponse; encode=key);
 shardable_key!(kvrpcpb::RawPutRequest);
 collect_first!(kvrpcpb::RawPutResponse);
 

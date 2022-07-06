@@ -137,7 +137,7 @@ impl<C: RequestCodec, R: RetryClientTrait> RegionCache<C, R> {
             .clone()
             .get_region(self.codec.encode_pd_query(key.into()))
             .await?;
-        r.region = self.codec.decode_region(r.region)?;
+        self.codec.decode_region(&mut r.region)?;
         self.add_region(r.clone()).await;
         Ok(r)
     }
@@ -152,7 +152,7 @@ impl<C: RequestCodec, R: RetryClientTrait> RegionCache<C, R> {
         }
 
         let mut region = self.inner_client.clone().get_region_by_id(id).await?;
-        region.region = self.codec.decode_region(region.region)?;
+        self.codec.decode_region(&mut region.region)?;
         self.add_region(region.clone()).await;
 
         // notify others

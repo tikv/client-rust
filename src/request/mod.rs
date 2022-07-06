@@ -42,6 +42,35 @@ pub trait KvRequest<C>: Request + Sized + Clone + Sync + Send + 'static {
 }
 
 #[macro_export]
+macro_rules! impl_kv_request {
+    ($req:ty, $resp:ty; encode=$($i:ident),*) => {
+        impl<C> KvRequest<C> for $req
+        where C: RequestCodec
+        {
+            type Response = $resp;
+
+            fn encode_request(mut self, codec: &C) -> Self {
+                $(
+                    paste::paste! {
+                        *self.[<mut_ $i>]() = codec.[<encode_ $i>](self.[<take_ $i>]());
+                    }
+
+                    self
+                )*
+            }
+
+            fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
+                if resp.has_region_error() {
+                    codec.decode_region_error(resp.mut_region_error())?;
+                }
+
+                Ok(resp)
+            }
+        }
+    };
+}
+
+#[macro_export]
 macro_rules! impl_kv_request_for_single_key_op {
     ($req: ty, $resp: ty) => {
         impl<C> KvRequest<C> for $req
@@ -79,7 +108,7 @@ macro_rules! impl_kv_request_for_batch_get {
                 codec: &C,
                 mut resp: Self::Response,
             ) -> $crate::Result<Self::Response> {
-                *resp.mut_pairs() = codec.decode_pairs(resp.take_pairs())?;
+                codec.decode_pairs(resp.mut_pairs())?;
 
                 Ok(resp)
             }
@@ -112,9 +141,9 @@ macro_rules! impl_kv_request_for_scan_op {
                 mut resp: Self::Response,
             ) -> $crate::Result<Self::Response> {
                 paste::paste! {
-                    let pairs = resp.[<take_ $pairs>]();
+                    let pairs = resp.[<mut_ $pairs>]();
 
-                    *resp.[<mut_ $pairs>]() = codec.encode_pairs(pairs);
+                    codec.decode_pairs(pairs)?;
 
                     Ok(resp)
                 }

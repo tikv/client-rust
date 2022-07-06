@@ -1,6 +1,7 @@
+use core::intrinsics::copy;
 use std::ops::{Deref, DerefMut};
 use tikv_client_common::Error;
-use tikv_client_proto::{kvrpcpb, metapb::Region};
+use tikv_client_proto::{errorpb, kvrpcpb, metapb::Region};
 
 use crate::{kv::codec::decode_bytes_in_place, Key, Result};
 
@@ -45,22 +46,85 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         pairs
     }
 
-    fn decode_key(&self, key: Vec<u8>) -> Result<Vec<u8>> {
-        Ok(key)
+    fn decode_key(&self, _key: &mut Vec<u8>) -> Result<()> {
+        Ok(())
     }
 
-    fn decode_keys(&self, keys: Vec<Vec<u8>>) -> Result<Vec<Vec<u8>>> {
-        keys.into_iter()
-            .map(|key| self.decode_key(key))
-            .collect::<Result<Vec<Vec<u8>>>>()
-    }
-
-    fn decode_pairs(&self, mut pairs: Vec<kvrpcpb::KvPair>) -> Result<Vec<kvrpcpb::KvPair>> {
-        for pair in pairs.iter_mut() {
-            *pair.mut_key() = self.decode_key(pair.take_key())?;
+    fn decode_keys(&self, keys: &mut [Vec<u8>]) -> Result<()> {
+        for key in keys.iter_mut() {
+            self.decode_key(key)?;
         }
 
-        Ok(pairs)
+        Ok(())
+    }
+
+    fn decode_key_error(&self, err: &mut kvrpcpb::KeyError) -> Result<()> {
+        if err.has_locked() {
+            let locked = err.mut_locked();
+            self.decode_lock(locked)?;
+        }
+
+        if err.has_conflict() {
+            let conflict = err.mut_conflict();
+            self.decode_key(conflict.mut_key())?;
+            self.decode_key(conflict.mut_primary())?;
+        }
+
+        if err.has_already_exist() {
+            let already_exist = err.mut_already_exist();
+            self.decode_key(already_exist.mut_key())?;
+        }
+
+        // We do not decode key in `Deadlock` since there is no use for the key right now in client side.
+        // All we need is the key hash to detect deadlock.
+        // TODO: while we check the keys against the deadlock key hash, we need to encode the key.
+
+        if err.has_commit_ts_expired() {
+            let commit_ts_expired = err.mut_commit_ts_expired();
+            self.decode_key(commit_ts_expired.mut_key())?;
+        }
+
+        if err.has_txn_not_found() {
+            let txn_not_found = err.mut_txn_not_found();
+            self.decode_key(txn_not_found.mut_primary_key())?;
+        }
+
+        if err.has_assertion_failed() {
+            let assertion_failed = err.mut_assertion_failed();
+            self.decode_key(assertion_failed.mut_key())?;
+        }
+
+        Ok(())
+    }
+
+    fn decode_key_errors(&self, errors: &mut [kvrpcpb::KeyError]) -> Result<()> {
+        for err in errors.iter_mut() {
+            self.decode_key_error(err)?;
+        }
+
+        Ok(())
+    }
+
+    fn decode_lock(&self, lock: &mut kvrpcpb::LockInfo) -> Result<()> {
+        self.decode_key(lock.mut_primary_lock())?;
+        self.decode_key(lock.mut_key())?;
+        self.decode_keys(lock.mut_secondaries())
+    }
+
+    fn decode_locks(&self, locks: &mut [kvrpcpb::LockInfo]) -> Result<()> {
+        for lock in locks.iter_mut() {
+            self.decode_lock(lock)?;
+        }
+
+        Ok(())
+    }
+
+    fn decode_pairs(&self, pairs: &mut [kvrpcpb::KvPair]) -> Result<()> {
+        for pair in pairs.iter_mut() {
+            self.decode_key(pair.mut_key())?;
+        }
+
+        Ok(())
     }
 
     fn encode_range(&self, start: Vec<u8>, end: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
@@ -81,8 +145,22 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         key
     }
 
-    fn decode_region(&self, region: Region) -> Result<Region> {
-        Ok(region)
+    fn decode_region(&self, _region: &mut Region) -> Result<()> {
+        Ok(())
+    }
+
+    fn decode_regions(&self, regions: &mut [Region]) -> Result<()> {
+        for region in regions.iter_mut() {
+            self.decode_region(region)?;
+        }
+        Ok(())
+    }
+
+    fn decode_region_error(&self, err: &mut errorpb::Error) -> Result<()> {
+        if err.has_epoch_not_match() {
+            self.decode_regions(err.mut_epoch_not_match().mut_current_regions())?;
+        }
+        Ok(())
     }
 
     fn is_plain(&self) -> bool {
@@ -107,10 +185,10 @@ impl RequestCodec for TxnApiV1 {
         Key::from(key).to_encoded().into()
     }
 
-    fn decode_region(&self, mut region: Region) -> Result<Region> {
+    fn decode_region(&self, region: &mut Region) -> Result<()> {
         decode_bytes_in_place(region.mut_start_key(), false)?;
         decode_bytes_in_place(region.mut_end_key(), false)?;
-        Ok(region)
+        Ok(())
     }
 }
 
@@ -151,7 +229,7 @@ impl KeyMode {
 
 type Prefix = [u8; KEYSPACE_PREFIX_LEN];
 
-#[derive(Clone, Copy, Default, PartialEq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct KeySpaceId([u8; 3]);
 
 impl Deref for KeySpaceId {
@@ -189,18 +267,27 @@ impl RequestCodec for KeySpaceCodec {
         encoded
     }
 
-    fn decode_key(&self, mut key: Vec<u8>) -> Result<Vec<u8>> {
+    fn decode_key(&self, key: &mut Vec<u8>) -> Result<()> {
         let prefix: Prefix = (*self).into();
 
         if !key.starts_with(&prefix) {
             return Err(Error::CorruptedKeyspace {
                 expected: prefix.to_vec(),
                 actual: key[..KEYSPACE_PREFIX_LEN].to_vec(),
-                key,
+                key: key.to_vec(),
             });
         }
 
-        Ok(key.split_off(KEYSPACE_PREFIX_LEN))
+        unsafe {
+            let trimmed_len = key.len() - KEYSPACE_PREFIX_LEN;
+            let ptr = key.as_mut_ptr();
+            let trimmed = key[KEYSPACE_PREFIX_LEN..].as_mut_ptr();
+
+            copy(trimmed, ptr, trimmed_len);
+
+            key.set_len(trimmed_len);
+        }
+        Ok(())
     }
 
     fn encode_range(&self, start: Vec<u8>, end: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
@@ -215,7 +302,7 @@ impl RequestCodec for KeySpaceCodec {
         Key::from(self.encode_key(key)).to_encoded().into()
     }
 
-    fn decode_region(&self, mut region: Region) -> Result<Region> {
+    fn decode_region(&self, region: &mut Region) -> Result<()> {
         decode_bytes_in_place(region.mut_start_key(), false)?;
         decode_bytes_in_place(region.mut_end_key(), false)?;
 
@@ -223,17 +310,17 @@ impl RequestCodec for KeySpaceCodec {
         if region.get_start_key() < self.mode.min_key().as_slice() {
             *region.mut_start_key() = vec![];
         } else {
-            *region.mut_start_key() = self.decode_key(region.get_start_key().to_vec())?;
+            self.decode_key(region.mut_start_key())?;
         }
 
         // Map the region's end key to the keyspace's end key.
         if region.get_end_key() > self.mode.max_key().as_slice() {
             *region.mut_end_key() = vec![];
         } else {
-            *region.mut_end_key() = self.decode_key(region.get_end_key().to_vec())?;
+            self.decode_key(region.mut_end_key())?;
         }
 
-        Ok(region)
+        Ok(())
     }
 
     fn is_plain(&self) -> bool {

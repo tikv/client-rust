@@ -171,7 +171,7 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ResolveLockRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        decode_key_error(codec, resp.mut_error())?;
+        codec.decode_key_error(resp.mut_error())?;
 
         Ok(resp)
     }
@@ -243,7 +243,7 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PrewriteRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        decode_key_errors(codec, resp.mut_errors())?;
+        codec.decode_key_errors(resp.mut_errors())?;
 
         Ok(resp)
     }
@@ -302,7 +302,7 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CommitRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        decode_key_error(codec, resp.mut_error())?;
+        codec.decode_key_error(resp.mut_error())?;
 
         Ok(resp)
     }
@@ -330,7 +330,7 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::BatchRollbackRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        decode_key_error(codec, resp.mut_error())?;
+        codec.decode_key_error(resp.mut_error())?;
 
         Ok(resp)
     }
@@ -361,7 +361,7 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PessimisticRollbackRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        decode_key_errors(codec, resp.mut_errors())?;
+        codec.decode_key_errors(resp.mut_errors())?;
 
         Ok(resp)
     }
@@ -405,7 +405,7 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PessimisticLockRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        decode_key_errors(codec, resp.mut_errors())?;
+        codec.decode_key_errors(resp.mut_errors())?;
 
         Ok(resp)
     }
@@ -516,8 +516,8 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ScanLockRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        decode_key_error(codec, resp.mut_error())?;
-        decode_lock_infos(codec, resp.mut_locks())?;
+        codec.decode_key_error(resp.mut_error())?;
+        codec.decode_locks(resp.mut_locks())?;
 
         Ok(resp)
     }
@@ -573,7 +573,7 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::TxnHeartBeatRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        decode_key_error(codec, resp.mut_error())?;
+        codec.decode_key_error(resp.mut_error())?;
         Ok(resp)
     }
 }
@@ -621,8 +621,8 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CheckTxnStatusRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        decode_key_error(codec, resp.mut_error())?;
-        decode_lock_info(codec, resp.mut_lock_info())?;
+        codec.decode_key_error(resp.mut_error())?;
+        codec.decode_lock(resp.mut_lock_info())?;
         Ok(resp)
     }
 }
@@ -701,8 +701,8 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CheckSecondaryLocksRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        decode_key_error(codec, resp.mut_error())?;
-        decode_lock_infos(codec, resp.mut_locks())?;
+        codec.decode_key_error(resp.mut_error())?;
+        codec.decode_locks(resp.mut_locks())?;
         Ok(resp)
     }
 }
@@ -782,81 +782,6 @@ impl HasLocks for kvrpcpb::PrewriteResponse {
             .filter_map(|error| error.locked.take())
             .collect()
     }
-}
-
-pub(crate) fn decode_lock_info<C: RequestCodec>(
-    codec: &C,
-    err: &mut kvrpcpb::LockInfo,
-) -> Result<()> {
-    *err.mut_primary_lock() = codec.decode_key(err.take_primary_lock())?;
-    *err.mut_key() = codec.decode_key(err.take_key())?;
-    *err.mut_secondaries() = codec.decode_keys(err.take_secondaries())?;
-
-    Ok(())
-}
-
-pub(crate) fn decode_lock_infos<C: RequestCodec>(
-    codec: &C,
-    errs: &mut [kvrpcpb::LockInfo],
-) -> Result<()> {
-    for err in errs.iter_mut() {
-        decode_lock_info(codec, err)?;
-    }
-
-    Ok(())
-}
-
-pub(crate) fn decode_key_errors<C: RequestCodec>(
-    codec: &C,
-    errs: &mut [kvrpcpb::KeyError],
-) -> Result<()> {
-    for err in errs.iter_mut() {
-        decode_key_error(codec, err)?;
-    }
-
-    Ok(())
-}
-
-pub(crate) fn decode_key_error<C: RequestCodec>(
-    codec: &C,
-    err: &mut kvrpcpb::KeyError,
-) -> Result<()> {
-    if err.has_locked() {
-        let locked = err.mut_locked();
-        decode_lock_info(codec, locked)?;
-    }
-
-    if err.has_conflict() {
-        let conflict = err.mut_conflict();
-        *conflict.mut_key() = codec.decode_key(conflict.take_key())?;
-        *conflict.mut_primary() = codec.decode_key(conflict.take_primary())?;
-    }
-
-    if err.has_already_exist() {
-        let already_exist = err.mut_already_exist();
-        *already_exist.mut_key() = codec.decode_key(already_exist.take_key())?;
-    }
-
-    // We do not decode key in `Deadlock` since there is no use for the key right now in client side.
-    // All we need is the key hash to detect deadlock.
-    // TODO: while we check the keys against the deadlock key hash, we need to encode the key.
-
-    if err.has_commit_ts_expired() {
-        let commit_ts_expired = err.mut_commit_ts_expired();
-        *commit_ts_expired.mut_key() = codec.decode_key(commit_ts_expired.take_key())?;
-    }
-
-    if err.has_txn_not_found() {
-        let txn_not_found = err.mut_txn_not_found();
-        *txn_not_found.mut_primary_key() = codec.decode_key(txn_not_found.take_primary_key())?;
-    }
-
-    if err.has_assertion_failed() {
-        let assertion_failed = err.mut_assertion_failed();
-        *assertion_failed.mut_key() = codec.decode_key(assertion_failed.take_key())?;
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
