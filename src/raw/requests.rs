@@ -32,7 +32,7 @@ pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::R
     req
 }
 
-impl_kv_request_for_single_key_op!(kvrpcpb::RawGetRequest, kvrpcpb::RawGetResponse);
+impl_kv_request!(kvrpcpb::RawGetRequest, key; kvrpcpb::RawGetResponse;);
 shardable_key!(kvrpcpb::RawGetRequest);
 collect_first!(kvrpcpb::RawGetResponse);
 
@@ -66,8 +66,7 @@ pub fn new_raw_batch_get_request(
     req
 }
 
-impl_kv_request_for_batch_get!(kvrpcpb::RawBatchGetRequest, kvrpcpb::RawBatchGetResponse);
-
+impl_kv_request!(kvrpcpb::RawBatchGetRequest, keys; kvrpcpb::RawBatchGetResponse;);
 shardable_keys!(kvrpcpb::RawBatchGetRequest);
 
 impl Merge<kvrpcpb::RawBatchGetResponse> for Collect {
@@ -96,7 +95,7 @@ pub fn new_raw_put_request(
     req
 }
 
-impl_kv_request!(kvrpcpb::RawPutRequest, kvrpcpb::RawPutResponse; encode=key);
+impl_kv_request!(kvrpcpb::RawPutRequest, key; kvrpcpb::RawPutResponse;);
 shardable_key!(kvrpcpb::RawPutRequest);
 collect_first!(kvrpcpb::RawPutResponse);
 
@@ -119,15 +118,7 @@ pub fn new_raw_batch_put_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchPutRequest {
-    type Response = kvrpcpb::RawBatchPutResponse;
-
-    fn encode_request(mut self, codec: &C) -> Self {
-        *self.mut_pairs() = codec.encode_pairs(self.take_pairs());
-
-        self
-    }
-}
+impl_kv_request!(kvrpcpb::RawBatchPutRequest, pairs; kvrpcpb::RawBatchPutResponse;);
 
 impl Shardable for kvrpcpb::RawBatchPutRequest {
     type Shard = Vec<kvrpcpb::KvPair>;
@@ -164,7 +155,7 @@ pub fn new_raw_delete_request(
     req
 }
 
-impl_kv_request_for_single_key_op!(kvrpcpb::RawDeleteRequest, kvrpcpb::RawDeleteResponse);
+impl_kv_request!(kvrpcpb::RawDeleteRequest, key; kvrpcpb::RawDeleteResponse;);
 shardable_key!(kvrpcpb::RawDeleteRequest);
 collect_first!(kvrpcpb::RawDeleteResponse);
 impl SingleKey for kvrpcpb::RawDeleteRequest {
@@ -184,16 +175,7 @@ pub fn new_raw_batch_delete_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchDeleteRequest {
-    type Response = kvrpcpb::RawBatchDeleteResponse;
-
-    fn encode_request(mut self, codec: &C) -> Self {
-        *self.mut_keys() = codec.encode_keys(self.take_keys());
-
-        self
-    }
-}
-
+impl_kv_request!(kvrpcpb::RawBatchDeleteRequest, keys; kvrpcpb::RawBatchDeleteResponse;);
 shardable_keys!(kvrpcpb::RawBatchDeleteRequest);
 
 pub fn new_raw_delete_range_request(
@@ -209,18 +191,10 @@ pub fn new_raw_delete_range_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawDeleteRangeRequest {
-    type Response = kvrpcpb::RawDeleteRangeResponse;
-
-    fn encode_request(mut self, codec: &C) -> Self {
-        let (start, end) = (self.take_start_key(), self.take_end_key());
-
-        self.set_start_key(codec.encode_key(start));
-        self.set_end_key(codec.encode_key(end));
-
-        self
-    }
-}
+impl_kv_request!(
+    kvrpcpb::RawDeleteRangeRequest;
+    kvrpcpb::RawDeleteRangeResponse;
+);
 
 shardable_range!(kvrpcpb::RawDeleteRangeRequest);
 
@@ -241,7 +215,7 @@ pub fn new_raw_scan_request(
     req
 }
 
-impl_kv_request_for_scan_op!(kvrpcpb::RawScanRequest, kvrpcpb::RawScanResponse, kvs);
+impl_kv_request!(kvrpcpb::RawScanRequest; kvrpcpb::RawScanResponse, kvs;);
 shardable_range!(kvrpcpb::RawScanRequest);
 
 impl Merge<kvrpcpb::RawScanResponse> for Collect {
@@ -270,15 +244,10 @@ pub fn new_raw_batch_scan_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchScanRequest {
-    type Response = kvrpcpb::RawBatchScanResponse;
-
-    fn encode_request(mut self, codec: &C) -> Self {
-        *self.mut_ranges() = codec.encode_ranges(self.take_ranges());
-
-        self
-    }
-}
+impl_kv_request!(
+    kvrpcpb::RawBatchScanRequest, ranges;
+    kvrpcpb::RawBatchScanResponse, kvs;
+);
 
 impl Shardable for kvrpcpb::RawBatchScanRequest {
     type Shard = Vec<kvrpcpb::KeyRange>;
@@ -325,7 +294,11 @@ pub fn new_cas_request(
     req
 }
 
-impl_kv_request_for_single_key_op!(kvrpcpb::RawCasRequest, kvrpcpb::RawCasResponse);
+impl_kv_request!(
+    kvrpcpb::RawCasRequest, key;
+    kvrpcpb::RawCasResponse;
+);
+
 shardable_key!(kvrpcpb::RawCasRequest);
 collect_first!(kvrpcpb::RawCasResponse);
 impl SingleKey for kvrpcpb::RawCasRequest {

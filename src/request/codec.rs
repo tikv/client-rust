@@ -58,7 +58,7 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         Ok(())
     }
 
-    fn decode_key_error(&self, err: &mut kvrpcpb::KeyError) -> Result<()> {
+    fn decode_error(&self, err: &mut kvrpcpb::KeyError) -> Result<()> {
         if err.has_locked() {
             let locked = err.mut_locked();
             self.decode_lock(locked)?;
@@ -97,9 +97,9 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         Ok(())
     }
 
-    fn decode_key_errors(&self, errors: &mut [kvrpcpb::KeyError]) -> Result<()> {
+    fn decode_errors(&self, errors: &mut [kvrpcpb::KeyError]) -> Result<()> {
         for err in errors.iter_mut() {
-            self.decode_key_error(err)?;
+            self.decode_error(err)?;
         }
 
         Ok(())
@@ -125,6 +125,10 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         }
 
         Ok(())
+    }
+
+    fn decode_kvs(&self, kvs: &mut [kvrpcpb::KvPair]) -> Result<()> {
+        self.decode_pairs(kvs)
     }
 
     fn encode_range(&self, start: Vec<u8>, end: Vec<u8>) -> (Vec<u8>, Vec<u8>) {

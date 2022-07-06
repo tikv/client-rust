@@ -41,9 +41,36 @@ pub trait KvRequest<C>: Request + Sized + Clone + Sync + Send + 'static {
     }
 }
 
+macro_rules! impl_decode_response {
+    ($($o:ident)*; $($e:ident)*) => {
+        fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
+            $(
+                paste::paste! {
+                    codec.[<decode_ $o>](resp.[<mut_ $o>]())?;
+                }
+            )*
+
+            // decode errors
+            if resp.has_region_error() {
+                codec.decode_region_error(resp.mut_region_error())?;
+            }
+
+            $(
+                paste::paste! {
+                    if resp.[<has_ $e>]() {
+                        codec.[<decode_ $e>](resp.[<mut_ $e>]())?;
+                    }
+                }
+            )*
+
+            Ok(resp)
+        }
+    };
+}
+
 #[macro_export]
 macro_rules! impl_kv_request {
-    ($req:ty, $resp:ty; encode=$($i:ident),*) => {
+    ($req:ty $(,$i:ident)+; $resp:ty $(,$o:ident)*; $($e:ident),*) => {
         impl<C> KvRequest<C> for $req
         where C: RequestCodec
         {
@@ -54,18 +81,30 @@ macro_rules! impl_kv_request {
                     paste::paste! {
                         *self.[<mut_ $i>]() = codec.[<encode_ $i>](self.[<take_ $i>]());
                     }
-
-                    self
                 )*
+
+                self
             }
 
-            fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-                if resp.has_region_error() {
-                    codec.decode_region_error(resp.mut_region_error())?;
-                }
+            impl_decode_response!{$($o)*; $($e)*}
+        }
+    };
 
-                Ok(resp)
+    ($req:ty; $resp:ty $(,$o:ident)*;$($e:ident)*) => {
+        impl<C> KvRequest<C> for $req
+        where C: RequestCodec
+        {
+            type Response = $resp;
+
+            fn encode_request(mut self, codec: &C) -> Self {
+                let (start, end) = codec.encode_range(self.take_start_key(), self.take_end_key());
+                *self.mut_start_key() = start;
+                *self.mut_end_key() = end;
+
+                self
             }
+
+            impl_decode_response!{$($o)*; $($e)*}
         }
     };
 }

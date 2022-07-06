@@ -72,7 +72,7 @@ pub fn new_get_request(key: Vec<u8>, timestamp: u64) -> kvrpcpb::GetRequest {
     req
 }
 
-impl_kv_request_for_single_key_op!(kvrpcpb::GetRequest, kvrpcpb::GetResponse);
+impl_kv_request!(kvrpcpb::GetRequest, key; kvrpcpb::GetResponse; error);
 shardable_key!(kvrpcpb::GetRequest);
 collect_first!(kvrpcpb::GetResponse);
 impl SingleKey for kvrpcpb::GetRequest {
@@ -101,7 +101,11 @@ pub fn new_batch_get_request(keys: Vec<Vec<u8>>, timestamp: u64) -> kvrpcpb::Bat
     req
 }
 
-impl_kv_request_for_batch_get!(kvrpcpb::BatchGetRequest, kvrpcpb::BatchGetResponse);
+impl_kv_request!(
+    kvrpcpb::BatchGetRequest, keys;
+    kvrpcpb::BatchGetResponse, pairs;
+    error
+);
 shardable_keys!(kvrpcpb::BatchGetRequest);
 
 impl Merge<kvrpcpb::BatchGetResponse> for Collect {
@@ -131,7 +135,7 @@ pub fn new_scan_request(
     req
 }
 
-impl_kv_request_for_scan_op!(kvrpcpb::ScanRequest, kvrpcpb::ScanResponse, pairs);
+impl_kv_request!(kvrpcpb::ScanRequest; kvrpcpb::ScanResponse, pairs; error);
 shardable_range!(kvrpcpb::ScanRequest);
 
 impl Merge<kvrpcpb::ScanResponse> for Collect {
@@ -161,21 +165,7 @@ pub fn new_resolve_lock_request(
 // on its region errors (in the Plan level). The region error must be manually
 // handled (in the upper level).
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ResolveLockRequest {
-    type Response = kvrpcpb::ResolveLockResponse;
-
-    fn encode_request(mut self, codec: &C) -> Self {
-        *self.mut_keys() = codec.encode_keys(self.take_keys());
-
-        self
-    }
-
-    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_key_error(resp.mut_error())?;
-
-        Ok(resp)
-    }
-}
+impl_kv_request!(kvrpcpb::ResolveLockRequest, keys; kvrpcpb::ResolveLockResponse; error);
 
 pub fn new_cleanup_request(key: Vec<u8>, start_version: u64) -> kvrpcpb::CleanupRequest {
     let mut req = kvrpcpb::CleanupRequest::default();
@@ -185,7 +175,12 @@ pub fn new_cleanup_request(key: Vec<u8>, start_version: u64) -> kvrpcpb::Cleanup
     req
 }
 
-impl_kv_request_for_single_key_op!(kvrpcpb::CleanupRequest, kvrpcpb::CleanupResponse);
+impl_kv_request!(
+    kvrpcpb::CleanupRequest, key;
+    kvrpcpb::CleanupResponse;
+    error
+);
+
 shardable_key!(kvrpcpb::CleanupRequest);
 collect_first!(kvrpcpb::CleanupResponse);
 impl SingleKey for kvrpcpb::CleanupRequest {
@@ -233,21 +228,7 @@ pub fn new_pessimistic_prewrite_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PrewriteRequest {
-    type Response = kvrpcpb::PrewriteResponse;
-
-    fn encode_request(mut self, codec: &C) -> Self {
-        *self.mut_mutations() = codec.encode_mutations(self.take_mutations());
-
-        self
-    }
-
-    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_key_errors(resp.mut_errors())?;
-
-        Ok(resp)
-    }
-}
+impl_kv_request!(kvrpcpb::PrewriteRequest, mutations; kvrpcpb::PrewriteResponse; errors);
 
 impl Shardable for kvrpcpb::PrewriteRequest {
     type Shard = Vec<kvrpcpb::Mutation>;
@@ -302,7 +283,7 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CommitRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_key_error(resp.mut_error())?;
+        codec.decode_error(resp.mut_error())?;
 
         Ok(resp)
     }
@@ -330,7 +311,7 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::BatchRollbackRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_key_error(resp.mut_error())?;
+        codec.decode_error(resp.mut_error())?;
 
         Ok(resp)
     }
@@ -361,7 +342,7 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PessimisticRollbackRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_key_errors(resp.mut_errors())?;
+        codec.decode_errors(resp.mut_errors())?;
 
         Ok(resp)
     }
@@ -405,7 +386,7 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PessimisticLockRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_key_errors(resp.mut_errors())?;
+        codec.decode_errors(resp.mut_errors())?;
 
         Ok(resp)
     }
@@ -516,7 +497,7 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ScanLockRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_key_error(resp.mut_error())?;
+        codec.decode_error(resp.mut_error())?;
         codec.decode_locks(resp.mut_locks())?;
 
         Ok(resp)
@@ -573,7 +554,7 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::TxnHeartBeatRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_key_error(resp.mut_error())?;
+        codec.decode_error(resp.mut_error())?;
         Ok(resp)
     }
 }
@@ -621,7 +602,7 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CheckTxnStatusRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_key_error(resp.mut_error())?;
+        codec.decode_error(resp.mut_error())?;
         codec.decode_lock(resp.mut_lock_info())?;
         Ok(resp)
     }
@@ -701,7 +682,7 @@ impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CheckSecondaryLocksRequest {
     }
 
     fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_key_error(resp.mut_error())?;
+        codec.decode_error(resp.mut_error())?;
         codec.decode_locks(resp.mut_locks())?;
         Ok(resp)
     }
