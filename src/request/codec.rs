@@ -151,7 +151,7 @@ impl KeyMode {
 
 type Prefix = [u8; KEYSPACE_PREFIX_LEN];
 
-#[derive(Clone,Copy,Default,PartialEq)]
+#[derive(Clone, Copy, Default, PartialEq)]
 pub struct KeySpaceId([u8; 3]);
 
 impl Deref for KeySpaceId {
