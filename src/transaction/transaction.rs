@@ -51,7 +51,7 @@ use crate::{
 /// ```rust,no_run
 /// # use tikv_client::{Config, TransactionClient};
 /// # use futures::prelude::*;
-/// use tikv_client::request::request_codec::TxnApiV1;
+/// use tikv_client::request::codec::TxnApiV1;
 /// # futures::executor::block_on(async {
 /// let client = TransactionClient::new(vec!["192.168.0.100"], TxnApiV1, None)
 ///     .await
@@ -108,7 +108,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
-    /// use tikv_client::request::request_codec::TxnApiV1;
+    /// use tikv_client::request::codec::TxnApiV1;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], TxnApiV1, None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
@@ -170,7 +170,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
-    /// use tikv_client::request::request_codec::TxnApiV1;
+    /// use tikv_client::request::codec::TxnApiV1;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], TxnApiV1, None).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
@@ -205,7 +205,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
-    /// use tikv_client::request::request_codec::TxnApiV1;
+    /// use tikv_client::request::codec::TxnApiV1;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], TxnApiV1, None).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
@@ -233,7 +233,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
-    /// use tikv_client::request::request_codec::TxnApiV1;
+    /// use tikv_client::request::codec::TxnApiV1;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], TxnApiV1, None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
@@ -287,7 +287,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Key, Value, Config, TransactionClient, KvPair};
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
-    /// use tikv_client::request::request_codec::TxnApiV1;
+    /// use tikv_client::request::codec::TxnApiV1;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], TxnApiV1, None).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
@@ -333,7 +333,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Key, KvPair, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
-    /// use tikv_client::request::request_codec::TxnApiV1;
+    /// use tikv_client::request::codec::TxnApiV1;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], TxnApiV1, None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
@@ -370,7 +370,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Key, KvPair, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
-    /// use tikv_client::request::request_codec::TxnApiV1;
+    /// use tikv_client::request::codec::TxnApiV1;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], TxnApiV1, None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
@@ -412,7 +412,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
-    /// use tikv_client::request::request_codec::TxnApiV1;
+    /// use tikv_client::request::codec::TxnApiV1;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], TxnApiV1, None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
@@ -444,7 +444,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
-    /// use tikv_client::request::request_codec::TxnApiV1;
+    /// use tikv_client::request::codec::TxnApiV1;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], TxnApiV1, None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
@@ -481,7 +481,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, TransactionClient};
     /// # use futures::prelude::*;
-    /// use tikv_client::request::request_codec::TxnApiV1;
+    /// use tikv_client::request::codec::TxnApiV1;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], TxnApiV1, None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
@@ -517,7 +517,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
-    /// use tikv_client::request::request_codec::TxnApiV1;
+    /// use tikv_client::request::codec::TxnApiV1;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100"], TxnApiV1, None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
@@ -554,7 +554,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Config, Timestamp, TransactionClient};
     /// # use futures::prelude::*;
-    /// use tikv_client::request::request_codec::TxnApiV1;
+    /// use tikv_client::request::codec::TxnApiV1;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100"], TxnApiV1, None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
@@ -613,7 +613,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Config, Timestamp, TransactionClient};
     /// # use futures::prelude::*;
-    /// use tikv_client::request::request_codec::TxnApiV1;
+    /// use tikv_client::request::codec::TxnApiV1;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100"], TxnApiV1, None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
