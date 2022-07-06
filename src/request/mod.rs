@@ -41,24 +41,31 @@ pub trait KvRequest<C>: Request + Sized + Clone + Sync + Send + 'static {
     }
 }
 
-macro_rules! impl_decode_response {
-    ($($o:ident)*; $($e:ident)*) => {
-        fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-            $(
-                paste::paste! {
-                    codec.[<decode_ $o>](resp.[<mut_ $o>]())?;
-                }
-            )*
+pub trait IsDefault {
+    fn is_default(&self) -> bool;
+}
 
+impl<T: PartialEq + Default> IsDefault for T {
+    fn is_default(&self) -> bool {
+        *self == T::default()
+    }
+}
+
+macro_rules! impl_decode_response {
+    ($($o:ident)*) => {
+        fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
             // decode errors
             if resp.has_region_error() {
                 codec.decode_region_error(resp.mut_region_error())?;
             }
 
+            #[allow(unused_imports)]
+            use $crate::request::IsDefault;
+
             $(
                 paste::paste! {
-                    if resp.[<has_ $e>]() {
-                        codec.[<decode_ $e>](resp.[<mut_ $e>]())?;
+                    if !resp.[<get_ $o>]().is_default() {
+                        codec.[<decode_ $o>](resp.[<mut_ $o>]())?;
                     }
                 }
             )*
@@ -70,7 +77,7 @@ macro_rules! impl_decode_response {
 
 #[macro_export]
 macro_rules! impl_kv_request {
-    ($req:ty $(,$i:ident)+; $resp:ty $(,$o:ident)*; $($e:ident),*) => {
+    ($req:ty $(,$i:ident)+; $resp:ty $(,$o:ident)*) => {
         impl<C> KvRequest<C> for $req
         where C: RequestCodec
         {
@@ -86,11 +93,11 @@ macro_rules! impl_kv_request {
                 self
             }
 
-            impl_decode_response!{$($o)*; $($e)*}
+            impl_decode_response!{$($o)*}
         }
     };
 
-    ($req:ty; $resp:ty $(,$o:ident)*;$($e:ident)*) => {
+    ($req:ty; $resp:ty $(,$o:ident)*) => {
         impl<C> KvRequest<C> for $req
         where C: RequestCodec
         {
@@ -104,7 +111,7 @@ macro_rules! impl_kv_request {
                 self
             }
 
-            impl_decode_response!{$($o)*; $($e)*}
+            impl_decode_response!{$($o)*}
         }
     };
 }

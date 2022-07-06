@@ -72,7 +72,7 @@ pub fn new_get_request(key: Vec<u8>, timestamp: u64) -> kvrpcpb::GetRequest {
     req
 }
 
-impl_kv_request!(kvrpcpb::GetRequest, key; kvrpcpb::GetResponse; error);
+impl_kv_request!(kvrpcpb::GetRequest, key; kvrpcpb::GetResponse, error);
 shardable_key!(kvrpcpb::GetRequest);
 collect_first!(kvrpcpb::GetResponse);
 impl SingleKey for kvrpcpb::GetRequest {
@@ -103,8 +103,7 @@ pub fn new_batch_get_request(keys: Vec<Vec<u8>>, timestamp: u64) -> kvrpcpb::Bat
 
 impl_kv_request!(
     kvrpcpb::BatchGetRequest, keys;
-    kvrpcpb::BatchGetResponse, pairs;
-    error
+    kvrpcpb::BatchGetResponse, pairs, error
 );
 shardable_keys!(kvrpcpb::BatchGetRequest);
 
@@ -135,7 +134,7 @@ pub fn new_scan_request(
     req
 }
 
-impl_kv_request!(kvrpcpb::ScanRequest; kvrpcpb::ScanResponse, pairs; error);
+impl_kv_request!(kvrpcpb::ScanRequest; kvrpcpb::ScanResponse, pairs, error);
 shardable_range!(kvrpcpb::ScanRequest);
 
 impl Merge<kvrpcpb::ScanResponse> for Collect {
@@ -165,7 +164,7 @@ pub fn new_resolve_lock_request(
 // on its region errors (in the Plan level). The region error must be manually
 // handled (in the upper level).
 
-impl_kv_request!(kvrpcpb::ResolveLockRequest, keys; kvrpcpb::ResolveLockResponse; error);
+impl_kv_request!(kvrpcpb::ResolveLockRequest, keys; kvrpcpb::ResolveLockResponse, error);
 
 pub fn new_cleanup_request(key: Vec<u8>, start_version: u64) -> kvrpcpb::CleanupRequest {
     let mut req = kvrpcpb::CleanupRequest::default();
@@ -177,8 +176,7 @@ pub fn new_cleanup_request(key: Vec<u8>, start_version: u64) -> kvrpcpb::Cleanup
 
 impl_kv_request!(
     kvrpcpb::CleanupRequest, key;
-    kvrpcpb::CleanupResponse;
-    error
+    kvrpcpb::CleanupResponse, error
 );
 
 shardable_key!(kvrpcpb::CleanupRequest);
@@ -228,7 +226,7 @@ pub fn new_pessimistic_prewrite_request(
     req
 }
 
-impl_kv_request!(kvrpcpb::PrewriteRequest, mutations; kvrpcpb::PrewriteResponse; errors);
+impl_kv_request!(kvrpcpb::PrewriteRequest, mutations; kvrpcpb::PrewriteResponse, errors);
 
 impl Shardable for kvrpcpb::PrewriteRequest {
     type Shard = Vec<kvrpcpb::Mutation>;
@@ -273,21 +271,7 @@ pub fn new_commit_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CommitRequest {
-    type Response = kvrpcpb::CommitResponse;
-
-    fn encode_request(mut self, codec: &C) -> Self {
-        *self.mut_keys() = codec.encode_keys(self.take_keys());
-
-        self
-    }
-
-    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_error(resp.mut_error())?;
-
-        Ok(resp)
-    }
-}
+impl_kv_request!(kvrpcpb::CommitRequest, keys; kvrpcpb::CommitResponse, error);
 shardable_keys!(kvrpcpb::CommitRequest);
 
 pub fn new_batch_rollback_request(
@@ -301,22 +285,7 @@ pub fn new_batch_rollback_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::BatchRollbackRequest {
-    type Response = kvrpcpb::BatchRollbackResponse;
-
-    fn encode_request(mut self, codec: &C) -> Self {
-        *self.mut_keys() = codec.encode_keys(self.take_keys());
-
-        self
-    }
-
-    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_error(resp.mut_error())?;
-
-        Ok(resp)
-    }
-}
-
+impl_kv_request!(kvrpcpb::BatchRollbackRequest, keys; kvrpcpb::BatchRollbackResponse, error);
 shardable_keys!(kvrpcpb::BatchRollbackRequest);
 
 pub fn new_pessimistic_rollback_request(
@@ -332,21 +301,12 @@ pub fn new_pessimistic_rollback_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PessimisticRollbackRequest {
-    type Response = kvrpcpb::PessimisticRollbackResponse;
-
-    fn encode_request(mut self, codec: &C) -> Self {
-        *self.mut_keys() = codec.encode_keys(self.take_keys());
-
-        self
-    }
-
-    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_errors(resp.mut_errors())?;
-
-        Ok(resp)
-    }
-}
+impl_kv_request!(
+    kvrpcpb::PessimisticRollbackRequest,
+    keys;
+    kvrpcpb::PessimisticRollbackResponse,
+    errors
+);
 
 shardable_keys!(kvrpcpb::PessimisticRollbackRequest);
 
@@ -375,22 +335,12 @@ pub fn new_pessimistic_lock_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::PessimisticLockRequest {
-    type Response = kvrpcpb::PessimisticLockResponse;
-
-    fn encode_request(mut self, codec: &C) -> Self {
-        *self.mut_mutations() = codec.encode_mutations(self.take_mutations());
-        *self.mut_primary_lock() = codec.encode_key(self.take_primary_lock());
-
-        self
-    }
-
-    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_errors(resp.mut_errors())?;
-
-        Ok(resp)
-    }
-}
+impl_kv_request!(
+    kvrpcpb::PessimisticLockRequest,
+    mutations, primary_lock;
+    kvrpcpb::PessimisticLockResponse,
+    errors
+);
 
 impl Shardable for kvrpcpb::PessimisticLockRequest {
     type Shard = Vec<kvrpcpb::Mutation>;
@@ -486,23 +436,11 @@ pub fn new_scan_lock_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::ScanLockRequest {
-    type Response = kvrpcpb::ScanLockResponse;
-
-    fn encode_request(mut self, codec: &C) -> Self {
-        let (start, end) = codec.encode_range(self.take_start_key(), self.take_end_key());
-        self.set_start_key(start);
-        self.set_end_key(end);
-        self
-    }
-
-    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_error(resp.mut_error())?;
-        codec.decode_locks(resp.mut_locks())?;
-
-        Ok(resp)
-    }
-}
+impl_kv_request!(
+    kvrpcpb::ScanLockRequest;
+    kvrpcpb::ScanLockResponse,
+    error, locks
+);
 
 impl Shardable for kvrpcpb::ScanLockRequest {
     type Shard = Vec<u8>;
@@ -544,20 +482,12 @@ pub fn new_heart_beat_request(
     req
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::TxnHeartBeatRequest {
-    type Response = kvrpcpb::TxnHeartBeatResponse;
-
-    fn encode_request(mut self, codec: &C) -> Self {
-        *self.mut_primary_lock() = codec.encode_key(self.take_primary_lock());
-
-        self
-    }
-
-    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_error(resp.mut_error())?;
-        Ok(resp)
-    }
-}
+impl_kv_request!(
+    kvrpcpb::TxnHeartBeatRequest,
+    primary_lock;
+    kvrpcpb::TxnHeartBeatResponse,
+    error
+);
 
 impl Shardable for kvrpcpb::TxnHeartBeatRequest {
     type Shard = Vec<Vec<u8>>;
@@ -593,20 +523,10 @@ impl Process<kvrpcpb::TxnHeartBeatResponse> for DefaultProcessor {
     }
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CheckTxnStatusRequest {
-    type Response = kvrpcpb::CheckTxnStatusResponse;
-
-    fn encode_request(mut self, codec: &C) -> Self {
-        *self.mut_primary_key() = codec.encode_key(self.take_primary_key());
-        self
-    }
-
-    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_error(resp.mut_error())?;
-        codec.decode_lock(resp.mut_lock_info())?;
-        Ok(resp)
-    }
-}
+impl_kv_request!(
+    kvrpcpb::CheckTxnStatusRequest, primary_key;
+    kvrpcpb::CheckTxnStatusResponse, lock_info, error
+);
 
 impl Shardable for kvrpcpb::CheckTxnStatusRequest {
     type Shard = Vec<Vec<u8>>;
@@ -673,20 +593,10 @@ impl From<(u64, u64, Option<kvrpcpb::LockInfo>)> for TransactionStatusKind {
     }
 }
 
-impl<C: RequestCodec> KvRequest<C> for kvrpcpb::CheckSecondaryLocksRequest {
-    type Response = kvrpcpb::CheckSecondaryLocksResponse;
-
-    fn encode_request(mut self, codec: &C) -> Self {
-        *self.mut_keys() = codec.encode_keys(self.take_keys());
-        self
-    }
-
-    fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
-        codec.decode_error(resp.mut_error())?;
-        codec.decode_locks(resp.mut_locks())?;
-        Ok(resp)
-    }
-}
+impl_kv_request!(
+    kvrpcpb::CheckSecondaryLocksRequest, keys;
+    kvrpcpb::CheckSecondaryLocksResponse, locks, error
+);
 
 shardable_keys!(kvrpcpb::CheckSecondaryLocksRequest);
 

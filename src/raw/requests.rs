@@ -32,7 +32,7 @@ pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::R
     req
 }
 
-impl_kv_request!(kvrpcpb::RawGetRequest, key; kvrpcpb::RawGetResponse;);
+impl_kv_request!(kvrpcpb::RawGetRequest, key; kvrpcpb::RawGetResponse);
 shardable_key!(kvrpcpb::RawGetRequest);
 collect_first!(kvrpcpb::RawGetResponse);
 
@@ -66,7 +66,7 @@ pub fn new_raw_batch_get_request(
     req
 }
 
-impl_kv_request!(kvrpcpb::RawBatchGetRequest, keys; kvrpcpb::RawBatchGetResponse;);
+impl_kv_request!(kvrpcpb::RawBatchGetRequest, keys; kvrpcpb::RawBatchGetResponse);
 shardable_keys!(kvrpcpb::RawBatchGetRequest);
 
 impl Merge<kvrpcpb::RawBatchGetResponse> for Collect {
@@ -95,7 +95,7 @@ pub fn new_raw_put_request(
     req
 }
 
-impl_kv_request!(kvrpcpb::RawPutRequest, key; kvrpcpb::RawPutResponse;);
+impl_kv_request!(kvrpcpb::RawPutRequest, key; kvrpcpb::RawPutResponse);
 shardable_key!(kvrpcpb::RawPutRequest);
 collect_first!(kvrpcpb::RawPutResponse);
 
@@ -118,7 +118,7 @@ pub fn new_raw_batch_put_request(
     req
 }
 
-impl_kv_request!(kvrpcpb::RawBatchPutRequest, pairs; kvrpcpb::RawBatchPutResponse;);
+impl_kv_request!(kvrpcpb::RawBatchPutRequest, pairs; kvrpcpb::RawBatchPutResponse);
 
 impl Shardable for kvrpcpb::RawBatchPutRequest {
     type Shard = Vec<kvrpcpb::KvPair>;
@@ -155,7 +155,7 @@ pub fn new_raw_delete_request(
     req
 }
 
-impl_kv_request!(kvrpcpb::RawDeleteRequest, key; kvrpcpb::RawDeleteResponse;);
+impl_kv_request!(kvrpcpb::RawDeleteRequest, key; kvrpcpb::RawDeleteResponse);
 shardable_key!(kvrpcpb::RawDeleteRequest);
 collect_first!(kvrpcpb::RawDeleteResponse);
 impl SingleKey for kvrpcpb::RawDeleteRequest {
@@ -175,7 +175,7 @@ pub fn new_raw_batch_delete_request(
     req
 }
 
-impl_kv_request!(kvrpcpb::RawBatchDeleteRequest, keys; kvrpcpb::RawBatchDeleteResponse;);
+impl_kv_request!(kvrpcpb::RawBatchDeleteRequest, keys; kvrpcpb::RawBatchDeleteResponse);
 shardable_keys!(kvrpcpb::RawBatchDeleteRequest);
 
 pub fn new_raw_delete_range_request(
@@ -193,7 +193,7 @@ pub fn new_raw_delete_range_request(
 
 impl_kv_request!(
     kvrpcpb::RawDeleteRangeRequest;
-    kvrpcpb::RawDeleteRangeResponse;
+    kvrpcpb::RawDeleteRangeResponse
 );
 
 shardable_range!(kvrpcpb::RawDeleteRangeRequest);
@@ -215,7 +215,7 @@ pub fn new_raw_scan_request(
     req
 }
 
-impl_kv_request!(kvrpcpb::RawScanRequest; kvrpcpb::RawScanResponse, kvs;);
+impl_kv_request!(kvrpcpb::RawScanRequest; kvrpcpb::RawScanResponse, kvs);
 shardable_range!(kvrpcpb::RawScanRequest);
 
 impl Merge<kvrpcpb::RawScanResponse> for Collect {
@@ -246,7 +246,7 @@ pub fn new_raw_batch_scan_request(
 
 impl_kv_request!(
     kvrpcpb::RawBatchScanRequest, ranges;
-    kvrpcpb::RawBatchScanResponse, kvs;
+    kvrpcpb::RawBatchScanResponse, kvs
 );
 
 impl Shardable for kvrpcpb::RawBatchScanRequest {
@@ -296,7 +296,7 @@ pub fn new_cas_request(
 
 impl_kv_request!(
     kvrpcpb::RawCasRequest, key;
-    kvrpcpb::RawCasResponse;
+    kvrpcpb::RawCasResponse
 );
 
 shardable_key!(kvrpcpb::RawCasRequest);

@@ -23,6 +23,14 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         key
     }
 
+    fn encode_primary_lock(&self, lock: Vec<u8>) -> Vec<u8> {
+        self.encode_key(lock)
+    }
+
+    fn encode_primary_key(&self, key: Vec<u8>) -> Vec<u8> {
+        self.encode_key(key)
+    }
+
     fn encode_mutations(&self, mutations: Vec<kvrpcpb::Mutation>) -> Vec<kvrpcpb::Mutation> {
         mutations
             .into_iter()
@@ -61,7 +69,7 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
     fn decode_error(&self, err: &mut kvrpcpb::KeyError) -> Result<()> {
         if err.has_locked() {
             let locked = err.mut_locked();
-            self.decode_lock(locked)?;
+            self.decode_lock_info(locked)?;
         }
 
         if err.has_conflict() {
@@ -105,7 +113,7 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         Ok(())
     }
 
-    fn decode_lock(&self, lock: &mut kvrpcpb::LockInfo) -> Result<()> {
+    fn decode_lock_info(&self, lock: &mut kvrpcpb::LockInfo) -> Result<()> {
         self.decode_key(lock.mut_primary_lock())?;
         self.decode_key(lock.mut_key())?;
         self.decode_keys(lock.mut_secondaries())
@@ -113,7 +121,7 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
 
     fn decode_locks(&self, locks: &mut [kvrpcpb::LockInfo]) -> Result<()> {
         for lock in locks.iter_mut() {
-            self.decode_lock(lock)?;
+            self.decode_lock_info(lock)?;
         }
 
         Ok(())
