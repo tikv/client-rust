@@ -119,88 +119,6 @@ macro_rules! impl_kv_request {
     };
 }
 
-#[macro_export]
-macro_rules! impl_kv_request_for_single_key_op {
-    ($req: ty, $resp: ty) => {
-        impl<C> KvRequest<C> for $req
-        where
-            C: RequestCodec,
-        {
-            type Response = $resp;
-
-            fn encode_request(mut self, codec: &C) -> Self {
-                *self.mut_key() = codec.encode_key(self.take_key());
-
-                self
-            }
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! impl_kv_request_for_batch_get {
-    ($req: ty, $resp: ty) => {
-        impl<C> KvRequest<C> for $req
-        where
-            C: RequestCodec,
-        {
-            type Response = $resp;
-
-            fn encode_request(mut self, codec: &C) -> Self {
-                *self.mut_keys() = codec.encode_keys(self.take_keys());
-
-                self
-            }
-
-            fn decode_response(
-                &self,
-                codec: &C,
-                mut resp: Self::Response,
-            ) -> $crate::Result<Self::Response> {
-                codec.decode_pairs(resp.mut_pairs())?;
-
-                Ok(resp)
-            }
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! impl_kv_request_for_scan_op {
-    ($req: ty, $resp: ty, $pairs: ident) => {
-        impl<C> KvRequest<C> for $req
-        where
-            C: RequestCodec,
-        {
-            type Response = $resp;
-
-            fn encode_request(mut self, codec: &C) -> Self {
-                let (start, end) =
-                    codec.encode_range(self.take_start_key().into(), self.take_end_key().into());
-
-                self.set_start_key(start);
-                self.set_end_key(end);
-
-                self
-            }
-
-            fn decode_response(
-                &self,
-                codec: &C,
-                mut resp: Self::Response,
-            ) -> $crate::Result<Self::Response> {
-                paste::paste! {
-                    let pairs = resp.[<mut_ $pairs>]();
-
-                    codec.decode_pairs(pairs)?;
-
-                    Ok(resp)
-                }
-            }
-        }
-    };
-}
-
 #[derive(Clone, Debug, new, Eq, PartialEq)]
 pub struct RetryOptions {
     /// How to retry when there is a region error and we need to resolve regions with PD.
@@ -295,6 +213,10 @@ mod test {
 
             fn set_context(&mut self, _: kvrpcpb::Context) {
                 unreachable!();
+            }
+
+            fn mut_context(&mut self) -> &mut kvrpcpb::Context {
+                unreachable!()
             }
         }
 

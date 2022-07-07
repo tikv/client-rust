@@ -66,7 +66,7 @@ pub fn new_raw_batch_get_request(
     req
 }
 
-impl_kv_request!(kvrpcpb::RawBatchGetRequest, keys; kvrpcpb::RawBatchGetResponse);
+impl_kv_request!(kvrpcpb::RawBatchGetRequest, keys; kvrpcpb::RawBatchGetResponse, pairs);
 shardable_keys!(kvrpcpb::RawBatchGetRequest);
 
 impl Merge<kvrpcpb::RawBatchGetResponse> for Collect {
@@ -361,6 +361,10 @@ impl Request for RawCoprocessorRequest {
 
     fn set_context(&mut self, context: kvrpcpb::Context) {
         self.inner.set_context(context);
+    }
+
+    fn mut_context(&mut self) -> &mut kvrpcpb::Context {
+        self.inner.mut_context()
     }
 }
 

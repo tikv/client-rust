@@ -55,10 +55,13 @@ impl<C: RequestCodec, Req: KvRequest<C>> Plan for Dispatch<C, Req> {
     type Result = Req::Response;
 
     async fn execute(&self) -> Result<Self::Result> {
-        let req = if self.codec.is_plain() {
-            Cow::Borrowed(&self.request)
-        } else {
-            Cow::Owned(self.request.clone().encode_request(&self.codec))
+        let req = match self.codec.version() {
+            kvrpcpb::ApiVersion::V2 => {
+                let mut req = self.request.clone();
+                req.mut_context().set_api_version(self.codec.version());
+                Cow::Owned(req.encode_request(&self.codec))
+            }
+            _ => Cow::Borrowed(&self.request),
         };
 
         let stats = tikv_stats(self.request.label());
@@ -75,10 +78,9 @@ impl<C: RequestCodec, Req: KvRequest<C>> Plan for Dispatch<C, Req> {
                 .downcast()
                 .expect("Downcast failed: request and response type mismatch");
 
-            if self.codec.is_plain() {
-                Ok(resp)
-            } else {
-                req.decode_response(&self.codec, resp)
+            match self.codec.version() {
+                kvrpcpb::ApiVersion::V2 => req.decode_response(&self.codec, resp),
+                _ => Ok(resp),
             }
         })
     }

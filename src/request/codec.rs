@@ -40,8 +40,8 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         Ok(())
     }
 
-    fn is_plain(&self) -> bool {
-        true
+    fn version(&self) -> kvrpcpb::ApiVersion {
+        kvrpcpb::ApiVersion::V1
     }
 }
 
@@ -331,7 +331,8 @@ impl RequestCodec for KeySpaceCodec {
         }
 
         // Map the region's end key to the keyspace's end key.
-        if region.get_end_key() > self.mode.max_key().as_slice() {
+        if region.get_end_key().is_empty() || region.get_end_key() > self.mode.max_key().as_slice()
+        {
             *region.mut_end_key() = vec![];
         } else {
             self.decode_key(region.mut_end_key())?;
@@ -340,8 +341,8 @@ impl RequestCodec for KeySpaceCodec {
         Ok(())
     }
 
-    fn is_plain(&self) -> bool {
-        false
+    fn version(&self) -> kvrpcpb::ApiVersion {
+        kvrpcpb::ApiVersion::V2
     }
 }
 
@@ -357,7 +358,31 @@ impl RawKeyspaceCodec {
     }
 }
 
-impl RequestCodec for RawKeyspaceCodec {}
+impl RequestCodec for RawKeyspaceCodec {
+    fn encode_key(&self, key: Vec<u8>) -> Vec<u8> {
+        self.0.encode_key(key)
+    }
+
+    fn decode_key(&self, key: &mut Vec<u8>) -> Result<()> {
+        self.0.decode_key(key)
+    }
+
+    fn encode_range(&self, start: Vec<u8>, end: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
+        self.0.encode_range(start, end)
+    }
+
+    fn encode_pd_query(&self, key: Vec<u8>) -> Vec<u8> {
+        self.0.encode_pd_query(key)
+    }
+
+    fn decode_region(&self, region: &mut Region) -> Result<()> {
+        self.0.decode_region(region)
+    }
+
+    fn version(&self) -> kvrpcpb::ApiVersion {
+        self.0.version()
+    }
+}
 
 impl RawCodec for RawKeyspaceCodec {}
 
@@ -373,6 +398,30 @@ impl TxnKeyspaceCodec {
     }
 }
 
-impl RequestCodec for TxnKeyspaceCodec {}
+impl RequestCodec for TxnKeyspaceCodec {
+    fn encode_key(&self, key: Vec<u8>) -> Vec<u8> {
+        self.0.encode_key(key)
+    }
+
+    fn decode_key(&self, key: &mut Vec<u8>) -> Result<()> {
+        self.0.decode_key(key)
+    }
+
+    fn encode_range(&self, start: Vec<u8>, end: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
+        self.0.encode_range(start, end)
+    }
+
+    fn encode_pd_query(&self, key: Vec<u8>) -> Vec<u8> {
+        self.0.encode_pd_query(key)
+    }
+
+    fn decode_region(&self, region: &mut Region) -> Result<()> {
+        self.0.decode_region(region)
+    }
+
+    fn version(&self) -> kvrpcpb::ApiVersion {
+        self.0.version()
+    }
+}
 
 impl TxnCodec for TxnKeyspaceCodec {}
