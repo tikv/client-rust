@@ -1,5 +1,6 @@
 use core::intrinsics::copy;
 use std::ops::{Deref, DerefMut};
+
 use tikv_client_common::Error;
 use tikv_client_proto::{errorpb, kvrpcpb, metapb::Region};
 
@@ -23,6 +24,28 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         key
     }
 
+    fn decode_key(&self, _key: &mut Vec<u8>) -> Result<()> {
+        Ok(())
+    }
+
+    fn encode_range(&self, start: Vec<u8>, end: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
+        (start, end)
+    }
+
+    fn encode_pd_query(&self, key: Vec<u8>) -> Vec<u8> {
+        key
+    }
+
+    fn decode_region(&self, _region: &mut Region) -> Result<()> {
+        Ok(())
+    }
+
+    fn is_plain(&self) -> bool {
+        true
+    }
+}
+
+pub trait RequestCodecExt: RequestCodec {
     fn encode_primary_lock(&self, lock: Vec<u8>) -> Vec<u8> {
         self.encode_key(lock)
     }
@@ -54,8 +77,14 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         pairs
     }
 
-    fn decode_key(&self, _key: &mut Vec<u8>) -> Result<()> {
-        Ok(())
+    fn encode_ranges(&self, mut ranges: Vec<kvrpcpb::KeyRange>) -> Vec<kvrpcpb::KeyRange> {
+        for range in ranges.iter_mut() {
+            let (start, end) = self.encode_range(range.take_start_key(), range.take_end_key());
+            *range.mut_start_key() = start;
+            *range.mut_end_key() = end;
+        }
+
+        ranges
     }
 
     fn decode_keys(&self, keys: &mut [Vec<u8>]) -> Result<()> {
@@ -139,28 +168,6 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         self.decode_pairs(kvs)
     }
 
-    fn encode_range(&self, start: Vec<u8>, end: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
-        (start, end)
-    }
-
-    fn encode_ranges(&self, mut ranges: Vec<kvrpcpb::KeyRange>) -> Vec<kvrpcpb::KeyRange> {
-        for range in ranges.iter_mut() {
-            let (start, end) = self.encode_range(range.take_start_key(), range.take_end_key());
-            *range.mut_start_key() = start;
-            *range.mut_end_key() = end;
-        }
-
-        ranges
-    }
-
-    fn encode_pd_query(&self, key: Vec<u8>) -> Vec<u8> {
-        key
-    }
-
-    fn decode_region(&self, _region: &mut Region) -> Result<()> {
-        Ok(())
-    }
-
     fn decode_regions(&self, regions: &mut [Region]) -> Result<()> {
         for region in regions.iter_mut() {
             self.decode_region(region)?;
@@ -174,11 +181,9 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         }
         Ok(())
     }
-
-    fn is_plain(&self) -> bool {
-        true
-    }
 }
+
+impl<T: RequestCodec> RequestCodecExt for T {}
 
 #[derive(Clone)]
 pub struct TxnApiV1;

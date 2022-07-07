@@ -54,13 +54,13 @@ impl<T: PartialEq + Default> IsDefault for T {
 macro_rules! impl_decode_response {
     ($($o:ident)*) => {
         fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
+            #[allow(unused_imports)]
+            use $crate::request::{IsDefault, codec::RequestCodecExt};
+
             // decode errors
             if resp.has_region_error() {
                 codec.decode_region_error(resp.mut_region_error())?;
             }
-
-            #[allow(unused_imports)]
-            use $crate::request::IsDefault;
 
             $(
                 paste::paste! {
@@ -84,6 +84,9 @@ macro_rules! impl_kv_request {
             type Response = $resp;
 
             fn encode_request(mut self, codec: &C) -> Self {
+                #[allow(unused_imports)]
+                use $crate::request::codec::RequestCodecExt;
+
                 $(
                     paste::paste! {
                         *self.[<mut_ $i>]() = codec.[<encode_ $i>](self.[<take_ $i>]());
