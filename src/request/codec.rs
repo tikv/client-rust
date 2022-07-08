@@ -1,6 +1,8 @@
 use core::intrinsics::copy;
 use std::ops::{Deref, DerefMut};
 
+use derive_new::new;
+
 use tikv_client_common::Error;
 use tikv_client_proto::{errorpb, kvrpcpb, metapb::Region};
 
@@ -185,36 +187,12 @@ pub trait RequestCodecExt: RequestCodec {
 
 impl<T: RequestCodec> RequestCodecExt for T {}
 
-#[derive(Clone)]
-pub struct TxnApiV1;
-
-#[derive(Clone)]
-pub struct RawApiV1;
-
 pub trait RawCodec: RequestCodec {}
 
 pub trait TxnCodec: RequestCodec {}
 
-impl RequestCodec for RawApiV1 {}
-
-impl RequestCodec for TxnApiV1 {
-    fn encode_pd_query(&self, key: Vec<u8>) -> Vec<u8> {
-        Key::from(key).to_encoded().into()
-    }
-
-    fn decode_region(&self, region: &mut Region) -> Result<()> {
-        decode_bytes_in_place(region.mut_start_key(), false)?;
-        decode_bytes_in_place(region.mut_end_key(), false)?;
-        Ok(())
-    }
-}
-
-impl RawCodec for RawApiV1 {}
-
-impl TxnCodec for TxnApiV1 {}
-
 #[derive(Copy, Clone)]
-enum KeyMode {
+pub(crate) enum KeyMode {
     Raw,
     Txn,
 }
@@ -263,8 +241,8 @@ impl DerefMut for KeySpaceId {
     }
 }
 
-#[derive(Copy, Clone)]
-struct KeySpaceCodec {
+#[derive(new, Copy, Clone)]
+pub(crate) struct KeySpaceCodec {
     mode: KeyMode,
     id: KeySpaceId,
 }
@@ -346,82 +324,33 @@ impl RequestCodec for KeySpaceCodec {
     }
 }
 
-#[derive(Clone)]
-pub struct RawKeyspaceCodec(KeySpaceCodec);
+#[macro_export]
+macro_rules! impl_request_codec_for_new_type {
+    ($t:ty) => {
+        impl RequestCodec for $t {
+            fn encode_key(&self, key: Vec<u8>) -> Vec<u8> {
+                self.0.encode_key(key)
+            }
 
-impl RawKeyspaceCodec {
-    pub fn new(id: KeySpaceId) -> Self {
-        RawKeyspaceCodec(KeySpaceCodec {
-            mode: KeyMode::Raw,
-            id,
-        })
-    }
+            fn decode_key(&self, key: &mut Vec<u8>) -> Result<()> {
+                self.0.decode_key(key)
+            }
+
+            fn encode_range(&self, start: Vec<u8>, end: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
+                self.0.encode_range(start, end)
+            }
+
+            fn encode_pd_query(&self, key: Vec<u8>) -> Vec<u8> {
+                self.0.encode_pd_query(key)
+            }
+
+            fn decode_region(&self, region: &mut Region) -> Result<()> {
+                self.0.decode_region(region)
+            }
+
+            fn version(&self) -> kvrpcpb::ApiVersion {
+                self.0.version()
+            }
+        }
+    };
 }
-
-impl RequestCodec for RawKeyspaceCodec {
-    fn encode_key(&self, key: Vec<u8>) -> Vec<u8> {
-        self.0.encode_key(key)
-    }
-
-    fn decode_key(&self, key: &mut Vec<u8>) -> Result<()> {
-        self.0.decode_key(key)
-    }
-
-    fn encode_range(&self, start: Vec<u8>, end: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
-        self.0.encode_range(start, end)
-    }
-
-    fn encode_pd_query(&self, key: Vec<u8>) -> Vec<u8> {
-        self.0.encode_pd_query(key)
-    }
-
-    fn decode_region(&self, region: &mut Region) -> Result<()> {
-        self.0.decode_region(region)
-    }
-
-    fn version(&self) -> kvrpcpb::ApiVersion {
-        self.0.version()
-    }
-}
-
-impl RawCodec for RawKeyspaceCodec {}
-
-#[derive(Clone)]
-pub struct TxnKeyspaceCodec(KeySpaceCodec);
-
-impl TxnKeyspaceCodec {
-    pub fn new(id: KeySpaceId) -> Self {
-        TxnKeyspaceCodec(KeySpaceCodec {
-            mode: KeyMode::Txn,
-            id,
-        })
-    }
-}
-
-impl RequestCodec for TxnKeyspaceCodec {
-    fn encode_key(&self, key: Vec<u8>) -> Vec<u8> {
-        self.0.encode_key(key)
-    }
-
-    fn decode_key(&self, key: &mut Vec<u8>) -> Result<()> {
-        self.0.decode_key(key)
-    }
-
-    fn encode_range(&self, start: Vec<u8>, end: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
-        self.0.encode_range(start, end)
-    }
-
-    fn encode_pd_query(&self, key: Vec<u8>) -> Vec<u8> {
-        self.0.encode_pd_query(key)
-    }
-
-    fn decode_region(&self, region: &mut Region) -> Result<()> {
-        self.0.decode_region(region)
-    }
-
-    fn version(&self) -> kvrpcpb::ApiVersion {
-        self.0.version()
-    }
-}
-
-impl TxnCodec for TxnKeyspaceCodec {}

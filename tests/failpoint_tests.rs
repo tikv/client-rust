@@ -6,8 +6,8 @@ use fail::FailScenario;
 use serial_test::serial;
 use std::time::Duration;
 use tikv_client::{
-    request::codec::TxnApiV1, transaction::HeartbeatOption, Result, TransactionClient,
-    TransactionOptions,
+    transaction::{ApiV1, HeartbeatOption},
+    Result, TransactionClient, TransactionOptions,
 };
 
 #[tokio::test]
@@ -19,7 +19,7 @@ async fn txn_optimistic_heartbeat() -> Result<()> {
 
     let key1 = "key1".to_owned();
     let key2 = "key2".to_owned();
-    let client = TransactionClient::new(pd_addrs(), TxnApiV1, None).await?;
+    let client = TransactionClient::new(pd_addrs(), ApiV1, None).await?;
 
     let mut heartbeat_txn = client
         .begin_with_options(

@@ -792,7 +792,7 @@ mod tests {
 
     use crate::{
         mock::{MockKvClient, MockPdClient},
-        request::codec::RawApiV1,
+        raw::ApiV1,
         Result,
     };
 
@@ -828,7 +828,7 @@ mod tests {
             cf: Some(ColumnFamily::Default),
             atomic: false,
             logger,
-            _phantom: PhantomData::<RawApiV1>,
+            _phantom: PhantomData::<ApiV1>,
         };
         let resps = client
             .coprocessor(

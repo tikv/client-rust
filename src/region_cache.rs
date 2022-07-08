@@ -262,8 +262,9 @@ mod test {
 
     use crate::{
         pd::RetryClientTrait,
+        raw::ApiV1,
         region::{RegionId, RegionWithLeader},
-        request::codec::{RawApiV1, RequestCodec},
+        request::codec::RequestCodec,
         Key, Result,
     };
 
@@ -330,7 +331,7 @@ mod test {
     #[tokio::test]
     async fn cache_is_used() -> Result<()> {
         let retry_client = Arc::new(MockRetryClient::default());
-        let cache = RegionCache::new(RawApiV1, retry_client.clone());
+        let cache = RegionCache::new(ApiV1, retry_client.clone());
         retry_client.regions.lock().await.insert(
             1,
             RegionWithLeader {
@@ -400,7 +401,7 @@ mod test {
     #[tokio::test]
     async fn test_add_disjoint_regions() {
         let retry_client = Arc::new(MockRetryClient::default());
-        let cache = RegionCache::new(RawApiV1, retry_client.clone());
+        let cache = RegionCache::new(ApiV1, retry_client.clone());
         let region1 = region(1, vec![], vec![10]);
         let region2 = region(2, vec![10], vec![20]);
         let region3 = region(3, vec![30], vec![]);
@@ -419,7 +420,7 @@ mod test {
     #[tokio::test]
     async fn test_add_intersecting_regions() {
         let retry_client = Arc::new(MockRetryClient::default());
-        let cache = RegionCache::new(RawApiV1, retry_client.clone());
+        let cache = RegionCache::new(ApiV1, retry_client.clone());
 
         cache.add_region(region(1, vec![], vec![10])).await;
         cache.add_region(region(2, vec![10], vec![20])).await;
@@ -457,7 +458,7 @@ mod test {
     #[tokio::test]
     async fn test_get_region_by_key() -> Result<()> {
         let retry_client = Arc::new(MockRetryClient::default());
-        let cache = RegionCache::new(RawApiV1, retry_client.clone());
+        let cache = RegionCache::new(ApiV1, retry_client.clone());
 
         let region1 = region(1, vec![], vec![10]);
         let region2 = region(2, vec![10], vec![20]);

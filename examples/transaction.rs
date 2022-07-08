@@ -4,8 +4,8 @@ mod common;
 
 use crate::common::parse_args;
 use tikv_client::{
-    request::codec::{TxnApiV1, TxnCodec},
-    BoundRange, Config, Key, KvPair, TransactionClient as Client, Value,
+    request::codec::TxnCodec, transaction::ApiV1, BoundRange, Config, Key, KvPair,
+    TransactionClient as Client, Value,
 };
 
 async fn puts<C: TxnCodec>(client: &Client<C>, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
@@ -84,7 +84,7 @@ async fn main() {
         Config::default()
     };
 
-    let txn = Client::new_with_config(args.pd, config, TxnApiV1, None)
+    let txn = Client::new_with_config(args.pd, config, ApiV1, None)
         .await
         .expect("Could not connect to tikv");
 

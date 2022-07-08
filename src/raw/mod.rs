@@ -9,11 +9,15 @@
 //!
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 
-pub use self::client::Client;
+pub use self::{
+    client::Client,
+    codec::{ApiV1, Keyspace},
+};
 use crate::Error;
 use std::{convert::TryFrom, fmt};
 
 mod client;
+mod codec;
 pub mod lowering;
 mod requests;
 
