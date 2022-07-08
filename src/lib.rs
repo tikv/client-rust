@@ -66,9 +66,9 @@
 //! # use tikv_client::{RawClient, Result};
 //! # use futures::prelude::*;
 //! # fn main() -> Result<()> {
-//! # use tikv_client::request::codec::RawApiV1;
+//! # use tikv_client::raw::ApiV1;
 //! futures::executor::block_on(async {
-//! let client = RawClient::new(vec!["127.0.0.1:2379"], RawApiV1, None).await?;
+//! let client = RawClient::new(vec!["127.0.0.1:2379"], ApiV1, None).await?;
 //! client.put("key".to_owned(), "value".to_owned()).await?;
 //! let value = client.get("key".to_owned()).await?;
 //! # Ok(())
@@ -81,9 +81,9 @@
 //! # use tikv_client::{TransactionClient, Result};
 //! # use futures::prelude::*;
 //! # fn main() -> Result<()> {
-//! # use tikv_client::request::codec::TxnApiV1;
+//! # use tikv_client::transaction::ApiV1;
 //! futures::executor::block_on(async {
-//! let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"], TxnApiV1, None).await?;
+//! let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"], ApiV1, None).await?;
 //! let mut txn = txn_client.begin_optimistic().await?;
 //! txn.put("key".to_owned(), "value".to_owned()).await?;
 //! let value = txn.get("key".to_owned()).await?;

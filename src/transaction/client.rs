@@ -68,9 +68,9 @@ where
     /// ```rust,no_run
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
-    /// use tikv_client::request::codec::TxnApiV1;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], TxnApiV1, None)
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1, None)
     ///     .await
     ///     .unwrap();
     /// # });
@@ -96,12 +96,12 @@ where
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # use std::time::Duration;
-    /// use tikv_client::request::codec::TxnApiV1;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
     /// let client = TransactionClient::new_with_config(
     ///     vec!["192.168.0.100"],
     ///     Config::default().with_timeout(Duration::from_secs(60)),
-    ///     TxnApiV1,
+    ///     ApiV1,
     ///     None,
     /// )
     /// .await
@@ -148,9 +148,9 @@ where
     /// ```rust,no_run
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
-    /// use tikv_client::request::codec::TxnApiV1;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], TxnApiV1, None)
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1, None)
     ///     .await
     ///     .unwrap();
     /// let mut transaction = client.begin_optimistic().await.unwrap();
@@ -174,9 +174,9 @@ where
     /// ```rust,no_run
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
-    /// use tikv_client::request::codec::TxnApiV1;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], TxnApiV1, None)
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1, None)
     ///     .await
     ///     .unwrap();
     /// let mut transaction = client.begin_pessimistic().await.unwrap();
@@ -197,9 +197,9 @@ where
     /// ```rust,no_run
     /// # use tikv_client::{Config, TransactionClient, TransactionOptions};
     /// # use futures::prelude::*;
-    /// use tikv_client::request::codec::TxnApiV1;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], TxnApiV1, None)
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1, None)
     ///     .await
     ///     .unwrap();
     /// let mut transaction = client
@@ -237,9 +237,9 @@ where
     /// ```rust,no_run
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
-    /// use tikv_client::request::codec::TxnApiV1;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], TxnApiV1, None)
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1, None)
     ///     .await
     ///     .unwrap();
     /// let timestamp = client.current_timestamp().await.unwrap();
