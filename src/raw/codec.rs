@@ -24,4 +24,4 @@ impl Keyspace {
 
 impl_request_codec_for_new_type!(Keyspace);
 
-impl TxnCodec for Keyspace {}
+impl RawCodec for Keyspace {}
