@@ -894,7 +894,7 @@ async fn txn_scan_reverse() -> Result<()> {
     let v1 = b"b1".to_vec();
     let v2 = b"b2".to_vec();
 
-    let _reverse_resp = vec![
+    let reverse_resp = vec![
         (Key::from(k2.clone()), v2.clone()),
         (Key::from(k1.clone()), v1.clone()),
     ];
@@ -908,12 +908,12 @@ async fn txn_scan_reverse() -> Result<()> {
 
     let mut t2 = client.begin_with_options(option).await?;
     let bound_range: BoundRange = (k1..=k2).into();
-    let _resp = t2
+    let resp = t2
         .scan_reverse(bound_range, 2)
         .await?
         .map(|kv| (kv.0, kv.1))
         .collect::<Vec<(Key, Vec<u8>)>>();
-    assert_eq!(_resp, _reverse_resp);
+    assert_eq!(resp, reverse_resp);
     t2.commit().await?;
 
     Ok(())
