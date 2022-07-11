@@ -15,9 +15,13 @@ mod test {
         let mut tikv_server = start_mock_tikv_server();
         let _pd_server = start_mock_pd_server();
 
-        let client = RawClient::new(vec![format!("localhost:{}", MOCK_PD_PORT)], ApiV1, None)
-            .await
-            .unwrap();
+        let client = RawClient::new(
+            vec![format!("localhost:{}", MOCK_PD_PORT)],
+            ApiV1::default(),
+            None,
+        )
+        .await
+        .unwrap();
 
         // empty; get non-existent key
         let res = client.get("k1".to_owned()).await;

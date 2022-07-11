@@ -53,7 +53,7 @@ use crate::{
 /// # use futures::prelude::*;
 /// use tikv_client::transaction::ApiV1;
 /// # futures::executor::block_on(async {
-/// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1, None)
+/// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1::default(), None)
 ///     .await
 ///     .unwrap();
 /// let mut txn = client.begin_optimistic().await.unwrap();
@@ -110,7 +110,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1, None).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1::default(), None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let result: Option<Value> = txn.get(key).await.unwrap();
@@ -172,7 +172,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1, None).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1::default(), None).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let result: Value = txn.get_for_update(key).await.unwrap().unwrap();
@@ -207,7 +207,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1, None).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1::default(), None).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let exists = txn.key_exists("k1".to_owned()).await.unwrap();
     /// txn.commit().await.unwrap();
@@ -235,7 +235,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use std::collections::HashMap;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1, None).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1::default(), None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let result: HashMap<Key, Value> = txn
@@ -289,7 +289,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use std::collections::HashMap;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1, None).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1::default(), None).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let keys = vec!["foo".to_owned(), "bar".to_owned()];
     /// let result: Vec<KvPair> = txn
@@ -335,7 +335,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use std::collections::HashMap;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1, None).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1::default(), None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key1: Key = b"foo".to_vec().into();
     /// let key2: Key = b"bar".to_vec().into();
@@ -372,7 +372,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use std::collections::HashMap;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1, None).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1::default(), None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key1: Key = b"foo".to_vec().into();
     /// let key2: Key = b"bar".to_vec().into();
@@ -414,7 +414,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1, None).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1::default(), None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "foo".to_owned();
     /// let val = "FOO".to_owned();
@@ -446,7 +446,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1, None).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1::default(), None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "foo".to_owned();
     /// let val = "FOO".to_owned();
@@ -483,7 +483,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1, None).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], ApiV1::default(), None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "foo".to_owned();
     /// txn.delete(key);
@@ -519,7 +519,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1, None).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1::default(), None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// txn.lock_keys(vec!["TiKV".to_owned(), "Rust".to_owned()]);
     /// // ... Do some actions.
@@ -556,7 +556,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1, None).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1::default(), None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// // ... Do some actions.
     /// let result: Timestamp = txn.commit().await.unwrap().unwrap();
@@ -615,7 +615,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1, None).await.unwrap();
+    /// # let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1::default(), None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// // ... Do some actions.
     /// txn.rollback().await.unwrap();

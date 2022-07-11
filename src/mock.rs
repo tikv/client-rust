@@ -42,7 +42,7 @@ pub async fn pd_rpc_client() -> PdRpcClient<ApiV1, MockKvConnect, MockCluster> {
                 MockCluster,
             ))
         },
-        ApiV1,
+        ApiV1::default(),
         logger,
     )
     .await
@@ -201,6 +201,6 @@ impl PdClient for MockPdClient {
     async fn invalidate_region_cache(&self, _ver_id: crate::region::RegionVerId) {}
 
     fn get_request_codec(&self) -> Self::RequestCodec {
-        ApiV1
+        ApiV1::default()
     }
 }

@@ -70,7 +70,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1, None)
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1::default(), None)
     ///     .await
     ///     .unwrap();
     /// # });
@@ -101,7 +101,7 @@ where
     /// let client = TransactionClient::new_with_config(
     ///     vec!["192.168.0.100"],
     ///     Config::default().with_timeout(Duration::from_secs(60)),
-    ///     ApiV1,
+    ///     ApiV1::default(),
     ///     None,
     /// )
     /// .await
@@ -150,7 +150,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1, None)
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1::default(), None)
     ///     .await
     ///     .unwrap();
     /// let mut transaction = client.begin_optimistic().await.unwrap();
@@ -176,7 +176,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1, None)
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1::default(), None)
     ///     .await
     ///     .unwrap();
     /// let mut transaction = client.begin_pessimistic().await.unwrap();
@@ -199,7 +199,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1, None)
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1::default(), None)
     ///     .await
     ///     .unwrap();
     /// let mut transaction = client
@@ -239,7 +239,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1, None)
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1::default(), None)
     ///     .await
     ///     .unwrap();
     /// let timestamp = client.current_timestamp().await.unwrap();

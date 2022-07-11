@@ -19,7 +19,7 @@ pub async fn clear_tikv() {
     // DEFAULT_REGION_BACKOFF is not long enough for CI environment. So set a longer backoff.
     let backoff = tikv_client::Backoff::no_jitter_backoff(100, 10000, 10);
     for cf in cfs {
-        let raw_client = RawClient::new(pd_addrs(), raw::ApiV1, None)
+        let raw_client = RawClient::new(pd_addrs(), raw::ApiV1::default(), None)
             .await
             .unwrap()
             .with_cf(cf);
@@ -63,7 +63,7 @@ async fn ensure_region_split(
     // 1. write plenty transactional keys
     // 2. wait until regions split
 
-    let client = TransactionClient::new(pd_addrs(), transaction::ApiV1, None).await?;
+    let client = TransactionClient::new(pd_addrs(), transaction::ApiV1::default(), None).await?;
     let mut txn = client.begin_optimistic().await?;
     for key in keys.into_iter() {
         txn.put(key.into(), vec![0, 0, 0, 0]).await?;

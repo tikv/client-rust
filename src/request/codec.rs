@@ -1,23 +1,17 @@
 use core::intrinsics::copy;
-use std::ops::{Deref, DerefMut};
-
-use derive_new::new;
+use std::{
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+};
 
 use tikv_client_common::Error;
 use tikv_client_proto::{errorpb, kvrpcpb, metapb::Region};
 
 use crate::{kv::codec::decode_bytes_in_place, Key, Result};
 
-const RAW_MODE_PREFIX: u8 = b'r';
-const TXN_MODE_PREFIX: u8 = b'x';
+type Prefix = [u8; KEYSPACE_PREFIX_LEN];
 
 const KEYSPACE_PREFIX_LEN: usize = 4;
-
-const RAW_MODE_MIN_KEY: Prefix = [RAW_MODE_PREFIX, 0, 0, 0];
-const RAW_MODE_MAX_KEY: Prefix = [RAW_MODE_PREFIX + 1, 0, 0, 0];
-
-const TXN_MODE_MIN_KEY: Prefix = [TXN_MODE_PREFIX, 0, 0, 0];
-const TXN_MODE_MAX_KEY: Prefix = [TXN_MODE_PREFIX + 1, 0, 0, 0];
 
 const MAX_KEYSPACE_ID: KeySpaceId = KeySpaceId([0xff, 0xff, 0xff]);
 
@@ -191,39 +185,6 @@ pub trait RawCodec: RequestCodec {}
 
 pub trait TxnCodec: RequestCodec {}
 
-#[derive(Copy, Clone)]
-pub(crate) enum KeyMode {
-    Raw,
-    Txn,
-}
-
-impl From<KeyMode> for u8 {
-    fn from(mode: KeyMode) -> u8 {
-        match mode {
-            KeyMode::Raw => b'r',
-            KeyMode::Txn => b'x',
-        }
-    }
-}
-
-impl KeyMode {
-    fn min_key(self) -> Vec<u8> {
-        match self {
-            KeyMode::Raw => RAW_MODE_MIN_KEY.to_vec(),
-            KeyMode::Txn => TXN_MODE_MIN_KEY.to_vec(),
-        }
-    }
-
-    fn max_key(self) -> Vec<u8> {
-        match self {
-            KeyMode::Raw => RAW_MODE_MAX_KEY.to_vec(),
-            KeyMode::Txn => TXN_MODE_MAX_KEY.to_vec(),
-        }
-    }
-}
-
-type Prefix = [u8; KEYSPACE_PREFIX_LEN];
-
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct KeySpaceId([u8; 3]);
 
@@ -241,29 +202,87 @@ impl DerefMut for KeySpaceId {
     }
 }
 
-#[derive(new, Copy, Clone)]
-pub(crate) struct KeySpaceCodec {
-    mode: KeyMode,
-    id: KeySpaceId,
+pub trait Mode: Clone + Copy + Sync + Send + 'static {
+    const PREFIX: u8;
+    const MIN_KEY: &'static [u8] = &[Self::PREFIX, 0, 0, 0];
+    const MAX_KEY: &'static [u8] = &[Self::PREFIX + 1, 0, 0, 0];
 }
 
-impl From<KeySpaceCodec> for Prefix {
-    fn from(codec: KeySpaceCodec) -> Self {
-        [codec.mode.into(), codec.id[0], codec.id[1], codec.id[2]]
+#[derive(Clone, Copy)]
+pub struct RawMode;
+
+#[derive(Clone, Copy)]
+pub struct TxnMode;
+
+impl Mode for RawMode {
+    const PREFIX: u8 = b'r';
+}
+
+impl Mode for TxnMode {
+    const PREFIX: u8 = b't';
+}
+
+#[derive(Clone)]
+pub struct ApiV1<M: Mode> {
+    _phantom: PhantomData<M>,
+}
+
+impl<M: Mode> Default for ApiV1<M> {
+    fn default() -> Self {
+        ApiV1 {
+            _phantom: PhantomData,
+        }
     }
 }
 
-impl RequestCodec for KeySpaceCodec {
+impl RequestCodec for ApiV1<RawMode> {}
+
+impl RawCodec for ApiV1<RawMode> {}
+
+impl RequestCodec for ApiV1<TxnMode> {
+    fn encode_pd_query(&self, key: Vec<u8>) -> Vec<u8> {
+        Key::from(key).to_encoded().into()
+    }
+
+    fn decode_region(&self, region: &mut Region) -> Result<()> {
+        decode_bytes_in_place(region.mut_start_key(), false)?;
+        decode_bytes_in_place(region.mut_end_key(), false)?;
+
+        Ok(())
+    }
+}
+
+impl TxnCodec for ApiV1<TxnMode> {}
+
+#[derive(Clone, Copy, Default)]
+pub struct KeySpace<M: Mode> {
+    id: KeySpaceId,
+    _phantom: PhantomData<M>,
+}
+
+impl<M: Mode> From<KeySpace<M>> for Prefix {
+    fn from(s: KeySpace<M>) -> Self {
+        [M::PREFIX, s.id[0], s.id[1], s.id[2]]
+    }
+}
+
+#[derive(Default, Clone)]
+pub struct ApiV2<M: Mode> {
+    keyspace: KeySpace<M>,
+}
+
+impl<M: Mode> RequestCodec for ApiV2<M> {
     fn encode_key(&self, mut key: Vec<u8>) -> Vec<u8> {
         let mut encoded = Vec::with_capacity(key.len() + KEYSPACE_PREFIX_LEN);
-        let prefix: Prefix = (*self).into();
+        let prefix: Prefix = self.keyspace.into();
+
         encoded.extend_from_slice(&prefix);
         encoded.append(&mut key);
         encoded
     }
 
     fn decode_key(&self, key: &mut Vec<u8>) -> Result<()> {
-        let prefix: Prefix = (*self).into();
+        let prefix: Prefix = self.keyspace.into();
 
         if !key.starts_with(&prefix) {
             return Err(Error::CorruptedKeyspace {
@@ -286,8 +305,8 @@ impl RequestCodec for KeySpaceCodec {
     }
 
     fn encode_range(&self, start: Vec<u8>, end: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
-        if self.id == MAX_KEYSPACE_ID {
-            (self.encode_key(start), self.mode.max_key())
+        if self.keyspace.id == MAX_KEYSPACE_ID {
+            (self.encode_key(start), M::MAX_KEY.to_vec())
         } else {
             (self.encode_key(start), self.encode_key(end))
         }
@@ -301,16 +320,15 @@ impl RequestCodec for KeySpaceCodec {
         decode_bytes_in_place(region.mut_start_key(), false)?;
         decode_bytes_in_place(region.mut_end_key(), false)?;
 
-        // Map the region's start key to the keyspace's start key.
-        if region.get_start_key() < self.mode.min_key().as_slice() {
+        // Map the region's start key to the keyspace start key.
+        if region.get_start_key() < M::MIN_KEY {
             *region.mut_start_key() = vec![];
         } else {
             self.decode_key(region.mut_start_key())?;
         }
 
-        // Map the region's end key to the keyspace's end key.
-        if region.get_end_key().is_empty() || region.get_end_key() > self.mode.max_key().as_slice()
-        {
+        // Map the region's end key to the keyspace end key.
+        if region.get_end_key().is_empty() || region.get_end_key() > M::MAX_KEY {
             *region.mut_end_key() = vec![];
         } else {
             self.decode_key(region.mut_end_key())?;
@@ -322,35 +340,4 @@ impl RequestCodec for KeySpaceCodec {
     fn version(&self) -> kvrpcpb::ApiVersion {
         kvrpcpb::ApiVersion::V2
     }
-}
-
-#[macro_export]
-macro_rules! impl_request_codec_for_new_type {
-    ($t:ty) => {
-        impl RequestCodec for $t {
-            fn encode_key(&self, key: Vec<u8>) -> Vec<u8> {
-                self.0.encode_key(key)
-            }
-
-            fn decode_key(&self, key: &mut Vec<u8>) -> Result<()> {
-                self.0.decode_key(key)
-            }
-
-            fn encode_range(&self, start: Vec<u8>, end: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
-                self.0.encode_range(start, end)
-            }
-
-            fn encode_pd_query(&self, key: Vec<u8>) -> Vec<u8> {
-                self.0.encode_pd_query(key)
-            }
-
-            fn decode_region(&self, region: &mut Region) -> Result<()> {
-                self.0.decode_region(region)
-            }
-
-            fn version(&self) -> kvrpcpb::ApiVersion {
-                self.0.version()
-            }
-        }
-    };
 }

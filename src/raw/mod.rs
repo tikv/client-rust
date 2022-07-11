@@ -11,7 +11,7 @@
 
 pub use self::{
     client::Client,
-    codec::{ApiV1, Keyspace},
+    codec::{ApiV1, ApiV2},
 };
 use crate::Error;
 use std::{convert::TryFrom, fmt};
