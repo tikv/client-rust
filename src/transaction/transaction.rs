@@ -12,9 +12,9 @@ use crate::{
 };
 use derive_new::new;
 use fail::fail_point;
-use futures::{prelude::*, stream::BoxStream};
+use futures::prelude::*;
 use slog::Logger;
-use std::{iter, ops::RangeBounds, sync::Arc, time::Instant};
+use std::{iter, sync::Arc, time::Instant};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 use tokio::{sync::RwLock, time::Duration};
 
@@ -344,7 +344,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
         debug!(self.logger, "invoking transactional scan request");
-        self.scan_inner(range, limit, false).await
+        self.scan_inner(range, limit, false, false).await
     }
 
     /// Create a new 'scan' request that only returns the keys.
@@ -381,7 +381,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     ) -> Result<impl Iterator<Item = Key>> {
         debug!(self.logger, "invoking transactional scan_keys request");
         Ok(self
-            .scan_inner(range, limit, true)
+            .scan_inner(range, limit, true, false)
             .await?
             .map(KvPair::into_key))
     }
@@ -389,9 +389,31 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Create a 'scan_reverse' request.
     ///
     /// Similar to [`scan`](Transaction::scan), but scans in the reverse direction.
-    pub(crate) fn scan_reverse(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
+    pub async fn scan_reverse(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Iterator<Item = KvPair>> {
         debug!(self.logger, "invoking transactional scan_reverse request");
-        unimplemented!()
+        self.scan_inner(range, limit, false, true).await
+    }
+
+    /// Create a 'scan_keys_reverse' request.
+    ///
+    /// Similar to [`scan`](Transaction::scan_keys), but scans in the reverse direction.
+    pub async fn scan_keys_reverse(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Iterator<Item = Key>> {
+        debug!(
+            self.logger,
+            "invoking transactional scan_keys_reverse request"
+        );
+        Ok(self
+            .scan_inner(range, limit, true, true)
+            .await?
+            .map(KvPair::into_key))
     }
 
     /// Sets the value associated with the given key.
@@ -680,6 +702,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
         key_only: bool,
+        reverse: bool,
     ) -> Result<impl Iterator<Item = KvPair>> {
         self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
@@ -691,8 +714,10 @@ impl<PdC: PdClient> Transaction<PdC> {
                 range.into(),
                 limit,
                 !key_only,
+                reverse,
                 move |new_range, new_limit| async move {
-                    let request = new_scan_request(new_range, timestamp, new_limit, key_only);
+                    let request =
+                        new_scan_request(new_range, timestamp, new_limit, key_only, reverse);
                     let plan = PlanBuilder::new(rpc, request)
                         .resolve_lock(retry_options.lock_backoff)
                         .retry_multi_region(retry_options.region_backoff)
