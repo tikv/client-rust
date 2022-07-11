@@ -160,7 +160,7 @@ impl Buffer {
             .map(|(k, v)| KvPair::new(k, v))
             .collect::<Vec<_>>();
 
-        // TODO use btreemap instead of hashmap to avoid sorting
+        // TODO: use `BTreeMap` instead of `HashMap` to avoid sorting.
         if reverse {
             res.sort_unstable_by(|a, b| b.key().cmp(a.key()));
         } else {
