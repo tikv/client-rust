@@ -41,7 +41,7 @@ pub trait KvRequest<C>: Request + Sized + Clone + Sync + Send + 'static {
     }
 }
 
-pub trait IsDefault {
+pub(crate) trait IsDefault {
     fn is_default(&self) -> bool;
 }
 
