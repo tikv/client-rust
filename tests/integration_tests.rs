@@ -22,7 +22,7 @@ use std::{
     iter,
 };
 use tikv_client::{
-    transaction::HeartbeatOption, Error, Key, KvPair, RawClient, Result, Transaction,
+    transaction::HeartbeatOption, BoundRange, Error, Key, KvPair, RawClient, Result, Transaction,
     TransactionClient, TransactionOptions, Value,
 };
 
@@ -878,6 +878,42 @@ async fn txn_scan() -> Result<()> {
     let mut t2 = client.begin_with_options(option).await?;
     t2.get(k1.clone()).await?;
     t2.key_exists(k1).await?;
+    t2.commit().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn txn_scan_reverse() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
+
+    let k1 = b"a1".to_vec();
+    let k2 = b"a2".to_vec();
+    let v1 = b"b1".to_vec();
+    let v2 = b"b2".to_vec();
+
+    let reverse_resp = vec![
+        (Key::from(k2.clone()), v2.clone()),
+        (Key::from(k1.clone()), v1.clone()),
+    ];
+
+    // pessimistic
+    let option = TransactionOptions::new_pessimistic().drop_check(tikv_client::CheckLevel::Warn);
+    let mut t = client.begin_with_options(option.clone()).await?;
+    t.put(k1.clone(), v1).await?;
+    t.put(k2.clone(), v2).await?;
+    t.commit().await?;
+
+    let mut t2 = client.begin_with_options(option).await?;
+    let bound_range: BoundRange = (k1..=k2).into();
+    let resp = t2
+        .scan_reverse(bound_range, 2)
+        .await?
+        .map(|kv| (kv.0, kv.1))
+        .collect::<Vec<(Key, Vec<u8>)>>();
+    assert_eq!(resp, reverse_resp);
     t2.commit().await?;
 
     Ok(())
