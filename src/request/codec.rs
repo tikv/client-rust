@@ -1,5 +1,6 @@
 use core::intrinsics::copy;
 use std::{
+    borrow::Cow,
     marker::PhantomData,
     ops::{Deref, DerefMut},
 };
@@ -7,7 +8,7 @@ use std::{
 use tikv_client_common::Error;
 use tikv_client_proto::{errorpb, kvrpcpb, metapb::Region};
 
-use crate::{kv::codec::decode_bytes_in_place, Key, Result};
+use crate::{kv::codec::decode_bytes_in_place, request::KvRequest, Key, Result};
 
 type Prefix = [u8; KEYSPACE_PREFIX_LEN];
 
@@ -16,6 +17,10 @@ const KEYSPACE_PREFIX_LEN: usize = 4;
 const MAX_KEYSPACE_ID: KeySpaceId = KeySpaceId([0xff, 0xff, 0xff]);
 
 pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
+    fn encode_request<'a, R: KvRequest<Self>>(&self, req: &'a R) -> Cow<'a, R> {
+        Cow::Borrowed(req)
+    }
+
     fn encode_key(&self, key: Vec<u8>) -> Vec<u8> {
         key
     }
@@ -36,8 +41,12 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         Ok(())
     }
 
-    fn version(&self) -> kvrpcpb::ApiVersion {
-        kvrpcpb::ApiVersion::V1
+    fn decode_response<R: KvRequest<Self>>(
+        &self,
+        _req: &R,
+        resp: R::Response,
+    ) -> Result<R::Response> {
+        Ok(resp)
     }
 }
 
@@ -272,6 +281,12 @@ pub struct ApiV2<M: Mode> {
 }
 
 impl<M: Mode> RequestCodec for ApiV2<M> {
+    fn encode_request<'a, R: KvRequest<Self>>(&self, req: &'a R) -> Cow<'a, R> {
+        let mut req = req.clone();
+        req.mut_context().set_api_version(kvrpcpb::ApiVersion::V2);
+        Cow::Owned(req.encode_request(self))
+    }
+
     fn encode_key(&self, mut key: Vec<u8>) -> Vec<u8> {
         let mut encoded = Vec::with_capacity(key.len() + KEYSPACE_PREFIX_LEN);
         let prefix: Prefix = self.keyspace.into();
@@ -337,7 +352,11 @@ impl<M: Mode> RequestCodec for ApiV2<M> {
         Ok(())
     }
 
-    fn version(&self) -> kvrpcpb::ApiVersion {
-        kvrpcpb::ApiVersion::V2
+    fn decode_response<R: KvRequest<Self>>(
+        &self,
+        req: &R,
+        resp: R::Response,
+    ) -> Result<R::Response> {
+        req.decode_response(self, resp)
     }
 }

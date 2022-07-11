@@ -1,6 +1,6 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{borrow::Cow, marker::PhantomData, sync::Arc};
+use std::{marker::PhantomData, sync::Arc};
 
 use async_recursion::async_recursion;
 use async_trait::async_trait;
@@ -55,14 +55,7 @@ impl<C: RequestCodec, Req: KvRequest<C>> Plan for Dispatch<C, Req> {
     type Result = Req::Response;
 
     async fn execute(&self) -> Result<Self::Result> {
-        let req = match self.codec.version() {
-            kvrpcpb::ApiVersion::V2 => {
-                let mut req = self.request.clone();
-                req.mut_context().set_api_version(self.codec.version());
-                Cow::Owned(req.encode_request(&self.codec))
-            }
-            _ => Cow::Borrowed(&self.request),
-        };
+        let req = self.codec.encode_request(&self.request);
 
         let stats = tikv_stats(self.request.label());
         let result = self
@@ -78,10 +71,7 @@ impl<C: RequestCodec, Req: KvRequest<C>> Plan for Dispatch<C, Req> {
                 .downcast()
                 .expect("Downcast failed: request and response type mismatch");
 
-            match self.codec.version() {
-                kvrpcpb::ApiVersion::V2 => req.decode_response(&self.codec, resp),
-                _ => Ok(resp),
-            }
+            self.codec.decode_response(req.as_ref(), resp)
         })
     }
 }
