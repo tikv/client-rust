@@ -302,7 +302,6 @@ impl<M: Mode> RequestCodec for ApiV2<M> {
         if !key.starts_with(&prefix) {
             return Err(Error::CorruptedKeyspace {
                 expected: prefix.to_vec(),
-                actual: key[..KEYSPACE_PREFIX_LEN].to_vec(),
                 key: key.to_vec(),
             });
         }
