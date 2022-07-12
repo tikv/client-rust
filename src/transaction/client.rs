@@ -37,13 +37,13 @@ const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
 ///
 /// The returned results of transactional requests are [`Future`](std::future::Future)s that must be
 /// awaited to execute.
-pub struct Client<C> {
+pub struct Client<C: TxnCodec> {
     pd: Arc<PdRpcClient<C>>,
     logger: Logger,
     _phantom: PhantomData<C>,
 }
 
-impl<C> Clone for Client<C> {
+impl<C: TxnCodec> Clone for Client<C> {
     fn clone(&self) -> Self {
         Self {
             pd: self.pd.clone(),

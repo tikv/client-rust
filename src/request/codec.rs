@@ -359,3 +359,7 @@ impl<M: Mode> RequestCodec for ApiV2<M> {
         req.decode_response(self, resp)
     }
 }
+
+impl RawCodec for ApiV2<RawMode> {}
+
+impl TxnCodec for ApiV2<TxnMode> {}

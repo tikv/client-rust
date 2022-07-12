@@ -13,10 +13,7 @@ use crate::{
     config::Config,
     pd::{PdClient, PdRpcClient},
     raw::lowering::*,
-    request::{
-        codec::{RawCodec, RequestCodec},
-        Collect, CollectSingle, Plan,
-    },
+    request::{codec::RawCodec, Collect, CollectSingle, Plan},
     Backoff, BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
 
@@ -29,7 +26,7 @@ const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 ///
 /// The returned results of raw request methods are [`Future`](std::future::Future)s that must be
 /// awaited to execute.
-pub struct Client<C, PdC: PdClient = PdRpcClient<C>> {
+pub struct Client<C: RawCodec, PdC: PdClient = PdRpcClient<C>> {
     rpc: Arc<PdC>,
     cf: Option<ColumnFamily>,
     /// Whether to use the [`atomic mode`](Client::with_atomic_for_cas).
@@ -38,7 +35,7 @@ pub struct Client<C, PdC: PdClient = PdRpcClient<C>> {
     _phantom: PhantomData<C>,
 }
 
-impl<C: RequestCodec> Clone for Client<C> {
+impl<C: RawCodec> Clone for Client<C> {
     fn clone(&self) -> Self {
         Self {
             rpc: self.rpc.clone(),
