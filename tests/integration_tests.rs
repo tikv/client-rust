@@ -23,9 +23,9 @@ use std::{
 };
 use tikv_client::{
     raw,
-    request::codec::RawCodec,
+    request::codec::{RawCodec, RequestCodec},
     transaction::{self, HeartbeatOption},
-    BoundRange, Error, Key, KvPair, PdClient, RawClient, Result, Transaction, TransactionClient,
+    BoundRange, Error, Key, KvPair, RawClient, Result, Transaction, TransactionClient,
     TransactionOptions, Value,
 };
 
@@ -973,7 +973,7 @@ async fn get_u32<C: RawCodec>(client: &RawClient<C>, key: Vec<u8>) -> Result<u32
 }
 
 // helper function
-async fn get_txn_u32<C: PdClient>(txn: &mut Transaction<C>, key: Vec<u8>) -> Result<u32> {
+async fn get_txn_u32<C: RequestCodec>(txn: &mut Transaction<C>, key: Vec<u8>) -> Result<u32> {
     let x = txn.get(key).await?.unwrap();
     let boxed_slice = x.into_boxed_slice();
     let array: Box<[u8; 4]> = boxed_slice

@@ -1,6 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{iter, sync::Arc, time::Instant};
+use std::{iter, marker::PhantomData, sync::Arc, time::Instant};
 
 use derive_new::new;
 use fail::fail_point;
@@ -12,9 +12,10 @@ use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
 use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF},
-    pd::PdClient,
+    pd::{PdClient, PdRpcClient},
     request::{
-        Collect, CollectError, CollectSingle, CollectWithShard, Plan, PlanBuilder, RetryOptions,
+        codec::RequestCodec, Collect, CollectError, CollectSingle, CollectWithShard, Plan,
+        PlanBuilder, RetryOptions,
     },
     timestamp::TimestampExt,
     transaction::{buffer::Buffer, lowering::*},
@@ -62,7 +63,7 @@ use crate::{
 /// txn.commit().await.unwrap();
 /// # });
 /// ```
-pub struct Transaction<PdC: PdClient> {
+pub struct Transaction<C: RequestCodec, PdC: PdClient<RequestCodec = C> = PdRpcClient<C>> {
     status: Arc<RwLock<TransactionStatus>>,
     timestamp: Timestamp,
     buffer: Buffer,
@@ -71,15 +72,20 @@ pub struct Transaction<PdC: PdClient> {
     is_heartbeat_started: bool,
     start_instant: Instant,
     logger: Logger,
+    _phantom: PhantomData<C>,
 }
 
-impl<PdC: PdClient> Transaction<PdC> {
+impl<C, PdC> Transaction<C, PdC>
+where
+    C: RequestCodec,
+    PdC: PdClient<RequestCodec = C>,
+{
     pub(crate) fn new(
         timestamp: Timestamp,
         rpc: Arc<PdC>,
         options: TransactionOptions,
         logger: Logger,
-    ) -> Transaction<PdC> {
+    ) -> Transaction<C, PdC> {
         let status = if options.read_only {
             TransactionStatus::ReadOnly
         } else {
@@ -94,6 +100,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             is_heartbeat_started: false,
             start_instant: std::time::Instant::now(),
             logger,
+            _phantom: PhantomData,
         }
     }
 
@@ -931,7 +938,11 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 }
 
-impl<PdC: PdClient> Drop for Transaction<PdC> {
+impl<C, PdC> Drop for Transaction<C, PdC>
+where
+    C: RequestCodec,
+    PdC: PdClient<RequestCodec = C>,
+{
     fn drop(&mut self) {
         debug!(self.logger, "dropping transaction");
         if std::thread::panicking() {

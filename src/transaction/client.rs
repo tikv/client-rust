@@ -158,7 +158,7 @@ where
     /// transaction.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn begin_optimistic(&self) -> Result<Transaction<PdRpcClient<C>>> {
+    pub async fn begin_optimistic(&self) -> Result<Transaction<C>> {
         debug!(self.logger, "creating new optimistic transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, TransactionOptions::new_optimistic()))
@@ -184,7 +184,7 @@ where
     /// transaction.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn begin_pessimistic(&self) -> Result<Transaction<PdRpcClient<C>>> {
+    pub async fn begin_pessimistic(&self) -> Result<Transaction<C>> {
         debug!(self.logger, "creating new pessimistic transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, TransactionOptions::new_pessimistic()))
@@ -210,21 +210,14 @@ where
     /// transaction.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn begin_with_options(
-        &self,
-        options: TransactionOptions,
-    ) -> Result<Transaction<PdRpcClient<C>>> {
+    pub async fn begin_with_options(&self, options: TransactionOptions) -> Result<Transaction<C>> {
         debug!(self.logger, "creating new customized transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, options))
     }
 
     /// Create a new [`Snapshot`](Snapshot) at the given [`Timestamp`](Timestamp).
-    pub fn snapshot(
-        &self,
-        timestamp: Timestamp,
-        options: TransactionOptions,
-    ) -> Snapshot<PdRpcClient<C>> {
+    pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> Snapshot<C> {
         debug!(self.logger, "creating new snapshot");
         let logger = self.logger.new(o!("child" => 1));
         Snapshot::new(self.new_transaction(timestamp, options.read_only()), logger)
@@ -306,11 +299,7 @@ where
         Ok(res)
     }
 
-    fn new_transaction(
-        &self,
-        timestamp: Timestamp,
-        options: TransactionOptions,
-    ) -> Transaction<PdRpcClient<C>> {
+    fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction<C> {
         let logger = self.logger.new(o!("child" => 1));
         Transaction::new(timestamp, self.pd.clone(), options, logger)
     }
