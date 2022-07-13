@@ -27,7 +27,6 @@ tikv-client = "0.1.0"
 - Rust >= 1.56.1
 - GCC >= 6.3.0
 
-
 The general flow of using the client crate is to create either a raw or transaction client object (which can be configured) then send commands using the client object, or use it to create transactions objects. In the latter case, the transaction is built up using various commands and then committed (or rolled back).
 
 ### Examples
