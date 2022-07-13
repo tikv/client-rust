@@ -23,9 +23,9 @@ tikv-client = "0.1.0"
 ```
 
 ### Prerequisites
-- CMake >= 3.12.0
-- Rust >= 1.56.1
-- GCC >= 6.3.0
+- [`CMake`](https://cmake.org/) >= 3.12.0 - Build tool (required for [`enabling parallel build gRPC`](https://cmake.org/cmake/help/latest/envvar/CMAKE_BUILD_PARALLEL_LEVEL.html))
+- [`Rust`](https://www.rust-lang.org/) >= 1.56.1 - Build tool (required for hashbrown-v0.12.1)
+- [`GCC`](https://gcc.gnu.org/) >= 6.3.0 - Build tool (required for [`gRPC C++`](https://github.com/grpc/grpc/tree/master/src/cpp))
 
 The general flow of using the client crate is to create either a raw or transaction client object (which can be configured) then send commands using the client object, or use it to create transactions objects. In the latter case, the transaction is built up using various commands and then committed (or rolled back).
 
