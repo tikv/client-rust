@@ -7,7 +7,7 @@
 
 This crate provides an easy-to-use client for [TiKV](https://github.com/tikv/tikv), a distributed, transactional key-value database written in Rust.
 
-This crate lets you connect to a TiKV cluster and use either a transactional or raw (simple get/put style without transactional consistency guarantees) API to access and update your data.
+This crate lets you connect to a TiKV(>= `v5.0.0`) cluster and use either a transactional or raw (simple get/put style without transactional consistency guarantees) API to access and update your data.
 
 The TiKV Rust client is an open source (Apache 2) project maintained by the TiKV Authors. We welcome contributions, see below for more info.
 
@@ -22,7 +22,10 @@ The TiKV client is a Rust library (crate). To use this crate in your project, ad
 tikv-client = "0.1.0"
 ```
 
-The minimum supported version of Rust is 1.40. The minimum supported version of TiKV is 5.0.
+### Prerequisites
+- [`cmake`](https://cmake.org/) >= `3.12.0`, required for [`building gRPC in parallel`](https://cmake.org/cmake/help/latest/envvar/CMAKE_BUILD_PARALLEL_LEVEL.html)
+- [`gcc`](https://gcc.gnu.org/) >= `6.3.0`, required for [`building gRPC`](https://github.com/grpc/grpc/tree/master/src/cpp)
+- [`rust`](https://www.rust-lang.org/) >= `1.56.1`, required for `hashbrown-v0.12.1`
 
 The general flow of using the client crate is to create either a raw or transaction client object (which can be configured) then send commands using the client object, or use it to create transactions objects. In the latter case, the transaction is built up using various commands and then committed (or rolled back).
 
