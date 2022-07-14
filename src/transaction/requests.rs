@@ -141,6 +141,7 @@ pub fn new_scan_request(
     req
 }
 
+has_reverse!(kvrpcpb::ScanRequest);
 impl_kv_request!(kvrpcpb::ScanRequest; kvrpcpb::ScanResponse, pairs, error);
 shardable_range!(kvrpcpb::ScanRequest);
 
@@ -233,7 +234,10 @@ pub fn new_pessimistic_prewrite_request(
     req
 }
 
-impl_kv_request!(kvrpcpb::PrewriteRequest, mutations; kvrpcpb::PrewriteResponse, errors);
+impl_kv_request!(
+    kvrpcpb::PrewriteRequest, mutations, primary_lock, secondaries;
+    kvrpcpb::PrewriteResponse, errors
+);
 
 impl Shardable for kvrpcpb::PrewriteRequest {
     type Shard = Vec<kvrpcpb::Mutation>;

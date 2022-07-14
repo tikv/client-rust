@@ -13,8 +13,9 @@ use crate::{
     collect_first,
     pd::PdClient,
     request::{
-        codec::RequestCodec, plan::ResponseWithShard, Collect, CollectSingle, DefaultProcessor,
-        KvRequest, Merge, Process, Shardable, SingleKey,
+        codec::{RequestCodec, RequestCodecExt},
+        plan::ResponseWithShard,
+        Collect, CollectSingle, DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_ranges, RegionStore},
     transaction::HasLocks,
@@ -215,6 +216,7 @@ pub fn new_raw_scan_request(
     req
 }
 
+has_reverse!(kvrpcpb::RawScanRequest);
 impl_kv_request!(kvrpcpb::RawScanRequest; kvrpcpb::RawScanResponse, kvs);
 shardable_range!(kvrpcpb::RawScanRequest);
 
@@ -244,10 +246,15 @@ pub fn new_raw_batch_scan_request(
     req
 }
 
-impl_kv_request!(
-    kvrpcpb::RawBatchScanRequest, ranges;
-    kvrpcpb::RawBatchScanResponse, kvs
-);
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchScanRequest {
+    type Response = kvrpcpb::RawBatchScanResponse;
+    fn encode_request(mut self, codec: &C) -> Self {
+        *self.mut_ranges() = codec.encode_ranges(self.take_ranges(), self.get_reverse());
+        self
+    }
+
+    impl_decode_response! {kvs}
+}
 
 impl Shardable for kvrpcpb::RawBatchScanRequest {
     type Shard = Vec<kvrpcpb::KeyRange>;

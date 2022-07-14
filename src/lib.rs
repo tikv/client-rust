@@ -92,6 +92,7 @@
 //! # })}
 //! ```
 
+#![feature(min_specialization)]
 #[macro_use]
 pub mod request;
 #[macro_use]

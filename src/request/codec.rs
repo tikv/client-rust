@@ -14,8 +14,6 @@ type Prefix = [u8; KEYSPACE_PREFIX_LEN];
 
 const KEYSPACE_PREFIX_LEN: usize = 4;
 
-const MAX_KEYSPACE_ID: KeySpaceId = KeySpaceId([0xff, 0xff, 0xff]);
-
 pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
     fn encode_request<'a, R: KvRequest<Self>>(&self, req: &'a R) -> Cow<'a, R> {
         Cow::Borrowed(req)
@@ -29,7 +27,7 @@ pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
         Ok(())
     }
 
-    fn encode_range(&self, start: Vec<u8>, end: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
+    fn encode_range(&self, start: Vec<u8>, end: Vec<u8>, _reverse: bool) -> (Vec<u8>, Vec<u8>) {
         (start, end)
     }
 
@@ -74,6 +72,10 @@ pub trait RequestCodecExt: RequestCodec {
         keys.into_iter().map(|key| self.encode_key(key)).collect()
     }
 
+    fn encode_secondaries(&self, secondaries: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+        self.encode_keys(secondaries)
+    }
+
     fn encode_pairs(&self, mut pairs: Vec<kvrpcpb::KvPair>) -> Vec<kvrpcpb::KvPair> {
         for pair in pairs.iter_mut() {
             *pair.mut_key() = self.encode_key(pair.take_key());
@@ -82,9 +84,14 @@ pub trait RequestCodecExt: RequestCodec {
         pairs
     }
 
-    fn encode_ranges(&self, mut ranges: Vec<kvrpcpb::KeyRange>) -> Vec<kvrpcpb::KeyRange> {
+    fn encode_ranges(
+        &self,
+        mut ranges: Vec<kvrpcpb::KeyRange>,
+        reverse: bool,
+    ) -> Vec<kvrpcpb::KeyRange> {
         for range in ranges.iter_mut() {
-            let (start, end) = self.encode_range(range.take_start_key(), range.take_end_key());
+            let (start, end) =
+                self.encode_range(range.take_start_key(), range.take_end_key(), reverse);
             *range.mut_start_key() = start;
             *range.mut_end_key() = end;
         }
@@ -217,10 +224,10 @@ pub trait Mode: Clone + Copy + Sync + Send + 'static {
     const MAX_KEY: &'static [u8] = &[Self::PREFIX + 1, 0, 0, 0];
 }
 
-#[derive(Clone, Copy)]
+#[derive(Default, Clone, Copy)]
 pub struct RawMode;
 
-#[derive(Clone, Copy)]
+#[derive(Default, Clone, Copy)]
 pub struct TxnMode;
 
 impl Mode for RawMode {
@@ -228,7 +235,7 @@ impl Mode for RawMode {
 }
 
 impl Mode for TxnMode {
-    const PREFIX: u8 = b't';
+    const PREFIX: u8 = b'x';
 }
 
 #[derive(Clone)]
@@ -263,15 +270,34 @@ impl RequestCodec for ApiV1<TxnMode> {
 
 impl TxnCodec for ApiV1<TxnMode> {}
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct KeySpace<M: Mode> {
     id: KeySpaceId,
     _phantom: PhantomData<M>,
 }
 
+impl<M: Mode> Default for KeySpace<M> {
+    fn default() -> Self {
+        KeySpace {
+            id: KeySpaceId::default(),
+            _phantom: PhantomData,
+        }
+    }
+}
+
 impl<M: Mode> From<KeySpace<M>> for Prefix {
     fn from(s: KeySpace<M>) -> Self {
         [M::PREFIX, s.id[0], s.id[1], s.id[2]]
+    }
+}
+
+impl<M: Mode> KeySpace<M> {
+    fn start(self) -> Prefix {
+        self.into()
+    }
+
+    fn end(self) -> Prefix {
+        (u32::from_be_bytes(self.into()) + 1).to_be_bytes()
     }
 }
 
@@ -318,12 +344,21 @@ impl<M: Mode> RequestCodec for ApiV2<M> {
         Ok(())
     }
 
-    fn encode_range(&self, start: Vec<u8>, end: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
-        if self.keyspace.id == MAX_KEYSPACE_ID {
-            (self.encode_key(start), M::MAX_KEY.to_vec())
-        } else {
-            (self.encode_key(start), self.encode_key(end))
+    fn encode_range(&self, start: Vec<u8>, end: Vec<u8>, reverse: bool) -> (Vec<u8>, Vec<u8>) {
+        if reverse {
+            let (start, end) = self.encode_range(end, start, false);
+            return (end, start);
         }
+
+        let start = self.encode_key(start);
+
+        let end = if end.is_empty() {
+            self.keyspace.end().into()
+        } else {
+            self.encode_key(end)
+        };
+
+        (start, end)
     }
 
     fn encode_pd_query(&self, key: Vec<u8>) -> Vec<u8> {
@@ -335,14 +370,15 @@ impl<M: Mode> RequestCodec for ApiV2<M> {
         decode_bytes_in_place(region.mut_end_key(), false)?;
 
         // Map the region's start key to the keyspace start key.
-        if region.get_start_key() < M::MIN_KEY {
+        if region.get_start_key() <= self.keyspace.start().as_slice() {
             *region.mut_start_key() = vec![];
         } else {
             self.decode_key(region.mut_start_key())?;
         }
 
         // Map the region's end key to the keyspace end key.
-        if region.get_end_key().is_empty() || region.get_end_key() > M::MAX_KEY {
+        if region.get_end_key().is_empty() || region.get_end_key() >= self.keyspace.end().as_slice()
+        {
             *region.mut_end_key() = vec![];
         } else {
             self.decode_key(region.mut_end_key())?;

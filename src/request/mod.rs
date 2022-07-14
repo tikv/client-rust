@@ -51,6 +51,26 @@ impl<T: PartialEq + Default> IsDefault for T {
     }
 }
 
+pub(crate) trait HasReverse {
+    fn has_reverse(&self) -> bool;
+}
+
+impl<T> HasReverse for T {
+    default fn has_reverse(&self) -> bool {
+        false
+    }
+}
+
+macro_rules! has_reverse {
+    ($t:ty) => {
+        impl $crate::request::HasReverse for $t {
+            fn has_reverse(&self) -> bool {
+                self.get_reverse()
+            }
+        }
+    };
+}
+
 macro_rules! impl_decode_response {
     ($($o:ident)*) => {
         fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
@@ -75,7 +95,6 @@ macro_rules! impl_decode_response {
     };
 }
 
-#[macro_export]
 macro_rules! impl_kv_request {
     ($req:ty $(,$i:ident)+; $resp:ty $(,$o:ident)*) => {
         impl<C> KvRequest<C> for $req
@@ -102,12 +121,14 @@ macro_rules! impl_kv_request {
 
     ($req:ty; $resp:ty $(,$o:ident)*) => {
         impl<C> KvRequest<C> for $req
-        where C: RequestCodec
+        where C: RequestCodec,
+                $req: $crate::request::HasReverse
         {
             type Response = $resp;
 
             fn encode_request(mut self, codec: &C) -> Self {
-                let (start, end) = codec.encode_range(self.take_start_key(), self.take_end_key());
+                use $crate::request::HasReverse;
+                let (start, end) = codec.encode_range(self.take_start_key(), self.take_end_key(), self.has_reverse());
                 *self.mut_start_key() = start;
                 *self.mut_end_key() = end;
 
