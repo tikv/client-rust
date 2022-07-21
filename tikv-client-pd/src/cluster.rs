@@ -10,6 +10,7 @@ use std::{
 };
 use tikv_client_common::internal_err;
 use tikv_client_proto::pdpb::{self, Timestamp};
+use tikv_client_proto::keyspacepb;
 
 /// A PD cluster.
 pub struct Cluster {
@@ -73,6 +74,12 @@ impl Cluster {
     ) -> Result<pdpb::UpdateGcSafePointResponse> {
         let mut req = pd_request!(self.id, pdpb::UpdateGcSafePointRequest);
         req.set_safe_point(safepoint);
+        req.send(&self.client, timeout).await
+    }
+
+    pub async fn load_keyspace<T: AsRef<str>>(&self, name: T, timeout: Duration) -> Result<keyspacepb::LoadKeyspaceResponse> {
+        let mut req = pd_request!(self.id, keyspacepb::LoadKeyspaceRequest);
+        req.set_name(name.as_ref().to_owned());
         req.send(&self.client, timeout).await
     }
 }
@@ -270,10 +277,11 @@ type GrpcResult<T> = std::result::Result<T, grpcio::Error>;
 #[async_trait]
 trait PdMessage {
     type Response: PdResponse;
+    type Client: Send + Sync;
 
-    async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response>;
+    async fn rpc(&self, client: &Self::Client, opt: CallOption) -> GrpcResult<Self::Response>;
 
-    async fn send(&self, client: &pdpb::PdClient, timeout: Duration) -> Result<Self::Response> {
+    async fn send(&self, client: &Self::Client, timeout: Duration) -> Result<Self::Response> {
         let option = CallOption::default().timeout(timeout);
         let response = self.rpc(client, option).await?;
 
@@ -288,6 +296,7 @@ trait PdMessage {
 #[async_trait]
 impl PdMessage for pdpb::GetRegionRequest {
     type Response = pdpb::GetRegionResponse;
+    type Client = pdpb::PdClient;
 
     async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
         client.get_region_async_opt(self, opt)?.await
@@ -297,6 +306,7 @@ impl PdMessage for pdpb::GetRegionRequest {
 #[async_trait]
 impl PdMessage for pdpb::GetRegionByIdRequest {
     type Response = pdpb::GetRegionResponse;
+    type Client = pdpb::PdClient;
 
     async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
         client.get_region_by_id_async_opt(self, opt)?.await
@@ -306,6 +316,7 @@ impl PdMessage for pdpb::GetRegionByIdRequest {
 #[async_trait]
 impl PdMessage for pdpb::GetStoreRequest {
     type Response = pdpb::GetStoreResponse;
+    type Client = pdpb::PdClient;
 
     async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
         client.get_store_async_opt(self, opt)?.await
@@ -315,6 +326,7 @@ impl PdMessage for pdpb::GetStoreRequest {
 #[async_trait]
 impl PdMessage for pdpb::GetAllStoresRequest {
     type Response = pdpb::GetAllStoresResponse;
+    type Client = pdpb::PdClient;
 
     async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
         client.get_all_stores_async_opt(self, opt)?.await
@@ -324,9 +336,21 @@ impl PdMessage for pdpb::GetAllStoresRequest {
 #[async_trait]
 impl PdMessage for pdpb::UpdateGcSafePointRequest {
     type Response = pdpb::UpdateGcSafePointResponse;
+    type Client = pdpb::PdClient;
 
     async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
         client.update_gc_safe_point_async_opt(self, opt)?.await
+    }
+}
+
+#[async_trait]
+impl PdMessage for keyspacepb::LoadKeyspaceRequest {
+    type Response = keyspacepb::LoadKeyspaceResponse;
+    type Client = pdpb::PdClient;
+
+    async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
+        unimplemented!()
+        // client.load_keyspace_async_opt(self, opt)?.await
     }
 }
 
@@ -353,6 +377,12 @@ impl PdResponse for pdpb::GetAllStoresResponse {
 }
 
 impl PdResponse for pdpb::UpdateGcSafePointResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.get_header()
+    }
+}
+
+impl PdResponse for keyspacepb::LoadKeyspaceResponse {
     fn header(&self) -> &pdpb::ResponseHeader {
         self.get_header()
     }
