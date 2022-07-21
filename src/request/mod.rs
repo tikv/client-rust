@@ -311,6 +311,7 @@ mod test {
                     region_error: None,
                     error: Some(kvrpcpb::KeyError::default()),
                     commit_version: 0,
+                    ..Default::default()
                 }) as Box<dyn Any>)
             },
         )));

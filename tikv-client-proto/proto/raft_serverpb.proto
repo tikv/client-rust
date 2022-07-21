@@ -103,6 +103,8 @@ message RegionLocalState {
     PeerState state = 1;
     metapb.Region region = 2;
     MergeState merge_state = 3;
+    // The apply index corresponding to the storage when it's initialized.
+    uint64 tablet_index = 4;
 }
 
 enum ExtraMessageType {
@@ -114,6 +116,7 @@ enum ExtraMessageType {
     // to make sure they all agree to sleep.
     MsgHibernateRequest = 4;
     MsgHibernateResponse = 5;
+    MsgRejectRaftLogCausedByMemoryUsage = 6;
 }
 
 message ExtraMessage {

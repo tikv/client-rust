@@ -84,6 +84,46 @@ service PD {
     rpc SplitAndScatterRegions(SplitAndScatterRegionsRequest) returns (SplitAndScatterRegionsResponse) {}
 
     rpc GetDCLocationInfo(GetDCLocationInfoRequest) returns (GetDCLocationInfoResponse) {}
+
+    rpc StoreGlobalConfig(StoreGlobalConfigRequest) returns (StoreGlobalConfigResponse) {}
+
+    rpc LoadGlobalConfig(LoadGlobalConfigRequest) returns (LoadGlobalConfigResponse) {}
+
+    rpc WatchGlobalConfig(WatchGlobalConfigRequest) returns (stream WatchGlobalConfigResponse) {}
+
+    rpc ReportBuckets(stream ReportBucketsRequest) returns (ReportBucketsResponse) {}
+
+    rpc ReportMinResolvedTS(ReportMinResolvedTsRequest) returns (ReportMinResolvedTsResponse) {}
+}
+
+message WatchGlobalConfigRequest {
+
+}
+
+message WatchGlobalConfigResponse {
+    repeated GlobalConfigItem changes = 1;
+}
+
+message StoreGlobalConfigRequest {
+    repeated GlobalConfigItem changes = 1;
+}
+
+message StoreGlobalConfigResponse {
+    Error error = 1;
+}
+
+message LoadGlobalConfigRequest {
+    repeated string names = 1;
+}
+
+message LoadGlobalConfigResponse {
+    repeated GlobalConfigItem items = 1;
+}
+
+message GlobalConfigItem {
+    string name = 1;
+    string value = 2;
+    Error error = 3;
 }
 
 message RequestHeader {
@@ -107,6 +147,9 @@ enum ErrorType {
     ALREADY_BOOTSTRAPPED = 4;
     INCOMPATIBLE_VERSION = 5;
     REGION_NOT_FOUND = 6;
+    GLOBAL_CONFIG_NOT_FOUND = 7;
+    DUPLICATED_ENTRY = 8;
+    ENTRY_NOT_FOUND = 9;
 }
 
 message Error {
@@ -207,6 +250,7 @@ message GetRegionRequest {
     RequestHeader header = 1;
 
     bytes region_key = 2;
+    bool need_buckets = 3;
 }
 
 message GetRegionResponse {
@@ -221,12 +265,15 @@ message GetRegionResponse {
     // Pending peers are the peers that the leader can't consider as
     // working followers.
     repeated metapb.Peer pending_peers = 6;
+    // buckets isn't nil if GetRegion.* requests set need_buckets.
+    metapb.Buckets buckets = 7;
 }
 
 message GetRegionByIDRequest {
     RequestHeader header = 1;
 
     uint64 region_id = 2;
+    bool need_buckets = 3;
 }
 
 // Use GetRegionResponse as the response of GetRegionByIDRequest.
@@ -407,7 +454,9 @@ message RegionHeartbeatResponse {
     // Multiple change peer operations atomically.
     // Note: PD can use both ChangePeer and ChangePeerV2 at the same time
     //       (not in the same RegionHeartbeatResponse).
-    //       Now, PD use ChangePeerV2 only for replacing peers.
+    //       Now, PD use ChangePeerV2 in following scenarios:
+    //       1. replacing peers
+    //       2. demoting voter directly
     ChangePeerV2 change_peer_v2 = 9;
 }
 
@@ -484,6 +533,8 @@ message PeerStat {
     uint64 read_keys = 2;
     uint64 read_bytes = 3;
     QueryStats query_stats = 4;
+    uint64 written_keys = 5;
+    uint64 written_bytes = 6;
 }
 
 message StoreStats {
@@ -532,37 +583,72 @@ message StoreStats {
     uint64 slow_score = 22;
     // Damaged regions on the store that need to be removed by PD.
     repeated uint64 damaged_regions_id = 23;
+    // If the apply worker is busy, namely high apply wait duration
+    bool is_apply_busy = 24;
 }
 
 message PeerReport {
     raft_serverpb.RaftLocalState raft_state = 1;
     raft_serverpb.RegionLocalState region_state = 2;
+    bool is_force_leader = 3;
+    // The peer has proposed but uncommitted commit merge.
+    bool has_commit_merge = 4;
 }
 
 message StoreReport {
     repeated PeerReport peer_reports = 1;
+    uint64 step = 2;
 }
 
 message StoreHeartbeatRequest {
     RequestHeader header = 1;
 
     StoreStats stats = 2;
-    // Detailed store report that is only filled up on PD's demand for online unsafe recover.
+    // Detailed store report that is only filled up on PD's demand for online unsafe recovery.
     StoreReport store_report = 3;
+    replication_modepb.StoreDRAutoSyncStatus dr_autosync_status = 4;
+}
+
+message DemoteFailedVoters {
+    uint64 region_id = 1;
+    repeated metapb.Peer failed_voters = 2;
+}
+
+message ForceLeader {
+    // The store ids of the failed stores, TiKV uses it to decide if a peer is alive.
+    repeated uint64 failed_stores = 1;
+    // The region ids of the peer which is to be force leader.
+    repeated uint64 enter_force_leaders = 2;
 }
 
 message RecoveryPlan {
+    // Create empty regions to fill the key range hole.
     repeated metapb.Region creates = 1;
-    repeated metapb.Region updates = 2;
-    repeated uint64 deletes = 3;
+    // Update the meta of the regions, including peer lists, epoch and key range.
+    repeated metapb.Region updates = 2 [deprecated=true];
+    // Tombstone the peers on the store locally.
+    repeated uint64 tombstones = 3;
+    // Issue conf change that demote voters on failed stores to learners on the regions.
+    repeated DemoteFailedVoters demotes = 4;
+    // Make the peers to be force leaders.
+    ForceLeader force_leader = 5;
+    // Step is an increasing number to note the round of recovery,
+    // It should be filled in the corresponding store report.
+    uint64 step = 6;
 }
 
 message StoreHeartbeatResponse {
     ResponseHeader header = 1;
     replication_modepb.ReplicationStatus replication_status = 2;
     string cluster_version = 3;
-    bool require_detailed_report = 4;
-    RecoveryPlan plan = 5;
+
+    // Used by online unsafe recovery to request store report.
+    // Now it's substituted by reusing recovery_plan field. PD will send a empty
+    // recovery plan instead to request store report.
+    bool require_detailed_report = 4 [deprecated=true];
+    // Operations of recovery. After the plan is executed, TiKV should attach the 
+    // store report in store heartbeat.
+    RecoveryPlan recovery_plan = 5;
 }
 
 message ScatterRegionRequest {
@@ -652,6 +738,8 @@ message SyncRegionResponse{
     uint64 start_index = 3;
     repeated RegionStat region_stats = 4;
     repeated metapb.Peer region_leaders = 5;
+    // the buckets informations without stats.
+    repeated metapb.Buckets buckets =6;
 }
 
 message GetOperatorRequest {
@@ -755,4 +843,27 @@ enum QueryKind {
     AcquirePessimisticLock = 9;
     Commit = 10;
     Rollback = 11;
+}
+
+message ReportBucketsRequest {
+    RequestHeader header = 1;
+
+    metapb.RegionEpoch region_epoch = 2;
+    metapb.Buckets buckets = 3;
+}
+
+message ReportBucketsResponse {
+    ResponseHeader header = 1;
+}
+
+message ReportMinResolvedTsRequest {
+    RequestHeader header = 1;
+
+    uint64 store_id = 2;
+
+    uint64 min_resolved_ts = 3;
+}
+
+message ReportMinResolvedTsResponse {
+    ResponseHeader header = 1;
 }

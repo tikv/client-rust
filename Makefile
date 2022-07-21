@@ -34,3 +34,6 @@ tiup:
 	tiup playground nightly --mode tikv-slim --kv 3 --without-monitor --kv.config $(shell pwd)/config/tikv.toml --pd.config $(shell pwd)/config/pd.toml &
 
 all: check doc test
+
+format:
+	cargo fmt --all

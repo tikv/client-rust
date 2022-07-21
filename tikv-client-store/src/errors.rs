@@ -227,6 +227,7 @@ mod test {
             region_error: None,
             error: None,
             commit_version: 0,
+            ..Default::default()
         });
         assert!(resp.key_errors().is_none());
 
@@ -234,6 +235,7 @@ mod test {
             region_error: None,
             error: Some(kvrpcpb::KeyError::default()),
             commit_version: 0,
+            ..Default::default()
         });
         assert!(resp.key_errors().is_some());
 

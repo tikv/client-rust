@@ -73,6 +73,10 @@ service Debug {
 
     // Get all region IDs in the store
     rpc GetAllRegionsInStore(GetAllRegionsInStoreRequest) returns (GetAllRegionsInStoreResponse) {}
+
+    // Make this TiKV node return to the status on this node to certain ts.
+    rpc ResetToVersion(ResetToVersionRequest) returns (ResetToVersionResponse) {}
+
 }
 
 enum DB {
@@ -258,4 +262,11 @@ message GetAllRegionsInStoreRequest {
 
 message GetAllRegionsInStoreResponse {
     repeated uint64 regions = 1;
+}
+
+message ResetToVersionRequest {
+    uint64 ts = 1;
+}
+
+message ResetToVersionResponse {
 }

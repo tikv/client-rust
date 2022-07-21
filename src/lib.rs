@@ -93,6 +93,8 @@
 //! ```
 
 #![feature(min_specialization)]
+#![feature(core_intrinsics)]
+
 #[macro_use]
 pub mod request;
 #[macro_use]

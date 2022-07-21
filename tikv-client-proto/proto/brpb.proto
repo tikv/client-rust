@@ -54,6 +54,7 @@ message BackupMeta {
     // Note: `raw_ranges` is deprecated, as it bloats backupmeta. It is kept for
     //       compatibility, so new BR can restore older backups.
     repeated RawRange raw_ranges = 9;
+
     // An index to files contains RawRanges.
     MetaFile raw_range_index = 15;
 
@@ -69,6 +70,12 @@ message BackupMeta {
 
     // API version implies the encode of the key and value.
     kvrpcpb.APIVersion api_version = 18;
+
+    // the placement policy info in backup cluster. we assume the policy won't be too much for one cluster.
+    repeated PlacementPolicy policies = 19;
+
+    // new_collations_enabled specifies the config `new_collations_enabled_on_first_bootstrap` in tidb.
+    string new_collations_enabled = 20;
 }
 
 message File {
@@ -104,6 +111,10 @@ message MetaFile {
     repeated RawRange raw_ranges = 4;
     // A set of files that contains DDLs.
     repeated bytes ddls = 5;
+}
+
+message PlacementPolicy {
+    bytes info = 1;
 }
 
 message Schema {
@@ -182,6 +193,47 @@ message BackupRequest {
     int32 compression_level = 13;
     // The cipher_info is Used to encrypt sst
     CipherInfo cipher_info = 14;
+
+    // dst_api_version indicates the key-value encoding version used by the
+    // generated SST file. Accepted values:
+    // 1. "v1": the generated SST files are encoded with api-v1, can be restored
+    //    to TiKV clusters whose api version is set to v1.
+    // 2. "v2": the generated SST files are encoded with api-v2, can be restored
+    //    to TiKV clusters whose api version is set to v2.
+    kvrpcpb.APIVersion dst_api_version = 15;
+}
+
+message StreamBackupTaskInfo {
+    // The storage for backup, parsed by BR.
+    StorageBackend storage = 1;
+    // The time range for backing up.
+    uint64 start_ts = 2;
+    uint64 end_ts = 3;
+
+    // Misc meta datas.
+    // The name of the task, also the ID of the task.
+    string name = 4;
+    // The table filter of the task.
+    // Only for displaying the task info.
+    repeated string table_filter = 5;
+
+    // The last timestamp of the task has been updated. 
+    // This is a simple solution for unfrequent config changing: 
+    // When we watched a config change(via polling or etcd watching),
+    // We perform a incremental scan between [last_update_ts, now), 
+    // for filling the diff data during conf changing.
+    // The current implementation scan [0, now) for every task ranges newly added, 
+    // So this field is reserved for future usage.
+    reserved "last_update_ts";
+
+    // We use '/tidb/br-stream/ranges/<task-name>/<start-key> -> <end-key>' 
+    // for storing all the target ranges of the task, the "ranges" field will not be saved in the taskinfo.
+    reserved "ranges";
+
+    // The status field allow us mark the task as 'paused'.
+    // We use '/tidb/br-stream/pause/<task-name> -> ()' for pausing a task for now.
+    // If we need more complexed status transforming, maybe add the status field back would be fine.
+    reserved "status";
 }
 
 message StorageBackend {
@@ -287,6 +339,9 @@ message BackupResponse {
     bytes start_key = 2;
     bytes end_key = 3;
     repeated File files = 4;
+
+    // API version implies the encode of the key and value.
+    kvrpcpb.APIVersion api_version = 5;
 }
 
 service Backup {
@@ -321,3 +376,66 @@ message ExternalStorageSaveRequest {
 message ExternalStorageSaveResponse {
 }
 
+message Metadata {
+    repeated DataFileInfo files = 1;
+    int64 store_id = 2;
+    uint64 resolved_ts = 3;
+    uint64 max_ts = 4;
+    uint64 min_ts = 5;
+}
+
+enum FileType {
+    Delete = 0;
+    Put = 1;
+}
+
+message DataFileInfo {
+    // SHA256 of the file.
+    bytes sha256 = 1;
+    // Path of the file.
+    string path = 2;
+    int64 number_of_entries = 3;
+    
+    /// Below are extra information of the file, for better filtering files.
+    // The min ts of the keys in the file.
+    uint64 min_ts = 4;
+    // The max ts of the keys in the file.
+    uint64 max_ts = 5;
+    // The resolved ts of the region when saving the file.
+    uint64 resolved_ts = 6;
+    // The region of the file.
+    int64 region_id = 7;
+    // The key range of the file.
+    // Encoded and starts with 'z'(internal key).
+    bytes start_key = 8;
+    bytes end_key = 9;
+    // The column family of the file.
+    string cf = 10;
+    // The operation type of the file.
+    FileType type = 11;
+
+    // Whether the data file contains meta keys(m prefixed keys) only.
+    bool is_meta = 12;
+    // The table ID of the file contains, when `is_meta` is true, would be ignored.
+    int64 table_id = 13;
+
+    // The file length.
+    uint64 length = 14;
+    
+    // The minimal begin ts in default cf if this file is write cf.
+    uint64 min_begin_ts_in_default_cf = 15;
+
+    // It may support encrypting at future.
+    reserved "iv";
+}
+
+message StreamBackupError {
+    // the unix epoch time (in millisecs) of the time the error reported.
+    uint64 happen_at = 1;
+    // the unified error code of the error.
+    string error_code = 2;
+    // the user-friendly error message.
+    string error_message = 3;
+    // the store id of who issues the error.
+    uint64 store_id = 4;
+}

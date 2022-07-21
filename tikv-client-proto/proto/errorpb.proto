@@ -128,6 +128,11 @@ message DataIsNotReady {
     uint64 safe_ts = 3;
 }
 
+message RecoveryInProgress {
+    // The requested region ID
+    uint64 region_id = 1;
+}
+
 // Error wraps all region errors, indicates an error encountered by a request.
 message Error {
     reserved "stale_epoch";
@@ -148,4 +153,6 @@ message Error {
     DataIsNotReady data_is_not_ready = 13;
     RegionNotInitialized region_not_initialized = 14;
     DiskFull disk_full = 15;
+    // Online recovery is still in performing, reject writes to avoid potential issues
+    RecoveryInProgress RecoveryInProgress = 16;
 }
