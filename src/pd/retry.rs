@@ -17,9 +17,8 @@ use std::{
 };
 use tikv_client_pd::{Cluster, Connection};
 use tikv_client_proto::{
-    metapb,
+    keyspacepb, metapb,
     pdpb::{self, Timestamp},
-    keyspacepb
 };
 use tokio::sync::RwLock;
 
@@ -45,7 +44,8 @@ pub trait RetryClientTrait {
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
 
-    async fn load_keyspace<T:AsRef<str> + Send>(self: Arc<Self>, name: T) -> Result<keyspacepb::LoadKeyspaceResponse>;
+    async fn load_keyspace(self: Arc<Self>, name: &str)
+        -> Result<keyspacepb::LoadKeyspaceResponse>;
 }
 /// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
 pub struct RetryClient<Cl = Cluster> {
@@ -186,11 +186,12 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
-    async fn load_keyspace<T: AsRef<str> + Send>(self: Arc<Self>, name: T) -> Result<keyspacepb::LoadKeyspaceResponse> {
+    async fn load_keyspace(
+        self: Arc<Self>,
+        name: &str,
+    ) -> Result<keyspacepb::LoadKeyspaceResponse> {
         retry!(self, "load_keyspace", |cluster| async {
-            cluster
-                .load_keyspace(name, self.timeout)
-                .await
+            cluster.load_keyspace(name.to_string(), self.timeout).await
         })
     }
 }

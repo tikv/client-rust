@@ -1,18 +1,19 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{marker::PhantomData, mem, sync::Arc};
+use std::{future::Future, marker::PhantomData, mem, sync::Arc};
 
-use slog::{Drain, Logger};
+use slog::Logger;
 
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
 use crate::{
     backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     config::Config,
-    pd::{PdClient, PdRpcClient},
+    pd::{PdClient, PdRpcClient, RetryClient},
     request::{codec::TxnCodec, Plan},
     timestamp::TimestampExt,
-    transaction::{Snapshot, Transaction, TransactionOptions},
+    transaction::{ApiV2, Snapshot, Transaction, TransactionOptions},
+    util::client::ClientContext,
     Result,
 };
 
@@ -53,6 +54,55 @@ impl<C: TxnCodec> Clone for Client<C> {
     }
 }
 
+impl Client<ApiV2> {
+    /// Create a transaction [`Client`] and connect to the TiKV cluster, with `keyspace` name.
+    ///
+    /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for
+    /// PD must be provided, not the TiKV nodes. It's important to include more than one PD endpoint
+    /// (include all endpoints, if possible), this helps avoid having a single point of failure.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Config, TransactionClient};
+    /// # use futures::prelude::*;
+    /// use tikv_client::transaction::ApiV2;
+    /// # futures::executor::block_on(async {
+    /// let client = TransactionClient::<ApiV2>::new_with_keyspace(
+    ///     vec!["192.168.0.100"],
+    ///     "space_for_txn",
+    ///     Config::default(),
+    ///     None,
+    /// )
+    /// .await
+    /// .unwrap();
+    /// # });
+    /// ```
+    pub async fn new_with_keyspace<S, K>(
+        pd_endpoints: Vec<S>,
+        keyspace: K,
+        config: Config,
+        optional_logger: Option<Logger>,
+    ) -> Result<Self>
+    where
+        S: Into<String>,
+        K: Into<String>,
+    {
+        let keyspace = &keyspace.into();
+        let this = Self::new_with_codec_factory(
+            pd_endpoints,
+            config,
+            async move |pd| ApiV2::with_keyspace(keyspace, pd).await,
+            optional_logger,
+        )
+        .await?;
+
+        info!(this.logger, "created transaction client"; "keyspace" => keyspace);
+
+        Ok(this)
+    }
+}
+
 impl<C> Client<C>
 where
     C: TxnCodec,
@@ -70,18 +120,17 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1::default(), None)
+    /// let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100"], None)
     ///     .await
     ///     .unwrap();
     /// # });
     /// ```
     pub async fn new<S: Into<String>>(
         pd_endpoints: Vec<S>,
-        codec: C,
         logger: Option<Logger>,
     ) -> Result<Client<C>> {
         // debug!(self.logger, "creating transactional client");
-        Self::new_with_config(pd_endpoints, Config::default(), codec, logger).await
+        Self::new_with_config(pd_endpoints, Config::default(), logger).await
     }
 
     /// Create a transactional [`Client`] with a custom configuration, and connect to the TiKV cluster.
@@ -98,10 +147,9 @@ where
     /// # use std::time::Duration;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new_with_config(
+    /// let client = TransactionClient::<ApiV1>::new_with_config(
     ///     vec!["192.168.0.100"],
     ///     Config::default().with_timeout(Duration::from_secs(60)),
-    ///     ApiV1::default(),
     ///     None,
     /// )
     /// .await
@@ -111,23 +159,31 @@ where
     pub async fn new_with_config<S: Into<String>>(
         pd_endpoints: Vec<S>,
         config: Config,
-        codec: C,
         optional_logger: Option<Logger>,
     ) -> Result<Client<C>> {
-        let logger = optional_logger.unwrap_or_else(|| {
-            let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-            Logger::root(
-                slog_term::FullFormat::new(plain)
-                    .build()
-                    .filter_level(slog::Level::Info)
-                    .fuse(),
-                o!(),
-            )
-        });
-        debug!(logger, "creating new transactional client");
-        let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let pd =
-            Arc::new(PdRpcClient::connect(&pd_endpoints, config, codec, logger.clone()).await?);
+        Self::new_with_codec_factory(
+            pd_endpoints,
+            config,
+            async move |_| Ok(C::default()),
+            optional_logger,
+        )
+        .await
+    }
+
+    pub async fn new_with_codec_factory<S, F, Fut>(
+        pd_endpoints: Vec<S>,
+        config: Config,
+        codec_factory: F,
+        optional_logger: Option<Logger>,
+    ) -> Result<Client<C>>
+    where
+        S: Into<String>,
+        F: Fn(Arc<RetryClient>) -> Fut,
+        Fut: Future<Output = Result<C>>,
+    {
+        let ClientContext { pd, logger } =
+            ClientContext::new(pd_endpoints, config, codec_factory, optional_logger).await?;
+
         Ok(Client {
             pd,
             logger,
@@ -150,7 +206,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1::default(), None)
+    /// let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100"], None)
     ///     .await
     ///     .unwrap();
     /// let mut transaction = client.begin_optimistic().await.unwrap();
@@ -176,7 +232,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1::default(), None)
+    /// let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100"], None)
     ///     .await
     ///     .unwrap();
     /// let mut transaction = client.begin_pessimistic().await.unwrap();
@@ -199,7 +255,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1::default(), None)
+    /// let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100"], None)
     ///     .await
     ///     .unwrap();
     /// let mut transaction = client
@@ -232,7 +288,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], ApiV1::default(), None)
+    /// let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100"], None)
     ///     .await
     ///     .unwrap();
     /// let timestamp = client.current_timestamp().await.unwrap();

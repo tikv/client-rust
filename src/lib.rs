@@ -68,7 +68,7 @@
 //! # fn main() -> Result<()> {
 //! # use tikv_client::raw::ApiV1;
 //! futures::executor::block_on(async {
-//! let client = RawClient::new(vec!["127.0.0.1:2379"], ApiV1::default(), None).await?;
+//! let client = RawClient::<ApiV1>::new(vec!["127.0.0.1:2379"],  None).await?;
 //! client.put("key".to_owned(), "value".to_owned()).await?;
 //! let value = client.get("key".to_owned()).await?;
 //! # Ok(())
@@ -83,7 +83,7 @@
 //! # fn main() -> Result<()> {
 //! # use tikv_client::transaction::ApiV1;
 //! futures::executor::block_on(async {
-//! let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"], ApiV1::default(), None).await?;
+//! let txn_client = TransactionClient::<ApiV1>::new(vec!["127.0.0.1:2379"],  None).await?;
 //! let mut txn = txn_client.begin_optimistic().await?;
 //! txn.put("key".to_owned(), "value".to_owned()).await?;
 //! let value = txn.get("key".to_owned()).await?;
@@ -94,6 +94,8 @@
 
 #![feature(min_specialization)]
 #![feature(core_intrinsics)]
+#![feature(async_closure)]
+#![feature(get_mut_unchecked)]
 
 #[macro_use]
 pub mod request;

@@ -1,9 +1,9 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use core::ops::Range;
-use std::{marker::PhantomData, str::FromStr, sync::Arc, u32};
+use std::{future::Future, marker::PhantomData, str::FromStr, sync::Arc, u32};
 
-use slog::{Drain, Logger};
+use slog::Logger;
 
 use tikv_client_common::Error;
 use tikv_client_proto::metapb;
@@ -11,9 +11,10 @@ use tikv_client_proto::metapb;
 use crate::{
     backoff::DEFAULT_REGION_BACKOFF,
     config::Config,
-    pd::{PdClient, PdRpcClient},
-    raw::lowering::*,
+    pd::{PdClient, PdRpcClient, RetryClient},
+    raw::{lowering::*, ApiV2},
     request::{codec::RawCodec, Collect, CollectSingle, Plan},
+    util::client::ClientContext,
     Backoff, BoundRange, ColumnFamily, Key, KvPair, Result, Value,
 };
 
@@ -47,6 +48,55 @@ impl<C: RawCodec> Clone for Client<C> {
     }
 }
 
+impl Client<ApiV2> {
+    /// Create a raw [`Client`] and connect to the TiKV cluster, with `keyspace` name.
+    ///
+    /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for
+    /// PD must be provided, not the TiKV nodes. It's important to include more than one PD endpoint
+    /// (include all endpoints, if possible), this helps avoid having a single point of failure.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Config, RawClient};
+    /// # use futures::prelude::*;
+    /// use tikv_client::raw::ApiV2;
+    /// # futures::executor::block_on(async {
+    /// let client = RawClient::<ApiV2>::new_with_keyspace(
+    ///     vec!["192.168.0.100"],
+    ///     "space_for_raw",
+    ///     Config::default(),
+    ///     None,
+    /// )
+    /// .await
+    /// .unwrap();
+    /// # });
+    /// ```
+    pub async fn new_with_keyspace<S, K>(
+        pd_endpoints: Vec<S>,
+        keyspace: K,
+        config: Config,
+        optional_logger: Option<Logger>,
+    ) -> Result<Self>
+    where
+        S: Into<String>,
+        K: Into<String>,
+    {
+        let keyspace = &keyspace.into();
+        let this = Self::new_with_codec_factory(
+            pd_endpoints,
+            config,
+            async move |pd| ApiV2::with_keyspace(keyspace, pd).await,
+            optional_logger,
+        )
+        .await?;
+
+        info!(this.logger, "created raw client"; "keyspace" => keyspace);
+
+        Ok(this)
+    }
+}
+
 impl<C: RawCodec> Client<C> {
     /// Create a raw [`Client`] and connect to the TiKV cluster.
     ///
@@ -61,17 +111,16 @@ impl<C: RawCodec> Client<C> {
     /// # use futures::prelude::*;
     /// use tikv_client::raw::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(vec!["192.168.0.100"], ApiV1::default(), None)
+    /// let client = RawClient::<ApiV1>::new(vec!["192.168.0.100"], None)
     ///     .await
     ///     .unwrap();
     /// # });
     /// ```
     pub async fn new<S: Into<String>>(
         pd_endpoints: Vec<S>,
-        codec: C,
         logger: Option<Logger>,
     ) -> Result<Self> {
-        Self::new_with_config(pd_endpoints, Config::default(), codec, logger).await
+        Self::new_with_config(pd_endpoints, Config::default(), logger).await
     }
 
     /// Create a raw [`Client`] with a custom configuration, and connect to the TiKV cluster.
@@ -88,10 +137,9 @@ impl<C: RawCodec> Client<C> {
     /// # use std::time::Duration;
     /// use tikv_client::raw::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new_with_config(
+    /// let client = RawClient::<ApiV1>::new_with_config(
     ///     vec!["192.168.0.100"],
     ///     Config::default().with_timeout(Duration::from_secs(60)),
-    ///     ApiV1::default(),
     ///     None,
     /// )
     /// .await
@@ -101,30 +149,15 @@ impl<C: RawCodec> Client<C> {
     pub async fn new_with_config<S: Into<String>>(
         pd_endpoints: Vec<S>,
         config: Config,
-        codec: C,
         optional_logger: Option<Logger>,
     ) -> Result<Self> {
-        let logger = optional_logger.unwrap_or_else(|| {
-            let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-            Logger::root(
-                slog_term::FullFormat::new(plain)
-                    .build()
-                    .filter_level(slog::Level::Info)
-                    .fuse(),
-                o!(),
-            )
-        });
-        debug!(logger, "creating new raw client");
-        let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let rpc =
-            Arc::new(PdRpcClient::connect(&pd_endpoints, config, codec, logger.clone()).await?);
-        Ok(Client {
-            rpc,
-            cf: None,
-            atomic: false,
-            logger,
-            _phantom: PhantomData,
-        })
+        Self::new_with_codec_factory(
+            pd_endpoints,
+            config,
+            async move |_| Ok(C::default()),
+            optional_logger,
+        )
+        .await
     }
 
     /// Create a new client which is a clone of `self`, but which uses an explicit column family for
@@ -144,7 +177,7 @@ impl<C: RawCodec> Client<C> {
     /// # use std::convert::TryInto;
     /// use tikv_client::raw::ApiV1;
     /// # futures::executor::block_on(async {
-    /// let client = RawClient::new(vec!["192.168.0.100"], ApiV1::default(), None)
+    /// let client = RawClient::<ApiV1>::new(vec!["192.168.0.100"], None)
     ///     .await
     ///     .unwrap()
     ///     .with_cf(ColumnFamily::Write);
@@ -180,6 +213,29 @@ impl<C: RawCodec> Client<C> {
             _phantom: PhantomData,
         }
     }
+
+    async fn new_with_codec_factory<S, F, Fut>(
+        pd_endpoints: Vec<S>,
+        config: Config,
+        codec_factory: F,
+        optional_logger: Option<Logger>,
+    ) -> Result<Self>
+    where
+        S: Into<String>,
+        F: Fn(Arc<RetryClient>) -> Fut,
+        Fut: Future<Output = Result<C>>,
+    {
+        let ClientContext { pd: rpc, logger } =
+            ClientContext::new(pd_endpoints, config, codec_factory, optional_logger).await?;
+
+        Ok(Client {
+            rpc,
+            cf: None,
+            atomic: false,
+            logger,
+            _phantom: PhantomData,
+        })
+    }
 }
 
 impl<C, PdC> Client<C, PdC>
@@ -200,7 +256,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::raw::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], ApiV1::default(), None).await.unwrap();
+    /// # let client = RawClient::<ApiV1>::new(vec!["192.168.0.100"],  None).await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let req = client.get(key);
     /// let result: Option<Value> = req.await.unwrap();
@@ -235,7 +291,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::raw::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], ApiV1::default(), None).await.unwrap();
+    /// # let client = RawClient::<ApiV1>::new(vec!["192.168.0.100"],  None).await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let req = client.batch_get(keys);
     /// let result: Vec<KvPair> = req.await.unwrap();
@@ -275,7 +331,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::raw::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], ApiV1::default(), None).await.unwrap();
+    /// # let client = RawClient::<ApiV1>::new(vec!["192.168.0.100"],  None).await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let val = "TiKV".to_owned();
     /// let req = client.put(key, val);
@@ -314,7 +370,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::raw::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], ApiV1::default(), None).await.unwrap();
+    /// # let client = RawClient::<ApiV1>::new(vec!["192.168.0.100"],  None).await.unwrap();
     /// let kvpair1 = ("PD".to_owned(), "Go".to_owned());
     /// let kvpair2 = ("TiKV".to_owned(), "Rust".to_owned());
     /// let iterable = vec![kvpair1, kvpair2];
@@ -361,7 +417,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::raw::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], ApiV1::default(), None).await.unwrap();
+    /// # let client = RawClient::<ApiV1>::new(vec!["192.168.0.100"],  None).await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let req = client.delete(key);
     /// let result: () = req.await.unwrap();
@@ -396,7 +452,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::raw::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], ApiV1::default(), None).await.unwrap();
+    /// # let client = RawClient::<ApiV1>::new(vec!["192.168.0.100"],  None).await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let req = client.batch_delete(keys);
     /// let result: () = req.await.unwrap();
@@ -434,7 +490,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::raw::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], ApiV1::default(), None).await.unwrap();
+    /// # let client = RawClient::<ApiV1>::new(vec!["192.168.0.100"],  None).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = client.delete_range(inclusive_range.into_owned());
     /// let result: () = req.await.unwrap();
@@ -475,7 +531,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::raw::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], ApiV1::default(), None).await.unwrap();
+    /// # let client = RawClient::<ApiV1>::new(vec!["192.168.0.100"],  None).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = client.scan(inclusive_range.into_owned(), 2);
     /// let result: Vec<KvPair> = req.await.unwrap();
@@ -510,7 +566,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::raw::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], ApiV1::default(), None).await.unwrap();
+    /// # let client = RawClient::<ApiV1>::new(vec!["192.168.0.100"],  None).await.unwrap();
     /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = client.scan_keys(inclusive_range.into_owned(), 2);
     /// let result: Vec<Key> = req.await.unwrap();
@@ -553,7 +609,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::raw::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], ApiV1::default(), None).await.unwrap();
+    /// # let client = RawClient::<ApiV1>::new(vec!["192.168.0.100"],  None).await.unwrap();
     /// let inclusive_range1 = "TiDB"..="TiKV";
     /// let inclusive_range2 = "TiKV"..="TiSpark";
     /// let iterable = vec![inclusive_range1.into_owned(), inclusive_range2.into_owned()];
@@ -598,7 +654,7 @@ where
     /// # use futures::prelude::*;
     /// use tikv_client::raw::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = RawClient::new(vec!["192.168.0.100"], ApiV1::default(), None).await.unwrap();
+    /// # let client = RawClient::<ApiV1>::new(vec!["192.168.0.100"],  None).await.unwrap();
     /// let inclusive_range1 = "TiDB"..="TiKV";
     /// let inclusive_range2 = "TiKV"..="TiSpark";
     /// let iterable = vec![inclusive_range1.into_owned(), inclusive_range2.into_owned()];
@@ -783,6 +839,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use slog::Drain;
     use std::{any::Any, sync::Arc};
 
     use tikv_client_proto::kvrpcpb;

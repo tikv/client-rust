@@ -254,19 +254,23 @@ impl<C: RequestCodec, KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpc
 }
 
 impl<C> PdRpcClient<C, TikvConnect, Cluster> {
-    pub async fn connect(
+    pub async fn connect<F, Fut>(
         pd_endpoints: &[String],
         config: Config,
-        codec: C,
+        codec_factory: F,
         logger: Logger,
-    ) -> Result<PdRpcClient<C, TikvConnect, Cluster>> {
+    ) -> Result<PdRpcClient<C, TikvConnect, Cluster>>
+    where
+        F: Fn(Arc<RetryClient>) -> Fut,
+        Fut: Future<Output = Result<C>>,
+    {
         PdRpcClient::new(
             config.clone(),
             |env, security_mgr| TikvConnect::new(env, security_mgr, config.timeout),
             |env, security_mgr| {
                 RetryClient::connect(env, pd_endpoints, security_mgr, config.timeout)
             },
-            codec,
+            codec_factory,
             logger,
         )
         .await
@@ -283,17 +287,19 @@ fn thread_name(prefix: &str) -> String {
 }
 
 impl<C, KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<C, KvC, Cl> {
-    pub async fn new<PdFut, MakeKvC, MakePd>(
+    pub async fn new<PdFut, MakeKvC, MakePd, MakeCodec, CodecFut>(
         config: Config,
         kv_connect: MakeKvC,
         pd: MakePd,
-        codec: C,
+        codec: MakeCodec,
         logger: Logger,
     ) -> Result<PdRpcClient<C, KvC, Cl>>
     where
         PdFut: Future<Output = Result<RetryClient<Cl>>>,
         MakeKvC: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> KvC,
         MakePd: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> PdFut,
+        MakeCodec: Fn(Arc<RetryClient<Cl>>) -> CodecFut,
+        CodecFut: Future<Output = Result<C>>,
     {
         let env = Arc::new(
             EnvBuilder::new()
@@ -313,11 +319,12 @@ impl<C, KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<C, KvC, Cl> {
 
         let pd = Arc::new(pd(env.clone(), security_mgr.clone()).await?);
         let kv_client_cache = Default::default();
+
         Ok(PdRpcClient {
             pd: pd.clone(),
             kv_client_cache,
             kv_connect: kv_connect(env, security_mgr),
-            region_cache: RegionCache::new(codec, pd),
+            region_cache: RegionCache::new(codec(pd.clone()).await?, pd),
             logger,
         })
     }

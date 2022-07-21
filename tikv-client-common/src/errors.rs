@@ -95,6 +95,10 @@ pub enum Error {
     },
     #[error("Corrupted keyspace: expected: {:?}, key: {:?}", expected, key)]
     CorruptedKeyspace { expected: Vec<u8>, key: Vec<u8> },
+    #[error("Keyspace is unsupported in the cluster")]
+    KeyspaceUnsupported,
+    #[error("Keyspace {} is not enabled", name)]
+    KeyspaceNotEnabled { name: String },
 }
 
 impl From<tikv_client_proto::errorpb::Error> for Error {

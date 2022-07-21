@@ -3,18 +3,24 @@ use std::{
     borrow::Cow,
     marker::PhantomData,
     ops::{Deref, DerefMut},
+    sync::Arc,
 };
 
 use tikv_client_common::Error;
-use tikv_client_proto::{errorpb, kvrpcpb, metapb::Region};
+use tikv_client_proto::{errorpb, keyspacepb, kvrpcpb, metapb::Region};
 
 use crate::{kv::codec::decode_bytes_in_place, request::KvRequest, Key, Result};
+
+use crate::pd::{RetryClient, RetryClientTrait};
+use derive_new::new;
 
 type Prefix = [u8; KEYSPACE_PREFIX_LEN];
 
 const KEYSPACE_PREFIX_LEN: usize = 4;
 
-pub trait RequestCodec: Sized + Clone + Sync + Send + 'static {
+pub const DEFAULT_KEYSPACE: &str = "DEFAULT";
+
+pub trait RequestCodec: Default + Sized + Clone + Sync + Send + 'static {
     fn encode_request<'a, R: KvRequest<Self>>(&self, req: &'a R) -> Cow<'a, R> {
         Cow::Borrowed(req)
     }
@@ -201,7 +207,7 @@ pub trait RawCodec: RequestCodec {}
 
 pub trait TxnCodec: RequestCodec {}
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(new, Clone, Copy, Default, PartialEq, Eq)]
 pub struct KeySpaceId([u8; 3]);
 
 impl Deref for KeySpaceId {
@@ -215,6 +221,25 @@ impl Deref for KeySpaceId {
 impl DerefMut for KeySpaceId {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+impl KeySpaceId {
+    pub async fn from_name(name: &str, pd: Arc<RetryClient>) -> Result<Self> {
+        if name == DEFAULT_KEYSPACE {
+            return Ok(KeySpaceId::default());
+        }
+
+        let resp = pd.load_keyspace(name).await?;
+        let keyspace = resp.get_keyspace();
+        if keyspace.get_state() == keyspacepb::KeyspaceState::Enabled {
+            let id = keyspace.get_id().to_be_bytes();
+            Ok(KeySpaceId::new([id[1], id[2], id[3]]))
+        } else {
+            Err(Error::KeyspaceNotEnabled {
+                name: name.to_string(),
+            })
+        }
     }
 }
 
@@ -276,6 +301,15 @@ pub struct KeySpace<M: Mode> {
     _phantom: PhantomData<M>,
 }
 
+impl<M: Mode> KeySpace<M> {
+    pub fn new(id: KeySpaceId) -> Self {
+        KeySpace {
+            id,
+            _phantom: PhantomData,
+        }
+    }
+}
+
 impl<M: Mode> Default for KeySpace<M> {
     fn default() -> Self {
         KeySpace {
@@ -301,9 +335,26 @@ impl<M: Mode> KeySpace<M> {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct ApiV2<M: Mode> {
     keyspace: KeySpace<M>,
+}
+
+impl<M: Mode> ApiV2<M> {
+    pub async fn with_keyspace(name: &str, pd: Arc<RetryClient>) -> Result<Self> {
+        let id = KeySpaceId::from_name(name, pd).await?;
+        Ok(ApiV2 {
+            keyspace: KeySpace::new(id),
+        })
+    }
+}
+
+impl<M: Mode> Default for ApiV2<M> {
+    fn default() -> Self {
+        ApiV2 {
+            keyspace: KeySpace::default(),
+        }
+    }
 }
 
 impl<M: Mode> RequestCodec for ApiV2<M> {

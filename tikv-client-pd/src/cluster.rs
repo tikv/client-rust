@@ -2,15 +2,17 @@
 
 use crate::{timestamp::TimestampOracle, Error, Result, SecurityManager};
 use async_trait::async_trait;
-use grpcio::{CallOption, Environment};
+use grpcio::{CallOption, Environment, RpcStatusCode};
 use std::{
     collections::HashSet,
     sync::Arc,
     time::{Duration, Instant},
 };
 use tikv_client_common::internal_err;
-use tikv_client_proto::pdpb::{self, Timestamp};
-use tikv_client_proto::keyspacepb;
+use tikv_client_proto::{
+    keyspacepb,
+    pdpb::{self, Timestamp},
+};
 
 /// A PD cluster.
 pub struct Cluster {
@@ -18,6 +20,7 @@ pub struct Cluster {
     client: pdpb::PdClient,
     members: pdpb::GetMembersResponse,
     tso: TimestampOracle,
+    keyspace_mgr: Option<keyspacepb::KeyspaceClient>,
 }
 
 macro_rules! pd_request {
@@ -77,11 +80,25 @@ impl Cluster {
         req.send(&self.client, timeout).await
     }
 
-    pub async fn load_keyspace<T: AsRef<str>>(&self, name: T, timeout: Duration) -> Result<keyspacepb::LoadKeyspaceResponse> {
+    pub async fn load_keyspace(
+        &self,
+        name: String,
+        timeout: Duration,
+    ) -> Result<keyspacepb::LoadKeyspaceResponse> {
         let mut req = pd_request!(self.id, keyspacepb::LoadKeyspaceRequest);
-        req.set_name(name.as_ref().to_owned());
-        req.send(&self.client, timeout).await
+        let mgr = self
+            .keyspace_mgr
+            .as_ref()
+            .ok_or(Error::KeyspaceUnsupported)?;
+        req.set_name(name);
+        req.send(mgr, timeout).await
     }
+}
+
+struct ConnectResponse {
+    client: pdpb::PdClient,
+    members: pdpb::GetMembersResponse,
+    keyspace_mgr: Option<keyspacepb::KeyspaceClient>,
 }
 
 /// An object for connecting and reconnecting to a PD cluster.
@@ -101,7 +118,11 @@ impl Connection {
         timeout: Duration,
     ) -> Result<Cluster> {
         let members = self.validate_endpoints(endpoints, timeout).await?;
-        let (client, members) = self.try_connect_leader(&members, timeout).await?;
+        let ConnectResponse {
+            client,
+            members,
+            keyspace_mgr,
+        } = self.try_connect_leader(&members, timeout).await?;
         let id = members.get_header().get_cluster_id();
         let tso = TimestampOracle::new(id, &client)?;
         let cluster = Cluster {
@@ -109,6 +130,7 @@ impl Connection {
             client,
             members,
             tso,
+            keyspace_mgr,
         };
         Ok(cluster)
     }
@@ -117,13 +139,18 @@ impl Connection {
     pub async fn reconnect(&self, cluster: &mut Cluster, timeout: Duration) -> Result<()> {
         warn!("updating pd client");
         let start = Instant::now();
-        let (client, members) = self.try_connect_leader(&cluster.members, timeout).await?;
+        let ConnectResponse {
+            client,
+            members,
+            keyspace_mgr,
+        } = self.try_connect_leader(&cluster.members, timeout).await?;
         let tso = TimestampOracle::new(cluster.id, &client)?;
         *cluster = Cluster {
             id: cluster.id,
             client,
             members,
             tso,
+            keyspace_mgr,
         };
 
         info!("updating PD client done, spent {:?}", start.elapsed());
@@ -144,8 +171,8 @@ impl Connection {
                 return Err(internal_err!("duplicated PD endpoint {}", ep));
             }
 
-            let (_, resp) = match self.connect(ep, timeout).await {
-                Ok(resp) => resp,
+            let resp = match self.connect(ep, timeout).await {
+                Ok(ConnectResponse { members, .. }) => members,
                 // Ignore failed PD node.
                 Err(e) => {
                     warn!("PD endpoint {} failed to respond: {:?}", ep, e);
@@ -182,20 +209,39 @@ impl Connection {
         }
     }
 
-    async fn connect(
-        &self,
-        addr: &str,
-        timeout: Duration,
-    ) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
+    async fn connect(&self, addr: &str, timeout: Duration) -> Result<ConnectResponse> {
         let client = self
             .security_mgr
             .connect(self.env.clone(), addr, pdpb::PdClient::new)?;
+
+        let keyspace_mgr = self.connect_keyspace_mgr(addr)?;
+
         let option = CallOption::default().timeout(timeout);
-        let resp = client
+        let members = client
             .get_members_async_opt(&pdpb::GetMembersRequest::default(), option)
             .map_err(Error::from)?
             .await?;
-        Ok((client, resp))
+
+        Ok(ConnectResponse {
+            client,
+            members,
+            keyspace_mgr,
+        })
+    }
+
+    fn connect_keyspace_mgr(&self, addr: &str) -> Result<Option<keyspacepb::KeyspaceClient>> {
+        let result =
+            self.security_mgr
+                .connect(self.env.clone(), addr, keyspacepb::KeyspaceClient::new);
+        match result {
+            Ok(mgr) => Ok(Some(mgr)),
+            Err(Error::Grpc(grpcio::Error::RpcFailure(status)))
+                if status.code() == RpcStatusCode::UNIMPLEMENTED =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     async fn try_connect(
@@ -203,10 +249,10 @@ impl Connection {
         addr: &str,
         cluster_id: u64,
         timeout: Duration,
-    ) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
-        let (client, r) = self.connect(addr, timeout).await?;
-        Connection::validate_cluster_id(addr, &r, cluster_id)?;
-        Ok((client, r))
+    ) -> Result<ConnectResponse> {
+        let connect_resp = self.connect(addr, timeout).await?;
+        Connection::validate_cluster_id(addr, &connect_resp.members, cluster_id)?;
+        Ok(connect_resp)
     }
 
     fn validate_cluster_id(
@@ -231,7 +277,7 @@ impl Connection {
         &self,
         previous: &pdpb::GetMembersResponse,
         timeout: Duration,
-    ) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
+    ) -> Result<ConnectResponse> {
         let previous_leader = previous.get_leader();
         let members = previous.get_members();
         let cluster_id = previous.get_header().get_cluster_id();
@@ -245,8 +291,8 @@ impl Connection {
         {
             for ep in m.get_client_urls() {
                 match self.try_connect(ep.as_str(), cluster_id, timeout).await {
-                    Ok((_, r)) => {
-                        resp = Some(r);
+                    Ok(ConnectResponse { members, .. }) => {
+                        resp = Some(members);
                         break 'outer;
                     }
                     Err(e) => {
@@ -346,11 +392,14 @@ impl PdMessage for pdpb::UpdateGcSafePointRequest {
 #[async_trait]
 impl PdMessage for keyspacepb::LoadKeyspaceRequest {
     type Response = keyspacepb::LoadKeyspaceResponse;
-    type Client = pdpb::PdClient;
+    type Client = keyspacepb::KeyspaceClient;
 
-    async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
-        unimplemented!()
-        // client.load_keyspace_async_opt(self, opt)?.await
+    async fn rpc(
+        &self,
+        client: &keyspacepb::KeyspaceClient,
+        opt: CallOption,
+    ) -> GrpcResult<Self::Response> {
+        client.load_keyspace_async_opt(self, opt)?.await
     }
 }
 

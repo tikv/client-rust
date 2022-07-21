@@ -42,7 +42,7 @@ pub async fn pd_rpc_client() -> PdRpcClient<ApiV1, MockKvConnect, MockCluster> {
                 MockCluster,
             ))
         },
-        ApiV1::default(),
+        async move |_| Ok(ApiV1::default()),
         logger,
     )
     .await

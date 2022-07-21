@@ -258,7 +258,7 @@ mod test {
     use tokio::sync::Mutex;
 
     use tikv_client_common::Error;
-    use tikv_client_proto::metapb;
+    use tikv_client_proto::{keyspacepb, metapb};
 
     use crate::{
         pd::RetryClientTrait,
@@ -324,6 +324,13 @@ mod test {
         }
 
         async fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> Result<bool> {
+            todo!()
+        }
+
+        async fn load_keyspace(
+            self: Arc<Self>,
+            _name: &str,
+        ) -> Result<keyspacepb::LoadKeyspaceResponse> {
             todo!()
         }
     }

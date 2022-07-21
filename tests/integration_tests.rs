@@ -37,7 +37,7 @@ const NUM_TRNASFER: u32 = 100;
 #[serial]
 async fn txn_get_timestamp() -> Result<()> {
     const COUNT: usize = 1 << 8; // use a small number to make test fast
-    let client = TransactionClient::new(pd_addrs(), transaction::ApiV1::default(), None).await?;
+    let client = TransactionClient::<transaction::ApiV1>::new(pd_addrs(), None).await?;
 
     let mut versions = future::join_all((0..COUNT).map(|_| client.current_timestamp()))
         .await
@@ -58,7 +58,7 @@ async fn txn_get_timestamp() -> Result<()> {
 async fn txn_crud() -> Result<()> {
     init().await?;
 
-    let client = TransactionClient::new(pd_addrs(), transaction::ApiV1::default(), None).await?;
+    let client = TransactionClient::<transaction::ApiV1>::new(pd_addrs(), None).await?;
     let mut txn = client.begin_optimistic().await?;
 
     // Get non-existent keys
@@ -142,7 +142,7 @@ async fn txn_crud() -> Result<()> {
 async fn txn_insert_duplicate_keys() -> Result<()> {
     init().await?;
 
-    let client = TransactionClient::new(pd_addrs(), transaction::ApiV1::default(), None).await?;
+    let client = TransactionClient::<transaction::ApiV1>::new(pd_addrs(), None).await?;
     // Initialize TiKV store with {foo => bar}
     let mut txn = client.begin_optimistic().await?;
     txn.put("foo".to_owned(), "bar".to_owned()).await?;
@@ -166,7 +166,7 @@ async fn txn_insert_duplicate_keys() -> Result<()> {
 async fn txn_pessimistic() -> Result<()> {
     init().await?;
 
-    let client = TransactionClient::new(pd_addrs(), transaction::ApiV1::default(), None).await?;
+    let client = TransactionClient::<transaction::ApiV1>::new(pd_addrs(), None).await?;
     let mut txn = client.begin_pessimistic().await?;
     txn.put("foo".to_owned(), "foo".to_owned()).await.unwrap();
 
@@ -183,7 +183,7 @@ async fn txn_pessimistic() -> Result<()> {
 #[serial]
 async fn raw_bank_transfer() -> Result<()> {
     init().await?;
-    let client = RawClient::new(pd_addrs(), raw::ApiV1::default(), None).await?;
+    let client = RawClient::<raw::ApiV1>::new(pd_addrs(), None).await?;
     let mut rng = thread_rng();
 
     let people = gen_u32_keys(NUM_PEOPLE, &mut rng);
@@ -235,7 +235,7 @@ async fn txn_read() -> Result<()> {
     let value = "large_value".repeat(10);
 
     init().await?;
-    let client = TransactionClient::new(pd_addrs(), transaction::ApiV1::default(), None).await?;
+    let client = TransactionClient::<transaction::ApiV1>::new(pd_addrs(), None).await?;
 
     for i in 0..2u32.pow(NUM_BITS_TXN) {
         let mut cur = i * 2u32.pow(32 - NUM_BITS_TXN);
@@ -327,7 +327,7 @@ async fn txn_read() -> Result<()> {
 #[serial]
 async fn txn_bank_transfer() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new(pd_addrs(), transaction::ApiV1::default(), None).await?;
+    let client = TransactionClient::<transaction::ApiV1>::new(pd_addrs(), None).await?;
     let mut rng = thread_rng();
     let options = TransactionOptions::new_optimistic()
         .use_async_commit()
@@ -380,7 +380,7 @@ async fn txn_bank_transfer() -> Result<()> {
 #[serial]
 async fn raw_req() -> Result<()> {
     init().await?;
-    let client = RawClient::new(pd_addrs(), raw::ApiV1::default(), None).await?;
+    let client = RawClient::<raw::ApiV1>::new(pd_addrs(), None).await?;
 
     // empty; get non-existent key
     let res = client.get("k1".to_owned()).await;
@@ -510,7 +510,7 @@ async fn raw_req() -> Result<()> {
 #[serial]
 async fn txn_update_safepoint() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new(pd_addrs(), transaction::ApiV1::default(), None).await?;
+    let client = TransactionClient::<transaction::ApiV1>::new(pd_addrs(), None).await?;
     let res = client.gc(client.current_timestamp().await?).await?;
     assert!(res);
     Ok(())
@@ -525,7 +525,7 @@ async fn raw_write_million() -> Result<()> {
     let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
 
     init().await?;
-    let client = RawClient::new(pd_addrs(), raw::ApiV1::default(), None).await?;
+    let client = RawClient::<raw::ApiV1>::new(pd_addrs(), None).await?;
 
     for i in 0..2u32.pow(NUM_BITS_TXN) {
         let mut cur = i * 2u32.pow(32 - NUM_BITS_TXN);
@@ -571,10 +571,9 @@ async fn raw_write_million() -> Result<()> {
 #[serial]
 async fn txn_pessimistic_rollback() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(
+    let client = TransactionClient::<transaction::ApiV1>::new_with_config(
         pd_addrs(),
         Default::default(),
-        transaction::ApiV1::default(),
         None,
     )
     .await?;
@@ -609,10 +608,9 @@ async fn txn_pessimistic_rollback() -> Result<()> {
 #[serial]
 async fn txn_pessimistic_delete() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(
+    let client = TransactionClient::<transaction::ApiV1>::new_with_config(
         vec!["127.0.0.1:2379"],
         Default::default(),
-        transaction::ApiV1::default(),
         None,
     )
     .await?;
@@ -657,10 +655,9 @@ async fn txn_pessimistic_delete() -> Result<()> {
 #[serial]
 async fn txn_lock_keys() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(
+    let client = TransactionClient::<transaction::ApiV1>::new_with_config(
         pd_addrs(),
         Default::default(),
-        transaction::ApiV1::default(),
         None,
     )
     .await?;
@@ -697,10 +694,9 @@ async fn txn_lock_keys() -> Result<()> {
 #[serial]
 async fn txn_lock_keys_error_handle() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(
+    let client = TransactionClient::<transaction::ApiV1>::new_with_config(
         pd_addrs(),
         Default::default(),
-        transaction::ApiV1::default(),
         None,
     )
     .await?;
@@ -740,10 +736,9 @@ async fn txn_lock_keys_error_handle() -> Result<()> {
 #[serial]
 async fn txn_get_for_update() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(
+    let client = TransactionClient::<transaction::ApiV1>::new_with_config(
         pd_addrs(),
         Default::default(),
-        transaction::ApiV1::default(),
         None,
     )
     .await?;
@@ -793,7 +788,7 @@ async fn txn_pessimistic_heartbeat() -> Result<()> {
 
     let key1 = "key1".to_owned();
     let key2 = "key2".to_owned();
-    let client = TransactionClient::new(pd_addrs(), transaction::ApiV1::default(), None).await?;
+    let client = TransactionClient::<transaction::ApiV1>::new(pd_addrs(), None).await?;
 
     let mut heartbeat_txn = client
         .begin_with_options(TransactionOptions::new_pessimistic())
@@ -833,7 +828,7 @@ async fn txn_pessimistic_heartbeat() -> Result<()> {
 #[serial]
 async fn raw_cas() -> Result<()> {
     init().await?;
-    let client = RawClient::new(pd_addrs(), raw::ApiV1::default(), None)
+    let client = RawClient::<raw::ApiV1>::new(pd_addrs(), None)
         .await?
         .with_atomic_for_cas();
     let key = "key".to_owned();
@@ -878,7 +873,7 @@ async fn raw_cas() -> Result<()> {
         client.batch_delete(vec![key.clone()]).await.err().unwrap(),
         Error::UnsupportedMode
     ));
-    let client = RawClient::new(pd_addrs(), raw::ApiV1::default(), None).await?;
+    let client = RawClient::<raw::ApiV1>::new(pd_addrs(), None).await?;
     assert!(matches!(
         client
             .compare_and_swap(key.clone(), None, vec![])
@@ -895,10 +890,9 @@ async fn raw_cas() -> Result<()> {
 #[serial]
 async fn txn_scan() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(
+    let client = TransactionClient::<transaction::ApiV1>::new_with_config(
         pd_addrs(),
         Default::default(),
-        transaction::ApiV1::default(),
         None,
     )
     .await?;
@@ -924,10 +918,9 @@ async fn txn_scan() -> Result<()> {
 #[serial]
 async fn txn_scan_reverse() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(
+    let client = TransactionClient::<transaction::ApiV1>::new_with_config(
         pd_addrs(),
         Default::default(),
-        transaction::ApiV1::default(),
         None,
     )
     .await?;
