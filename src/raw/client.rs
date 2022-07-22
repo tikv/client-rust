@@ -27,7 +27,11 @@ const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 ///
 /// The returned results of raw request methods are [`Future`](std::future::Future)s that must be
 /// awaited to execute.
-pub struct Client<C: RawCodec, PdC: PdClient = PdRpcClient<C>> {
+pub struct Client<C, PdC = PdRpcClient<C>>
+where
+    C: RawCodec,
+    PdC: PdClient<RequestCodec = C>,
+{
     rpc: Arc<PdC>,
     cf: Option<ColumnFamily>,
     /// Whether to use the [`atomic mode`](Client::with_atomic_for_cas).
