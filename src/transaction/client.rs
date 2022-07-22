@@ -1,6 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{future::Future, marker::PhantomData, mem, sync::Arc};
+use std::{future::Future, mem, sync::Arc};
 
 use slog::Logger;
 
@@ -41,7 +41,6 @@ const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
 pub struct Client<C: TxnCodec> {
     pd: Arc<PdRpcClient<C>>,
     logger: Logger,
-    _phantom: PhantomData<C>,
 }
 
 impl<C: TxnCodec> Clone for Client<C> {
@@ -49,7 +48,6 @@ impl<C: TxnCodec> Clone for Client<C> {
         Self {
             pd: self.pd.clone(),
             logger: self.logger.clone(),
-            _phantom: PhantomData,
         }
     }
 }
@@ -184,11 +182,7 @@ where
         let ClientContext { pd, logger } =
             ClientContext::new(pd_endpoints, config, codec_factory, optional_logger).await?;
 
-        Ok(Client {
-            pd,
-            logger,
-            _phantom: PhantomData,
-        })
+        Ok(Client { pd, logger })
     }
 
     /// Creates a new optimistic [`Transaction`].
