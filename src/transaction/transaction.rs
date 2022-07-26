@@ -208,8 +208,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```
     pub async fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
         debug!(self.logger, "invoking transactional key_exists request");
-        let key = key.into();
-        Ok(self.scan_keys(key.clone()..=key, 1).await?.next().is_some())
+        Ok(self.get(key).await?.is_some())
     }
 
     /// Create a new 'batch get' request.
