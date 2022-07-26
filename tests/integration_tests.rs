@@ -928,16 +928,16 @@ async fn txn_key_exists() -> Result<()> {
     let value = "value".to_owned();
     let mut t1 = client.begin_optimistic().await?;
     t1.put(key.clone(), value.clone()).await?;
-    assert_eq!(true, t1.key_exists(key.clone()).await?);
+    assert!(t1.key_exists(key.clone()).await?);
     t1.commit().await?;
 
     let mut t2 = client.begin_optimistic().await?;
-    assert_eq!(true, t2.key_exists(key).await?);
+    assert!(t2.key_exists(key).await?);
     t2.commit().await?;
 
     let not_exists_key = "not_exists_key".to_owned();
     let mut t3 = client.begin_optimistic().await?;
-    assert_eq!(false, t3.key_exists(not_exists_key).await?);
+    assert!(!t3.key_exists(not_exists_key).await?);
     t3.commit().await?;
     Ok(())
 }
