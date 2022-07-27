@@ -1,3 +1,5 @@
+export RUSTFLAGS=-Dwarnings
+
 .PHONY: default check unit-test integration-tests test doc docker-pd docker-kv docker all
 
 default: check
