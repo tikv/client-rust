@@ -12,9 +12,9 @@ use crate::{
 };
 use derive_new::new;
 use fail::fail_point;
-use futures::{prelude::*, stream::BoxStream};
+use futures::prelude::*;
 use slog::Logger;
-use std::{iter, ops::RangeBounds, sync::Arc, time::Instant};
+use std::{iter, sync::Arc, time::Instant};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 use tokio::{sync::RwLock, time::Duration};
 
@@ -208,8 +208,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```
     pub async fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
         debug!(self.logger, "invoking transactional key_exists request");
-        let key = key.into();
-        Ok(self.scan_keys(key.clone()..=key, 1).await?.next().is_some())
+        Ok(self.get(key).await?.is_some())
     }
 
     /// Create a new 'batch get' request.
@@ -344,7 +343,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
         debug!(self.logger, "invoking transactional scan request");
-        self.scan_inner(range, limit, false).await
+        self.scan_inner(range, limit, false, false).await
     }
 
     /// Create a new 'scan' request that only returns the keys.
@@ -381,7 +380,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     ) -> Result<impl Iterator<Item = Key>> {
         debug!(self.logger, "invoking transactional scan_keys request");
         Ok(self
-            .scan_inner(range, limit, true)
+            .scan_inner(range, limit, true, false)
             .await?
             .map(KvPair::into_key))
     }
@@ -389,9 +388,31 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Create a 'scan_reverse' request.
     ///
     /// Similar to [`scan`](Transaction::scan), but scans in the reverse direction.
-    pub(crate) fn scan_reverse(&self, _range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
+    pub async fn scan_reverse(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Iterator<Item = KvPair>> {
         debug!(self.logger, "invoking transactional scan_reverse request");
-        unimplemented!()
+        self.scan_inner(range, limit, false, true).await
+    }
+
+    /// Create a 'scan_keys_reverse' request.
+    ///
+    /// Similar to [`scan`](Transaction::scan_keys), but scans in the reverse direction.
+    pub async fn scan_keys_reverse(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Iterator<Item = Key>> {
+        debug!(
+            self.logger,
+            "invoking transactional scan_keys_reverse request"
+        );
+        Ok(self
+            .scan_inner(range, limit, true, true)
+            .await?
+            .map(KvPair::into_key))
     }
 
     /// Sets the value associated with the given key.
@@ -664,7 +685,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let request = new_heart_beat_request(
             self.timestamp.clone(),
             primary_key,
-            self.start_instant.elapsed().as_millis() as u64 + DEFAULT_LOCK_TTL,
+            self.start_instant.elapsed().as_millis() as u64 + MAX_TTL,
         );
         let plan = PlanBuilder::new(self.rpc.clone(), request)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
@@ -680,6 +701,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
         key_only: bool,
+        reverse: bool,
     ) -> Result<impl Iterator<Item = KvPair>> {
         self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
@@ -690,8 +712,11 @@ impl<PdC: PdClient> Transaction<PdC> {
             .scan_and_fetch(
                 range.into(),
                 limit,
+                !key_only,
+                reverse,
                 move |new_range, new_limit| async move {
-                    let request = new_scan_request(new_range, timestamp, new_limit, key_only);
+                    let request =
+                        new_scan_request(new_range, timestamp, new_limit, key_only, reverse);
                     let plan = PlanBuilder::new(rpc, request)
                         .resolve_lock(retry_options.lock_backoff)
                         .retry_multi_region(retry_options.region_backoff)
@@ -743,28 +768,75 @@ impl<PdC: PdClient> Transaction<PdC> {
             keys.clone().into_iter(),
             primary_lock,
             self.timestamp.clone(),
-            DEFAULT_LOCK_TTL,
-            for_update_ts,
+            MAX_TTL,
+            for_update_ts.clone(),
             need_value,
         );
         let plan = PlanBuilder::new(self.rpc.clone(), request)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .preserve_shard()
-            .retry_multi_region(self.options.retry_options.region_backoff.clone())
+            .retry_multi_region_preserve_results(self.options.retry_options.region_backoff.clone())
             .merge(CollectWithShard)
             .plan();
         let pairs = plan.execute().await;
 
-        // primary key will be set here if needed
-        self.buffer.primary_key_or(&first_key);
+        if let Err(err) = pairs {
+            match err {
+                Error::PessimisticLockError {
+                    inner,
+                    success_keys,
+                } if !success_keys.is_empty() => {
+                    let keys = success_keys.into_iter().map(Key::from);
+                    self.pessimistic_lock_rollback(keys, self.timestamp.clone(), for_update_ts)
+                        .await?;
+                    Err(*inner)
+                }
+                _ => Err(err),
+            }
+        } else {
+            // primary key will be set here if needed
+            self.buffer.primary_key_or(&first_key);
 
-        self.start_auto_heartbeat().await;
+            self.start_auto_heartbeat().await;
 
-        for key in keys {
-            self.buffer.lock(key.key());
+            for key in keys {
+                self.buffer.lock(key.key());
+            }
+
+            pairs
+        }
+    }
+
+    /// Rollback pessimistic lock
+    async fn pessimistic_lock_rollback(
+        &mut self,
+        keys: impl Iterator<Item = Key>,
+        start_version: Timestamp,
+        for_update_ts: Timestamp,
+    ) -> Result<()> {
+        debug!(self.logger, "rollback pessimistic lock");
+
+        let keys: Vec<_> = keys.into_iter().collect();
+        if keys.is_empty() {
+            return Ok(());
         }
 
-        pairs
+        let req = new_pessimistic_rollback_request(
+            keys.clone().into_iter(),
+            start_version,
+            for_update_ts,
+        );
+        let plan = PlanBuilder::new(self.rpc.clone(), req)
+            .resolve_lock(self.options.retry_options.lock_backoff.clone())
+            .retry_multi_region(self.options.retry_options.region_backoff.clone())
+            .extract_error()
+            .plan();
+        plan.execute().await?;
+
+        for key in keys {
+            self.buffer.unlock(&key);
+        }
+        Ok(())
     }
 
     /// Checks if the transaction can perform arbitrary operations.
@@ -822,7 +894,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 let request = new_heart_beat_request(
                     start_ts.clone(),
                     primary_key.clone(),
-                    start_instant.elapsed().as_millis() as u64 + DEFAULT_LOCK_TTL,
+                    start_instant.elapsed().as_millis() as u64 + MAX_TTL,
                 );
                 let plan = PlanBuilder::new(rpc.clone(), request)
                     .retry_multi_region(region_backoff.clone())
@@ -905,7 +977,7 @@ pub struct TransactionOptions {
     heartbeat_option: HeartbeatOption,
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum HeartbeatOption {
     NoHeartbeat,
     FixedTime(Duration),
@@ -945,42 +1017,49 @@ impl TransactionOptions {
     }
 
     /// Try to use async commit.
+    #[must_use]
     pub fn use_async_commit(mut self) -> TransactionOptions {
         self.async_commit = true;
         self
     }
 
     /// Try to use 1pc.
+    #[must_use]
     pub fn try_one_pc(mut self) -> TransactionOptions {
         self.try_one_pc = true;
         self
     }
 
     /// Make the transaction read only.
+    #[must_use]
     pub fn read_only(mut self) -> TransactionOptions {
         self.read_only = true;
         self
     }
 
     /// Don't automatically resolve locks and retry if keys are locked.
+    #[must_use]
     pub fn no_resolve_locks(mut self) -> TransactionOptions {
         self.retry_options.lock_backoff = Backoff::no_backoff();
         self
     }
 
     /// Don't automatically resolve regions with PD if we have outdated region information.
+    #[must_use]
     pub fn no_resolve_regions(mut self) -> TransactionOptions {
         self.retry_options.region_backoff = Backoff::no_backoff();
         self
     }
 
     /// Set RetryOptions.
+    #[must_use]
     pub fn retry_options(mut self, options: RetryOptions) -> TransactionOptions {
         self.retry_options = options;
         self
     }
 
     /// Set the behavior when dropping a transaction without an attempt to commit or rollback it.
+    #[must_use]
     pub fn drop_check(mut self, level: CheckLevel) -> TransactionOptions {
         self.check_level = level;
         self
@@ -998,6 +1077,7 @@ impl TransactionOptions {
         }
     }
 
+    #[must_use]
     pub fn heartbeat_option(mut self, heartbeat_option: HeartbeatOption) -> TransactionOptions {
         self.heartbeat_option = heartbeat_option;
         self
@@ -1252,7 +1332,7 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 enum TransactionStatus {
     /// The transaction is read-only [`Snapshot`](super::Snapshot), no need to commit or rollback or panic on drop.
     ReadOnly,

@@ -22,7 +22,7 @@ use std::{
     iter,
 };
 use tikv_client::{
-    transaction::HeartbeatOption, Error, Key, KvPair, RawClient, Result, Transaction,
+    transaction::HeartbeatOption, BoundRange, Error, Key, KvPair, RawClient, Result, Transaction,
     TransactionClient, TransactionOptions, Value,
 };
 
@@ -395,7 +395,7 @@ async fn raw_req() -> Result<()> {
     assert_eq!(res[1].1, "v2".as_bytes());
 
     // k1,k2; batch_put then batch_get
-    let _ = client
+    client
         .batch_put(vec![
             ("k3".to_owned(), "v3".to_owned()),
             ("k4".to_owned(), "v4".to_owned()),
@@ -437,7 +437,7 @@ async fn raw_req() -> Result<()> {
     assert_eq!(res.len(), 0);
 
     // empty; batch_put then scan
-    let _ = client
+    client
         .batch_put(vec![
             ("k3".to_owned(), "v3".to_owned()),
             ("k5".to_owned(), "v5".to_owned()),
@@ -676,6 +676,43 @@ async fn txn_lock_keys() -> Result<()> {
 
 #[tokio::test]
 #[serial]
+async fn txn_lock_keys_error_handle() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
+
+    // Keys in `k` should locate in different regions. See `init()` for boundary of regions.
+    let k: Vec<Key> = vec![
+        0x00000000_u32,
+        0x40000000_u32,
+        0x80000000_u32,
+        0xC0000000_u32,
+    ]
+    .into_iter()
+    .map(|x| x.to_be_bytes().to_vec().into())
+    .collect();
+
+    let mut t1 = client.begin_pessimistic().await?;
+    let mut t2 = client.begin_pessimistic().await?;
+    let mut t3 = client.begin_pessimistic().await?;
+
+    t1.lock_keys(vec![k[0].clone(), k[1].clone()]).await?;
+    assert!(t2
+        .lock_keys(vec![k[0].clone(), k[2].clone()])
+        .await
+        .is_err());
+    t3.lock_keys(vec![k[2].clone(), k[3].clone()]).await?;
+
+    t1.rollback().await?;
+    t3.rollback().await?;
+
+    t2.lock_keys(vec![k[0].clone(), k[2].clone()]).await?;
+    t2.commit().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
 async fn txn_get_for_update() -> Result<()> {
     init().await?;
     let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
@@ -742,7 +779,7 @@ async fn txn_pessimistic_heartbeat() -> Result<()> {
         .await
         .unwrap();
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(23)).await;
 
     // use other txns to check these locks
     let mut t3 = client
@@ -820,6 +857,88 @@ async fn raw_cas() -> Result<()> {
         Error::UnsupportedMode
     ));
 
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn txn_scan() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
+
+    let k1 = b"a".to_vec();
+    let v = b"b".to_vec();
+
+    // pessimistic
+    let option = TransactionOptions::new_pessimistic().drop_check(tikv_client::CheckLevel::Warn);
+    let mut t = client.begin_with_options(option.clone()).await?;
+    t.put(k1.clone(), v).await?;
+    t.commit().await?;
+
+    let mut t2 = client.begin_with_options(option).await?;
+    t2.get(k1.clone()).await?;
+    t2.key_exists(k1).await?;
+    t2.commit().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn txn_scan_reverse() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
+
+    let k1 = b"a1".to_vec();
+    let k2 = b"a2".to_vec();
+    let v1 = b"b1".to_vec();
+    let v2 = b"b2".to_vec();
+
+    let reverse_resp = vec![
+        (Key::from(k2.clone()), v2.clone()),
+        (Key::from(k1.clone()), v1.clone()),
+    ];
+
+    // pessimistic
+    let option = TransactionOptions::new_pessimistic().drop_check(tikv_client::CheckLevel::Warn);
+    let mut t = client.begin_with_options(option.clone()).await?;
+    t.put(k1.clone(), v1).await?;
+    t.put(k2.clone(), v2).await?;
+    t.commit().await?;
+
+    let mut t2 = client.begin_with_options(option).await?;
+    let bound_range: BoundRange = (k1..=k2).into();
+    let resp = t2
+        .scan_reverse(bound_range, 2)
+        .await?
+        .map(|kv| (kv.0, kv.1))
+        .collect::<Vec<(Key, Vec<u8>)>>();
+    assert_eq!(resp, reverse_resp);
+    t2.commit().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn txn_key_exists() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
+    let key = "key".to_owned();
+    let value = "value".to_owned();
+    let mut t1 = client.begin_optimistic().await?;
+    t1.put(key.clone(), value.clone()).await?;
+    assert!(t1.key_exists(key.clone()).await?);
+    t1.commit().await?;
+
+    let mut t2 = client.begin_optimistic().await?;
+    assert!(t2.key_exists(key).await?);
+    t2.commit().await?;
+
+    let not_exists_key = "not_exists_key".to_owned();
+    let mut t3 = client.begin_optimistic().await?;
+    assert!(!t3.key_exists(not_exists_key).await?);
+    t3.commit().await?;
     Ok(())
 }
 

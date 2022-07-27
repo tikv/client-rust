@@ -36,6 +36,8 @@ message Request {
     // Any schema-ful storage to validate schema correctness if necessary.
     int64 schema_ver = 8;
     bool is_trace_enabled = 9;
+    // paging_size is 0 when it's disabled, otherwise, it should be a positive number.
+    uint64 paging_size = 10;
 }
 
 message Response {

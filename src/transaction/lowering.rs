@@ -23,6 +23,7 @@ pub fn new_scan_request(
     timestamp: Timestamp,
     limit: u32,
     key_only: bool,
+    reverse: bool,
 ) -> kvrpcpb::ScanRequest {
     let (start_key, end_key) = range.into_keys();
     requests::new_scan_request(
@@ -31,6 +32,7 @@ pub fn new_scan_request(
         timestamp.version(),
         limit,
         key_only,
+        reverse,
     )
 }
 

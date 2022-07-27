@@ -2,9 +2,7 @@
 
 use crate::{BoundRange, Key, KvPair, Result, Transaction, Value};
 use derive_new::new;
-use futures::stream::BoxStream;
 use slog::Logger;
-use std::ops::RangeBounds;
 
 /// A read-only transaction which reads at the given timestamp.
 ///
@@ -61,10 +59,26 @@ impl Snapshot {
         self.transaction.scan_keys(range, limit).await
     }
 
-    /// Unimplemented. Similar to scan, but in the reverse direction.
-    #[allow(dead_code)]
-    fn scan_reverse(&mut self, range: impl RangeBounds<Key>) -> BoxStream<Result<KvPair>> {
+    /// Similar to scan, but in the reverse direction.
+    pub async fn scan_reverse(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Iterator<Item = KvPair>> {
         debug!(self.logger, "invoking scan_reverse request on snapshot");
-        self.transaction.scan_reverse(range)
+        self.transaction.scan_reverse(range, limit).await
+    }
+
+    /// Similar to scan_keys, but in the reverse direction.
+    pub async fn scan_keys_reverse(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Iterator<Item = Key>> {
+        debug!(
+            self.logger,
+            "invoking scan_keys_reverse request on snapshot"
+        );
+        self.transaction.scan_keys_reverse(range, limit).await
     }
 }

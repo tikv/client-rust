@@ -110,6 +110,8 @@ impl Buffer {
         &mut self,
         range: BoundRange,
         limit: u32,
+        update_cache: bool,
+        reverse: bool,
         f: F,
     ) -> Result<impl Iterator<Item = KvPair>>
     where
@@ -147,15 +149,23 @@ impl Buffer {
         }
 
         // update local buffer
-        for (k, v) in &results {
-            self.update_cache(k.clone(), Some(v.clone()));
+        if update_cache {
+            for (k, v) in &results {
+                self.update_cache(k.clone(), Some(v.clone()));
+            }
         }
 
         let mut res = results
             .into_iter()
             .map(|(k, v)| KvPair::new(k, v))
             .collect::<Vec<_>>();
-        res.sort_by_cached_key(|x| x.key().clone());
+
+        // TODO: use `BTreeMap` instead of `HashMap` to avoid sorting.
+        if reverse {
+            res.sort_unstable_by(|a, b| b.key().cmp(a.key()));
+        } else {
+            res.sort_unstable_by(|a, b| a.key().cmp(b.key()));
+        }
 
         Ok(res.into_iter().take(limit as usize))
     }
@@ -171,6 +181,19 @@ impl Buffer {
         // But values which we have only read, but not written, do.
         if let BufferEntry::Cached(v) = value {
             *value = BufferEntry::Locked(Some(v.take()))
+        }
+    }
+
+    /// Unlock the given key if locked.
+    pub fn unlock(&mut self, key: &Key) {
+        if let Some(value) = self.entry_map.get_mut(key) {
+            if let BufferEntry::Locked(v) = value {
+                if let Some(v) = v {
+                    *value = BufferEntry::Cached(v.take());
+                } else {
+                    self.entry_map.remove(key);
+                }
+            }
         }
     }
 
@@ -485,6 +508,12 @@ mod tests {
             };
         }
 
+        macro_rules! assert_entry_none {
+            ($key: ident) => {
+                assert!(matches!(buffer.entry_map.get(&$key), None,))
+            };
+        }
+
         // Insert + Delete = CheckNotExists
         let key: Key = b"key1".to_vec().into();
         buffer.insert(key.clone(), b"value1".to_vec());
@@ -510,5 +539,27 @@ mod tests {
         buffer.delete(key.clone());
         buffer.insert(key.clone(), b"value1".to_vec());
         assert_entry!(key, BufferEntry::Put(_));
+
+        // Lock + Unlock = None
+        let key: Key = b"key4".to_vec().into();
+        buffer.lock(key.clone());
+        buffer.unlock(&key);
+        assert_entry_none!(key);
+
+        // Cached + Lock + Unlock = Cached
+        let key: Key = b"key5".to_vec().into();
+        let val: Value = b"value5".to_vec();
+        let val_ = val.clone();
+        let r = block_on(buffer.get_or_else(key.clone(), move |_| ready(Ok(Some(val_)))));
+        assert_eq!(r.unwrap().unwrap(), val);
+        buffer.lock(key.clone());
+        buffer.unlock(&key);
+        assert_entry!(key, BufferEntry::Cached(Some(_)));
+        assert_eq!(
+            block_on(buffer.get_or_else(key, move |_| ready(Err(internal_err!("")))))
+                .unwrap()
+                .unwrap(),
+            val
+        );
     }
 }

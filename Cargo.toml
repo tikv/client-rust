@@ -24,7 +24,7 @@ either = "1.6"
 fail = "0.4"
 futures = { version = "0.3", features = ["async-await", "thread-pool"] }
 futures-timer = "3.0"
-grpcio = { version = "0.9", features = [ "secure", "prost-codec", "use-bindgen", "openssl-vendored" ], default-features = false }
+grpcio = { version = "0.10", features = [ "prost-codec", "openssl-vendored" ], default-features = false }
 lazy_static = "1"
 log = "0.4"
 prometheus = { version = "0.12", features = [ "push", "process" ], default-features = false } 
