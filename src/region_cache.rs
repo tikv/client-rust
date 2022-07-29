@@ -1,18 +1,22 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    pd::{RetryClient, RetryClientTrait},
-    region::{RegionId, RegionVerId, RegionWithLeader, StoreId},
-    Key, Result,
-};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
+
+use tokio::sync::{Notify, RwLock};
+
 use tikv_client_common::Error;
 use tikv_client_pd::Cluster;
 use tikv_client_proto::metapb::{self, Store};
-use tokio::sync::{Notify, RwLock};
+
+use crate::{
+    pd::{RetryClient, RetryClientTrait},
+    region::{RegionId, RegionVerId, RegionWithLeader, StoreId},
+    request::codec::RequestCodec,
+    Key, Result,
+};
 
 const MAX_RETRY_WAITING_CONCURRENT_REQUEST: usize = 4;
 
@@ -44,23 +48,25 @@ impl RegionCacheMap {
     }
 }
 
-pub struct RegionCache<Client = RetryClient<Cluster>> {
+pub struct RegionCache<C, Client = RetryClient<Cluster>> {
     region_cache: RwLock<RegionCacheMap>,
     store_cache: RwLock<HashMap<StoreId, Store>>,
     inner_client: Arc<Client>,
+    codec: C,
 }
 
-impl<Client> RegionCache<Client> {
-    pub fn new(inner_client: Arc<Client>) -> RegionCache<Client> {
+impl<C, Client> RegionCache<C, Client> {
+    pub fn new(codec: C, inner_client: Arc<Client>) -> Self {
         RegionCache {
             region_cache: RwLock::new(RegionCacheMap::new()),
             store_cache: RwLock::new(HashMap::new()),
             inner_client,
+            codec,
         }
     }
 }
 
-impl<C: RetryClientTrait> RegionCache<C> {
+impl<C: RequestCodec, R: RetryClientTrait> RegionCache<C, R> {
     // Retrieve cache entry by key. If there's no entry, query PD and update cache.
     pub async fn get_region_by_key(&self, key: &Key) -> Result<RegionWithLeader> {
         let region_cache_guard = self.region_cache.read().await;
@@ -126,9 +132,14 @@ impl<C: RetryClientTrait> RegionCache<C> {
 
     /// Force read through (query from PD) and update cache
     pub async fn read_through_region_by_key(&self, key: Key) -> Result<RegionWithLeader> {
-        let region = self.inner_client.clone().get_region(key.into()).await?;
-        self.add_region(region.clone()).await;
-        Ok(region)
+        let mut r = self
+            .inner_client
+            .clone()
+            .get_region(self.codec.encode_pd_query(key.into()))
+            .await?;
+        self.codec.decode_region(&mut r.region)?;
+        self.add_region(r.clone()).await;
+        Ok(r)
     }
 
     /// Force read through (query from PD) and update cache
@@ -140,7 +151,8 @@ impl<C: RetryClientTrait> RegionCache<C> {
             region_cache_guard.on_my_way_id.insert(id, notify.clone());
         }
 
-        let region = self.inner_client.clone().get_region_by_id(id).await?;
+        let mut region = self.inner_client.clone().get_region_by_id(id).await?;
+        self.codec.decode_region(&mut region.region)?;
         self.add_region(region.clone()).await;
 
         // notify others
@@ -226,17 +238,14 @@ impl<C: RetryClientTrait> RegionCache<C> {
             cache.key_to_ver_id.remove(&start_key);
         }
     }
+
+    pub fn get_request_codec(&self) -> C {
+        self.codec.clone()
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use super::RegionCache;
-    use crate::{
-        pd::RetryClientTrait,
-        region::{RegionId, RegionWithLeader},
-        Key, Result,
-    };
-    use async_trait::async_trait;
     use std::{
         collections::{BTreeMap, HashMap, HashSet},
         sync::{
@@ -244,9 +253,22 @@ mod test {
             Arc,
         },
     };
-    use tikv_client_common::Error;
-    use tikv_client_proto::metapb;
+
+    use async_trait::async_trait;
     use tokio::sync::Mutex;
+
+    use tikv_client_common::Error;
+    use tikv_client_proto::{keyspacepb, metapb};
+
+    use crate::{
+        pd::RetryClientTrait,
+        raw::ApiV1,
+        region::{RegionId, RegionWithLeader},
+        request::codec::RequestCodec,
+        Key, Result,
+    };
+
+    use super::RegionCache;
 
     #[derive(Default)]
     struct MockRetryClient {
@@ -304,12 +326,19 @@ mod test {
         async fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> Result<bool> {
             todo!()
         }
+
+        async fn load_keyspace(
+            self: Arc<Self>,
+            _name: &str,
+        ) -> Result<keyspacepb::LoadKeyspaceResponse> {
+            todo!()
+        }
     }
 
     #[tokio::test]
     async fn cache_is_used() -> Result<()> {
         let retry_client = Arc::new(MockRetryClient::default());
-        let cache = RegionCache::new(retry_client.clone());
+        let cache = RegionCache::new(ApiV1::default(), retry_client.clone());
         retry_client.regions.lock().await.insert(
             1,
             RegionWithLeader {
@@ -379,7 +408,7 @@ mod test {
     #[tokio::test]
     async fn test_add_disjoint_regions() {
         let retry_client = Arc::new(MockRetryClient::default());
-        let cache = RegionCache::new(retry_client.clone());
+        let cache = RegionCache::new(ApiV1::default(), retry_client.clone());
         let region1 = region(1, vec![], vec![10]);
         let region2 = region(2, vec![10], vec![20]);
         let region3 = region(3, vec![30], vec![]);
@@ -398,7 +427,7 @@ mod test {
     #[tokio::test]
     async fn test_add_intersecting_regions() {
         let retry_client = Arc::new(MockRetryClient::default());
-        let cache = RegionCache::new(retry_client.clone());
+        let cache = RegionCache::new(ApiV1::default(), retry_client.clone());
 
         cache.add_region(region(1, vec![], vec![10])).await;
         cache.add_region(region(2, vec![10], vec![20])).await;
@@ -436,7 +465,7 @@ mod test {
     #[tokio::test]
     async fn test_get_region_by_key() -> Result<()> {
         let retry_client = Arc::new(MockRetryClient::default());
-        let cache = RegionCache::new(retry_client.clone());
+        let cache = RegionCache::new(ApiV1::default(), retry_client.clone());
 
         let region1 = region(1, vec![], vec![10]);
         let region2 = region(2, vec![10], vec![20]);
@@ -466,8 +495,8 @@ mod test {
     }
 
     // a helper function to assert the cache is in expected state
-    async fn assert(
-        cache: &RegionCache<MockRetryClient>,
+    async fn assert<C: RequestCodec>(
+        cache: &RegionCache<C, MockRetryClient>,
         expected_cache: &BTreeMap<Key, RegionWithLeader>,
     ) {
         let guard = cache.region_cache.read().await;

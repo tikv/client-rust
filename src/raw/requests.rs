@@ -5,22 +5,25 @@ use std::{any::Any, ops::Range, sync::Arc};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use grpcio::CallOption;
+
 use tikv_client_proto::{kvrpcpb, metapb, tikvpb::TikvClient};
 use tikv_client_store::Request;
 
-use super::RawRpcRequest;
 use crate::{
     collect_first,
     pd::PdClient,
     request::{
-        plan::ResponseWithShard, Collect, CollectSingle, DefaultProcessor, KvRequest, Merge,
-        Process, Shardable, SingleKey,
+        codec::{RequestCodec, RequestCodecExt},
+        plan::ResponseWithShard,
+        Collect, CollectSingle, DefaultProcessor, KvRequest, Merge, Process, Shardable, SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_ranges, RegionStore},
     transaction::HasLocks,
     util::iter::FlatMapOkIterExt,
     ColumnFamily, Key, KvPair, Result, Value,
 };
+
+use super::RawRpcRequest;
 
 pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::RawGetRequest {
     let mut req = kvrpcpb::RawGetRequest::default();
@@ -30,10 +33,7 @@ pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::R
     req
 }
 
-impl KvRequest for kvrpcpb::RawGetRequest {
-    type Response = kvrpcpb::RawGetResponse;
-}
-
+impl_kv_request!(kvrpcpb::RawGetRequest, key; kvrpcpb::RawGetResponse);
 shardable_key!(kvrpcpb::RawGetRequest);
 collect_first!(kvrpcpb::RawGetResponse);
 
@@ -67,10 +67,7 @@ pub fn new_raw_batch_get_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawBatchGetRequest {
-    type Response = kvrpcpb::RawBatchGetResponse;
-}
-
+impl_kv_request!(kvrpcpb::RawBatchGetRequest, keys; kvrpcpb::RawBatchGetResponse, pairs);
 shardable_keys!(kvrpcpb::RawBatchGetRequest);
 
 impl Merge<kvrpcpb::RawBatchGetResponse> for Collect {
@@ -99,12 +96,10 @@ pub fn new_raw_put_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawPutRequest {
-    type Response = kvrpcpb::RawPutResponse;
-}
-
+impl_kv_request!(kvrpcpb::RawPutRequest, key; kvrpcpb::RawPutResponse);
 shardable_key!(kvrpcpb::RawPutRequest);
 collect_first!(kvrpcpb::RawPutResponse);
+
 impl SingleKey for kvrpcpb::RawPutRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -124,9 +119,7 @@ pub fn new_raw_batch_put_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawBatchPutRequest {
-    type Response = kvrpcpb::RawBatchPutResponse;
-}
+impl_kv_request!(kvrpcpb::RawBatchPutRequest, pairs; kvrpcpb::RawBatchPutResponse);
 
 impl Shardable for kvrpcpb::RawBatchPutRequest {
     type Shard = Vec<kvrpcpb::KvPair>;
@@ -163,10 +156,7 @@ pub fn new_raw_delete_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawDeleteRequest {
-    type Response = kvrpcpb::RawDeleteResponse;
-}
-
+impl_kv_request!(kvrpcpb::RawDeleteRequest, key; kvrpcpb::RawDeleteResponse);
 shardable_key!(kvrpcpb::RawDeleteRequest);
 collect_first!(kvrpcpb::RawDeleteResponse);
 impl SingleKey for kvrpcpb::RawDeleteRequest {
@@ -186,10 +176,7 @@ pub fn new_raw_batch_delete_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
-    type Response = kvrpcpb::RawBatchDeleteResponse;
-}
-
+impl_kv_request!(kvrpcpb::RawBatchDeleteRequest, keys; kvrpcpb::RawBatchDeleteResponse);
 shardable_keys!(kvrpcpb::RawBatchDeleteRequest);
 
 pub fn new_raw_delete_range_request(
@@ -205,9 +192,10 @@ pub fn new_raw_delete_range_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
-    type Response = kvrpcpb::RawDeleteRangeResponse;
-}
+impl_kv_request!(
+    kvrpcpb::RawDeleteRangeRequest;
+    kvrpcpb::RawDeleteRangeResponse
+);
 
 shardable_range!(kvrpcpb::RawDeleteRangeRequest);
 
@@ -228,10 +216,8 @@ pub fn new_raw_scan_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawScanRequest {
-    type Response = kvrpcpb::RawScanResponse;
-}
-
+has_reverse!(kvrpcpb::RawScanRequest);
+impl_kv_request!(kvrpcpb::RawScanRequest; kvrpcpb::RawScanResponse, kvs);
 shardable_range!(kvrpcpb::RawScanRequest);
 
 impl Merge<kvrpcpb::RawScanResponse> for Collect {
@@ -260,8 +246,14 @@ pub fn new_raw_batch_scan_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawBatchScanRequest {
+impl<C: RequestCodec> KvRequest<C> for kvrpcpb::RawBatchScanRequest {
     type Response = kvrpcpb::RawBatchScanResponse;
+    fn encode_request(mut self, codec: &C) -> Self {
+        *self.mut_ranges() = codec.encode_ranges(self.take_ranges(), self.get_reverse());
+        self
+    }
+
+    impl_decode_response! {kvs}
 }
 
 impl Shardable for kvrpcpb::RawBatchScanRequest {
@@ -309,9 +301,10 @@ pub fn new_cas_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawCasRequest {
-    type Response = kvrpcpb::RawCasResponse;
-}
+impl_kv_request!(
+    kvrpcpb::RawCasRequest, key;
+    kvrpcpb::RawCasResponse
+);
 
 shardable_key!(kvrpcpb::RawCasRequest);
 collect_first!(kvrpcpb::RawCasResponse);
@@ -376,9 +369,13 @@ impl Request for RawCoprocessorRequest {
     fn set_context(&mut self, context: kvrpcpb::Context) {
         self.inner.set_context(context);
     }
+
+    fn mut_context(&mut self) -> &mut kvrpcpb::Context {
+        self.inner.mut_context()
+    }
 }
 
-impl KvRequest for RawCoprocessorRequest {
+impl<C: RequestCodec> KvRequest<C> for RawCoprocessorRequest {
     type Response = kvrpcpb::RawCoprocessorResponse;
 }
 
@@ -455,29 +452,43 @@ impl_raw_rpc_request!(RawDeleteRangeRequest);
 impl_raw_rpc_request!(RawCasRequest);
 
 impl HasLocks for kvrpcpb::RawGetResponse {}
+
 impl HasLocks for kvrpcpb::RawBatchGetResponse {}
+
 impl HasLocks for kvrpcpb::RawPutResponse {}
+
 impl HasLocks for kvrpcpb::RawBatchPutResponse {}
+
 impl HasLocks for kvrpcpb::RawDeleteResponse {}
+
 impl HasLocks for kvrpcpb::RawBatchDeleteResponse {}
+
 impl HasLocks for kvrpcpb::RawScanResponse {}
+
 impl HasLocks for kvrpcpb::RawBatchScanResponse {}
+
 impl HasLocks for kvrpcpb::RawDeleteRangeResponse {}
+
 impl HasLocks for kvrpcpb::RawCasResponse {}
+
 impl HasLocks for kvrpcpb::RawCoprocessorResponse {}
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use std::any::Any;
+
+    use futures::executor;
+
+    use tikv_client_proto::kvrpcpb;
+
     use crate::{
         backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
         mock::{MockKvClient, MockPdClient},
         request::Plan,
         Key,
     };
-    use futures::executor;
-    use std::any::Any;
-    use tikv_client_proto::kvrpcpb;
+
+    use super::*;
 
     #[test]
     #[ignore]

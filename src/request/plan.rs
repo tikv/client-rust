@@ -5,14 +5,15 @@ use std::{marker::PhantomData, sync::Arc};
 use async_recursion::async_recursion;
 use async_trait::async_trait;
 use futures::{future::try_join_all, prelude::*};
+use tokio::sync::Semaphore;
+
 use tikv_client_proto::{errorpb, errorpb::EpochNotMatch, kvrpcpb};
 use tikv_client_store::{HasKeyErrors, HasRegionError, HasRegionErrors, KvClient};
-use tokio::sync::Semaphore;
 
 use crate::{
     backoff::Backoff,
     pd::PdClient,
-    request::{KvRequest, Shardable},
+    request::{codec::RequestCodec, KvRequest, Shardable},
     stats::tikv_stats,
     store::RegionStore,
     transaction::{resolve_locks, HasLocks},
@@ -33,27 +34,44 @@ pub trait Plan: Sized + Clone + Sync + Send + 'static {
 
 /// The simplest plan which just dispatches a request to a specific kv server.
 #[derive(Clone)]
-pub struct Dispatch<Req: KvRequest> {
+pub struct Dispatch<C, Req: KvRequest<C>> {
     pub request: Req,
     pub kv_client: Option<Arc<dyn KvClient + Send + Sync>>,
+    codec: C,
+}
+
+impl<C, Req: KvRequest<C>> Dispatch<C, Req> {
+    pub fn new(request: Req, kv_client: Option<Arc<dyn KvClient + Send + Sync>>, codec: C) -> Self {
+        Self {
+            request,
+            kv_client,
+            codec,
+        }
+    }
 }
 
 #[async_trait]
-impl<Req: KvRequest> Plan for Dispatch<Req> {
+impl<C: RequestCodec, Req: KvRequest<C>> Plan for Dispatch<C, Req> {
     type Result = Req::Response;
 
     async fn execute(&self) -> Result<Self::Result> {
+        let req = self.codec.encode_request(&self.request);
+
         let stats = tikv_stats(self.request.label());
         let result = self
             .kv_client
             .as_ref()
             .expect("Unreachable: kv_client has not been initialised in Dispatch")
-            .dispatch(&self.request)
+            .dispatch(req.as_ref())
             .await;
         let result = stats.done(result);
-        result.map(|r| {
-            *r.downcast()
-                .expect("Downcast failed: request and response type mismatch")
+
+        result.and_then(|r| {
+            let resp = *r
+                .downcast()
+                .expect("Downcast failed: request and response type mismatch");
+
+            self.codec.decode_response(req.as_ref(), resp)
         })
     }
 }
@@ -544,10 +562,13 @@ impl<Resp: HasRegionError, Shard> HasRegionError for ResponseWithShard<Resp, Sha
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use crate::mock::MockPdClient;
     use futures::stream::{self, BoxStream};
+
     use tikv_client_proto::kvrpcpb::BatchGetResponse;
+
+    use crate::mock::MockPdClient;
+
+    use super::*;
 
     #[derive(Clone)]
     struct ErrPlan;

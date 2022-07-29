@@ -44,6 +44,7 @@ enum EncryptionMethod {
     AES128_CTR = 2;
     AES192_CTR = 3;
     AES256_CTR = 4;
+    SM4_CTR = 5;
 }
 
 // The key used to encrypt the user data.

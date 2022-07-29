@@ -6,7 +6,6 @@ import "kvrpcpb.proto";
 import "gogoproto/gogo.proto";
 import "rustproto.proto";
 import "metapb.proto";
-import "span.proto";
 
 option (gogoproto.marshaler_all) = true;
 option (gogoproto.sizer_all) = true;
@@ -57,13 +56,23 @@ message Response {
     bool is_cache_hit = 7;
     uint64 cache_last_version = 8;
     bool can_be_cached = 9;
-    repeated span.SpanSet spans = 10;
+
+    reserved 10;
+
+    // Contains the latest buckets version of the region.
+    // Clients should query PD to update buckets in cache if its is stale.
+    uint64 latest_buckets_version = 12;
 }
 
 message RegionInfo {
     uint64 region_id = 1;
     metapb.RegionEpoch region_epoch = 2;
     repeated KeyRange ranges = 3;
+}
+
+message TableRegions {
+    int64 physical_table_id = 1;
+    repeated RegionInfo regions = 2;
 }
 
 message BatchRequest {
@@ -74,6 +83,8 @@ message BatchRequest {
     uint64 start_ts = 5;
     // Any schema-ful storage to validate schema correctness if necessary.
     int64 schema_ver = 6;
+    // Used for partition table scan
+    repeated TableRegions table_regions = 7;
 }
 
 message BatchResponse {

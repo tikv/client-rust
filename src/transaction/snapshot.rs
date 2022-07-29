@@ -1,8 +1,13 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{BoundRange, Key, KvPair, Result, Transaction, Value};
+use crate::{
+    pd::{PdClient, PdRpcClient},
+    request::codec::RequestCodec,
+    BoundRange, Key, KvPair, Result, Transaction, Value,
+};
 use derive_new::new;
 use slog::Logger;
+use std::marker::PhantomData;
 
 /// A read-only transaction which reads at the given timestamp.
 ///
@@ -12,12 +17,17 @@ use slog::Logger;
 ///
 /// See the [Transaction](struct@crate::Transaction) docs for more information on the methods.
 #[derive(new)]
-pub struct Snapshot {
-    transaction: Transaction,
+pub struct Snapshot<C: RequestCodec, PdC: PdClient<RequestCodec = C> = PdRpcClient<C>> {
+    transaction: Transaction<C, PdC>,
     logger: Logger,
+    _phantom: PhantomData<C>,
 }
 
-impl Snapshot {
+impl<C, PdC> Snapshot<C, PdC>
+where
+    C: RequestCodec,
+    PdC: PdClient<RequestCodec = C>,
+{
     /// Get the value associated with the given key.
     pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         debug!(self.logger, "invoking get request on snapshot");

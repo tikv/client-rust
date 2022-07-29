@@ -1,19 +1,23 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::plan::PreserveShard;
+use std::{marker::PhantomData, sync::Arc};
+
+use tikv_client_store::{HasKeyErrors, HasRegionError, HasRegionErrors};
+
 use crate::{
     backoff::Backoff,
     pd::PdClient,
     request::{
-        DefaultProcessor, Dispatch, ExtractError, KvRequest, Merge, MergeResponse, Plan, Process,
-        ProcessResponse, ResolveLock, RetryableMultiRegion, Shardable,
+        codec::RequestCodec, DefaultProcessor, Dispatch, ExtractError, KvRequest, Merge,
+        MergeResponse, Plan, Process, ProcessResponse, ResolveLock, RetryableMultiRegion,
+        Shardable,
     },
     store::RegionStore,
     transaction::HasLocks,
     Result,
 };
-use std::{marker::PhantomData, sync::Arc};
-use tikv_client_store::{HasKeyErrors, HasRegionError, HasRegionErrors};
+
+use super::plan::PreserveShard;
 
 /// Builder type for plans (see that module for more).
 pub struct PlanBuilder<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> {
@@ -25,19 +29,26 @@ pub struct PlanBuilder<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> {
 /// Used to ensure that a plan has a designated target or targets, a target is
 /// a particular TiKV server.
 pub trait PlanBuilderPhase {}
+
 pub struct NoTarget;
+
 impl PlanBuilderPhase for NoTarget {}
+
 pub struct Targetted;
+
 impl PlanBuilderPhase for Targetted {}
 
-impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
+impl<C, PdC, Req> PlanBuilder<PdC, Dispatch<C, Req>, NoTarget>
+where
+    C: RequestCodec,
+    Req: KvRequest<C>,
+    PdC: PdClient<RequestCodec = C>,
+{
     pub fn new(pd_client: Arc<PdC>, request: Req) -> Self {
+        let codec = pd_client.get_request_codec();
         PlanBuilder {
             pd_client,
-            plan: Dispatch {
-                request,
-                kv_client: None,
-            },
+            plan: Dispatch::new(request, None, codec),
             phantom: PhantomData,
         }
     }
@@ -144,11 +155,13 @@ where
     }
 }
 
-impl<PdC: PdClient, R: KvRequest + SingleKey> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
+impl<C: RequestCodec, PdC: PdClient, R: KvRequest<C> + SingleKey>
+    PlanBuilder<PdC, Dispatch<C, R>, NoTarget>
+{
     /// Target the request at a single region. *Note*: single region plan will
     /// cannot automatically retry on region errors. It's only used for requests
     /// that target at a specific region but not keys (e.g. ResolveLockRequest).
-    pub async fn single_region(self) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
+    pub async fn single_region(self) -> Result<PlanBuilder<PdC, Dispatch<C, R>, Targetted>> {
         let key = self.plan.request.key();
         // TODO: retry when region error occurred
         let store = self.pd_client.clone().store_for_key(key.into()).await?;
@@ -156,12 +169,12 @@ impl<PdC: PdClient, R: KvRequest + SingleKey> PlanBuilder<PdC, Dispatch<R>, NoTa
     }
 }
 
-impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
+impl<C: RequestCodec, PdC: PdClient, R: KvRequest<C>> PlanBuilder<PdC, Dispatch<C, R>, NoTarget> {
     /// Target the request at a single region; caller supplies the store to target.
     pub async fn single_region_with_store(
         self,
         store: RegionStore,
-    ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
+    ) -> Result<PlanBuilder<PdC, Dispatch<C, R>, Targetted>> {
         set_single_region_store(self.plan, store, self.pd_client)
     }
 }
@@ -195,11 +208,11 @@ where
     }
 }
 
-fn set_single_region_store<PdC: PdClient, R: KvRequest>(
-    mut plan: Dispatch<R>,
+fn set_single_region_store<C: RequestCodec, PdC: PdClient, R: KvRequest<C>>(
+    mut plan: Dispatch<C, R>,
     store: RegionStore,
     pd_client: Arc<PdC>,
-) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
+) -> Result<PlanBuilder<PdC, Dispatch<C, R>, Targetted>> {
     plan.request
         .set_context(store.region_with_leader.context()?);
     plan.kv_client = Some(store.client);

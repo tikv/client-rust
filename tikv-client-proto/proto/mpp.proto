@@ -34,6 +34,8 @@ message DispatchTaskRequest {
         repeated coprocessor.RegionInfo regions = 4; 
 	// If this task contains table scan, we still need their region info.
 	int64 schema_ver = 5;
+	// Used for partition table scan
+	repeated coprocessor.TableRegions table_regions = 6;
 }
 
 // Get response of DispatchTaskRequest.
@@ -64,6 +66,7 @@ message MPPDataPacket {
         bytes data = 1;
 	Error error = 2;
 	repeated bytes chunks = 3;
+	repeated uint64 stream_ids = 4;
 }
 
 message Error {

@@ -1,22 +1,26 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::{iter, marker::PhantomData, sync::Arc, time::Instant};
+
+use derive_new::new;
+use fail::fail_point;
+use futures::prelude::*;
+use slog::Logger;
+use tokio::{sync::RwLock, time::Duration};
+
+use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+
 use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF},
     pd::{PdClient, PdRpcClient},
     request::{
-        Collect, CollectError, CollectSingle, CollectWithShard, Plan, PlanBuilder, RetryOptions,
+        codec::RequestCodec, Collect, CollectError, CollectSingle, CollectWithShard, Plan,
+        PlanBuilder, RetryOptions,
     },
     timestamp::TimestampExt,
     transaction::{buffer::Buffer, lowering::*},
     BoundRange, Error, Key, KvPair, Result, Value,
 };
-use derive_new::new;
-use fail::fail_point;
-use futures::prelude::*;
-use slog::Logger;
-use std::{iter, sync::Arc, time::Instant};
-use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
-use tokio::{sync::RwLock, time::Duration};
 
 /// An undo-able set of actions on the dataset.
 ///
@@ -48,8 +52,9 @@ use tokio::{sync::RwLock, time::Duration};
 /// ```rust,no_run
 /// # use tikv_client::{Config, TransactionClient};
 /// # use futures::prelude::*;
+/// use tikv_client::transaction::ApiV1;
 /// # futures::executor::block_on(async {
-/// let client = TransactionClient::new(vec!["192.168.0.100"], None)
+/// let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100"], None)
 ///     .await
 ///     .unwrap();
 /// let mut txn = client.begin_optimistic().await.unwrap();
@@ -58,7 +63,7 @@ use tokio::{sync::RwLock, time::Duration};
 /// txn.commit().await.unwrap();
 /// # });
 /// ```
-pub struct Transaction<PdC: PdClient = PdRpcClient> {
+pub struct Transaction<C: RequestCodec, PdC: PdClient<RequestCodec = C> = PdRpcClient<C>> {
     status: Arc<RwLock<TransactionStatus>>,
     timestamp: Timestamp,
     buffer: Buffer,
@@ -67,15 +72,20 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     is_heartbeat_started: bool,
     start_instant: Instant,
     logger: Logger,
+    _phantom: PhantomData<C>,
 }
 
-impl<PdC: PdClient> Transaction<PdC> {
+impl<C, PdC> Transaction<C, PdC>
+where
+    C: RequestCodec,
+    PdC: PdClient<RequestCodec = C>,
+{
     pub(crate) fn new(
         timestamp: Timestamp,
         rpc: Arc<PdC>,
         options: TransactionOptions,
         logger: Logger,
-    ) -> Transaction<PdC> {
+    ) -> Transaction<C, PdC> {
         let status = if options.read_only {
             TransactionStatus::ReadOnly
         } else {
@@ -90,6 +100,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             is_heartbeat_started: false,
             start_instant: std::time::Instant::now(),
             logger,
+            _phantom: PhantomData,
         }
     }
 
@@ -104,8 +115,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
+    /// # let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100", "192.168.0.101"],  None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let result: Option<Value> = txn.get(key).await.unwrap();
@@ -165,8 +177,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
+    /// # let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100", "192.168.0.101"],  None).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let result: Value = txn.get_for_update(key).await.unwrap().unwrap();
@@ -199,8 +212,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Value, Config, TransactionClient};
     /// # use futures::prelude::*;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
+    /// # let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100", "192.168.0.101"],  None).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let exists = txn.key_exists("k1".to_owned()).await.unwrap();
     /// txn.commit().await.unwrap();
@@ -225,8 +239,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
+    /// # let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100", "192.168.0.101"],  None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let keys = vec!["TiKV".to_owned(), "TiDB".to_owned()];
     /// let result: HashMap<Key, Value> = txn
@@ -278,8 +293,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Key, Value, Config, TransactionClient, KvPair};
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
+    /// # let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100", "192.168.0.101"],  None).await.unwrap();
     /// let mut txn = client.begin_pessimistic().await.unwrap();
     /// let keys = vec!["foo".to_owned(), "bar".to_owned()];
     /// let result: Vec<KvPair> = txn
@@ -323,8 +339,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Key, KvPair, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
+    /// # let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100", "192.168.0.101"],  None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key1: Key = b"foo".to_vec().into();
     /// let key2: Key = b"bar".to_vec().into();
@@ -359,8 +376,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # use tikv_client::{Key, KvPair, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # use std::collections::HashMap;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
+    /// # let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100", "192.168.0.101"],  None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key1: Key = b"foo".to_vec().into();
     /// let key2: Key = b"bar".to_vec().into();
@@ -422,8 +440,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
+    /// # let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100", "192.168.0.101"],  None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "foo".to_owned();
     /// let val = "FOO".to_owned();
@@ -453,8 +472,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Key, Value, Config, TransactionClient};
     /// # use futures::prelude::*;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
+    /// # let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100", "192.168.0.101"],  None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "foo".to_owned();
     /// let val = "FOO".to_owned();
@@ -489,8 +509,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Key, Config, TransactionClient};
     /// # use futures::prelude::*;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"], None).await.unwrap();
+    /// # let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100", "192.168.0.101"],  None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let key = "foo".to_owned();
     /// txn.delete(key);
@@ -524,8 +545,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// # let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100"],  None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// txn.lock_keys(vec!["TiKV".to_owned(), "Rust".to_owned()]);
     /// // ... Do some actions.
@@ -560,8 +582,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Config, Timestamp, TransactionClient};
     /// # use futures::prelude::*;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// # let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100"],  None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// // ... Do some actions.
     /// let result: Timestamp = txn.commit().await.unwrap().unwrap();
@@ -618,8 +641,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```rust,no_run
     /// # use tikv_client::{Config, Timestamp, TransactionClient};
     /// # use futures::prelude::*;
+    /// use tikv_client::transaction::ApiV1;
     /// # futures::executor::block_on(async {
-    /// # let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// # let client = TransactionClient::<ApiV1>::new(vec!["192.168.0.100"],  None).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// // ... Do some actions.
     /// txn.rollback().await.unwrap();
@@ -913,7 +937,11 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 }
 
-impl<PdC: PdClient> Drop for Transaction<PdC> {
+impl<C, PdC> Drop for Transaction<C, PdC>
+where
+    C: RequestCodec,
+    PdC: PdClient<RequestCodec = C>,
+{
     fn drop(&mut self) {
         debug!(self.logger, "dropping transaction");
         if std::thread::panicking() {
@@ -1123,7 +1151,7 @@ impl HeartbeatOption {
 /// The committer implements `prewrite`, `commit` and `rollback` functions.
 #[allow(clippy::too_many_arguments)]
 #[derive(new)]
-struct Committer<PdC: PdClient = PdRpcClient> {
+struct Committer<PdC: PdClient> {
     primary_key: Option<Key>,
     mutations: Vec<kvrpcpb::Mutation>,
     start_version: Timestamp,
@@ -1352,13 +1380,6 @@ enum TransactionStatus {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        mock::{MockKvClient, MockPdClient},
-        transaction::HeartbeatOption,
-        Transaction, TransactionOptions,
-    };
-    use fail::FailScenario;
-    use slog::{Drain, Logger};
     use std::{
         any::Any,
         io,
@@ -1368,7 +1389,17 @@ mod tests {
         },
         time::Duration,
     };
+
+    use fail::FailScenario;
+    use slog::{Drain, Logger};
+
     use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+
+    use crate::{
+        mock::{MockKvClient, MockPdClient},
+        transaction::HeartbeatOption,
+        Transaction, TransactionOptions,
+    };
 
     #[tokio::test]
     async fn test_optimistic_heartbeat() -> Result<(), io::Error> {

@@ -1,25 +1,27 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
+use std::{collections::HashMap, iter, sync::Arc};
+
+use either::Either;
+use futures::stream::BoxStream;
+
+use tikv_client_common::Error::PessimisticLockError;
+use tikv_client_proto::{
+    kvrpcpb::{self, TxnHeartBeatResponse},
+    pdpb::Timestamp,
+};
 
 use crate::{
     collect_first,
     pd::PdClient,
     request::{
-        Collect, CollectSingle, CollectWithShard, DefaultProcessor, KvRequest, Merge, Process,
-        ResponseWithShard, Shardable, SingleKey,
+        codec::RequestCodec, Collect, CollectSingle, CollectWithShard, DefaultProcessor, KvRequest,
+        Merge, Process, ResponseWithShard, Shardable, SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_range_by_start_key, RegionStore},
     timestamp::TimestampExt,
     transaction::HasLocks,
     util::iter::FlatMapOkIterExt,
     Key, KvPair, Result, Value,
-};
-use either::Either;
-use futures::stream::BoxStream;
-use std::{collections::HashMap, iter, sync::Arc};
-use tikv_client_common::Error::PessimisticLockError;
-use tikv_client_proto::{
-    kvrpcpb::{self, TxnHeartBeatResponse},
-    pdpb::Timestamp,
 };
 
 // implement HasLocks for a response type that has a `pairs` field,
@@ -70,10 +72,7 @@ pub fn new_get_request(key: Vec<u8>, timestamp: u64) -> kvrpcpb::GetRequest {
     req
 }
 
-impl KvRequest for kvrpcpb::GetRequest {
-    type Response = kvrpcpb::GetResponse;
-}
-
+impl_kv_request!(kvrpcpb::GetRequest, key; kvrpcpb::GetResponse, error);
 shardable_key!(kvrpcpb::GetRequest);
 collect_first!(kvrpcpb::GetResponse);
 impl SingleKey for kvrpcpb::GetRequest {
@@ -102,10 +101,10 @@ pub fn new_batch_get_request(keys: Vec<Vec<u8>>, timestamp: u64) -> kvrpcpb::Bat
     req
 }
 
-impl KvRequest for kvrpcpb::BatchGetRequest {
-    type Response = kvrpcpb::BatchGetResponse;
-}
-
+impl_kv_request!(
+    kvrpcpb::BatchGetRequest, keys;
+    kvrpcpb::BatchGetResponse, pairs, error
+);
 shardable_keys!(kvrpcpb::BatchGetRequest);
 
 impl Merge<kvrpcpb::BatchGetResponse> for Collect {
@@ -142,10 +141,8 @@ pub fn new_scan_request(
     req
 }
 
-impl KvRequest for kvrpcpb::ScanRequest {
-    type Response = kvrpcpb::ScanResponse;
-}
-
+has_reverse!(kvrpcpb::ScanRequest);
+impl_kv_request!(kvrpcpb::ScanRequest; kvrpcpb::ScanResponse, pairs, error);
 shardable_range!(kvrpcpb::ScanRequest);
 
 impl Merge<kvrpcpb::ScanResponse> for Collect {
@@ -174,9 +171,8 @@ pub fn new_resolve_lock_request(
 // region without keys. So it's not Shardable. And we don't automatically retry
 // on its region errors (in the Plan level). The region error must be manually
 // handled (in the upper level).
-impl KvRequest for kvrpcpb::ResolveLockRequest {
-    type Response = kvrpcpb::ResolveLockResponse;
-}
+
+impl_kv_request!(kvrpcpb::ResolveLockRequest, keys; kvrpcpb::ResolveLockResponse, error);
 
 pub fn new_cleanup_request(key: Vec<u8>, start_version: u64) -> kvrpcpb::CleanupRequest {
     let mut req = kvrpcpb::CleanupRequest::default();
@@ -186,9 +182,10 @@ pub fn new_cleanup_request(key: Vec<u8>, start_version: u64) -> kvrpcpb::Cleanup
     req
 }
 
-impl KvRequest for kvrpcpb::CleanupRequest {
-    type Response = kvrpcpb::CleanupResponse;
-}
+impl_kv_request!(
+    kvrpcpb::CleanupRequest, key;
+    kvrpcpb::CleanupResponse, error
+);
 
 shardable_key!(kvrpcpb::CleanupRequest);
 collect_first!(kvrpcpb::CleanupResponse);
@@ -237,9 +234,10 @@ pub fn new_pessimistic_prewrite_request(
     req
 }
 
-impl KvRequest for kvrpcpb::PrewriteRequest {
-    type Response = kvrpcpb::PrewriteResponse;
-}
+impl_kv_request!(
+    kvrpcpb::PrewriteRequest, mutations, primary_lock, secondaries;
+    kvrpcpb::PrewriteResponse, errors
+);
 
 impl Shardable for kvrpcpb::PrewriteRequest {
     type Shard = Vec<kvrpcpb::Mutation>;
@@ -284,10 +282,7 @@ pub fn new_commit_request(
     req
 }
 
-impl KvRequest for kvrpcpb::CommitRequest {
-    type Response = kvrpcpb::CommitResponse;
-}
-
+impl_kv_request!(kvrpcpb::CommitRequest, keys; kvrpcpb::CommitResponse, error);
 shardable_keys!(kvrpcpb::CommitRequest);
 
 pub fn new_batch_rollback_request(
@@ -301,10 +296,7 @@ pub fn new_batch_rollback_request(
     req
 }
 
-impl KvRequest for kvrpcpb::BatchRollbackRequest {
-    type Response = kvrpcpb::BatchRollbackResponse;
-}
-
+impl_kv_request!(kvrpcpb::BatchRollbackRequest, keys; kvrpcpb::BatchRollbackResponse, error);
 shardable_keys!(kvrpcpb::BatchRollbackRequest);
 
 pub fn new_pessimistic_rollback_request(
@@ -320,9 +312,12 @@ pub fn new_pessimistic_rollback_request(
     req
 }
 
-impl KvRequest for kvrpcpb::PessimisticRollbackRequest {
-    type Response = kvrpcpb::PessimisticRollbackResponse;
-}
+impl_kv_request!(
+    kvrpcpb::PessimisticRollbackRequest,
+    keys;
+    kvrpcpb::PessimisticRollbackResponse,
+    errors
+);
 
 shardable_keys!(kvrpcpb::PessimisticRollbackRequest);
 
@@ -351,9 +346,12 @@ pub fn new_pessimistic_lock_request(
     req
 }
 
-impl KvRequest for kvrpcpb::PessimisticLockRequest {
-    type Response = kvrpcpb::PessimisticLockResponse;
-}
+impl_kv_request!(
+    kvrpcpb::PessimisticLockRequest,
+    mutations, primary_lock;
+    kvrpcpb::PessimisticLockResponse,
+    errors
+);
 
 impl Shardable for kvrpcpb::PessimisticLockRequest {
     type Shard = Vec<kvrpcpb::Mutation>;
@@ -449,9 +447,11 @@ pub fn new_scan_lock_request(
     req
 }
 
-impl KvRequest for kvrpcpb::ScanLockRequest {
-    type Response = kvrpcpb::ScanLockResponse;
-}
+impl_kv_request!(
+    kvrpcpb::ScanLockRequest;
+    kvrpcpb::ScanLockResponse,
+    error, locks
+);
 
 impl Shardable for kvrpcpb::ScanLockRequest {
     type Shard = Vec<u8>;
@@ -493,9 +493,12 @@ pub fn new_heart_beat_request(
     req
 }
 
-impl KvRequest for kvrpcpb::TxnHeartBeatRequest {
-    type Response = kvrpcpb::TxnHeartBeatResponse;
-}
+impl_kv_request!(
+    kvrpcpb::TxnHeartBeatRequest,
+    primary_lock;
+    kvrpcpb::TxnHeartBeatResponse,
+    error
+);
 
 impl Shardable for kvrpcpb::TxnHeartBeatRequest {
     type Shard = Vec<Vec<u8>>;
@@ -531,9 +534,10 @@ impl Process<kvrpcpb::TxnHeartBeatResponse> for DefaultProcessor {
     }
 }
 
-impl KvRequest for kvrpcpb::CheckTxnStatusRequest {
-    type Response = kvrpcpb::CheckTxnStatusResponse;
-}
+impl_kv_request!(
+    kvrpcpb::CheckTxnStatusRequest, primary_key;
+    kvrpcpb::CheckTxnStatusResponse, lock_info, error
+);
 
 impl Shardable for kvrpcpb::CheckTxnStatusRequest {
     type Shard = Vec<Vec<u8>>;
@@ -600,9 +604,10 @@ impl From<(u64, u64, Option<kvrpcpb::LockInfo>)> for TransactionStatusKind {
     }
 }
 
-impl KvRequest for kvrpcpb::CheckSecondaryLocksRequest {
-    type Response = kvrpcpb::CheckSecondaryLocksResponse;
-}
+impl_kv_request!(
+    kvrpcpb::CheckSecondaryLocksRequest, keys;
+    kvrpcpb::CheckSecondaryLocksResponse, locks, error
+);
 
 shardable_keys!(kvrpcpb::CheckSecondaryLocksRequest);
 
@@ -651,6 +656,7 @@ error_locks!(kvrpcpb::CheckTxnStatusResponse);
 error_locks!(kvrpcpb::CheckSecondaryLocksResponse);
 
 impl HasLocks for kvrpcpb::CleanupResponse {}
+
 impl HasLocks for kvrpcpb::ScanLockResponse {}
 
 impl HasLocks for kvrpcpb::PessimisticRollbackResponse {
@@ -682,12 +688,13 @@ impl HasLocks for kvrpcpb::PrewriteResponse {
 
 #[cfg(test)]
 mod tests {
+    use tikv_client_common::Error::{PessimisticLockError, ResolveLockError};
+    use tikv_client_proto::kvrpcpb;
+
     use crate::{
         request::{plan::Merge, CollectWithShard, ResponseWithShard},
         KvPair,
     };
-    use tikv_client_common::Error::{PessimisticLockError, ResolveLockError};
-    use tikv_client_proto::kvrpcpb;
 
     #[tokio::test]
     async fn test_merge_pessimistic_lock_response() {

@@ -3,9 +3,12 @@
 mod common;
 
 use crate::common::parse_args;
-use tikv_client::{BoundRange, Config, Key, KvPair, TransactionClient as Client, Value};
+use tikv_client::{
+    request::codec::TxnCodec, transaction::ApiV1, BoundRange, Config, Key, KvPair,
+    TransactionClient as Client, Value,
+};
 
-async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
+async fn puts<C: TxnCodec>(client: &Client<C>, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
     let mut txn = client
         .begin_optimistic()
         .await
@@ -17,7 +20,7 @@ async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>
     txn.commit().await.expect("Could not commit transaction");
 }
 
-async fn get(client: &Client, key: Key) -> Option<Value> {
+async fn get<C: TxnCodec>(client: &Client<C>, key: Key) -> Option<Value> {
     let mut txn = client
         .begin_optimistic()
         .await
@@ -29,7 +32,7 @@ async fn get(client: &Client, key: Key) -> Option<Value> {
     res
 }
 
-async fn key_exists(client: &Client, key: Key) -> bool {
+async fn key_exists<C: TxnCodec>(client: &Client<C>, key: Key) -> bool {
     let mut txn = client
         .begin_optimistic()
         .await
@@ -44,7 +47,7 @@ async fn key_exists(client: &Client, key: Key) -> bool {
     res
 }
 
-async fn scan(client: &Client, range: impl Into<BoundRange>, limit: u32) {
+async fn scan<C: TxnCodec>(client: &Client<C>, range: impl Into<BoundRange>, limit: u32) {
     let mut txn = client
         .begin_optimistic()
         .await
@@ -56,7 +59,7 @@ async fn scan(client: &Client, range: impl Into<BoundRange>, limit: u32) {
     txn.commit().await.expect("Could not commit transaction");
 }
 
-async fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {
+async fn dels<C: TxnCodec>(client: &Client<C>, keys: impl IntoIterator<Item = Key>) {
     let mut txn = client
         .begin_optimistic()
         .await
@@ -81,7 +84,7 @@ async fn main() {
         Config::default()
     };
 
-    let txn = Client::new_with_config(args.pd, config, None)
+    let txn = Client::<ApiV1>::new_with_config(args.pd, config, None)
         .await
         .expect("Could not connect to tikv");
 

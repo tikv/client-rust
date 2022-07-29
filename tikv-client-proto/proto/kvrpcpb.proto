@@ -6,6 +6,7 @@ import "errorpb.proto";
 import "gogoproto/gogo.proto";
 import "rustproto.proto";
 import "deadlock.proto";
+import "tracepb.proto";
 
 option (gogoproto.marshaler_all) = true;
 option (gogoproto.sizer_all) = true;
@@ -121,6 +122,8 @@ message PrewriteResponse {
     // the commit ts of the transaction. Otherwise, if TiKV failed to commit it with 1PC or the
     // transaction is not 1PC, the value will be 0.
     uint64 one_pc_commit_ts = 4;
+    // Execution details about the request processing.
+    ExecDetailsV2 exec_details_v2 = 5;
 }
 
 // Lock a set of keys to prepare to write to them.
@@ -172,6 +175,8 @@ message PessimisticLockResponse {
     // In legacy TiKV, this field is not used even 'force' is false. In that case, an empty value indicates
     // two possible situations: (1) the key does not exist. (2) the key exists but the value is empty.
     repeated bool not_founds = 6;
+    // Execution details about the request processing.
+    ExecDetailsV2 exec_details_v2 = 7;
 }
 
 // Unlock keys locked using `PessimisticLockRequest`.
@@ -185,6 +190,8 @@ message PessimisticRollbackRequest {
 message PessimisticRollbackResponse {
     errorpb.Error region_error = 1;
     repeated KeyError errors = 2;
+    // Execution details about the request processing.
+    ExecDetailsV2 exec_details_v2 = 3;
 }
 
 // Used to update the lock_ttl of a psessimistic and/or large transaction to prevent it from been killed.
@@ -203,6 +210,8 @@ message TxnHeartBeatResponse {
     KeyError error = 2;
     // The TTL actually set on the requested lock.
     uint64 lock_ttl = 3;
+    // Execution details about the request processing.
+    ExecDetailsV2 exec_details_v2 = 4;
 }
 
 // CheckTxnStatusRequest checks the status of a transaction.
@@ -246,6 +255,8 @@ message CheckTxnStatusResponse {
     // The action performed by TiKV (and why if the action is to rollback).
     Action action = 5;
     LockInfo lock_info = 6;
+    // Execution details about the request processing.
+    ExecDetailsV2 exec_details_v2 = 7;
 }
 
 // Part of the async commit protocol, checks for locks on all supplied keys. If a lock is missing,
@@ -268,6 +279,8 @@ message CheckSecondaryLocksResponse {
     // If any of the locks have been committed, this is the commit ts used. If no
     // locks have been committed, it will be zero.
     uint64 commit_ts = 4;
+    // Execution details about the request processing.
+    ExecDetailsV2 exec_details_v2 = 5;
 }
 
 // The second phase of writing to TiKV. If there are no errors or conflicts, then this request
@@ -289,6 +302,8 @@ message CommitResponse {
     KeyError error = 2;
     // If the commit ts is derived from min_commit_ts, this field should be set.
     uint64 commit_version = 3;
+    // Execution details about the request processing.
+    ExecDetailsV2 exec_details_v2 = 4;
 }
 
 // Not yet implemented.
@@ -353,6 +368,8 @@ message BatchRollbackRequest {
 message BatchRollbackResponse {
     errorpb.Error region_error = 1;
     KeyError error = 2;
+    // Execution details about the request processing.
+    ExecDetailsV2 exec_details_v2 = 3;
 }
 
 // Scan the database for locks. Used at the start of the GC process to find all
@@ -374,6 +391,8 @@ message ScanLockResponse {
     KeyError error = 2;
     // Info on all locks found by the scan.
     repeated LockInfo locks = 3;
+    // Execution details about the request processing.
+    ExecDetailsV2 exec_details_v2 = 4;
 }
 
 // For all keys locked by the transaction identified by `start_version`, either
@@ -392,6 +411,8 @@ message ResolveLockRequest {
 message ResolveLockResponse {
     errorpb.Error region_error = 1;
     KeyError error = 2;
+    // Execution details about the request processing.
+    ExecDetailsV2 exec_details_v2 = 3;
 }
 
 // Request TiKV to garbage collect all non-current data older than `safe_point`.
@@ -466,11 +487,13 @@ message RawBatchPutRequest {
     Context context = 1;
     repeated KvPair pairs = 2;
     string cf = 3;
+    uint64 ttl = 4 [deprecated=true];
+    bool for_cas = 5;
+
     // The time-to-live for each keys in seconds, and if the length of `ttls`
     // is exactly one, the ttl will be applied to all keys. Otherwise, the length
     // mismatch between `ttls` and `pairs` will return an error.
-    repeated uint64 ttls = 4;
-    bool for_cas = 5;
+    repeated uint64 ttls = 6;
 }
 
 message RawBatchPutResponse {
@@ -710,6 +733,13 @@ message Context {
     // Read request should read through locks belonging to these transactions because these
     // transactions are committed and theirs commit_ts <= read request's start_ts.
     repeated uint64 committed_locks = 22;
+
+    // The informantion to trace a request sent to TiKV.
+    tracepb.TraceContext trace_context = 23;
+
+    // The source of the request, will be used as the tag of the metrics reporting.
+    // This field can be set for any requests that require to report metrics with any extra labels.
+    string request_source = 24;
 }
 
 // The API version the server and the client is using.
@@ -841,6 +871,7 @@ enum CommandPri {
 enum IsolationLevel {
     SI = 0; // SI = snapshot isolation
     RC = 1; // RC = read committed
+    RCCheckTS = 2; // RC read and it's needed to check if there exists more recent versions.
 }
 
 // Operation allowed info during each TiKV storage threshold.
@@ -852,16 +883,18 @@ enum DiskFullOpt {
 
 message TimeDetail {
     // Off-cpu wall time elapsed in TiKV side. Usually this includes queue waiting time and
-    // other kind of waitings in series.
-    int64 wait_wall_time_ms = 1;
+    // other kind of waitings in series. (Wait time in the raftstore is not included.)
+    uint64 wait_wall_time_ms = 1;
     // Off-cpu and on-cpu wall time elapsed to actually process the request payload. It does not
     // include `wait_wall_time`.
     // This field is very close to the CPU time in most cases. Some wait time spend in RocksDB
     // cannot be excluded for now, like Mutex wait time, which is included in this field, so that
     // this field is called wall time instead of CPU time.
-    int64 process_wall_time_ms = 2;
+    uint64 process_wall_time_ms = 2;
     // KV read wall Time means the time used in key/value scan and get.
-    int64 kv_read_wall_time_ms = 3;
+    uint64 kv_read_wall_time_ms = 3;
+    // Total wall clock time spent on this RPC in TiKV .
+    uint64 total_rpc_wall_time_ns = 4;
 }
 
 message ScanInfo {
@@ -911,6 +944,12 @@ message ScanDetailV2 {
 
     // Total number of bytes from block reads.
     uint64 rocksdb_block_read_byte = 7;
+
+    // Total time used for block reads.
+    uint64 rocksdb_block_read_nanos = 9;
+
+    // Time used for getting a raftstore snapshot (including leader confirmation and getting the RocksDB snapshot).
+    uint64 get_snapshot_nanos = 10;
 }
 
 message ExecDetails {
@@ -931,6 +970,50 @@ message ExecDetailsV2 {
 
     // Available when ctx.record_scan_stat = true or meet slow query.
     ScanDetailV2 scan_detail_v2 = 2;
+
+    // Raftstore writing durations of the request. Only available for some write requests.
+    WriteDetail write_detail = 3;
+}
+
+message WriteDetail {
+    // Wait duration in the store loop.
+    uint64 store_batch_wait_nanos = 1;
+
+    // Wait duration before sending proposal to peers.
+    uint64 propose_send_wait_nanos = 2;
+
+    // Total time spent on persisting the log.
+    uint64 persist_log_nanos = 3;
+
+    // Wait time until the Raft log write leader begins to write.
+    uint64 raft_db_write_leader_wait_nanos = 4;
+
+    // Time spent on synchronizing the Raft log to the disk.
+    uint64 raft_db_sync_log_nanos = 5;
+
+    // Time spent on writing the Raft log to the Raft memtable.
+    uint64 raft_db_write_memtable_nanos = 6;
+
+    // Time waiting for peers to confirm the proposal (counting from the instant when the leader sends the proposal message).
+    uint64 commit_log_nanos = 7;
+
+    // Wait duration in the apply loop.
+    uint64 apply_batch_wait_nanos = 8;
+
+    // Total time spend to applying the log.
+    uint64 apply_log_nanos = 9;
+
+    // Wait time until the KV RocksDB lock is acquired.
+    uint64 apply_mutex_lock_nanos = 10;
+
+    // Wait time until becoming the KV RocksDB write leader.
+    uint64 apply_write_leader_wait_nanos = 11;
+
+    // Time spent on writing the KV DB WAL to the disk.
+    uint64 apply_write_wal_nanos = 12;
+
+    // Time spent on writing to the memtable of the KV RocksDB.
+    uint64 apply_write_memtable_nanos = 13;
 }
 
 message KvPair {
@@ -1143,4 +1226,54 @@ message RawChecksumResponse {
     uint64 checksum = 3;
     uint64 total_kvs = 4;
     uint64 total_bytes = 5;
+}
+
+message CompactError {
+    oneof error {
+        CompactErrorInvalidStartKey err_invalid_start_key = 1;
+        CompactErrorPhysicalTableNotExist err_physical_table_not_exist = 2;
+        CompactErrorCompactInProgress err_compact_in_progress = 3;
+        CompactErrorTooManyPendingTasks err_too_many_pending_tasks = 4;
+    }
+}
+
+message CompactErrorInvalidStartKey {}
+
+message CompactErrorPhysicalTableNotExist {}
+
+message CompactErrorCompactInProgress {}
+
+message CompactErrorTooManyPendingTasks {}
+
+message CompactRequest {
+    // If specified, the compaction will start from this start key.
+    // If unspecified, the compaction will start from beginning.
+    // NOTE 1: The start key should be never manually constructed. You should always use a key
+    // returned in CompactResponse.
+    // NOTE 2: the compaction range will be always restricted by physical_table_id.
+    bytes start_key = 1;
+
+    // The physical table that will be compacted.
+    //
+    // TODO: this is information that TiKV doesn't need to know.
+    // See https://github.com/pingcap/kvproto/issues/912
+    int64 physical_table_id = 2;
+
+    // The logical table id of the compaction. When receiving parallel requests with the same
+    // logical table id, err_compact_in_progress will be returned.
+    //
+    // TODO: this is information that TiKV doesn't need to know.
+    // See https://github.com/pingcap/kvproto/issues/912
+    int64 logical_table_id = 3;
+}
+
+message CompactResponse {
+    CompactError error = 1;
+
+    // The compaction is done incrementally. If there are more data to compact, this field
+    // will be set. The client can request to compact more data according to the `compacted_end_key`.
+    bool has_remaining = 2;
+
+    bytes compacted_start_key = 3;
+    bytes compacted_end_key = 4;
 }

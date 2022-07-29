@@ -9,6 +9,7 @@
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 
 pub use client::Client;
+pub use codec::{ApiV1, ApiV2};
 pub(crate) use lock::{resolve_locks, HasLocks};
 pub use snapshot::Snapshot;
 #[doc(hidden)]
@@ -20,6 +21,7 @@ mod client;
 pub mod lowering;
 #[macro_use]
 mod requests;
+mod codec;
 mod lock;
 mod snapshot;
 #[allow(clippy::module_inception)]

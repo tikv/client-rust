@@ -1,9 +1,12 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-mod common;
+use tikv_client::{
+    transaction::ApiV1, Config, Key, TransactionClient as Client, TransactionOptions, Value,
+};
 
 use crate::common::parse_args;
-use tikv_client::{Config, Key, TransactionClient as Client, TransactionOptions, Value};
+
+mod common;
 
 #[tokio::main]
 async fn main() {
@@ -20,7 +23,7 @@ async fn main() {
     };
 
     // init
-    let client = Client::new_with_config(args.pd, config, None)
+    let client = Client::<ApiV1>::new_with_config(args.pd, config, None)
         .await
         .expect("Could not connect to tikv");
 

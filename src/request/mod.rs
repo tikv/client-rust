@@ -1,12 +1,14 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use async_trait::async_trait;
+use derive_new::new;
+
+use tikv_client_store::{HasKeyErrors, HasRegionError, Request};
+
 use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF, PESSIMISTIC_BACKOFF},
     transaction::HasLocks,
 };
-use async_trait::async_trait;
-use derive_new::new;
-use tikv_client_store::{HasKeyErrors, Request};
 
 pub use self::{
     plan::{
@@ -22,12 +24,120 @@ pub mod plan;
 mod plan_builder;
 #[macro_use]
 mod shard;
+pub mod codec;
 
 /// Abstracts any request sent to a TiKV server.
 #[async_trait]
-pub trait KvRequest: Request + Sized + Clone + Sync + Send + 'static {
+pub trait KvRequest<C>: Request + Sized + Clone + Sync + Send + 'static {
     /// The expected response to the request.
-    type Response: HasKeyErrors + HasLocks + Clone + Send + 'static;
+    type Response: HasKeyErrors + HasLocks + HasRegionError + Clone + Send + 'static;
+
+    fn encode_request(self, _codec: &C) -> Self {
+        self
+    }
+
+    fn decode_response(&self, _codec: &C, resp: Self::Response) -> crate::Result<Self::Response> {
+        Ok(resp)
+    }
+}
+
+pub(crate) trait IsDefault {
+    fn is_default(&self) -> bool;
+}
+
+impl<T: PartialEq + Default> IsDefault for T {
+    fn is_default(&self) -> bool {
+        *self == T::default()
+    }
+}
+
+pub(crate) trait HasReverse {
+    fn has_reverse(&self) -> bool;
+}
+
+impl<T> HasReverse for T {
+    default fn has_reverse(&self) -> bool {
+        false
+    }
+}
+
+macro_rules! has_reverse {
+    ($t:ty) => {
+        impl $crate::request::HasReverse for $t {
+            fn has_reverse(&self) -> bool {
+                self.get_reverse()
+            }
+        }
+    };
+}
+
+macro_rules! impl_decode_response {
+    ($($o:ident)*) => {
+        fn decode_response(&self, codec: &C, mut resp: Self::Response) -> Result<Self::Response> {
+            #[allow(unused_imports)]
+            use $crate::request::{IsDefault, codec::RequestCodecExt};
+
+            // decode errors
+            if resp.has_region_error() {
+                codec.decode_region_error(resp.mut_region_error())?;
+            }
+
+            $(
+                paste::paste! {
+                    if !resp.[<get_ $o>]().is_default() {
+                        codec.[<decode_ $o>](resp.[<mut_ $o>]())?;
+                    }
+                }
+            )*
+
+            Ok(resp)
+        }
+    };
+}
+
+macro_rules! impl_kv_request {
+    ($req:ty $(,$i:ident)+; $resp:ty $(,$o:ident)*) => {
+        impl<C> KvRequest<C> for $req
+        where C: RequestCodec
+        {
+            type Response = $resp;
+
+            fn encode_request(mut self, codec: &C) -> Self {
+                #[allow(unused_imports)]
+                use $crate::request::codec::RequestCodecExt;
+
+                $(
+                    paste::paste! {
+                        *self.[<mut_ $i>]() = codec.[<encode_ $i>](self.[<take_ $i>]());
+                    }
+                )*
+
+                self
+            }
+
+            impl_decode_response!{$($o)*}
+        }
+    };
+
+    ($req:ty; $resp:ty $(,$o:ident)*) => {
+        impl<C> KvRequest<C> for $req
+        where C: RequestCodec,
+                $req: $crate::request::HasReverse
+        {
+            type Response = $resp;
+
+            fn encode_request(mut self, codec: &C) -> Self {
+                use $crate::request::HasReverse;
+                let (start, end) = codec.encode_range(self.take_start_key(), self.take_end_key(), self.has_reverse());
+                *self.mut_start_key() = start;
+                *self.mut_end_key() = end;
+
+                self
+            }
+
+            impl_decode_response!{$($o)*}
+        }
+    };
 }
 
 #[derive(Clone, Debug, new, Eq, PartialEq)]
@@ -63,21 +173,26 @@ impl RetryOptions {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use crate::{
-        mock::{MockKvClient, MockPdClient},
-        store::store_stream_for_keys,
-        transaction::lowering::new_commit_request,
-        Error, Key, Result,
-    };
-    use grpcio::CallOption;
     use std::{
         any::Any,
         iter,
         sync::{atomic::AtomicUsize, Arc},
     };
+
+    use grpcio::CallOption;
+
     use tikv_client_proto::{kvrpcpb, pdpb::Timestamp, tikvpb::TikvClient};
     use tikv_client_store::HasRegionError;
+
+    use crate::{
+        mock::{MockKvClient, MockPdClient},
+        request::{codec::RequestCodec, KvRequest},
+        store::store_stream_for_keys,
+        transaction::lowering::new_commit_request,
+        Error, Key, Result,
+    };
+
+    use super::*;
 
     #[tokio::test]
     async fn test_region_retry() {
@@ -120,11 +235,23 @@ mod test {
             fn set_context(&mut self, _: kvrpcpb::Context) {
                 unreachable!();
             }
+
+            fn mut_context(&mut self) -> &mut kvrpcpb::Context {
+                unreachable!()
+            }
         }
 
         #[async_trait]
-        impl KvRequest for MockKvRequest {
+        impl<C: RequestCodec> KvRequest<C> for MockKvRequest {
             type Response = MockRpcResponse;
+
+            fn encode_request(self, _codec: &C) -> Self {
+                self
+            }
+
+            fn decode_response(&self, _codec: &C, resp: Self::Response) -> Result<Self::Response> {
+                Ok(resp)
+            }
         }
 
         impl Shardable for MockKvRequest {
@@ -184,6 +311,7 @@ mod test {
                     region_error: None,
                     error: Some(kvrpcpb::KeyError::default()),
                     commit_version: 0,
+                    ..Default::default()
                 }) as Box<dyn Any>)
             },
         )));

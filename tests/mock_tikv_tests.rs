@@ -4,7 +4,7 @@ mod test {
     use log::debug;
     use mock_tikv::{start_mock_pd_server, start_mock_tikv_server, MOCK_PD_PORT};
     use simple_logger::SimpleLogger;
-    use tikv_client::{KvPair, RawClient};
+    use tikv_client::{raw::ApiV1, KvPair, RawClient};
 
     #[tokio::test]
     #[ignore]
@@ -15,7 +15,7 @@ mod test {
         let mut tikv_server = start_mock_tikv_server();
         let _pd_server = start_mock_pd_server();
 
-        let client = RawClient::new(vec![format!("localhost:{}", MOCK_PD_PORT)], None)
+        let client = RawClient::<ApiV1>::new(vec![format!("localhost:{}", MOCK_PD_PORT)], None)
             .await
             .unwrap();
 
