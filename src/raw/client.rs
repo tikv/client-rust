@@ -9,7 +9,7 @@ use tikv_client_proto::metapb;
 
 use crate::{
     backoff::DEFAULT_REGION_BACKOFF,
-    config::Config,
+    config::{Config, KVClientConfig},
     pd::{PdClient, PdRpcClient},
     raw::lowering::*,
     request::{Collect, CollectSingle, Plan},
@@ -31,6 +31,7 @@ pub struct Client<PdC: PdClient = PdRpcClient> {
     /// Whether to use the [`atomic mode`](Client::with_atomic_for_cas).
     atomic: bool,
     logger: Logger,
+    kv_config: KVClientConfig,
 }
 
 impl Clone for Client {
@@ -40,6 +41,7 @@ impl Clone for Client {
             cf: self.cf.clone(),
             atomic: self.atomic,
             logger: self.logger.clone(),
+            kv_config: self.kv_config.clone(),
         }
     }
 }
@@ -106,13 +108,15 @@ impl Client<PdRpcClient> {
         });
         debug!(logger, "creating new raw client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let rpc =
-            Arc::new(PdRpcClient::connect(&pd_endpoints, config, false, logger.clone()).await?);
+        let rpc = Arc::new(
+            PdRpcClient::connect(&pd_endpoints, config.clone(), false, logger.clone()).await?,
+        );
         Ok(Client {
             rpc,
             cf: None,
             atomic: false,
             logger,
+            kv_config: config.kv_client_config,
         })
     }
 
@@ -147,6 +151,7 @@ impl Client<PdRpcClient> {
             cf: Some(cf),
             atomic: self.atomic,
             logger: self.logger.clone(),
+            kv_config: self.kv_config.clone(),
         }
     }
 
@@ -164,6 +169,7 @@ impl Client<PdRpcClient> {
             cf: self.cf.clone(),
             atomic: true,
             logger: self.logger.clone(),
+            kv_config: self.kv_config.clone(),
         }
     }
 }
@@ -195,11 +201,12 @@ impl<PdC: PdClient> Client<PdC> {
     pub async fn get_opt(&self, key: impl Into<Key>, backoff: Backoff) -> Result<Option<Value>> {
         debug!(self.logger, "invoking raw get request");
         let request = new_raw_get_request(key.into(), self.cf.clone());
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .retry_multi_region(backoff)
-            .merge(CollectSingle)
-            .post_process_default()
-            .plan();
+        let plan =
+            crate::request::PlanBuilder::new(self.rpc.clone(), request, self.kv_config.clone())
+                .retry_multi_region(backoff)
+                .merge(CollectSingle)
+                .post_process_default()
+                .plan();
         plan.execute().await
     }
 
@@ -236,10 +243,11 @@ impl<PdC: PdClient> Client<PdC> {
     ) -> Result<Vec<KvPair>> {
         debug!(self.logger, "invoking raw batch_get request");
         let request = new_raw_batch_get_request(keys.into_iter().map(Into::into), self.cf.clone());
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .retry_multi_region(backoff)
-            .merge(Collect)
-            .plan();
+        let plan =
+            crate::request::PlanBuilder::new(self.rpc.clone(), request, self.kv_config.clone())
+                .retry_multi_region(backoff)
+                .merge(Collect)
+                .plan();
         plan.execute()
             .await
             .map(|r| r.into_iter().map(Into::into).collect())
@@ -274,11 +282,12 @@ impl<PdC: PdClient> Client<PdC> {
     ) -> Result<()> {
         debug!(self.logger, "invoking raw put request");
         let request = new_raw_put_request(key.into(), value.into(), self.cf.clone(), self.atomic);
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .retry_multi_region(backoff)
-            .merge(CollectSingle)
-            .extract_error()
-            .plan();
+        let plan =
+            crate::request::PlanBuilder::new(self.rpc.clone(), request, self.kv_config.clone())
+                .retry_multi_region(backoff)
+                .merge(CollectSingle)
+                .extract_error()
+                .plan();
         plan.execute().await?;
         Ok(())
     }
@@ -319,10 +328,11 @@ impl<PdC: PdClient> Client<PdC> {
             self.cf.clone(),
             self.atomic,
         );
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .retry_multi_region(backoff)
-            .extract_error()
-            .plan();
+        let plan =
+            crate::request::PlanBuilder::new(self.rpc.clone(), request, self.kv_config.clone())
+                .retry_multi_region(backoff)
+                .extract_error()
+                .plan();
         plan.execute().await?;
         Ok(())
     }
@@ -352,11 +362,12 @@ impl<PdC: PdClient> Client<PdC> {
     pub async fn delete_opt(&self, key: impl Into<Key>, backoff: Backoff) -> Result<()> {
         debug!(self.logger, "invoking raw delete request");
         let request = new_raw_delete_request(key.into(), self.cf.clone(), self.atomic);
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .retry_multi_region(backoff)
-            .merge(CollectSingle)
-            .extract_error()
-            .plan();
+        let plan =
+            crate::request::PlanBuilder::new(self.rpc.clone(), request, self.kv_config.clone())
+                .retry_multi_region(backoff)
+                .merge(CollectSingle)
+                .extract_error()
+                .plan();
         plan.execute().await?;
         Ok(())
     }
@@ -392,10 +403,11 @@ impl<PdC: PdClient> Client<PdC> {
         self.assert_non_atomic()?;
         let request =
             new_raw_batch_delete_request(keys.into_iter().map(Into::into), self.cf.clone());
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .retry_multi_region(backoff)
-            .extract_error()
-            .plan();
+        let plan =
+            crate::request::PlanBuilder::new(self.rpc.clone(), request, self.kv_config.clone())
+                .retry_multi_region(backoff)
+                .extract_error()
+                .plan();
         plan.execute().await?;
         Ok(())
     }
@@ -428,10 +440,11 @@ impl<PdC: PdClient> Client<PdC> {
         debug!(self.logger, "invoking raw delete_range request");
         self.assert_non_atomic()?;
         let request = new_raw_delete_range_request(range.into(), self.cf.clone());
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .retry_multi_region(backoff)
-            .extract_error()
-            .plan();
+        let plan =
+            crate::request::PlanBuilder::new(self.rpc.clone(), request, self.kv_config.clone())
+                .retry_multi_region(backoff)
+                .extract_error()
+                .plan();
         plan.execute().await?;
         Ok(())
     }
@@ -640,7 +653,7 @@ impl<PdC: PdClient> Client<PdC> {
             previous_value.into(),
             self.cf.clone(),
         );
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), req)
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), req, self.kv_config.clone())
             .retry_multi_region(backoff)
             .merge(CollectSingle)
             .post_process_default()
@@ -682,7 +695,7 @@ impl<PdC: PdClient> Client<PdC> {
             ranges.into_iter().map(Into::into),
             request_builder,
         );
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), req)
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), req, self.kv_config.clone())
             .preserve_shard()
             .retry_multi_region(backoff)
             .post_process_default()
@@ -705,10 +718,11 @@ impl<PdC: PdClient> Client<PdC> {
         }
 
         let request = new_raw_scan_request(range.into(), limit, key_only, self.cf.clone());
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .retry_multi_region(backoff)
-            .merge(Collect)
-            .plan();
+        let plan =
+            crate::request::PlanBuilder::new(self.rpc.clone(), request, self.kv_config.clone())
+                .retry_multi_region(backoff)
+                .merge(Collect)
+                .plan();
         let res = plan.execute().await;
         res.map(|mut s| {
             s.truncate(limit as usize);
@@ -736,10 +750,11 @@ impl<PdC: PdClient> Client<PdC> {
             key_only,
             self.cf.clone(),
         );
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .retry_multi_region(backoff)
-            .merge(Collect)
-            .plan();
+        let plan =
+            crate::request::PlanBuilder::new(self.rpc.clone(), request, self.kv_config.clone())
+                .retry_multi_region(backoff)
+                .merge(Collect)
+                .plan();
         plan.execute().await
     }
 
@@ -792,6 +807,7 @@ mod tests {
             cf: Some(ColumnFamily::Default),
             atomic: false,
             logger,
+            kv_config: KVClientConfig::default(),
         };
         let resps = client
             .coprocessor(

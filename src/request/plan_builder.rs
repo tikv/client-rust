@@ -3,6 +3,7 @@
 use super::plan::PreserveShard;
 use crate::{
     backoff::Backoff,
+    config::KVClientConfig,
     pd::PdClient,
     request::{
         DefaultProcessor, Dispatch, ExtractError, KvRequest, Merge, MergeResponse, Plan, Process,
@@ -31,11 +32,12 @@ pub struct Targetted;
 impl PlanBuilderPhase for Targetted {}
 
 impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
-    pub fn new(pd_client: Arc<PdC>, request: Req) -> Self {
+    pub fn new(pd_client: Arc<PdC>, request: Req, kv_config: KVClientConfig) -> Self {
         PlanBuilder {
             pd_client,
             plan: Dispatch {
                 request,
+                kv_config,
                 kv_client: None,
             },
             phantom: PhantomData,

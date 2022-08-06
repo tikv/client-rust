@@ -3,7 +3,7 @@
 use super::{requests::new_scan_lock_request, resolve_locks};
 use crate::{
     backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
-    config::Config,
+    config::{Config, KVClientConfig},
     pd::{PdClient, PdRpcClient},
     request::Plan,
     timestamp::TimestampExt,
@@ -36,6 +36,7 @@ const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
 pub struct Client {
     pd: Arc<PdRpcClient>,
     logger: Logger,
+    kv_config: KVClientConfig,
 }
 
 impl Clone for Client {
@@ -43,6 +44,7 @@ impl Clone for Client {
         Self {
             pd: self.pd.clone(),
             logger: self.logger.clone(),
+            kv_config: self.kv_config.clone(),
         }
     }
 }
@@ -112,8 +114,14 @@ impl Client {
         });
         debug!(logger, "creating new transactional client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config, true, logger.clone()).await?);
-        Ok(Client { pd, logger })
+        let pd = Arc::new(
+            PdRpcClient::connect(&pd_endpoints, config.clone(), true, logger.clone()).await?,
+        );
+        Ok(Client {
+            pd,
+            logger,
+            kv_config: config.kv_client_config,
+        })
     }
 
     /// Creates a new optimistic [`Transaction`].
@@ -245,11 +253,12 @@ impl Client {
                 SCAN_LOCK_BATCH_SIZE,
             );
 
-            let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
-                .resolve_lock(OPTIMISTIC_BACKOFF)
-                .retry_multi_region(DEFAULT_REGION_BACKOFF)
-                .merge(crate::request::Collect)
-                .plan();
+            let plan =
+                crate::request::PlanBuilder::new(self.pd.clone(), req, self.kv_config.clone())
+                    .resolve_lock(OPTIMISTIC_BACKOFF)
+                    .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                    .merge(crate::request::Collect)
+                    .plan();
             let res: Vec<kvrpcpb::LockInfo> = plan.execute().await?;
 
             if res.is_empty() {
@@ -262,7 +271,7 @@ impl Client {
 
         // resolve locks
         // FIXME: (1) this is inefficient (2) when region error occurred
-        resolve_locks(locks, self.pd.clone()).await?;
+        resolve_locks(locks, self.pd.clone(), self.kv_config.clone()).await?;
 
         // update safepoint to PD
         let res: bool = self
@@ -278,6 +287,12 @@ impl Client {
 
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
         let logger = self.logger.new(o!("child" => 1));
-        Transaction::new(timestamp, self.pd.clone(), options, logger)
+        Transaction::new(
+            timestamp,
+            self.pd.clone(),
+            options,
+            self.kv_config.clone(),
+            logger,
+        )
     }
 }

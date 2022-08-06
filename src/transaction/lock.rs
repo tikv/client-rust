@@ -2,6 +2,7 @@
 
 use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
+    config::KVClientConfig,
     pd::PdClient,
     region::RegionVerId,
     request::{CollectSingle, Plan},
@@ -28,6 +29,7 @@ const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 pub async fn resolve_locks(
     locks: Vec<kvrpcpb::LockInfo>,
     pd_client: Arc<impl PdClient>,
+    kv_config: KVClientConfig,
 ) -> Result<bool> {
     debug!("resolving locks");
     let ts = pd_client.clone().get_timestamp().await?;
@@ -62,12 +64,13 @@ pub async fn resolve_locks(
             Some(&commit_version) => commit_version,
             None => {
                 let request = requests::new_cleanup_request(lock.primary_lock, lock.lock_version);
-                let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
-                    .resolve_lock(OPTIMISTIC_BACKOFF)
-                    .retry_multi_region(DEFAULT_REGION_BACKOFF)
-                    .merge(CollectSingle)
-                    .post_process_default()
-                    .plan();
+                let plan =
+                    crate::request::PlanBuilder::new(pd_client.clone(), request, kv_config.clone())
+                        .resolve_lock(OPTIMISTIC_BACKOFF)
+                        .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                        .merge(CollectSingle)
+                        .post_process_default()
+                        .plan();
                 let commit_version = plan.execute().await?;
                 commit_versions.insert(lock.lock_version, commit_version);
                 commit_version
@@ -79,6 +82,7 @@ pub async fn resolve_locks(
             lock.lock_version,
             commit_version,
             pd_client.clone(),
+            kv_config.clone(),
         )
         .await?;
         clean_regions
@@ -94,6 +98,7 @@ async fn resolve_lock_with_retry(
     start_version: u64,
     commit_version: u64,
     pd_client: Arc<impl PdClient>,
+    kv_config: KVClientConfig,
 ) -> Result<RegionVerId> {
     debug!("resolving locks with retry");
     // FIXME: Add backoff
@@ -104,7 +109,7 @@ async fn resolve_lock_with_retry(
         let ver_id = store.region_with_leader.ver_id();
         let request = requests::new_resolve_lock_request(start_version, commit_version);
         // The only place where single-region is used
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), request, kv_config.clone())
             .single_region_with_store(store)
             .await?
             .resolve_lock(Backoff::no_backoff())
@@ -165,15 +170,16 @@ mod tests {
 
         let key = vec![1];
         let region1 = MockPdClient::region1();
-        let resolved_region = resolve_lock_with_retry(&key, 1, 2, client.clone())
-            .await
-            .unwrap();
+        let resolved_region =
+            resolve_lock_with_retry(&key, 1, 2, client.clone(), KVClientConfig::default())
+                .await
+                .unwrap();
         assert_eq!(region1.ver_id(), resolved_region);
 
         // Test resolve lock over retry limit
         fail::cfg("region-error", "10*return").unwrap();
         let key = vec![100];
-        resolve_lock_with_retry(&key, 3, 4, client)
+        resolve_lock_with_retry(&key, 3, 4, client, KVClientConfig::default())
             .await
             .expect_err("should return error");
     }

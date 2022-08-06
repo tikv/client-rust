@@ -2,6 +2,7 @@
 
 use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF},
+    config::KVClientConfig,
     pd::{PdClient, PdRpcClient},
     request::{
         Collect, CollectError, CollectSingle, CollectWithShard, Plan, PlanBuilder, RetryOptions,
@@ -64,6 +65,7 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     buffer: Buffer,
     rpc: Arc<PdC>,
     options: TransactionOptions,
+    kv_config: KVClientConfig,
     is_heartbeat_started: bool,
     start_instant: Instant,
     logger: Logger,
@@ -74,6 +76,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         timestamp: Timestamp,
         rpc: Arc<PdC>,
         options: TransactionOptions,
+        kv_config: KVClientConfig,
         logger: Logger,
     ) -> Transaction<PdC> {
         let status = if options.read_only {
@@ -87,6 +90,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             buffer: Buffer::new(options.is_pessimistic()),
             rpc,
             options,
+            kv_config,
             is_heartbeat_started: false,
             start_instant: std::time::Instant::now(),
             logger,
@@ -118,11 +122,12 @@ impl<PdC: PdClient> Transaction<PdC> {
         let rpc = self.rpc.clone();
         let key = key.into();
         let retry_options = self.options.retry_options.clone();
+        let kv_config = self.kv_config.clone();
 
         self.buffer
             .get_or_else(key, |key| async move {
                 let request = new_get_request(key, timestamp);
-                let plan = PlanBuilder::new(rpc, request)
+                let plan = PlanBuilder::new(rpc, request, kv_config)
                     .resolve_lock(retry_options.lock_backoff)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
                     .merge(CollectSingle)
@@ -248,11 +253,12 @@ impl<PdC: PdClient> Transaction<PdC> {
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         let retry_options = self.options.retry_options.clone();
+        let kv_config = self.kv_config.clone();
 
         self.buffer
             .batch_get_or_else(keys.into_iter().map(|k| k.into()), move |keys| async move {
                 let request = new_batch_get_request(keys, timestamp);
-                let plan = PlanBuilder::new(rpc, request)
+                let plan = PlanBuilder::new(rpc, request, kv_config)
                     .resolve_lock(retry_options.lock_backoff)
                     .retry_multi_region(retry_options.region_backoff)
                     .merge(Collect)
@@ -595,6 +601,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.timestamp.clone(),
             self.rpc.clone(),
             self.options.clone(),
+            self.kv_config.clone(),
             self.buffer.get_write_size() as u64,
             self.start_instant,
             self.logger.new(o!("child" => 1)),
@@ -652,6 +659,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.timestamp.clone(),
             self.rpc.clone(),
             self.options.clone(),
+            self.kv_config.clone(),
             self.buffer.get_write_size() as u64,
             self.start_instant,
             self.logger.new(o!("child" => 1)),
@@ -687,7 +695,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             primary_key,
             self.start_instant.elapsed().as_millis() as u64 + MAX_TTL,
         );
-        let plan = PlanBuilder::new(self.rpc.clone(), request)
+        let plan = PlanBuilder::new(self.rpc.clone(), request, self.kv_config.clone())
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .merge(CollectSingle)
@@ -707,6 +715,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         let retry_options = self.options.retry_options.clone();
+        let kv_config = self.kv_config.clone();
 
         self.buffer
             .scan_and_fetch(
@@ -717,7 +726,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 move |new_range, new_limit| async move {
                     let request =
                         new_scan_request(new_range, timestamp, new_limit, key_only, reverse);
-                    let plan = PlanBuilder::new(rpc, request)
+                    let plan = PlanBuilder::new(rpc, request, kv_config)
                         .resolve_lock(retry_options.lock_backoff)
                         .retry_multi_region(retry_options.region_backoff)
                         .merge(Collect)
@@ -772,7 +781,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             for_update_ts.clone(),
             need_value,
         );
-        let plan = PlanBuilder::new(self.rpc.clone(), request)
+        let plan = PlanBuilder::new(self.rpc.clone(), request, self.kv_config.clone())
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .preserve_shard()
             .retry_multi_region_preserve_results(self.options.retry_options.region_backoff.clone())
@@ -826,7 +835,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             start_version,
             for_update_ts,
         );
-        let plan = PlanBuilder::new(self.rpc.clone(), req)
+        let plan = PlanBuilder::new(self.rpc.clone(), req, self.kv_config.clone())
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .extract_error()
@@ -876,6 +885,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             HeartbeatOption::FixedTime(heartbeat_interval) => heartbeat_interval,
         };
         let start_instant = self.start_instant;
+        let kv_config = self.kv_config.clone();
 
         let heartbeat_task = async move {
             loop {
@@ -896,7 +906,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     primary_key.clone(),
                     start_instant.elapsed().as_millis() as u64 + MAX_TTL,
                 );
-                let plan = PlanBuilder::new(rpc.clone(), request)
+                let plan = PlanBuilder::new(rpc.clone(), request, kv_config.clone())
                     .retry_multi_region(region_backoff.clone())
                     .merge(CollectSingle)
                     .plan();
@@ -1129,6 +1139,7 @@ struct Committer<PdC: PdClient = PdRpcClient> {
     start_version: Timestamp,
     rpc: Arc<PdC>,
     options: TransactionOptions,
+    kv_config: KVClientConfig,
     #[new(default)]
     undetermined: bool,
     write_size: u64,
@@ -1203,7 +1214,7 @@ impl<PdC: PdClient> Committer<PdC> {
             .collect();
         // FIXME set max_commit_ts and min_commit_ts
 
-        let plan = PlanBuilder::new(self.rpc.clone(), request)
+        let plan = PlanBuilder::new(self.rpc.clone(), request, self.kv_config.clone())
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .merge(CollectError)
@@ -1243,7 +1254,7 @@ impl<PdC: PdClient> Committer<PdC> {
             self.start_version.clone(),
             commit_version.clone(),
         );
-        let plan = PlanBuilder::new(self.rpc.clone(), req)
+        let plan = PlanBuilder::new(self.rpc.clone(), req, self.kv_config.clone())
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .extract_error()
@@ -1280,7 +1291,7 @@ impl<PdC: PdClient> Committer<PdC> {
                 .filter(|key| &primary_key != key);
             new_commit_request(keys, self.start_version, commit_version)
         };
-        let plan = PlanBuilder::new(self.rpc, req)
+        let plan = PlanBuilder::new(self.rpc, req, self.kv_config.clone())
             .resolve_lock(self.options.retry_options.lock_backoff)
             .retry_multi_region(self.options.retry_options.region_backoff)
             .extract_error()
@@ -1301,7 +1312,7 @@ impl<PdC: PdClient> Committer<PdC> {
         match self.options.kind {
             TransactionKind::Optimistic => {
                 let req = new_batch_rollback_request(keys, self.start_version);
-                let plan = PlanBuilder::new(self.rpc, req)
+                let plan = PlanBuilder::new(self.rpc, req, self.kv_config.clone())
                     .resolve_lock(self.options.retry_options.lock_backoff)
                     .retry_multi_region(self.options.retry_options.region_backoff)
                     .extract_error()
@@ -1310,7 +1321,7 @@ impl<PdC: PdClient> Committer<PdC> {
             }
             TransactionKind::Pessimistic(for_update_ts) => {
                 let req = new_pessimistic_rollback_request(keys, self.start_version, for_update_ts);
-                let plan = PlanBuilder::new(self.rpc, req)
+                let plan = PlanBuilder::new(self.rpc, req, self.kv_config.clone())
                     .resolve_lock(self.options.retry_options.lock_backoff)
                     .retry_multi_region(self.options.retry_options.region_backoff)
                     .extract_error()
@@ -1353,6 +1364,7 @@ enum TransactionStatus {
 #[cfg(test)]
 mod tests {
     use crate::{
+        config::KVClientConfig,
         mock::{MockKvClient, MockPdClient},
         transaction::HeartbeatOption,
         Transaction, TransactionOptions,
@@ -1402,6 +1414,7 @@ mod tests {
             pd_client,
             TransactionOptions::new_optimistic()
                 .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_secs(1))),
+            KVClientConfig::default(),
             logger.new(o!("child" => 1)),
         );
         heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
@@ -1451,6 +1464,7 @@ mod tests {
             pd_client,
             TransactionOptions::new_pessimistic()
                 .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_secs(1))),
+            KVClientConfig::default(),
             logger.new(o!("child" => 1)),
         );
         heartbeat_txn.put(key1.clone(), "foo").await.unwrap();

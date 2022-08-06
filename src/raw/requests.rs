@@ -471,6 +471,7 @@ mod test {
     use super::*;
     use crate::{
         backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
+        config::KVClientConfig,
         mock::{MockKvClient, MockPdClient},
         request::Plan,
         Key,
@@ -510,7 +511,7 @@ mod test {
             key_only: true,
             ..Default::default()
         };
-        let plan = crate::request::PlanBuilder::new(client, scan)
+        let plan = crate::request::PlanBuilder::new(client, scan, KVClientConfig::default())
             .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)

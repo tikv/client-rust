@@ -65,6 +65,7 @@ impl RetryOptions {
 mod test {
     use super::*;
     use crate::{
+        config::KVClientConfig,
         mock::{MockKvClient, MockPdClient},
         store::store_stream_for_keys,
         transaction::lowering::new_commit_request,
@@ -165,11 +166,12 @@ mod test {
             |_: &dyn Any| Ok(Box::new(MockRpcResponse) as Box<dyn Any>),
         )));
 
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
-            .resolve_lock(Backoff::no_jitter_backoff(1, 1, 3))
-            .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
-            .extract_error()
-            .plan();
+        let plan =
+            crate::request::PlanBuilder::new(pd_client.clone(), request, KVClientConfig::default())
+                .resolve_lock(Backoff::no_jitter_backoff(1, 1, 3))
+                .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
+                .extract_error()
+                .plan();
         let _ = plan.execute().await;
 
         // Original call plus the 3 retries
@@ -192,18 +194,23 @@ mod test {
         let req = new_commit_request(iter::once(key), Timestamp::default(), Timestamp::default());
 
         // does not extract error
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), req.clone())
-            .resolve_lock(OPTIMISTIC_BACKOFF)
-            .retry_multi_region(OPTIMISTIC_BACKOFF)
-            .plan();
+        let plan = crate::request::PlanBuilder::new(
+            pd_client.clone(),
+            req.clone(),
+            KVClientConfig::default(),
+        )
+        .resolve_lock(OPTIMISTIC_BACKOFF)
+        .retry_multi_region(OPTIMISTIC_BACKOFF)
+        .plan();
         assert!(plan.execute().await.is_ok());
 
         // extract error
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), req)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
-            .retry_multi_region(OPTIMISTIC_BACKOFF)
-            .extract_error()
-            .plan();
+        let plan =
+            crate::request::PlanBuilder::new(pd_client.clone(), req, KVClientConfig::default())
+                .resolve_lock(OPTIMISTIC_BACKOFF)
+                .retry_multi_region(OPTIMISTIC_BACKOFF)
+                .extract_error()
+                .plan();
         assert!(plan.execute().await.is_err());
     }
 }

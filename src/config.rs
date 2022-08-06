@@ -3,6 +3,14 @@
 use serde_derive::{Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
 
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+const DEFAULT_GRPC_KEEPALIVE_TIME: Duration = Duration::from_secs(10);
+const DEFAULT_GRPC_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(3);
+const DEFAULT_GRPC_COMPLETION_QUEUE_SIZE: usize = 1;
+const DEFAULT_MAX_BATCH_WAIT_TIME: Duration = Duration::from_millis(0);
+const DEFAULT_MAX_BATCH_SIZE: usize = 8;
+const DEFAULT_OVERLOAD_THRESHOLD: usize = 200;
+
 /// The configuration for either a [`RawClient`](crate::RawClient) or a
 /// [`TransactionClient`](crate::TransactionClient).
 ///
@@ -16,9 +24,35 @@ pub struct Config {
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
     pub timeout: Duration,
+    pub kv_client_config: KVClientConfig,
 }
 
-const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[serde(rename_all = "kebab-case")]
+pub struct KVClientConfig {
+    pub completion_queue_size: usize,
+    pub grpc_keepalive_time: Duration,
+    pub grpc_keepalive_timeout: Duration,
+    pub allow_batch: bool,
+    pub overload_threshold: usize,
+    pub max_batch_wait_time: Duration,
+    pub max_batch_size: usize,
+}
+
+impl Default for KVClientConfig {
+    fn default() -> Self {
+        Self {
+            completion_queue_size: DEFAULT_GRPC_COMPLETION_QUEUE_SIZE,
+            grpc_keepalive_time: DEFAULT_GRPC_KEEPALIVE_TIME,
+            grpc_keepalive_timeout: DEFAULT_GRPC_KEEPALIVE_TIMEOUT,
+            allow_batch: true,
+            overload_threshold: DEFAULT_OVERLOAD_THRESHOLD,
+            max_batch_wait_time: DEFAULT_MAX_BATCH_WAIT_TIME,
+            max_batch_size: DEFAULT_MAX_BATCH_SIZE,
+        }
+    }
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -27,6 +61,7 @@ impl Default for Config {
             cert_path: None,
             key_path: None,
             timeout: DEFAULT_REQUEST_TIMEOUT,
+            kv_client_config: KVClientConfig::default(),
         }
     }
 }
@@ -80,4 +115,6 @@ impl Config {
         self.timeout = timeout;
         self
     }
+
+    // TODO: add more config options for tivk client config
 }
