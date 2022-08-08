@@ -50,35 +50,17 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
 
     async fn execute(&self) -> Result<Self::Result> {
         let stats = tikv_stats(self.request.label());
-
-        let c = &self.kv_config;
-
-        // Do a super batch request if possible if batching is enabled.
-        if c.allow_batch && c.max_batch_size > 1 {
-            // Generate a entry for batch request and response
-
-            // Send the request to the batch stream channel and wait for response
-            let result = self
-                .kv_client
-                .as_ref()
-                .expect("Unreachable: kv_client has not been initialised in Dispatch")
-                .dispatch(&self.request)
-                .await?;
-
-            Ok(Result)
-        } else {
-            let result = self
-                .kv_client
-                .as_ref()
-                .expect("Unreachable: kv_client has not been initialised in Dispatch")
-                .dispatch(&self.request)
-                .await;
-            let result = stats.done(result);
-            result.map(|r| {
-                *r.downcast()
-                    .expect("Downcast failed: request and response type mismatch")
-            })
-        }
+        let result = self
+            .kv_client
+            .as_ref()
+            .expect("Unreachable: kv_client has not been initialised in Dispatch")
+            .dispatch(Box::new(self.request))
+            .await;
+        let result = stats.done(result);
+        result.map(|r| {
+            *r.downcast()
+                .expect("Downcast failed: request and response type mismatch")
+        })
     }
 
     fn kv_config(&self) -> KVClientConfig {

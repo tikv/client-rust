@@ -2,6 +2,7 @@
 
 use crate::{
     compat::stream_fn,
+    config::KVClientConfig,
     kv::codec,
     pd::{retry::RetryClientTrait, RetryClient},
     region::{RegionId, RegionVerId, RegionWithLeader},
@@ -210,6 +211,7 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     pd: Arc<RetryClient<Cl>>,
     kv_connect: KvC,
     kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
+    kv_config: KVClientConfig,
     enable_codec: bool,
     region_cache: RegionCache<RetryClient<Cl>>,
     logger: Logger,
@@ -293,6 +295,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
     pub async fn new<PdFut, MakeKvC, MakePd>(
         config: Config,
         kv_connect: MakeKvC,
+        kv_config: KVClientConfig,
         pd: MakePd,
         enable_codec: bool,
         logger: Logger,
@@ -324,6 +327,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             pd: pd.clone(),
             kv_client_cache,
             kv_connect: kv_connect(env, security_mgr),
+            kv_config,
             enable_codec,
             region_cache: RegionCache::new(pd),
             logger,
@@ -335,7 +339,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             return Ok(client.clone());
         };
         info!(self.logger, "connect to tikv endpoint: {:?}", address);
-        match self.kv_connect.connect(address) {
+        match self.kv_connect.connect(address, kv_config) {
             Ok(client) => {
                 self.kv_client_cache
                     .write()

@@ -22,6 +22,7 @@ pub mod plan;
 mod plan_builder;
 #[macro_use]
 mod shard;
+pub mod batch;
 
 /// Abstracts any request sent to a TiKV server.
 #[async_trait]

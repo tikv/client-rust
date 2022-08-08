@@ -27,33 +27,6 @@ pub struct Config {
     pub kv_client_config: KVClientConfig,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default)]
-#[serde(rename_all = "kebab-case")]
-pub struct KVClientConfig {
-    pub completion_queue_size: usize,
-    pub grpc_keepalive_time: Duration,
-    pub grpc_keepalive_timeout: Duration,
-    pub allow_batch: bool,
-    pub overload_threshold: usize,
-    pub max_batch_wait_time: Duration,
-    pub max_batch_size: usize,
-}
-
-impl Default for KVClientConfig {
-    fn default() -> Self {
-        Self {
-            completion_queue_size: DEFAULT_GRPC_COMPLETION_QUEUE_SIZE,
-            grpc_keepalive_time: DEFAULT_GRPC_KEEPALIVE_TIME,
-            grpc_keepalive_timeout: DEFAULT_GRPC_KEEPALIVE_TIMEOUT,
-            allow_batch: true,
-            overload_threshold: DEFAULT_OVERLOAD_THRESHOLD,
-            max_batch_wait_time: DEFAULT_MAX_BATCH_WAIT_TIME,
-            max_batch_size: DEFAULT_MAX_BATCH_SIZE,
-        }
-    }
-}
-
 impl Default for Config {
     fn default() -> Self {
         Config {

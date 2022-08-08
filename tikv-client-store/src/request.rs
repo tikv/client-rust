@@ -19,7 +19,7 @@ pub trait Request: Any + Sync + Send + 'static {
     fn label(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
     fn set_context(&mut self, context: kvrpcpb::Context);
-    fn into_batch(&self) -> BatchCommandsRequest;
+    fn to_batch_request(&self) -> batch_commands_request::Request;
 }
 
 macro_rules! impl_request {
@@ -50,14 +50,11 @@ macro_rules! impl_request {
                 kvrpcpb::$name::set_context(self, context)
             }
 
-            fn into_batch(&self) -> BatchCommandsRequest {
+            fn to_batch_request(&self) -> batch_commands_request::Request {
                 let req = batch_commands_request::Request {
                     cmd: Some($cmd(self.clone())),
                 };
-                BatchCommandsRequest {
-                    requests: vec![req],
-                    request_ids: vec![0],
-                }
+                req
             }
         }
     };
@@ -212,7 +209,7 @@ impl Request for BatchCommandsRequest {
     fn set_context(&mut self, _: tikv_client_proto::kvrpcpb::Context) {
         todo!()
     }
-    fn into_batch(&self) -> BatchCommandsRequest {
-        self.clone()
+    fn to_batch_request(&self) -> batch_commands_request::Request {
+        batch_commands_request::Request { cmd: None }
     }
 }
