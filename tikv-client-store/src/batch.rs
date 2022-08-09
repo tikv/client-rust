@@ -1,4 +1,4 @@
-use crate::{Error, Request, Result};
+use crate::{request::from_batch_commands_resp, Error, Request, Result};
 use core::any::Any;
 use futures::{
     channel::{mpsc, oneshot},
@@ -26,7 +26,7 @@ use tikv_client_proto::tikvpb::{BatchCommandsRequest, BatchCommandsResponse, Tik
 
 static ID_ALLOC: AtomicU64 = AtomicU64::new(0);
 
-type Response = oneshot::Sender<Result<Box<dyn Any + Send>>>;
+type Response = oneshot::Sender<Box<dyn Any + Send>>;
 pub struct RequestEntry {
     cmd: Box<dyn Request>,
     tx: Response,
@@ -77,7 +77,7 @@ impl BatchWorker {
         Ok(BatchWorker { request_tx })
     }
 
-    pub async fn dispatch(mut self, request: Box<dyn Request>) -> Result<Box<dyn Any>> {
+    pub async fn dispatch(mut self, request: Box<dyn Request>) -> Result<Box<dyn Any + Send>> {
         let (tx, rx) = oneshot::channel();
         // Generate BatchCommandRequestEntry
         let entry = RequestEntry::new(request, tx);
@@ -87,7 +87,8 @@ impl BatchWorker {
             .send(entry)
             .await
             .map_err(|_| internal_err!("Failed to send request to batch worker".to_owned()))?;
-        Ok(Box::new(rx.await?))
+        rx.await
+            .map_err(|_| internal_err!("Failed to receive response from batch worker".to_owned()))
     }
 }
 
@@ -112,28 +113,28 @@ async fn run_batch_worker(
         max_batch_size,
         max_inflight_requests,
         max_delay_duration,
-    };
+    }
+    .map(Ok);
 
     let send_requests = tx.send_all(&mut request_stream);
 
     let recv_handle_response = async move {
         while let Some(Ok(mut batch_resp)) = rx.next().await {
-            // TODO resp is BatchCommandsResponse, split it into responses
             let mut inflight_requests = inflight_requests.borrow_mut();
 
             if inflight_requests.len() == max_inflight_requests {
                 waker.wake();
             }
 
-            // TODO more handle to response
             for (id, resp) in batch_resp
                 .take_request_ids()
                 .into_iter()
                 .zip(batch_resp.take_responses())
             {
                 if let Some(tx) = inflight_requests.remove(&id) {
-                    debug!("Received response for request_id {}: {:?}", id, resp.cmd);
-                    tx.send(Ok(Box::new(resp.cmd))).unwrap();
+                    let inner_resp = from_batch_commands_resp(resp);
+                    debug!("Received response for request_id {}", id);
+                    tx.send(inner_resp.unwrap()).unwrap();
                 }
             }
         }
@@ -154,7 +155,7 @@ struct BatchCommandsRequestStream<'a> {
 }
 
 impl Stream for BatchCommandsRequestStream<'_> {
-    type Item = Result<(BatchCommandsRequest, WriteFlags)>;
+    type Item = (BatchCommandsRequest, WriteFlags);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let inflight_requests = self.inflight_requests.clone();
@@ -192,20 +193,14 @@ impl Stream for BatchCommandsRequestStream<'_> {
 
         // The requests is the commands will be convert to a batch request
         if !requests.is_empty() {
-            // TODO generate BatchCommandsRequest from requests
             let mut batch_request = BatchCommandsRequest::new_();
             batch_request.set_requests(requests);
-            // TODO request id
             batch_request.set_request_ids(request_ids);
             let write_flags = WriteFlags::default().buffer_hint(false);
-            Poll::Ready(Some(Ok((batch_request, write_flags))))
+            Poll::Ready(Some((batch_request, write_flags)))
         } else {
             self.self_waker.register(cx.waker());
             Poll::Pending
         }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (0, None)
     }
 }

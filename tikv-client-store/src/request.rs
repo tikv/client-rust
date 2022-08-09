@@ -5,17 +5,22 @@ use async_trait::async_trait;
 use futures::{SinkExt, TryStreamExt};
 use grpcio::{CallOption, WriteFlags};
 use std::any::Any;
+use tikv_client_common::internal_err;
 use tikv_client_proto::{
     kvrpcpb,
     tikvpb::{
         batch_commands_request::{self, request::Cmd::*},
-        BatchCommandsRequest, TikvClient,
+        batch_commands_response, BatchCommandsRequest, TikvClient,
     },
 };
 
 #[async_trait]
 pub trait Request: Any + Sync + Send + 'static {
-    async fn dispatch(&self, client: &TikvClient, options: CallOption) -> Result<Box<dyn Any>>;
+    async fn dispatch(
+        &self,
+        client: &TikvClient,
+        options: CallOption,
+    ) -> Result<Box<dyn Any + Send>>;
     fn label(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
     fn set_context(&mut self, context: kvrpcpb::Context);
@@ -30,11 +35,11 @@ macro_rules! impl_request {
                 &self,
                 client: &TikvClient,
                 options: CallOption,
-            ) -> Result<Box<dyn Any>> {
+            ) -> Result<Box<dyn Any + Send>> {
                 client
                     .$fun(self, options)?
                     .await
-                    .map(|r| Box::new(r) as Box<dyn Any>)
+                    .map(|r| Box::new(r) as Box<dyn Any + Send>)
                     .map_err(Error::Grpc)
             }
 
@@ -100,13 +105,40 @@ impl_request!(
     RawDeleteRange
 );
 
-// TODO
+// TODO implement batchcommands support for rawcasrequest
 // impl_request!(
 //     RawCasRequest,
 //     raw_compare_and_swap_async_opt,
 //     "raw_compare_and_swap",
 //     RawCas
 // );
+#[async_trait]
+impl Request for kvrpcpb::RawCasRequest {
+    async fn dispatch(
+        &self,
+        client: &TikvClient,
+        options: CallOption,
+    ) -> Result<Box<dyn Any + Send>> {
+        client
+            .raw_compare_and_swap_async_opt(self, options)?
+            .await
+            .map(|r| Box::new(r) as Box<dyn Any + Send>)
+            .map_err(Error::Grpc)
+    }
+    fn label(&self) -> &'static str {
+        "raw_compare_and_swap"
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn set_context(&mut self, _: tikv_client_proto::kvrpcpb::Context) {
+        todo!()
+    }
+    // TODO
+    fn to_batch_request(&self) -> batch_commands_request::Request {
+        batch_commands_request::Request { cmd: None }
+    }
+}
 
 impl_request!(
     RawCoprocessorRequest,
@@ -189,13 +221,17 @@ impl_request!(
 
 #[async_trait]
 impl Request for BatchCommandsRequest {
-    async fn dispatch(&self, client: &TikvClient, options: CallOption) -> Result<Box<dyn Any>> {
+    async fn dispatch(
+        &self,
+        client: &TikvClient,
+        options: CallOption,
+    ) -> Result<Box<dyn Any + Send>> {
         match client.batch_commands_opt(options) {
             Ok((mut tx, mut rx)) => {
                 tx.send((self.clone(), WriteFlags::default())).await?;
                 tx.close().await?;
                 let resp = rx.try_next().await?.unwrap();
-                Ok(Box::new(resp) as Box<dyn Any>)
+                Ok(Box::new(resp) as Box<dyn Any + Send>)
             }
             Err(e) => Err(Error::Grpc(e)),
         }
@@ -211,5 +247,97 @@ impl Request for BatchCommandsRequest {
     }
     fn to_batch_request(&self) -> batch_commands_request::Request {
         batch_commands_request::Request { cmd: None }
+    }
+}
+
+pub fn from_batch_commands_resp(
+    resp: batch_commands_response::Response,
+) -> Result<Box<dyn Any + Send>> {
+    match resp.cmd {
+        Some(batch_commands_response::response::Cmd::Get(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::Scan(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::Prewrite(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::Commit(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::Import(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::Cleanup(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::BatchGet(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::BatchRollback(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::ScanLock(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::ResolveLock(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::Gc(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::DeleteRange(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::RawGet(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::RawBatchGet(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::RawPut(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::RawBatchPut(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::RawDelete(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::RawBatchDelete(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::RawScan(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::RawDeleteRange(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::RawBatchScan(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::Coprocessor(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::PessimisticLock(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::PessimisticRollback(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::CheckTxnStatus(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::TxnHeartBeat(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::CheckSecondaryLocks(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        Some(batch_commands_response::response::Cmd::RawCoprocessor(cmd)) => {
+            Ok(Box::new(cmd) as Box<dyn Any + Send>)
+        }
+        _ => Err(internal_err!("batch_commands_resp.cmd is None".to_owned())),
     }
 }

@@ -3,7 +3,7 @@
 use super::{requests::new_scan_lock_request, resolve_locks};
 use crate::{
     backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
-    config::{Config, KVClientConfig},
+    config::Config,
     pd::{PdClient, PdRpcClient},
     request::Plan,
     timestamp::TimestampExt,
@@ -13,6 +13,7 @@ use crate::{
 use slog::{Drain, Logger};
 use std::{mem, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use tikv_client_store::KVClientConfig;
 
 // FIXME: cargo-culted value
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
@@ -120,7 +121,7 @@ impl Client {
         Ok(Client {
             pd,
             logger,
-            kv_config: config.kv_client_config,
+            kv_config: config.kv_config,
         })
     }
 
@@ -253,12 +254,11 @@ impl Client {
                 SCAN_LOCK_BATCH_SIZE,
             );
 
-            let plan =
-                crate::request::PlanBuilder::new(self.pd.clone(), req, self.kv_config.clone())
-                    .resolve_lock(OPTIMISTIC_BACKOFF)
-                    .retry_multi_region(DEFAULT_REGION_BACKOFF)
-                    .merge(crate::request::Collect)
-                    .plan();
+            let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
+                .resolve_lock(OPTIMISTIC_BACKOFF)
+                .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                .merge(crate::request::Collect)
+                .plan();
             let res: Vec<kvrpcpb::LockInfo> = plan.execute().await?;
 
             if res.is_empty() {
@@ -271,7 +271,7 @@ impl Client {
 
         // resolve locks
         // FIXME: (1) this is inefficient (2) when region error occurred
-        resolve_locks(locks, self.pd.clone(), self.kv_config.clone()).await?;
+        resolve_locks(locks, self.pd.clone()).await?;
 
         // update safepoint to PD
         let res: bool = self
@@ -287,12 +287,6 @@ impl Client {
 
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
         let logger = self.logger.new(o!("child" => 1));
-        Transaction::new(
-            timestamp,
-            self.pd.clone(),
-            options,
-            self.kv_config.clone(),
-            logger,
-        )
+        Transaction::new(timestamp, self.pd.clone(), options, logger)
     }
 }

@@ -94,7 +94,7 @@ impl KvConnect for TikvConnect {
 
 #[async_trait]
 pub trait KvClient {
-    async fn dispatch(&self, req: Box<dyn Request>) -> Result<Box<dyn Any>>;
+    async fn dispatch(&self, req: Box<dyn Request>) -> Result<Box<dyn Any + Send>>;
 }
 
 /// This client handles requests for a single TiKV node. It converts the data
@@ -108,7 +108,7 @@ pub struct KvRpcClient {
 
 #[async_trait]
 impl KvClient for KvRpcClient {
-    async fn dispatch(&self, request: Box<dyn Request>) -> Result<Box<dyn Any>> {
+    async fn dispatch(&self, request: Box<dyn Request>) -> Result<Box<dyn Any + Send>> {
         if let Some(batch_worker) = self.batch_worker.clone() {
             batch_worker.dispatch(request).await
         } else {

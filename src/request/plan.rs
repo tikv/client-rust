@@ -11,7 +11,6 @@ use tokio::sync::Semaphore;
 
 use crate::{
     backoff::Backoff,
-    config::KVClientConfig,
     pd::PdClient,
     request::{KvRequest, Shardable},
     stats::tikv_stats,
@@ -30,10 +29,6 @@ pub trait Plan: Sized + Clone + Sync + Send + 'static {
 
     /// Execute the plan.
     async fn execute(&self) -> Result<Self::Result>;
-
-    fn kv_config(&self) -> KVClientConfig {
-        KVClientConfig::default()
-    }
 }
 
 /// The simplest plan which just dispatches a request to a specific kv server.
@@ -41,7 +36,6 @@ pub trait Plan: Sized + Clone + Sync + Send + 'static {
 pub struct Dispatch<Req: KvRequest> {
     pub request: Req,
     pub kv_client: Option<Arc<dyn KvClient + Send + Sync>>,
-    pub kv_config: KVClientConfig,
 }
 
 #[async_trait]
@@ -54,17 +48,13 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             .kv_client
             .as_ref()
             .expect("Unreachable: kv_client has not been initialised in Dispatch")
-            .dispatch(Box::new(self.request))
+            .dispatch(Box::new(self.request.clone()))
             .await;
         let result = stats.done(result);
         result.map(|r| {
             *r.downcast()
                 .expect("Downcast failed: request and response type mismatch")
         })
-    }
-
-    fn kv_config(&self) -> KVClientConfig {
-        self.kv_config.clone()
     }
 }
 
@@ -426,7 +416,6 @@ where
     async fn execute(&self) -> Result<Self::Result> {
         let mut result = self.inner.execute().await?;
         let mut clone = self.clone();
-        let kv_config = self.kv_config();
         loop {
             let locks = result.take_locks();
             if locks.is_empty() {
@@ -438,7 +427,7 @@ where
             }
 
             let pd_client = self.pd_client.clone();
-            if resolve_locks(locks, pd_client.clone(), kv_config.clone()).await? {
+            if resolve_locks(locks, pd_client.clone()).await? {
                 result = self.inner.execute().await?;
             } else {
                 match clone.backoff.next_delay_duration() {
@@ -450,10 +439,6 @@ where
                 }
             }
         }
-    }
-
-    fn kv_config(&self) -> KVClientConfig {
-        self.inner.kv_config()
     }
 }
 

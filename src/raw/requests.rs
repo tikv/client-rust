@@ -361,7 +361,11 @@ pub struct RawCoprocessorRequest {
 
 #[async_trait]
 impl Request for RawCoprocessorRequest {
-    async fn dispatch(&self, client: &TikvClient, options: CallOption) -> Result<Box<dyn Any>> {
+    async fn dispatch(
+        &self,
+        client: &TikvClient,
+        options: CallOption,
+    ) -> Result<Box<dyn Any + Send>> {
         self.inner.dispatch(client, options).await
     }
 
@@ -375,6 +379,10 @@ impl Request for RawCoprocessorRequest {
 
     fn set_context(&mut self, context: kvrpcpb::Context) {
         self.inner.set_context(context);
+    }
+
+    fn to_batch_request(&self) -> tikv_client_proto::tikvpb::batch_commands_request::Request {
+        todo!()
     }
 }
 
@@ -471,7 +479,6 @@ mod test {
     use super::*;
     use crate::{
         backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
-        config::KVClientConfig,
         mock::{MockKvClient, MockPdClient},
         request::Plan,
         Key,
@@ -511,7 +518,7 @@ mod test {
             key_only: true,
             ..Default::default()
         };
-        let plan = crate::request::PlanBuilder::new(client, scan, KVClientConfig::default())
+        let plan = crate::request::PlanBuilder::new(client, scan)
             .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)

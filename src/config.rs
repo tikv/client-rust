@@ -2,15 +2,9 @@
 
 use serde_derive::{Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
+use tikv_client_store::KVClientConfig;
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
-const DEFAULT_GRPC_KEEPALIVE_TIME: Duration = Duration::from_secs(10);
-const DEFAULT_GRPC_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(3);
-const DEFAULT_GRPC_COMPLETION_QUEUE_SIZE: usize = 1;
-const DEFAULT_MAX_BATCH_WAIT_TIME: Duration = Duration::from_millis(0);
-const DEFAULT_MAX_BATCH_SIZE: usize = 8;
-const DEFAULT_OVERLOAD_THRESHOLD: usize = 200;
-
 /// The configuration for either a [`RawClient`](crate::RawClient) or a
 /// [`TransactionClient`](crate::TransactionClient).
 ///
@@ -24,7 +18,7 @@ pub struct Config {
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
     pub timeout: Duration,
-    pub kv_client_config: KVClientConfig,
+    pub kv_config: KVClientConfig,
 }
 
 impl Default for Config {
@@ -34,7 +28,7 @@ impl Default for Config {
             cert_path: None,
             key_path: None,
             timeout: DEFAULT_REQUEST_TIMEOUT,
-            kv_client_config: KVClientConfig::default(),
+            kv_config: KVClientConfig::default(),
         }
     }
 }

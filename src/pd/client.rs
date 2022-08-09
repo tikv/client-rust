@@ -2,7 +2,6 @@
 
 use crate::{
     compat::stream_fn,
-    config::KVClientConfig,
     kv::codec,
     pd::{retry::RetryClientTrait, RetryClient},
     region::{RegionId, RegionVerId, RegionWithLeader},
@@ -17,7 +16,7 @@ use slog::Logger;
 use std::{collections::HashMap, sync::Arc, thread};
 use tikv_client_pd::Cluster;
 use tikv_client_proto::{kvrpcpb, metapb};
-use tikv_client_store::{KvClient, KvConnect, TikvConnect};
+use tikv_client_store::{KVClientConfig, KvClient, KvConnect, TikvConnect};
 use tokio::sync::RwLock;
 
 const CQ_COUNT: usize = 1;
@@ -295,7 +294,6 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
     pub async fn new<PdFut, MakeKvC, MakePd>(
         config: Config,
         kv_connect: MakeKvC,
-        kv_config: KVClientConfig,
         pd: MakePd,
         enable_codec: bool,
         logger: Logger,
@@ -327,7 +325,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             pd: pd.clone(),
             kv_client_cache,
             kv_connect: kv_connect(env, security_mgr),
-            kv_config,
+            kv_config: config.kv_config,
             enable_codec,
             region_cache: RegionCache::new(pd),
             logger,
@@ -339,7 +337,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             return Ok(client.clone());
         };
         info!(self.logger, "connect to tikv endpoint: {:?}", address);
-        match self.kv_connect.connect(address, kv_config) {
+        match self.kv_connect.connect(address, self.kv_config.clone()) {
             Ok(client) => {
                 self.kv_client_cache
                     .write()

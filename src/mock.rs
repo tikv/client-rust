@@ -16,7 +16,7 @@ use derive_new::new;
 use slog::{Drain, Logger};
 use std::{any::Any, sync::Arc};
 use tikv_client_proto::metapb;
-use tikv_client_store::{KvClient, KvConnect, Request};
+use tikv_client_store::{KVClientConfig, KvClient, KvConnect, Request};
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
@@ -78,7 +78,7 @@ pub struct MockPdClient {
 
 #[async_trait]
 impl KvClient for MockKvClient {
-    async fn dispatch(&self, req: &dyn Request) -> Result<Box<dyn Any>> {
+    async fn dispatch(&self, req: Box<dyn Request>) -> Result<Box<dyn Any>> {
         match &self.dispatch {
             Some(f) => f(req.as_any()),
             None => panic!("no dispatch hook set"),
@@ -89,7 +89,7 @@ impl KvClient for MockKvClient {
 impl KvConnect for MockKvConnect {
     type KvClient = MockKvClient;
 
-    fn connect(&self, address: &str) -> Result<Self::KvClient> {
+    fn connect(&self, address: &str, kv_config: KVClientConfig) -> Result<Self::KvClient> {
         Ok(MockKvClient {
             addr: address.to_owned(),
             dispatch: None,
