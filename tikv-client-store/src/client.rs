@@ -12,8 +12,8 @@ const DEFAULT_REQUEST_TIMEOUT: u64 = 2000;
 const DEFAULT_GRPC_KEEPALIVE_TIME: u64 = 10000;
 const DEFAULT_GRPC_KEEPALIVE_TIMEOUT: u64 = 3000;
 const DEFAULT_GRPC_COMPLETION_QUEUE_SIZE: usize = 1;
-const DEFAULT_MAX_BATCH_WAIT_TIME: u64 = 100;
-const DEFAULT_MAX_BATCH_SIZE: usize = 8;
+const DEFAULT_MAX_BATCH_WAIT_TIME: u64 = 10;
+const DEFAULT_MAX_BATCH_SIZE: usize = 100;
 const DEFAULT_OVERLOAD_THRESHOLD: usize = 200;
 /// A trait for connecting to TiKV stores.
 pub trait KvConnect: Sized + Send + Sync + 'static {
@@ -43,7 +43,7 @@ impl Default for KVClientConfig {
             completion_queue_size: DEFAULT_GRPC_COMPLETION_QUEUE_SIZE,
             grpc_keepalive_time: DEFAULT_GRPC_KEEPALIVE_TIME,
             grpc_keepalive_timeout: DEFAULT_GRPC_KEEPALIVE_TIMEOUT,
-            allow_batch: true,
+            allow_batch: false,
             overload_threshold: DEFAULT_OVERLOAD_THRESHOLD,
             max_batch_wait_time: DEFAULT_MAX_BATCH_WAIT_TIME,
             max_batch_size: DEFAULT_MAX_BATCH_SIZE,

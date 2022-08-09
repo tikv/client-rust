@@ -19,7 +19,6 @@ use tikv_client_proto::{kvrpcpb, metapb};
 use tikv_client_store::{KVClientConfig, KvClient, KvConnect, TikvConnect};
 use tokio::sync::RwLock;
 
-const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";
 
 /// The PdClient handles all the encoding stuff.
@@ -305,7 +304,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
     {
         let env = Arc::new(
             EnvBuilder::new()
-                .cq_count(CQ_COUNT)
+                .cq_count(config.kv_config.completion_queue_size)
                 .name_prefix(thread_name(CLIENT_PREFIX))
                 .build(),
         );

@@ -84,4 +84,43 @@ impl Config {
     }
 
     // TODO: add more config options for tivk client config
+    pub fn with_kv_timeout(mut self, timeout: u64) -> Self {
+        self.kv_config.request_timeout = timeout;
+        self
+    }
+
+    pub fn with_kv_completion_queue_size(mut self, size: usize) -> Self {
+        self.kv_config.completion_queue_size = size;
+        self
+    }
+
+    pub fn with_kv_grpc_keepalive_time(mut self, time: u64) -> Self {
+        self.kv_config.grpc_keepalive_time = time;
+        self
+    }
+
+    pub fn with_kv_grpc_keepalive_timeout(mut self, timeout: u64) -> Self {
+        self.kv_config.grpc_keepalive_timeout = timeout;
+        self
+    }
+
+    pub fn with_kv_allow_batch(mut self, allow_batch: bool) -> Self {
+        self.kv_config.allow_batch = allow_batch;
+        self
+    }
+
+    pub fn with_kv_overload_threshold(mut self, threshold: usize) -> Self {
+        self.kv_config.overload_threshold = threshold;
+        self
+    }
+
+    pub fn with_kv_max_batch_wait_time(mut self, wait: u64) -> Self {
+        self.kv_config.max_batch_wait_time = wait;
+        self
+    }
+
+    pub fn with_kv_max_batch_size(mut self, size: usize) -> Self {
+        self.kv_config.max_batch_size = size;
+        self
+    }
 }
