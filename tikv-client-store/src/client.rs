@@ -19,13 +19,13 @@ const DEFAULT_OVERLOAD_THRESHOLD: usize = 200;
 pub trait KvConnect: Sized + Send + Sync + 'static {
     type KvClient: KvClient + Clone + Send + Sync + 'static;
 
-    fn connect(&self, address: &str, kv_config: KVClientConfig) -> Result<Self::KvClient>;
+    fn connect(&self, address: &str, kv_config: KvClientConfig) -> Result<Self::KvClient>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 #[serde(rename_all = "kebab-case")]
-pub struct KVClientConfig {
+pub struct KvClientConfig {
     pub request_timeout: u64,
     pub completion_queue_size: usize,
     pub grpc_keepalive_time: u64,
@@ -36,7 +36,7 @@ pub struct KVClientConfig {
     pub max_batch_size: usize,
 }
 
-impl Default for KVClientConfig {
+impl Default for KvClientConfig {
     fn default() -> Self {
         Self {
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
@@ -61,7 +61,7 @@ pub struct TikvConnect {
 impl KvConnect for TikvConnect {
     type KvClient = KvRpcClient;
 
-    fn connect(&self, address: &str, kv_config: KVClientConfig) -> Result<KvRpcClient> {
+    fn connect(&self, address: &str, kv_config: KvClientConfig) -> Result<KvRpcClient> {
         self.security_mgr
             .connect(
                 self.env.clone(),

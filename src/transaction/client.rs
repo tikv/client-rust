@@ -13,7 +13,7 @@ use crate::{
 use slog::{Drain, Logger};
 use std::{mem, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
-use tikv_client_store::KVClientConfig;
+use tikv_client_store::KvClientConfig;
 
 // FIXME: cargo-culted value
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
@@ -37,7 +37,7 @@ const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
 pub struct Client {
     pd: Arc<PdRpcClient>,
     logger: Logger,
-    kv_config: KVClientConfig,
+    kv_config: KvClientConfig,
 }
 
 impl Clone for Client {

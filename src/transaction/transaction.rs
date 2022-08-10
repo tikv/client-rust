@@ -1369,7 +1369,7 @@ mod tests {
         time::Duration,
     };
     use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
-    use tikv_client_store::KVClientConfig;
+    use tikv_client_store::KvClientConfig;
 
     #[tokio::test]
     async fn test_optimistic_heartbeat() -> Result<(), io::Error> {

@@ -2,7 +2,7 @@
 
 use serde_derive::{Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
-use tikv_client_store::KVClientConfig;
+use tikv_client_store::KvClientConfig;
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 /// The configuration for either a [`RawClient`](crate::RawClient) or a
@@ -18,7 +18,7 @@ pub struct Config {
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
     pub timeout: Duration,
-    pub kv_config: KVClientConfig,
+    pub kv_config: KvClientConfig,
 }
 
 impl Default for Config {
@@ -28,7 +28,7 @@ impl Default for Config {
             cert_path: None,
             key_path: None,
             timeout: DEFAULT_REQUEST_TIMEOUT,
-            kv_config: KVClientConfig::default(),
+            kv_config: KvClientConfig::default(),
         }
     }
 }

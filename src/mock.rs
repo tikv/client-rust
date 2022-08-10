@@ -16,7 +16,7 @@ use derive_new::new;
 use slog::{Drain, Logger};
 use std::{any::Any, sync::Arc};
 use tikv_client_proto::metapb;
-use tikv_client_store::{KVClientConfig, KvClient, KvConnect, Request};
+use tikv_client_store::{KvClient, KvClientConfig, KvConnect, Request};
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
@@ -89,7 +89,7 @@ impl KvClient for MockKvClient {
 impl KvConnect for MockKvConnect {
     type KvClient = MockKvClient;
 
-    fn connect(&self, address: &str, kv_config: KVClientConfig) -> Result<Self::KvClient> {
+    fn connect(&self, address: &str, kv_config: KvClientConfig) -> Result<Self::KvClient> {
         Ok(MockKvClient {
             addr: address.to_owned(),
             dispatch: None,

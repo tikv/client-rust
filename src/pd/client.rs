@@ -16,7 +16,7 @@ use slog::Logger;
 use std::{collections::HashMap, sync::Arc, thread};
 use tikv_client_pd::Cluster;
 use tikv_client_proto::{kvrpcpb, metapb};
-use tikv_client_store::{KVClientConfig, KvClient, KvConnect, TikvConnect};
+use tikv_client_store::{KvClientConfig, KvClient, KvConnect, TikvConnect};
 use tokio::sync::RwLock;
 
 const CLIENT_PREFIX: &str = "tikv-client";
@@ -209,7 +209,7 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     pd: Arc<RetryClient<Cl>>,
     kv_connect: KvC,
     kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
-    kv_config: KVClientConfig,
+    kv_config: KvClientConfig,
     enable_codec: bool,
     region_cache: RegionCache<RetryClient<Cl>>,
     logger: Logger,

@@ -8,7 +8,7 @@ mod request;
 #[doc(inline)]
 pub use crate::{
     batch::{BatchWorker, RequestEntry},
-    client::{KVClientConfig, KvClient, KvConnect, TikvConnect},
+    client::{KvClientConfig, KvClient, KvConnect, TikvConnect},
     errors::{HasKeyErrors, HasRegionError, HasRegionErrors},
     request::Request,
 };

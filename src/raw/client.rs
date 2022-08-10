@@ -6,7 +6,7 @@ use std::{str::FromStr, sync::Arc, u32};
 use slog::{Drain, Logger};
 use tikv_client_common::Error;
 use tikv_client_proto::metapb;
-use tikv_client_store::KVClientConfig;
+use tikv_client_store::KvClientConfig;
 
 use crate::{
     backoff::DEFAULT_REGION_BACKOFF,
@@ -32,7 +32,7 @@ pub struct Client<PdC: PdClient = PdRpcClient> {
     /// Whether to use the [`atomic mode`](Client::with_atomic_for_cas).
     atomic: bool,
     logger: Logger,
-    kv_config: KVClientConfig,
+    kv_config: KvClientConfig,
 }
 
 impl Clone for Client {
@@ -799,7 +799,7 @@ mod tests {
             cf: Some(ColumnFamily::Default),
             atomic: false,
             logger,
-            kv_config: KVClientConfig::default(),
+            kv_config: KvClientConfig::default(),
         };
         let resps = client
             .coprocessor(
