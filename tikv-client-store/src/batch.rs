@@ -25,6 +25,7 @@ use tikv_client_common::internal_err;
 use tikv_client_proto::tikvpb::{BatchCommandsRequest, BatchCommandsResponse, TikvClient};
 
 static ID_ALLOC: AtomicU64 = AtomicU64::new(0);
+const BATCH_WORKER_NAME: &str = "batch-worker";
 
 type Response = oneshot::Sender<Box<dyn Any + Send>>;
 pub struct RequestEntry {
@@ -63,16 +64,19 @@ impl BatchWorker {
         let (rpc_sender, rpc_receiver) = kv_client.batch_commands_opt(options)?;
 
         // Start a background thread to handle batch requests and responses
-        thread::spawn(move || {
-            block_on(run_batch_worker(
-                rpc_sender.sink_err_into(),
-                rpc_receiver.err_into(),
-                request_rx,
-                max_batch_size,
-                max_inflight_requests,
-                max_delay_duration,
-            ))
-        });
+        thread::Builder::new()
+            .name(BATCH_WORKER_NAME.to_owned())
+            .spawn(move || {
+                block_on(run_batch_worker(
+                    rpc_sender.sink_err_into(),
+                    rpc_receiver.err_into(),
+                    request_rx,
+                    max_batch_size,
+                    max_inflight_requests,
+                    max_delay_duration,
+                ))
+            })
+            .unwrap();
 
         Ok(BatchWorker { request_tx })
     }

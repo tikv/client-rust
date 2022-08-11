@@ -91,7 +91,7 @@ impl KvClient for MockKvClient {
 impl KvConnect for MockKvConnect {
     type KvClient = MockKvClient;
 
-    fn connect(&self, address: &str, kv_config: KvClientConfig) -> Result<Self::KvClient> {
+    fn connect(&self, address: &str, _: KvClientConfig) -> Result<Self::KvClient> {
         Ok(MockKvClient {
             addr: address.to_owned(),
             dispatch: None,
