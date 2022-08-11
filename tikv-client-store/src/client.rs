@@ -13,8 +13,9 @@ const DEFAULT_GRPC_KEEPALIVE_TIME: u64 = 10000;
 const DEFAULT_GRPC_KEEPALIVE_TIMEOUT: u64 = 3000;
 const DEFAULT_GRPC_COMPLETION_QUEUE_SIZE: usize = 1;
 const DEFAULT_MAX_BATCH_WAIT_TIME: u64 = 10;
-const DEFAULT_MAX_BATCH_SIZE: usize = 100;
-const DEFAULT_OVERLOAD_THRESHOLD: usize = 200;
+const DEFAULT_MAX_BATCH_SIZE: usize = 10;
+const DEFAULT_MAX_INFLIGHT_REQUESTS: usize = 100;
+const DEFAULT_OVERLOAD_THRESHOLD: u64 = 1000;
 /// A trait for connecting to TiKV stores.
 pub trait KvConnect: Sized + Send + Sync + 'static {
     type KvClient: KvClient + Clone + Send + Sync + 'static;
@@ -31,9 +32,10 @@ pub struct KvClientConfig {
     pub grpc_keepalive_time: u64,
     pub grpc_keepalive_timeout: u64,
     pub allow_batch: bool,
-    pub overload_threshold: usize,
+    pub overload_threshold: u64,
     pub max_batch_wait_time: u64,
     pub max_batch_size: usize,
+    pub max_inflight_requests: usize,
 }
 
 impl Default for KvClientConfig {
@@ -47,6 +49,7 @@ impl Default for KvClientConfig {
             overload_threshold: DEFAULT_OVERLOAD_THRESHOLD,
             max_batch_wait_time: DEFAULT_MAX_BATCH_WAIT_TIME,
             max_batch_size: DEFAULT_MAX_BATCH_SIZE,
+            max_inflight_requests: DEFAULT_MAX_INFLIGHT_REQUESTS,
         }
     }
 }
@@ -78,8 +81,9 @@ impl KvConnect for TikvConnect {
                         BatchWorker::new(
                             c.clone(),
                             kv_config.max_batch_size,
-                            kv_config.max_batch_size,
+                            kv_config.max_inflight_requests,
                             kv_config.max_batch_wait_time,
+                            kv_config.overload_threshold,
                             CallOption::default(),
                         )
                         .unwrap(),

@@ -109,7 +109,7 @@ impl Config {
         self
     }
 
-    pub fn with_kv_overload_threshold(mut self, threshold: usize) -> Self {
+    pub fn with_kv_overload_threshold(mut self, threshold: u64) -> Self {
         self.kv_config.overload_threshold = threshold;
         self
     }
@@ -121,6 +121,11 @@ impl Config {
 
     pub fn with_kv_max_batch_size(mut self, size: usize) -> Self {
         self.kv_config.max_batch_size = size;
+        self
+    }
+
+    pub fn with_kv_max_inflight_requests(mut self, requests: usize) -> Self {
+        self.kv_config.max_inflight_requests = requests;
         self
     }
 }

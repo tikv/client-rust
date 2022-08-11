@@ -31,14 +31,16 @@ type Response = oneshot::Sender<Box<dyn Any + Send>>;
 pub struct RequestEntry {
     cmd: Box<dyn Request>,
     tx: Response,
+    transport_layer_load: u64,
     id: u64,
 }
 
 impl RequestEntry {
-    pub fn new(cmd: Box<dyn Request>, tx: Response) -> Self {
+    pub fn new(cmd: Box<dyn Request>, tx: Response, transport_layer_load: u64) -> Self {
         Self {
             cmd,
             tx,
+            transport_layer_load,
             id: ID_ALLOC.fetch_add(1, Ordering::Relaxed),
         }
     }
@@ -48,6 +50,7 @@ impl RequestEntry {
 #[derive(Clone)]
 pub struct BatchWorker {
     request_tx: mpsc::Sender<RequestEntry>,
+    last_transport_layer_load_report: Arc<AtomicU64>,
 }
 
 impl BatchWorker {
@@ -56,6 +59,7 @@ impl BatchWorker {
         max_batch_size: usize,
         max_inflight_requests: usize,
         max_delay_duration: u64,
+        overload_threshold: u64,
         options: CallOption,
     ) -> Result<BatchWorker> {
         let (request_tx, request_rx) = mpsc::channel(max_batch_size);
@@ -63,7 +67,10 @@ impl BatchWorker {
         // Create rpc sender and receiver
         let (rpc_sender, rpc_receiver) = kv_client.batch_commands_opt(options)?;
 
+        let last_transport_layer_load_report = Arc::new(AtomicU64::new(0));
+
         // Start a background thread to handle batch requests and responses
+        let last_transport_layer_load_report_clone = last_transport_layer_load_report.clone();
         thread::Builder::new()
             .name(BATCH_WORKER_NAME.to_owned())
             .spawn(move || {
@@ -74,17 +81,27 @@ impl BatchWorker {
                     max_batch_size,
                     max_inflight_requests,
                     max_delay_duration,
+                    overload_threshold,
+                    last_transport_layer_load_report_clone,
                 ))
             })
             .unwrap();
 
-        Ok(BatchWorker { request_tx })
+        Ok(BatchWorker {
+            request_tx,
+            last_transport_layer_load_report,
+        })
     }
 
     pub async fn dispatch(mut self, request: Box<dyn Request>) -> Result<Box<dyn Any + Send>> {
         let (tx, rx) = oneshot::channel();
         // Generate BatchCommandRequestEntry
-        let entry = RequestEntry::new(request, tx);
+        let last_transport_layer_load = self
+            .last_transport_layer_load_report
+            .load(Ordering::Relaxed);
+
+        // Save the load of transport layer in RequestEntry
+        let entry = RequestEntry::new(request, tx, last_transport_layer_load);
         // Send request entry to the background thread to handle the request, response will be
         // received in rx channel.
         self.request_tx
@@ -103,6 +120,8 @@ async fn run_batch_worker(
     max_batch_size: usize,
     max_inflight_requests: usize,
     max_delay_duration: u64,
+    overload_threshold: u64,
+    last_transport_layer_load_report: Arc<AtomicU64>,
 ) {
     // Inflight requests which are waiting for the response from rpc server
     let inflight_requests = Rc::new(RefCell::new(HashMap::new()));
@@ -117,6 +136,7 @@ async fn run_batch_worker(
         max_batch_size,
         max_inflight_requests,
         max_delay_duration,
+        overload_threshold,
     }
     .map(Ok);
 
@@ -129,6 +149,10 @@ async fn run_batch_worker(
             if inflight_requests.len() == max_inflight_requests {
                 waker.wake();
             }
+
+            let trasport_layer_load = batch_resp.get_transport_layer_load();
+            // Store the load of transport layer
+            last_transport_layer_load_report.store(trasport_layer_load, Ordering::Relaxed);
 
             for (id, resp) in batch_resp
                 .take_request_ids()
@@ -156,6 +180,7 @@ struct BatchCommandsRequestStream<'a> {
     max_batch_size: usize,
     max_inflight_requests: usize,
     max_delay_duration: u64,
+    overload_threshold: u64,
 }
 
 impl Stream for BatchCommandsRequestStream<'_> {
@@ -185,6 +210,15 @@ impl Stream for BatchCommandsRequestStream<'_> {
                     inflight_requests.insert(entry.id, entry.tx);
                     requests.push(entry.cmd.to_batch_request());
                     request_ids.push(entry.id);
+
+                    // Check the transport layer load received in RequestEntry
+                    let load_reported = entry.transport_layer_load;
+                    if load_reported > 0
+                        && self.overload_threshold > 0
+                        && load_reported > self.overload_threshold
+                    {
+                        break;
+                    }
                 }
                 Poll::Ready(None) => {
                     return Poll::Ready(None);
