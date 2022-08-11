@@ -1369,7 +1369,6 @@ mod tests {
         time::Duration,
     };
     use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
-    use tikv_client_store::KvClientConfig;
 
     #[tokio::test]
     async fn test_optimistic_heartbeat() -> Result<(), io::Error> {
@@ -1386,14 +1385,14 @@ mod tests {
         let heartbeats = Arc::new(AtomicUsize::new(0));
         let heartbeats_cloned = heartbeats.clone();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
-            move |req: &dyn Any| {
+            move |req: &(dyn Any + Send)| {
                 if req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>().is_some() {
                     heartbeats_cloned.fetch_add(1, Ordering::SeqCst);
-                    Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>)
+                    Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any + Send>)
                 } else if req.downcast_ref::<kvrpcpb::PrewriteRequest>().is_some() {
-                    Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
+                    Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any + Send>)
                 } else {
-                    Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
+                    Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any + Send>)
                 }
             },
         )));
@@ -1430,19 +1429,20 @@ mod tests {
         let heartbeats = Arc::new(AtomicUsize::new(0));
         let heartbeats_cloned = heartbeats.clone();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
-            move |req: &dyn Any| {
+            move |req: &(dyn Any + Send)| {
                 if req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>().is_some() {
                     heartbeats_cloned.fetch_add(1, Ordering::SeqCst);
-                    Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>)
+                    Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any + Send>)
                 } else if req.downcast_ref::<kvrpcpb::PrewriteRequest>().is_some() {
-                    Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
+                    Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any + Send>)
                 } else if req
                     .downcast_ref::<kvrpcpb::PessimisticLockRequest>()
                     .is_some()
                 {
-                    Ok(Box::new(kvrpcpb::PessimisticLockResponse::default()) as Box<dyn Any>)
+                    Ok(Box::new(kvrpcpb::PessimisticLockResponse::default())
+                        as Box<dyn Any + Send>)
                 } else {
-                    Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
+                    Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any + Send>)
                 }
             },
         )));

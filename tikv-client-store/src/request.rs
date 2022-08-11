@@ -22,7 +22,7 @@ pub trait Request: Any + Sync + Send + 'static {
         options: CallOption,
     ) -> Result<Box<dyn Any + Send>>;
     fn label(&self) -> &'static str;
-    fn as_any(&self) -> &dyn Any;
+    fn as_any(&self) -> &(dyn Any + Send);
     fn set_context(&mut self, context: kvrpcpb::Context);
     fn to_batch_request(&self) -> batch_commands_request::Request;
 }
@@ -47,7 +47,7 @@ macro_rules! impl_request {
                 $label
             }
 
-            fn as_any(&self) -> &dyn Any {
+            fn as_any(&self) -> &(dyn Any + Send) {
                 self
             }
 
@@ -128,7 +128,7 @@ impl Request for kvrpcpb::RawCasRequest {
     fn label(&self) -> &'static str {
         "raw_compare_and_swap"
     }
-    fn as_any(&self) -> &dyn Any {
+    fn as_any(&self) -> &(dyn Any + Send) {
         self
     }
     fn set_context(&mut self, _: tikv_client_proto::kvrpcpb::Context) {
@@ -239,7 +239,7 @@ impl Request for BatchCommandsRequest {
     fn label(&self) -> &'static str {
         "kv_batch_commands"
     }
-    fn as_any(&self) -> &dyn Any {
+    fn as_any(&self) -> &(dyn Any + Send) {
         self
     }
     fn set_context(&mut self, _: tikv_client_proto::kvrpcpb::Context) {

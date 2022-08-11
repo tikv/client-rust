@@ -780,7 +780,7 @@ mod tests {
             o!(),
         );
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
-            move |req: &dyn Any| {
+            move |req: &(dyn Any + Send)| {
                 if let Some(req) = req.downcast_ref::<kvrpcpb::RawCoprocessorRequest>() {
                     assert_eq!(req.copr_name, "example");
                     assert_eq!(req.copr_version_req, "0.1.0");
@@ -788,7 +788,7 @@ mod tests {
                         data: req.data.clone(),
                         ..Default::default()
                     };
-                    Ok(Box::new(resp) as Box<dyn Any>)
+                    Ok(Box::new(resp) as Box<dyn Any + Send>)
                 } else {
                     unreachable!()
                 }

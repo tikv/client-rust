@@ -52,13 +52,15 @@ pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
 #[derive(new, Default, Clone)]
 pub struct MockKvClient {
     pub addr: String,
-    dispatch: Option<Arc<dyn Fn(&dyn Any) -> Result<Box<dyn Any>> + Send + Sync + 'static>>,
+    dispatch: Option<
+        Arc<dyn Fn(&(dyn Any + Send)) -> Result<Box<dyn Any + Send>> + Send + Sync + 'static>,
+    >,
 }
 
 impl MockKvClient {
     pub fn with_dispatch_hook<F>(dispatch: F) -> MockKvClient
     where
-        F: Fn(&dyn Any) -> Result<Box<dyn Any>> + Send + Sync + 'static,
+        F: Fn(&(dyn Any + Send)) -> Result<Box<dyn Any + Send>> + Send + Sync + 'static,
     {
         MockKvClient {
             addr: String::new(),
@@ -78,7 +80,7 @@ pub struct MockPdClient {
 
 #[async_trait]
 impl KvClient for MockKvClient {
-    async fn dispatch(&self, req: Box<dyn Request>) -> Result<Box<dyn Any>> {
+    async fn dispatch(&self, req: Box<dyn Request>) -> Result<Box<dyn Any + Send>> {
         match &self.dispatch {
             Some(f) => f(req.as_any()),
             None => panic!("no dispatch hook set"),
