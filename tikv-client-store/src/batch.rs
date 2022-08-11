@@ -62,7 +62,7 @@ impl BatchWorker {
         overload_threshold: u64,
         options: CallOption,
     ) -> Result<BatchWorker> {
-        let (request_tx, request_rx) = mpsc::channel(max_batch_size);
+        let (request_tx, request_rx) = mpsc::channel(max_inflight_requests);
 
         // Create rpc sender and receiver
         let (rpc_sender, rpc_receiver) = kv_client.batch_commands_opt(options)?;
