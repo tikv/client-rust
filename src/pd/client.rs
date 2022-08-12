@@ -16,7 +16,7 @@ use slog::Logger;
 use std::{collections::HashMap, sync::Arc, thread};
 use tikv_client_pd::Cluster;
 use tikv_client_proto::{kvrpcpb, metapb};
-use tikv_client_store::{KvClientConfig, KvClient, KvConnect, TikvConnect};
+use tikv_client_store::{KvClient, KvClientConfig, KvConnect, TikvConnect};
 use tokio::sync::RwLock;
 
 const CLIENT_PREFIX: &str = "tikv-client";
