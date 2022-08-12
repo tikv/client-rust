@@ -91,7 +91,7 @@ impl KvConnect for TikvConnect {
                 } else {
                     None
                 };
-                KvRpcClient::new(c.clone(), self.timeout, batch_worker)
+                KvRpcClient::new(c, self.timeout, batch_worker)
             })
     }
 }

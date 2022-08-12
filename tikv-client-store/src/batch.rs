@@ -113,6 +113,7 @@ impl BatchWorker {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_batch_worker(
     mut tx: impl Sink<(BatchCommandsRequest, WriteFlags), Error = Error> + Unpin,
     mut rx: impl Stream<Item = Result<BatchCommandsResponse>> + Unpin,
