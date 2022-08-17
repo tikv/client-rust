@@ -3,11 +3,11 @@
 use crate::{batch::BatchWorker, request::Request, Result, SecurityManager};
 use async_trait::async_trait;
 use derive_new::new;
-use futures::lock::Mutex;
 use grpcio::{CallOption, Environment};
 use serde_derive::{Deserialize, Serialize};
 use std::{any::Any, sync::Arc, time::Duration};
 use tikv_client_proto::tikvpb::TikvClient;
+use tokio::sync::RwLock;
 
 const DEFAULT_REQUEST_TIMEOUT: u64 = 2000;
 const DEFAULT_GRPC_KEEPALIVE_TIME: u64 = 10000;
@@ -78,7 +78,7 @@ impl KvConnect for TikvConnect {
                 // Create batch worker if needed
                 let c = Arc::new(c);
                 let batch_worker = if kv_config.allow_batch {
-                    Some(Arc::new(Mutex::new(
+                    Some(Arc::new(RwLock::new(
                         BatchWorker::new(
                             c.clone(),
                             kv_config.max_batch_size,
@@ -108,17 +108,20 @@ pub trait KvClient {
 pub struct KvRpcClient {
     rpc_client: Arc<TikvClient>,
     timeout: Duration,
-    batch_worker: Option<Arc<Mutex<BatchWorker>>>,
+    batch_worker: Option<Arc<RwLock<BatchWorker>>>,
 }
 
 #[async_trait]
 impl KvClient for KvRpcClient {
     async fn dispatch(&self, request: Box<dyn Request>) -> Result<Box<dyn Any + Send>> {
         if let Some(batch_worker_arc) = self.batch_worker.clone() {
-            let mut batch_worker = batch_worker_arc.lock().await;
+            let batch_worker = batch_worker_arc.read().await;
             if batch_worker.is_running() {
                 return batch_worker.clone().dispatch(request).await;
             }
+            drop(batch_worker);
+
+            let mut batch_worker = batch_worker_arc.write().await;
             // batch worker is not running, because of gRPC channel is broken, create a new one
             *batch_worker = BatchWorker::new(
                 self.rpc_client.clone(),
