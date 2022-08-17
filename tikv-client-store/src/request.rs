@@ -2,15 +2,14 @@
 
 use crate::{Error, Result};
 use async_trait::async_trait;
-use futures::{SinkExt, TryStreamExt};
-use grpcio::{CallOption, WriteFlags};
+use grpcio::CallOption;
 use std::any::Any;
 use tikv_client_common::internal_err;
 use tikv_client_proto::{
     kvrpcpb,
     tikvpb::{
         batch_commands_request::{self, request::Cmd::*},
-        batch_commands_response, BatchCommandsRequest, TikvClient,
+        batch_commands_response, TikvClient,
     },
 };
 
@@ -24,7 +23,12 @@ pub trait Request: Any + Sync + Send + 'static {
     fn label(&self) -> &'static str;
     fn as_any(&self) -> &(dyn Any + Send);
     fn set_context(&mut self, context: kvrpcpb::Context);
-    fn to_batch_request(&self) -> batch_commands_request::Request;
+    fn to_batch_request(&self) -> batch_commands_request::Request {
+        batch_commands_request::Request { cmd: None }
+    }
+    fn support_batch(&self) -> bool {
+        false
+    }
 }
 
 macro_rules! impl_request {
@@ -60,6 +64,10 @@ macro_rules! impl_request {
                     cmd: Some($cmd(self.clone())),
                 };
                 req
+            }
+
+            fn support_batch(&self) -> bool {
+                true
             }
         }
     };
@@ -104,41 +112,6 @@ impl_request!(
     "raw_delete_range",
     RawDeleteRange
 );
-
-// TODO implement batchcommands support for rawcasrequest
-// impl_request!(
-//     RawCasRequest,
-//     raw_compare_and_swap_async_opt,
-//     "raw_compare_and_swap",
-//     RawCas
-// );
-#[async_trait]
-impl Request for kvrpcpb::RawCasRequest {
-    async fn dispatch(
-        &self,
-        client: &TikvClient,
-        options: CallOption,
-    ) -> Result<Box<dyn Any + Send>> {
-        client
-            .raw_compare_and_swap_async_opt(self, options)?
-            .await
-            .map(|r| Box::new(r) as Box<dyn Any + Send>)
-            .map_err(Error::Grpc)
-    }
-    fn label(&self) -> &'static str {
-        "raw_compare_and_swap"
-    }
-    fn as_any(&self) -> &(dyn Any + Send) {
-        self
-    }
-    fn set_context(&mut self, _: tikv_client_proto::kvrpcpb::Context) {
-        todo!()
-    }
-    // TODO
-    fn to_batch_request(&self) -> batch_commands_request::Request {
-        batch_commands_request::Request { cmd: None }
-    }
-}
 
 impl_request!(
     RawCoprocessorRequest,
@@ -220,24 +193,20 @@ impl_request!(
 );
 
 #[async_trait]
-impl Request for BatchCommandsRequest {
+impl Request for kvrpcpb::RawCasRequest {
     async fn dispatch(
         &self,
         client: &TikvClient,
         options: CallOption,
     ) -> Result<Box<dyn Any + Send>> {
-        match client.batch_commands_opt(options) {
-            Ok((mut tx, mut rx)) => {
-                tx.send((self.clone(), WriteFlags::default())).await?;
-                tx.close().await?;
-                let resp = rx.try_next().await?.unwrap();
-                Ok(Box::new(resp) as Box<dyn Any + Send>)
-            }
-            Err(e) => Err(Error::Grpc(e)),
-        }
+        client
+            .raw_compare_and_swap_async_opt(self, options)?
+            .await
+            .map(|r| Box::new(r) as Box<dyn Any + Send>)
+            .map_err(Error::Grpc)
     }
     fn label(&self) -> &'static str {
-        "kv_batch_commands"
+        "raw_compare_and_swap"
     }
     fn as_any(&self) -> &(dyn Any + Send) {
         self

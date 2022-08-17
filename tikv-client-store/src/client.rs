@@ -114,7 +114,7 @@ pub struct KvRpcClient {
 #[async_trait]
 impl KvClient for KvRpcClient {
     async fn dispatch(&self, request: Box<dyn Request>) -> Result<Box<dyn Any + Send>> {
-        if let Some(batch_worker_arc) = self.batch_worker.clone() {
+        if let Some(batch_worker_arc) = self.batch_worker.clone() && request.support_batch(){
             let batch_worker = batch_worker_arc.read().await;
             if batch_worker.is_running() {
                 return batch_worker.clone().dispatch(request).await;
