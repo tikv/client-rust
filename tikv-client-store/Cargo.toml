@@ -13,5 +13,8 @@ derive-new = "0.5"
 futures = { version = "0.3", features = ["compat", "async-await", "thread-pool"] }
 grpcio = { version = "0.10", features = [ "prost-codec" ], default-features = false }
 log = "0.4"
+serde = "1.0"
+serde_derive = "1.0"
+tokio = { version = "1", features = [ "sync", "rt-multi-thread", "macros" ] }
 tikv-client-common = { version = "0.1.0", path = "../tikv-client-common" }
 tikv-client-proto = { version = "0.1.0", path = "../tikv-client-proto" }

@@ -105,7 +105,7 @@ mod test {
 
         #[async_trait]
         impl Request for MockKvRequest {
-            async fn dispatch(&self, _: &TikvClient, _: CallOption) -> Result<Box<dyn Any>> {
+            async fn dispatch(&self, _: &TikvClient, _: CallOption) -> Result<Box<dyn Any + Send>> {
                 Ok(Box::new(MockRpcResponse {}))
             }
 
@@ -113,12 +113,18 @@ mod test {
                 "mock"
             }
 
-            fn as_any(&self) -> &dyn Any {
+            fn as_any(&self) -> &(dyn Any + Send) {
                 self
             }
 
             fn set_context(&mut self, _: kvrpcpb::Context) {
                 unreachable!();
+            }
+
+            fn to_batch_request(
+                &self,
+            ) -> tikv_client_proto::tikvpb::batch_commands_request::Request {
+                todo!()
             }
         }
 
@@ -162,7 +168,7 @@ mod test {
         };
 
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
-            |_: &dyn Any| Ok(Box::new(MockRpcResponse) as Box<dyn Any>),
+            |_: &(dyn Any + Send)| Ok(Box::new(MockRpcResponse) as Box<dyn Any + Send>),
         )));
 
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
@@ -179,12 +185,12 @@ mod test {
     #[tokio::test]
     async fn test_extract_error() {
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
-            |_: &dyn Any| {
+            |_: &(dyn Any + Send)| {
                 Ok(Box::new(kvrpcpb::CommitResponse {
                     region_error: None,
                     error: Some(kvrpcpb::KeyError::default()),
                     commit_version: 0,
-                }) as Box<dyn Any>)
+                }) as Box<dyn Any + Send>)
             },
         )));
 

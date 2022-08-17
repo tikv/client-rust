@@ -361,7 +361,11 @@ pub struct RawCoprocessorRequest {
 
 #[async_trait]
 impl Request for RawCoprocessorRequest {
-    async fn dispatch(&self, client: &TikvClient, options: CallOption) -> Result<Box<dyn Any>> {
+    async fn dispatch(
+        &self,
+        client: &TikvClient,
+        options: CallOption,
+    ) -> Result<Box<dyn Any + Send>> {
         self.inner.dispatch(client, options).await
     }
 
@@ -369,12 +373,16 @@ impl Request for RawCoprocessorRequest {
         self.inner.label()
     }
 
-    fn as_any(&self) -> &dyn Any {
+    fn as_any(&self) -> &(dyn Any + Send) {
         self.inner.as_any()
     }
 
     fn set_context(&mut self, context: kvrpcpb::Context) {
         self.inner.set_context(context);
+    }
+
+    fn to_batch_request(&self) -> tikv_client_proto::tikvpb::batch_commands_request::Request {
+        todo!()
     }
 }
 
@@ -483,7 +491,7 @@ mod test {
     #[ignore]
     fn test_raw_scan() {
         let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
-            |req: &dyn Any| {
+            |req: &(dyn Any + Send)| {
                 let req: &kvrpcpb::RawScanRequest = req.downcast_ref().unwrap();
                 assert!(req.key_only);
                 assert_eq!(req.limit, 10);
@@ -497,7 +505,7 @@ mod test {
                     resp.kvs.push(kv);
                 }
 
-                Ok(Box::new(resp) as Box<dyn Any>)
+                Ok(Box::new(resp) as Box<dyn Any + Send>)
             },
         )));
 

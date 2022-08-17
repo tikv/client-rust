@@ -48,7 +48,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             .kv_client
             .as_ref()
             .expect("Unreachable: kv_client has not been initialised in Dispatch")
-            .dispatch(&self.request)
+            .dispatch(Box::new(self.request.clone()))
             .await;
         let result = stats.done(result);
         result.map(|r| {
@@ -85,7 +85,7 @@ where
         preserve_region_results: bool,
     ) -> Result<<Self as Plan>::Result> {
         let shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
-        let mut handles = Vec::new();
+        let mut handles = Vec::with_capacity(shards.len());
         for shard in shards {
             let (shard, region_store) = shard?;
             let mut clone = current_plan.clone();

@@ -2,7 +2,9 @@
 
 use serde_derive::{Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
+use tikv_client_store::KvClientConfig;
 
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 /// The configuration for either a [`RawClient`](crate::RawClient) or a
 /// [`TransactionClient`](crate::TransactionClient).
 ///
@@ -16,9 +18,8 @@ pub struct Config {
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
     pub timeout: Duration,
+    pub kv_config: KvClientConfig,
 }
-
-const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl Default for Config {
     fn default() -> Self {
@@ -27,6 +28,7 @@ impl Default for Config {
             cert_path: None,
             key_path: None,
             timeout: DEFAULT_REQUEST_TIMEOUT,
+            kv_config: KvClientConfig::default(),
         }
     }
 }
@@ -78,6 +80,52 @@ impl Config {
     #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    // TODO: add more config options for tivk client config
+    pub fn with_kv_timeout(mut self, timeout: u64) -> Self {
+        self.kv_config.request_timeout = timeout;
+        self
+    }
+
+    pub fn with_kv_completion_queue_size(mut self, size: usize) -> Self {
+        self.kv_config.completion_queue_size = size;
+        self
+    }
+
+    pub fn with_kv_grpc_keepalive_time(mut self, time: u64) -> Self {
+        self.kv_config.grpc_keepalive_time = time;
+        self
+    }
+
+    pub fn with_kv_grpc_keepalive_timeout(mut self, timeout: u64) -> Self {
+        self.kv_config.grpc_keepalive_timeout = timeout;
+        self
+    }
+
+    pub fn with_kv_allow_batch(mut self, allow_batch: bool) -> Self {
+        self.kv_config.allow_batch = allow_batch;
+        self
+    }
+
+    pub fn with_kv_overload_threshold(mut self, threshold: u64) -> Self {
+        self.kv_config.overload_threshold = threshold;
+        self
+    }
+
+    pub fn with_kv_max_batch_wait_time(mut self, wait: u64) -> Self {
+        self.kv_config.max_batch_wait_time = wait;
+        self
+    }
+
+    pub fn with_kv_max_batch_size(mut self, size: usize) -> Self {
+        self.kv_config.max_batch_size = size;
+        self
+    }
+
+    pub fn with_kv_max_inflight_requests(mut self, requests: usize) -> Self {
+        self.kv_config.max_inflight_requests = requests;
         self
     }
 }

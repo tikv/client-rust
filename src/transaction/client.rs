@@ -13,6 +13,7 @@ use crate::{
 use slog::{Drain, Logger};
 use std::{mem, sync::Arc};
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use tikv_client_store::KvClientConfig;
 
 // FIXME: cargo-culted value
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
@@ -36,6 +37,7 @@ const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
 pub struct Client {
     pd: Arc<PdRpcClient>,
     logger: Logger,
+    kv_config: KvClientConfig,
 }
 
 impl Clone for Client {
@@ -43,6 +45,7 @@ impl Clone for Client {
         Self {
             pd: self.pd.clone(),
             logger: self.logger.clone(),
+            kv_config: self.kv_config.clone(),
         }
     }
 }
@@ -112,8 +115,14 @@ impl Client {
         });
         debug!(logger, "creating new transactional client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config, true, logger.clone()).await?);
-        Ok(Client { pd, logger })
+        let pd = Arc::new(
+            PdRpcClient::connect(&pd_endpoints, config.clone(), true, logger.clone()).await?,
+        );
+        Ok(Client {
+            pd,
+            logger,
+            kv_config: config.kv_config,
+        })
     }
 
     /// Creates a new optimistic [`Transaction`].

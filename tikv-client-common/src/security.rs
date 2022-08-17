@@ -67,6 +67,8 @@ impl SecurityManager {
         &self,
         env: Arc<Environment>,
         addr: &str,
+        keepalive: u64,
+        keepalive_timeout: u64,
         factory: Factory,
     ) -> Result<Client>
     where
@@ -77,8 +79,8 @@ impl SecurityManager {
         let addr = SCHEME_REG.replace(addr, "");
 
         let cb = ChannelBuilder::new(env)
-            .keepalive_time(Duration::from_secs(10))
-            .keepalive_timeout(Duration::from_secs(3))
+            .keepalive_time(Duration::from_millis(keepalive))
+            .keepalive_timeout(Duration::from_millis(keepalive_timeout))
             .use_local_subchannel_pool(true);
 
         let channel = if self.ca.is_empty() {

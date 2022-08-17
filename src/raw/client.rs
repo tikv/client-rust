@@ -6,6 +6,7 @@ use std::{str::FromStr, sync::Arc, u32};
 use slog::{Drain, Logger};
 use tikv_client_common::Error;
 use tikv_client_proto::metapb;
+use tikv_client_store::KvClientConfig;
 
 use crate::{
     backoff::DEFAULT_REGION_BACKOFF,
@@ -31,6 +32,7 @@ pub struct Client<PdC: PdClient = PdRpcClient> {
     /// Whether to use the [`atomic mode`](Client::with_atomic_for_cas).
     atomic: bool,
     logger: Logger,
+    kv_config: KvClientConfig,
 }
 
 impl Clone for Client {
@@ -40,6 +42,7 @@ impl Clone for Client {
             cf: self.cf.clone(),
             atomic: self.atomic,
             logger: self.logger.clone(),
+            kv_config: self.kv_config.clone(),
         }
     }
 }
@@ -106,13 +109,15 @@ impl Client<PdRpcClient> {
         });
         debug!(logger, "creating new raw client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let rpc =
-            Arc::new(PdRpcClient::connect(&pd_endpoints, config, false, logger.clone()).await?);
+        let rpc = Arc::new(
+            PdRpcClient::connect(&pd_endpoints, config.clone(), false, logger.clone()).await?,
+        );
         Ok(Client {
             rpc,
             cf: None,
             atomic: false,
             logger,
+            kv_config: config.kv_config,
         })
     }
 
@@ -147,6 +152,7 @@ impl Client<PdRpcClient> {
             cf: Some(cf),
             atomic: self.atomic,
             logger: self.logger.clone(),
+            kv_config: self.kv_config.clone(),
         }
     }
 
@@ -164,6 +170,7 @@ impl Client<PdRpcClient> {
             cf: self.cf.clone(),
             atomic: true,
             logger: self.logger.clone(),
+            kv_config: self.kv_config.clone(),
         }
     }
 }
@@ -773,7 +780,7 @@ mod tests {
             o!(),
         );
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
-            move |req: &dyn Any| {
+            move |req: &(dyn Any + Send)| {
                 if let Some(req) = req.downcast_ref::<kvrpcpb::RawCoprocessorRequest>() {
                     assert_eq!(req.copr_name, "example");
                     assert_eq!(req.copr_version_req, "0.1.0");
@@ -781,7 +788,7 @@ mod tests {
                         data: req.data.clone(),
                         ..Default::default()
                     };
-                    Ok(Box::new(resp) as Box<dyn Any>)
+                    Ok(Box::new(resp) as Box<dyn Any + Send>)
                 } else {
                     unreachable!()
                 }
@@ -792,6 +799,7 @@ mod tests {
             cf: Some(ColumnFamily::Default),
             atomic: false,
             logger,
+            kv_config: KvClientConfig::default(),
         };
         let resps = client
             .coprocessor(

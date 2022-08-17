@@ -180,9 +180,9 @@ impl Connection {
         addr: &str,
         timeout: Duration,
     ) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
-        let client = self
-            .security_mgr
-            .connect(self.env.clone(), addr, pdpb::PdClient::new)?;
+        let client =
+            self.security_mgr
+                .connect(self.env.clone(), addr, 10000, 2000, pdpb::PdClient::new)?;
         let option = CallOption::default().timeout(timeout);
         let resp = client
             .get_members_async_opt(&pdpb::GetMembersRequest::default(), option)

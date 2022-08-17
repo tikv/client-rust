@@ -8,7 +8,7 @@ use std::{
     sync::Arc,
 };
 use tikv_client_proto::kvrpcpb;
-use tikv_client_store::{KvClient, KvConnect, TikvConnect};
+use tikv_client_store::KvClient;
 
 #[derive(new, Clone)]
 pub struct RegionStore {
@@ -16,15 +16,15 @@ pub struct RegionStore {
     pub client: Arc<dyn KvClient + Send + Sync>,
 }
 
-pub trait KvConnectStore: KvConnect {
-    fn connect_to_store(&self, region: RegionWithLeader, address: String) -> Result<RegionStore> {
-        log::info!("connect to tikv endpoint: {:?}", &address);
-        let client = self.connect(address.as_str())?;
-        Ok(RegionStore::new(region, Arc::new(client)))
-    }
-}
+// pub trait KvConnectStore: KvConnect {
+//     fn connect_to_store(&self, region: RegionWithLeader, address: String) -> Result<RegionStore> {
+//         log::info!("connect to tikv endpoint: {:?}", &address);
+//         let client = self.connect(address.as_str())?;
+//         Ok(RegionStore::new(region, Arc::new(client)))
+//     }
+// }
 
-impl KvConnectStore for TikvConnect {}
+// impl KvConnectStore for TikvConnect {}
 
 /// Maps keys to a stream of stores. `key_data` must be sorted in increasing order
 pub fn store_stream_for_keys<K, KOut, PdC>(

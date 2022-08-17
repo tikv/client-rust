@@ -16,10 +16,9 @@ use slog::Logger;
 use std::{collections::HashMap, sync::Arc, thread};
 use tikv_client_pd::Cluster;
 use tikv_client_proto::{kvrpcpb, metapb};
-use tikv_client_store::{KvClient, KvConnect, TikvConnect};
+use tikv_client_store::{KvClient, KvClientConfig, KvConnect, TikvConnect};
 use tokio::sync::RwLock;
 
-const CQ_COUNT: usize = 1;
 const CLIENT_PREFIX: &str = "tikv-client";
 
 /// The PdClient handles all the encoding stuff.
@@ -210,6 +209,7 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     pd: Arc<RetryClient<Cl>>,
     kv_connect: KvC,
     kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
+    kv_config: KvClientConfig,
     enable_codec: bool,
     region_cache: RegionCache<RetryClient<Cl>>,
     logger: Logger,
@@ -304,7 +304,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
     {
         let env = Arc::new(
             EnvBuilder::new()
-                .cq_count(CQ_COUNT)
+                .cq_count(config.kv_config.completion_queue_size)
                 .name_prefix(thread_name(CLIENT_PREFIX))
                 .build(),
         );
@@ -324,6 +324,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             pd: pd.clone(),
             kv_client_cache,
             kv_connect: kv_connect(env, security_mgr),
+            kv_config: config.kv_config,
             enable_codec,
             region_cache: RegionCache::new(pd),
             logger,
@@ -335,7 +336,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             return Ok(client.clone());
         };
         info!(self.logger, "connect to tikv endpoint: {:?}", address);
-        match self.kv_connect.connect(address) {
+        match self.kv_connect.connect(address, self.kv_config.clone()) {
             Ok(client) => {
                 self.kv_client_cache
                     .write()
