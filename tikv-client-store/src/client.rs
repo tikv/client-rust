@@ -3,6 +3,7 @@
 use crate::{batch::BatchWorker, request::Request, Result, SecurityManager};
 use async_trait::async_trait;
 use derive_new::new;
+use futures::lock::Mutex;
 use grpcio::{CallOption, Environment};
 use serde_derive::{Deserialize, Serialize};
 use std::{any::Any, sync::Arc, time::Duration};
@@ -77,7 +78,7 @@ impl KvConnect for TikvConnect {
                 // Create batch worker if needed
                 let c = Arc::new(c);
                 let batch_worker = if kv_config.allow_batch {
-                    Some(
+                    Some(Arc::new(Mutex::new(
                         BatchWorker::new(
                             c.clone(),
                             kv_config.max_batch_size,
@@ -87,7 +88,7 @@ impl KvConnect for TikvConnect {
                             CallOption::default(),
                         )
                         .unwrap(),
-                    )
+                    )))
                 } else {
                     None
                 };
@@ -107,14 +108,28 @@ pub trait KvClient {
 pub struct KvRpcClient {
     rpc_client: Arc<TikvClient>,
     timeout: Duration,
-    batch_worker: Option<BatchWorker>,
+    batch_worker: Option<Arc<Mutex<BatchWorker>>>,
 }
 
 #[async_trait]
 impl KvClient for KvRpcClient {
     async fn dispatch(&self, request: Box<dyn Request>) -> Result<Box<dyn Any + Send>> {
-        if let Some(batch_worker) = self.batch_worker.clone() {
-            batch_worker.dispatch(request).await
+        if let Some(batch_worker_arc) = self.batch_worker.clone() {
+            let mut batch_worker = batch_worker_arc.lock().await;
+            if batch_worker.is_running() {
+                return batch_worker.clone().dispatch(request).await;
+            }
+            // batch worker is not running, because of gRPC channel is broken, create a new one
+            *batch_worker = BatchWorker::new(
+                self.rpc_client.clone(),
+                batch_worker.max_batch_size(),
+                batch_worker.max_inflight_requests(),
+                batch_worker.max_delay_duration(),
+                batch_worker.overload_threshold(),
+                batch_worker.options(),
+            )
+            .unwrap();
+            batch_worker.clone().dispatch(request).await
         } else {
             // Batch no needed if not batch enabled
             request

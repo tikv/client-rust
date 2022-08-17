@@ -15,7 +15,7 @@ use std::{
     pin::Pin,
     rc::Rc,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     thread,
@@ -51,6 +51,12 @@ impl RequestEntry {
 pub struct BatchWorker {
     request_tx: mpsc::Sender<RequestEntry>,
     last_transport_layer_load_report: Arc<AtomicU64>,
+    is_running: Arc<AtomicBool>,
+    max_batch_size: usize,
+    max_inflight_requests: usize,
+    max_delay_duration: u64,
+    overload_threshold: u64,
+    options: CallOption,
 }
 
 impl BatchWorker {
@@ -65,9 +71,11 @@ impl BatchWorker {
         let (request_tx, request_rx) = mpsc::channel(max_inflight_requests);
 
         // Create rpc sender and receiver
-        let (rpc_sender, rpc_receiver) = kv_client.batch_commands_opt(options)?;
+        let (rpc_sender, rpc_receiver) = kv_client.batch_commands_opt(options.clone())?;
 
         let last_transport_layer_load_report = Arc::new(AtomicU64::new(0));
+        let is_running_status = Arc::new(AtomicBool::new(true));
+        let is_running_status_cloned = is_running_status.clone();
 
         // Start a background thread to handle batch requests and responses
         let last_transport_layer_load_report_clone = last_transport_layer_load_report.clone();
@@ -77,6 +85,7 @@ impl BatchWorker {
                 block_on(run_batch_worker(
                     rpc_sender.sink_err_into(),
                     rpc_receiver.err_into(),
+                    is_running_status_cloned,
                     request_rx,
                     max_batch_size,
                     max_inflight_requests,
@@ -90,7 +99,37 @@ impl BatchWorker {
         Ok(BatchWorker {
             request_tx,
             last_transport_layer_load_report,
+            is_running: is_running_status,
+            max_batch_size,
+            max_inflight_requests,
+            max_delay_duration,
+            overload_threshold,
+            options,
         })
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.is_running.load(Ordering::Relaxed)
+    }
+
+    pub fn max_batch_size(&self) -> usize {
+        self.max_batch_size
+    }
+
+    pub fn max_inflight_requests(&self) -> usize {
+        self.max_inflight_requests
+    }
+
+    pub fn max_delay_duration(&self) -> u64 {
+        self.max_delay_duration
+    }
+
+    pub fn overload_threshold(&self) -> u64 {
+        self.overload_threshold
+    }
+
+    pub fn options(&self) -> CallOption {
+        self.options.clone()
     }
 
     pub async fn dispatch(mut self, request: Box<dyn Request>) -> Result<Box<dyn Any + Send>> {
@@ -117,6 +156,7 @@ impl BatchWorker {
 async fn run_batch_worker(
     mut tx: impl Sink<(BatchCommandsRequest, WriteFlags), Error = Error> + Unpin,
     mut rx: impl Stream<Item = Result<BatchCommandsResponse>> + Unpin,
+    is_running: Arc<AtomicBool>,
     request_rx: mpsc::Receiver<RequestEntry>,
     max_batch_size: usize,
     max_inflight_requests: usize,
@@ -170,6 +210,9 @@ async fn run_batch_worker(
     };
 
     let (tx_res, rx_res) = join!(send_requests, recv_handle_response);
+
+    is_running.store(false, Ordering::Relaxed);
+
     debug!("Batch sender finished: {:?}", tx_res);
     debug!("Batch receiver finished: {:?}", rx_res);
 }
