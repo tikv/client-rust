@@ -82,6 +82,13 @@ impl Key {
         self.0.is_empty()
     }
 
+    #[inline]
+    pub fn next_key(&self) -> Self {
+        let mut key = self.clone();
+        key.0.push(0);
+        key
+    }
+
     /// Return whether the last byte of key is 0.
     #[inline]
     pub(super) fn zero_terminated(&self) -> bool {

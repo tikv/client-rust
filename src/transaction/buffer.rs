@@ -1,11 +1,85 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{BoundRange, Key, KvPair, Result, Value};
+use crate::{
+    pd::{PdClient, PdRpcClient},
+    request::{Collect, Plan, PlanBuilder},
+    transaction_lowering::new_scan_request,
+    BoundRange, Key, KvPair, Result, RetryOptions, Value,
+};
+use futures::stream::{self, StreamExt};
 use std::{
     collections::{btree_map::Entry, BTreeMap, HashMap},
+    convert::TryInto,
     future::Future,
+    sync::Arc,
 };
-use tikv_client_proto::kvrpcpb;
+use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+
+const DEFAULT_BATCH_SIZE: u32 = 16;
+
+pub struct Scanner<PdC: PdClient = PdRpcClient> {
+    pdc: Arc<PdC>,
+    timestamp: Timestamp,
+    range: BoundRange,
+    batch_size: u32,
+    current: usize,
+    limit: u32,
+    cache: Vec<KvPair>,
+    next_start_key: Key,
+    next_end_key: Key,
+    reverse: bool,
+    key_only: bool,
+    retry_options: RetryOptions,
+}
+
+impl<PdC: PdClient> Scanner<PdC> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        pdc: Arc<PdC>,
+        timestamp: Timestamp,
+        range: BoundRange,
+        batch_size: u32,
+        limit: u32,
+        reverse: bool,
+        key_only: bool,
+        retry_options: RetryOptions,
+    ) -> Self {
+        let (start, end) = range.clone().into_keys();
+        Self {
+            pdc,
+            timestamp,
+            range,
+            batch_size: batch_size.max(DEFAULT_BATCH_SIZE),
+            current: 0,
+            limit,
+            cache: Vec::new(),
+            next_start_key: start,
+            next_end_key: end.unwrap_or(Key::EMPTY),
+            reverse,
+            key_only,
+            retry_options,
+        }
+    }
+
+    pub async fn fetch_data(&self) -> Result<Vec<KvPair>> {
+        let request = new_scan_request(
+            self.range.clone(),
+            self.timestamp.clone(),
+            self.batch_size,
+            self.key_only,
+            self.reverse,
+        );
+        let retry_options = self.retry_options.clone();
+        let plan = PlanBuilder::new(self.pdc.clone(), request)
+            .resolve_lock(retry_options.lock_backoff)
+            .retry_multi_region(retry_options.region_backoff)
+            .merge(Collect)
+            .plan();
+        plan.execute()
+            .await
+            .map(|r| r.into_iter().map(Into::into).collect())
+    }
+}
 
 /// A caching layer which buffers reads and writes in a transaction.
 pub struct Buffer {
@@ -106,18 +180,17 @@ impl Buffer {
     }
 
     /// Run `f` to fetch entries in `range` from TiKV. Combine them with mutations in local buffer. Returns the results.
-    pub async fn scan_and_fetch<F, Fut>(
+    #[allow(clippy::too_many_arguments)]
+    pub async fn scan_and_fetch<PdC: PdClient>(
         &mut self,
+        pdc: Arc<PdC>,
         range: BoundRange,
+        timestamp: Timestamp,
         limit: u32,
         update_cache: bool,
         reverse: bool,
-        f: F,
-    ) -> Result<impl Iterator<Item = KvPair>>
-    where
-        F: FnOnce(BoundRange, u32) -> Fut,
-        Fut: Future<Output = Result<Vec<KvPair>>>,
-    {
+        retry_options: RetryOptions,
+    ) -> Result<impl Iterator<Item = KvPair>> {
         // read from local buffer
         let mutation_range = self.entry_map.range(range.clone());
 
@@ -129,11 +202,66 @@ impl Buffer {
                 .filter(|(_, m)| matches!(m, BufferEntry::Del))
                 .count() as u32;
 
-        let mut results = f(range, redundant_limit)
-            .await?
-            .into_iter()
-            .map(|pair| pair.into())
-            .collect::<HashMap<Key, Value>>();
+        let scanner = Scanner::new(
+            pdc,
+            timestamp,
+            range,
+            DEFAULT_BATCH_SIZE,
+            redundant_limit,
+            reverse,
+            !update_cache,
+            retry_options,
+        );
+
+        let kv_stream = stream::unfold(scanner, |mut scanner| async move {
+            // try read from cache
+            // cache is consumed done, so we need to fetch new data from server, and fill the cache
+            if scanner.current >= scanner.cache.len() {
+                // scan ended, because cache is not full-filled in the last fetch
+                if !scanner.cache.is_empty()
+                    && scanner.cache.len() < scanner.batch_size.try_into().unwrap()
+                {
+                    return None;
+                }
+                // fill cache
+                // generate new bound range
+                let range = scanner.next_start_key.clone()..scanner.next_end_key.clone();
+                scanner.range = range.into();
+                if scanner.limit < scanner.batch_size {
+                    scanner.batch_size = scanner.limit;
+                };
+
+                if let Ok(data) = scanner.fetch_data().await {
+                    scanner.cache = data;
+                } else {
+                    return None;
+                }
+
+                if scanner.cache.is_empty() {
+                    // scan ended
+                    return None;
+                }
+
+                scanner.limit -= scanner.cache.len() as u32;
+                // reset current index to start
+                scanner.current = 0;
+
+                // update bound range for next fetch
+                let last_key = scanner.cache.last().map(|kv| kv.0.clone()).unwrap();
+                if !scanner.reverse {
+                    scanner.next_start_key = last_key.next_key();
+                } else {
+                    scanner.next_end_key = last_key;
+                }
+            }
+
+            let ret = scanner.cache[scanner.current].clone();
+
+            scanner.current += 1;
+            Some((ret, scanner))
+        });
+        let kv_pairs = kv_stream.collect::<Vec<_>>().await;
+        let mut results: HashMap<Key, Value> = kv_pairs.into_iter().map(|kv| kv.into()).collect();
 
         // override using local data
         for (k, m) in mutation_range {
