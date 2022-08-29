@@ -713,6 +713,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 rpc,
                 range.into(),
                 timestamp,
+                self.options.scan_batch_size,
                 limit,
                 !key_only,
                 reverse,
@@ -939,6 +940,8 @@ const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(MAX_TTL / 2);
 const TXN_COMMIT_BATCH_SIZE: u64 = 16 * 1024;
 const TTL_FACTOR: f64 = 6000.0;
 
+const DEFAULT_BATCH_SIZE: u32 = 256;
+
 /// Optimistic or pessimistic transaction.
 #[derive(Clone, PartialEq, Debug)]
 pub enum TransactionKind {
@@ -964,6 +967,8 @@ pub struct TransactionOptions {
     retry_options: RetryOptions,
     /// What to do if the transaction is dropped without an attempt to commit or rollback
     check_level: CheckLevel,
+    /// Batch size for can operation, default is 256.
+    scan_batch_size: u32,
     #[doc(hidden)]
     heartbeat_option: HeartbeatOption,
 }
@@ -990,6 +995,7 @@ impl TransactionOptions {
             read_only: false,
             retry_options: RetryOptions::default_optimistic(),
             check_level: CheckLevel::Panic,
+            scan_batch_size: DEFAULT_BATCH_SIZE,
             heartbeat_option: HeartbeatOption::FixedTime(DEFAULT_HEARTBEAT_INTERVAL),
         }
     }
@@ -1003,6 +1009,7 @@ impl TransactionOptions {
             read_only: false,
             retry_options: RetryOptions::default_pessimistic(),
             check_level: CheckLevel::Panic,
+            scan_batch_size: DEFAULT_BATCH_SIZE,
             heartbeat_option: HeartbeatOption::FixedTime(DEFAULT_HEARTBEAT_INTERVAL),
         }
     }
@@ -1039,6 +1046,13 @@ impl TransactionOptions {
     #[must_use]
     pub fn no_resolve_regions(mut self) -> TransactionOptions {
         self.retry_options.region_backoff = Backoff::no_backoff();
+        self
+    }
+
+    /// Set batch size for transaction scan
+    #[must_use]
+    pub fn scan_batch_size(mut self, size: u32) -> TransactionOptions {
+        self.scan_batch_size = size;
         self
     }
 

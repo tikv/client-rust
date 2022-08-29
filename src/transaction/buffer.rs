@@ -15,8 +15,6 @@ use std::{
 };
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 
-const DEFAULT_BATCH_SIZE: u32 = 16;
-
 pub struct Scanner<PdC: PdClient = PdRpcClient> {
     pdc: Arc<PdC>,
     timestamp: Timestamp,
@@ -49,7 +47,7 @@ impl<PdC: PdClient> Scanner<PdC> {
             pdc,
             timestamp,
             range,
-            batch_size: batch_size.max(DEFAULT_BATCH_SIZE),
+            batch_size,
             current: 0,
             limit,
             cache: Vec::new(),
@@ -186,6 +184,7 @@ impl Buffer {
         pdc: Arc<PdC>,
         range: BoundRange,
         timestamp: Timestamp,
+        batch_size: u32,
         limit: u32,
         update_cache: bool,
         reverse: bool,
@@ -206,7 +205,7 @@ impl Buffer {
             pdc,
             timestamp,
             range,
-            DEFAULT_BATCH_SIZE,
+            batch_size,
             redundant_limit,
             reverse,
             !update_cache,
