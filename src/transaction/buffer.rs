@@ -193,7 +193,6 @@ impl Buffer {
         // read from local buffer
         let mutation_range = self.entry_map.range(range.clone());
 
-        // fetch from TiKV
         // fetch more entries because some of them may be deleted.
         let redundant_limit = limit
             + mutation_range
@@ -259,8 +258,10 @@ impl Buffer {
             scanner.current += 1;
             Some((ret, scanner))
         });
-        let kv_pairs = kv_stream.collect::<Vec<_>>().await;
-        let mut results: HashMap<Key, Value> = kv_pairs.into_iter().map(|kv| kv.into()).collect();
+        let mut results = kv_stream
+            .map(|kv| kv.into())
+            .collect::<HashMap<Key, Value>>()
+            .await;
 
         // override using local data
         for (k, m) in mutation_range {
