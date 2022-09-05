@@ -62,14 +62,22 @@ impl<Client> RegionCache<Client> {
 
 impl<C: RetryClientTrait> RegionCache<C> {
     // Retrieve cache entry by key. If there's no entry, query PD and update cache.
-    pub async fn get_region_by_key(&self, key: &Key) -> Result<RegionWithLeader> {
+    pub async fn get_region_by_key(&self, key: &Key, is_endkey: bool) -> Result<RegionWithLeader> {
         let region_cache_guard = self.region_cache.read().await;
         let res = {
-            region_cache_guard
-                .key_to_ver_id
-                .range(..=key)
-                .next_back()
-                .map(|(x, y)| (x.clone(), y.clone()))
+            if !is_endkey {
+                region_cache_guard
+                    .key_to_ver_id
+                    .range(..=key)
+                    .next_back()
+                    .map(|(x, y)| (x.clone(), y.clone()))
+            } else {
+                region_cache_guard
+                    .key_to_ver_id
+                    .range(..key)
+                    .next_back()
+                    .map(|(x, y)| (x.clone(), y.clone()))
+            }
         };
 
         if let Some((_, candidate_region_ver_id)) = res {
@@ -83,7 +91,11 @@ impl<C: RetryClientTrait> RegionCache<C> {
             }
         }
         drop(region_cache_guard);
-        self.read_through_region_by_key(key.clone()).await
+        if !is_endkey {
+            self.read_through_region_by_key(key.clone()).await
+        } else {
+            self.read_through_prev_region_by_key(key.clone()).await
+        }
     }
 
     // Retrieve cache entry by RegionId. If there's no entry, query PD and update cache.
@@ -127,6 +139,17 @@ impl<C: RetryClientTrait> RegionCache<C> {
     /// Force read through (query from PD) and update cache
     pub async fn read_through_region_by_key(&self, key: Key) -> Result<RegionWithLeader> {
         let region = self.inner_client.clone().get_region(key.into()).await?;
+        self.add_region(region.clone()).await;
+        Ok(region)
+    }
+
+    /// Force read through (query from PD) and update cache
+    pub async fn read_through_prev_region_by_key(&self, key: Key) -> Result<RegionWithLeader> {
+        let region = self
+            .inner_client
+            .clone()
+            .get_prev_region(key.into())
+            .await?;
         self.add_region(region.clone()).await;
         Ok(region)
     }
@@ -269,6 +292,13 @@ mod test {
                 .map(|(_, r)| r.clone())
                 .next()
                 .ok_or_else(|| Error::StringError("MockRetryClient: region not found".to_owned()))
+        }
+
+        async fn get_prev_region(
+            self: Arc<Self>,
+            key: Vec<u8>,
+        ) -> Result<crate::region::RegionWithLeader> {
+            self.get_region(key).await
         }
 
         async fn get_region_by_id(
@@ -448,20 +478,29 @@ mod test {
         cache.add_region(region4.clone()).await;
 
         assert_eq!(
-            cache.get_region_by_key(&vec![].into()).await?,
+            cache.get_region_by_key(&vec![].into(), false).await?,
             region1.clone()
         );
         assert_eq!(
-            cache.get_region_by_key(&vec![5].into()).await?,
+            cache.get_region_by_key(&vec![5].into(), false).await?,
             region1.clone()
         );
         assert_eq!(
-            cache.get_region_by_key(&vec![10].into()).await?,
+            cache.get_region_by_key(&vec![10].into(), false).await?,
             region2.clone()
         );
-        assert!(cache.get_region_by_key(&vec![20].into()).await.is_err());
-        assert!(cache.get_region_by_key(&vec![25].into()).await.is_err());
-        assert_eq!(cache.get_region_by_key(&vec![60].into()).await?, region4);
+        assert!(cache
+            .get_region_by_key(&vec![20].into(), false)
+            .await
+            .is_err());
+        assert!(cache
+            .get_region_by_key(&vec![25].into(), false)
+            .await
+            .is_err());
+        assert_eq!(
+            cache.get_region_by_key(&vec![60].into(), false).await?,
+            region4
+        );
         Ok(())
     }
 

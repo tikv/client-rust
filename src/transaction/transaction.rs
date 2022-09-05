@@ -346,6 +346,15 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.scan_inner(range, limit, false, false).await
     }
 
+    pub async fn scan_stream(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Stream<Item = KvPair>> {
+        debug!(self.logger, "invoking transactional scan request");
+        self.scan_inner_stream(range, limit, false, false).await
+    }
+
     /// Create a new 'scan' request that only returns the keys.
     ///
     /// Once resolved this request will result in a `Vec` of keys that lies in the specified range.
@@ -385,6 +394,18 @@ impl<PdC: PdClient> Transaction<PdC> {
             .map(KvPair::into_key))
     }
 
+    pub async fn scan_keys_stream(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Stream<Item = Key>> {
+        debug!(self.logger, "invoking transactional scan_keys request");
+        Ok(self
+            .scan_inner_stream(range, limit, true, false)
+            .await?
+            .map(KvPair::into_key))
+    }
+
     /// Create a 'scan_reverse' request.
     ///
     /// Similar to [`scan`](Transaction::scan), but scans in the reverse direction.
@@ -395,6 +416,15 @@ impl<PdC: PdClient> Transaction<PdC> {
     ) -> Result<impl Iterator<Item = KvPair>> {
         debug!(self.logger, "invoking transactional scan_reverse request");
         self.scan_inner(range, limit, false, true).await
+    }
+
+    pub async fn scan_reverse_stream(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Stream<Item = KvPair>> {
+        debug!(self.logger, "invoking transactional scan_reverse request");
+        self.scan_inner_stream(range, limit, false, true).await
     }
 
     /// Create a 'scan_keys_reverse' request.
@@ -411,6 +441,21 @@ impl<PdC: PdClient> Transaction<PdC> {
         );
         Ok(self
             .scan_inner(range, limit, true, true)
+            .await?
+            .map(KvPair::into_key))
+    }
+
+    pub async fn scan_keys_reverse_stream(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Stream<Item = Key>> {
+        debug!(
+            self.logger,
+            "invoking transactional scan_keys_reverse request"
+        );
+        Ok(self
+            .scan_inner_stream(range, limit, true, true)
             .await?
             .map(KvPair::into_key))
     }
@@ -439,7 +484,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.pessimistic_lock(iter::once(key.clone()), false)
                 .await?;
         }
-        self.buffer.put(key, value.into());
+        self.buffer.put(key, value.into()).await;
         Ok(())
     }
 
@@ -466,7 +511,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         debug!(self.logger, "invoking transactional insert request");
         self.check_allow_operation().await?;
         let key = key.into();
-        if self.buffer.get(&key).is_some() {
+        if self.buffer.get(&key).await.is_some() {
             return Err(Error::DuplicateKeyInsertion);
         }
         if self.is_pessimistic() {
@@ -476,7 +521,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             )
             .await?;
         }
-        self.buffer.insert(key, value.into());
+        self.buffer.insert(key, value.into()).await;
         Ok(())
     }
 
@@ -505,7 +550,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.pessimistic_lock(iter::once(key.clone()), false)
                 .await?;
         }
-        self.buffer.delete(key);
+        self.buffer.delete(key).await;
         Ok(())
     }
 
@@ -541,7 +586,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         match self.options.kind {
             TransactionKind::Optimistic => {
                 for key in keys {
-                    self.buffer.lock(key.into());
+                    self.buffer.lock(key.into()).await;
                 }
             }
             TransactionKind::Pessimistic(_) => {
@@ -581,7 +626,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         }
 
         let primary_key = self.buffer.get_primary_key();
-        let mutations = self.buffer.to_proto_mutations();
+        let mutations = self.buffer.to_proto_mutations().await;
         if mutations.is_empty() {
             assert!(primary_key.is_none());
             return Ok(None);
@@ -595,7 +640,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.timestamp.clone(),
             self.rpc.clone(),
             self.options.clone(),
-            self.buffer.get_write_size() as u64,
+            self.buffer.get_write_size().await as u64,
             self.start_instant,
             self.logger.new(o!("child" => 1)),
         )
@@ -645,14 +690,14 @@ impl<PdC: PdClient> Transaction<PdC> {
         }
 
         let primary_key = self.buffer.get_primary_key();
-        let mutations = self.buffer.to_proto_mutations();
+        let mutations = self.buffer.to_proto_mutations().await;
         let res = Committer::new(
             primary_key,
             mutations,
             self.timestamp.clone(),
             self.rpc.clone(),
             self.options.clone(),
-            self.buffer.get_write_size() as u64,
+            self.buffer.get_write_size().await as u64,
             self.start_instant,
             self.logger.new(o!("child" => 1)),
         )
@@ -710,6 +755,40 @@ impl<PdC: PdClient> Transaction<PdC> {
 
         self.buffer
             .scan_and_fetch(
+                range.into(),
+                limit,
+                !key_only,
+                reverse,
+                move |new_range, new_limit| async move {
+                    let request =
+                        new_scan_request(new_range, timestamp, new_limit, key_only, reverse);
+                    let plan = PlanBuilder::new(rpc, request)
+                        .resolve_lock(retry_options.lock_backoff)
+                        .retry_multi_region(retry_options.region_backoff)
+                        .merge(Collect)
+                        .plan();
+                    plan.execute()
+                        .await
+                        .map(|r| r.into_iter().map(Into::into).collect())
+                },
+            )
+            .await
+    }
+
+    async fn scan_inner_stream(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+        key_only: bool,
+        reverse: bool,
+    ) -> Result<impl Stream<Item = KvPair>> {
+        self.check_allow_operation().await?;
+        let timestamp = self.timestamp.clone();
+        let rpc = self.rpc.clone();
+        let retry_options = self.options.retry_options.clone();
+
+        self.buffer
+            .scan_and_fetch_stream(
                 rpc,
                 range.into(),
                 timestamp,
@@ -792,7 +871,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.start_auto_heartbeat().await;
 
             for key in keys {
-                self.buffer.lock(key.key());
+                self.buffer.lock(key.key()).await;
             }
 
             pairs
@@ -826,7 +905,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         plan.execute().await?;
 
         for key in keys {
-            self.buffer.unlock(&key);
+            self.buffer.unlock(&key).await;
         }
         Ok(())
     }

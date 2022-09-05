@@ -34,6 +34,8 @@ pub trait RetryClientTrait {
     // It does not know about encoding. Caller should take care of it.
     async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader>;
 
+    async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader>;
+
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader>;
 
     async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store>;
@@ -135,6 +137,39 @@ impl RetryClientTrait for RetryClient<Cluster> {
                     .await
                     .and_then(|resp| {
                         region_from_response(resp, || Error::RegionForKeyNotFound { key })
+                    })
+            }
+        })
+    }
+
+    async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
+        let prev_key = if key.is_empty() {
+            vec![0_u8]
+        } else {
+            let mut key = key.clone();
+            key.pop().unwrap();
+            key
+        };
+        retry!(self, "get_prev_region", |cluster| {
+            let key = key.clone();
+            // trim the last byte to get the previous key for scan
+            async {
+                cluster
+                    .scan_regions(prev_key.clone(), key.clone(), 0, self.timeout)
+                    .await
+                    .and_then(|mut resp| {
+                        let regions = resp.take_regions();
+                        let regions_len = regions.len();
+                        if regions.len() < 2 {
+                            Err(Error::RegionForKeyNotFound { key })
+                        } else {
+                            let region = regions[regions_len - 2].clone();
+                            let region_meta = region
+                                .region
+                                .ok_or_else(|| Error::RegionForKeyNotFound { key: key.clone() })?;
+
+                            Ok(RegionWithLeader::new(region_meta, region.leader))
+                        }
                     })
             }
         })

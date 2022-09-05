@@ -2,19 +2,25 @@
 
 use crate::{
     pd::{PdClient, PdRpcClient},
-    request::{Collect, Plan, PlanBuilder},
+    request::{Plan, PlanBuilder},
     transaction_lowering::new_scan_request,
     BoundRange, Key, KvPair, Result, RetryOptions, Value,
 };
-use futures::stream::{self, StreamExt};
+use futures::{
+    stream::{self, StreamExt},
+    Stream,
+};
+use ordered_stream::{FromStream, OrderedStreamExt};
 use std::{
+    cmp::Reverse,
     collections::{btree_map::Entry, BTreeMap, HashMap},
-    convert::TryInto,
     future::Future,
     sync::Arc,
 };
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use tokio::sync::RwLock;
 
+#[allow(dead_code)]
 pub struct Scanner<PdC: PdClient = PdRpcClient> {
     pdc: Arc<PdC>,
     timestamp: Timestamp,
@@ -28,6 +34,7 @@ pub struct Scanner<PdC: PdClient = PdRpcClient> {
     reverse: bool,
     key_only: bool,
     retry_options: RetryOptions,
+    eof: bool,
 }
 
 impl<PdC: PdClient> Scanner<PdC> {
@@ -46,43 +53,103 @@ impl<PdC: PdClient> Scanner<PdC> {
         Self {
             pdc,
             timestamp,
-            range,
+            range: range.clone(),
             batch_size,
             current: 0,
             limit,
             cache: Vec::new(),
             next_start_key: start,
-            next_end_key: end.unwrap_or(Key::EMPTY),
+            next_end_key: end.unwrap_or_default(),
             reverse,
             key_only,
             retry_options,
+            eof: false,
         }
     }
 
-    pub async fn fetch_data(&self) -> Result<Vec<KvPair>> {
+    pub async fn fetch_data(&mut self) -> Result<Vec<KvPair>> {
+        let retry_options = self.retry_options.clone();
+        let (start_key, end_key) = self.range.clone().into_keys();
+
+        let region_store = if !self.reverse {
+            self.pdc.clone().store_for_key(&self.next_start_key).await?
+        } else {
+            self.pdc
+                .clone()
+                .store_for_endkey(&self.next_end_key)
+                .await?
+        };
+
+        let (mut region_start, mut region_end) = region_store.region_with_leader.range();
+        if !self.reverse {
+            region_start = self.next_start_key.clone();
+            if !end_key.is_none() && !region_end.is_empty() && region_end > end_key.clone().unwrap()
+            {
+                region_end = end_key.clone().unwrap();
+            }
+        } else {
+            region_end = self.next_end_key.clone();
+            if start_key.is_empty() || !region_start.is_empty() && region_start < start_key {
+                region_start = start_key.clone();
+            }
+        }
+        let req_range_key = region_start.clone()..region_end.clone();
+        let req_range = req_range_key.into();
         let request = new_scan_request(
-            self.range.clone(),
+            req_range,
             self.timestamp.clone(),
             self.batch_size,
             self.key_only,
             self.reverse,
         );
-        let retry_options = self.retry_options.clone();
         let plan = PlanBuilder::new(self.pdc.clone(), request)
+            .single_region_with_store(region_store)
+            .await?
             .resolve_lock(retry_options.lock_backoff)
-            .retry_multi_region(retry_options.region_backoff)
-            .merge(Collect)
+            .extract_error()
             .plan();
-        plan.execute()
-            .await
-            .map(|r| r.into_iter().map(Into::into).collect())
+        let resp = plan.execute().await.map(|resp| {
+            resp.get_pairs()
+                .iter()
+                .map(|kv| KvPair::from((kv.key.clone(), kv.value.clone())))
+                .collect::<Vec<_>>()
+        });
+
+        if let Ok(resp) = resp.as_ref() {
+            if resp.len() < self.batch_size as usize {
+                if !self.reverse {
+                    // set next_start_key to end_key
+                    self.next_start_key = region_end.clone();
+                } else {
+                    self.next_end_key = region_start.clone();
+                }
+                if (!self.reverse
+                    && (region_end.is_empty()
+                        || end_key.is_some() && self.next_start_key >= end_key.unwrap()))
+                    || (self.reverse
+                        && (region_start.is_empty()
+                            || start_key.len() > 0 && start_key >= self.next_end_key))
+                {
+                    self.eof = true;
+                }
+            } else {
+                let last_key = resp.last().map(|kv| kv.0.clone()).unwrap();
+                if !self.reverse {
+                    self.next_start_key = last_key.next_key();
+                } else {
+                    self.next_end_key = last_key;
+                }
+            }
+        }
+
+        resp
     }
 }
 
 /// A caching layer which buffers reads and writes in a transaction.
 pub struct Buffer {
     primary_key: Option<Key>,
-    entry_map: BTreeMap<Key, BufferEntry>,
+    entry_map: Arc<RwLock<BTreeMap<Key, BufferEntry>>>,
     is_pessimistic: bool,
 }
 
@@ -90,7 +157,7 @@ impl Buffer {
     pub fn new(is_pessimistic: bool) -> Buffer {
         Buffer {
             primary_key: None,
-            entry_map: BTreeMap::new(),
+            entry_map: Arc::new(RwLock::new(BTreeMap::new())),
             is_pessimistic,
         }
     }
@@ -107,8 +174,8 @@ impl Buffer {
 
     /// Get a value from the buffer.
     /// If the returned value is None, it means the key doesn't exist in buffer yet.
-    pub fn get(&self, key: &Key) -> Option<Value> {
-        match self.get_from_mutations(key) {
+    pub async fn get(&self, key: &Key) -> Option<Value> {
+        match self.get_from_mutations(key).await {
             MutationValue::Determined(value) => value,
             MutationValue::Undetermined => None,
         }
@@ -121,11 +188,11 @@ impl Buffer {
         F: FnOnce(Key) -> Fut,
         Fut: Future<Output = Result<Option<Value>>>,
     {
-        match self.get_from_mutations(&key) {
+        match self.get_from_mutations(&key).await {
             MutationValue::Determined(value) => Ok(value),
             MutationValue::Undetermined => {
                 let value = f(key.clone()).await?;
-                self.update_cache(key, value.clone());
+                self.update_cache(key, value.clone()).await;
                 Ok(value)
             }
         }
@@ -147,10 +214,10 @@ impl Buffer {
         let (cached_results, undetermined_keys) = {
             // Partition the keys into those we have buffered and those we have to
             // get from the store.
+            let entry_map = self.entry_map.read().await;
             let (undetermined_keys, cached_results): (Vec<_>, Vec<_>) = keys
                 .map(|key| {
-                    let value = self
-                        .entry_map
+                    let value = entry_map
                         .get(&key)
                         .map(BufferEntry::get_value)
                         .unwrap_or(MutationValue::Undetermined);
@@ -170,7 +237,7 @@ impl Buffer {
         for kvpair in &fetched_results {
             let key = kvpair.0.clone();
             let value = Some(kvpair.1.clone());
-            self.update_cache(key, value);
+            self.update_cache(key, value).await;
         }
 
         let results = cached_results.chain(fetched_results.into_iter());
@@ -178,8 +245,74 @@ impl Buffer {
     }
 
     /// Run `f` to fetch entries in `range` from TiKV. Combine them with mutations in local buffer. Returns the results.
+    pub async fn scan_and_fetch<F, Fut>(
+        &mut self,
+        range: BoundRange,
+        limit: u32,
+        update_cache: bool,
+        reverse: bool,
+        f: F,
+    ) -> Result<impl Iterator<Item = KvPair>>
+    where
+        F: FnOnce(BoundRange, u32) -> Fut,
+        Fut: Future<Output = Result<Vec<KvPair>>> + Send,
+    {
+        // read from local buffer
+        let entry_map = self.entry_map.read().await;
+        let mutation_range = entry_map.range(range.clone());
+
+        // fetch from TiKV
+        // fetch more entries because some of them may be deleted.
+        let redundant_limit = limit
+            + mutation_range
+                .clone()
+                .filter(|(_, m)| matches!(m, BufferEntry::Del))
+                .count() as u32;
+
+        let mut results = f(range, redundant_limit)
+            .await?
+            .into_iter()
+            .map(|pair| pair.into())
+            .collect::<HashMap<Key, Value>>();
+
+        // override using local data
+        for (k, m) in mutation_range {
+            match m {
+                BufferEntry::Put(v) => {
+                    results.insert(k.clone(), v.clone());
+                }
+                BufferEntry::Del => {
+                    results.remove(k);
+                }
+                _ => {}
+            }
+        }
+        drop(entry_map);
+
+        // update local buffer
+        if update_cache {
+            for (k, v) in &results {
+                self.update_cache(k.clone(), Some(v.clone())).await;
+            }
+        }
+
+        let mut res = results
+            .into_iter()
+            .map(|(k, v)| KvPair::new(k, v))
+            .collect::<Vec<_>>();
+
+        // TODO: use `BTreeMap` instead of `HashMap` to avoid sorting.
+        if reverse {
+            res.sort_unstable_by(|a, b| b.key().cmp(a.key()));
+        } else {
+            res.sort_unstable_by(|a, b| a.key().cmp(b.key()));
+        }
+
+        Ok(res.into_iter().take(limit as usize))
+    }
+
     #[allow(clippy::too_many_arguments)]
-    pub async fn scan_and_fetch<PdC: PdClient>(
+    pub async fn scan_and_fetch_stream<PdC: PdClient>(
         &mut self,
         pdc: Arc<PdC>,
         range: BoundRange,
@@ -189,9 +322,10 @@ impl Buffer {
         update_cache: bool,
         reverse: bool,
         retry_options: RetryOptions,
-    ) -> Result<impl Iterator<Item = KvPair>> {
+    ) -> Result<impl Stream<Item = KvPair>> {
         // read from local buffer
-        let mutation_range = self.entry_map.range(range.clone());
+        let entry_map = self.entry_map.read().await;
+        let mutation_range = entry_map.range(range.clone());
 
         // fetch more entries because some of them may be deleted.
         let redundant_limit = limit
@@ -214,17 +348,12 @@ impl Buffer {
         let kv_stream = stream::unfold(scanner, |mut scanner| async move {
             // try read from cache
             // cache is consumed done, so we need to fetch new data from server, and fill the cache
-            if scanner.current >= scanner.cache.len() {
-                // scan ended, because cache is not full-filled in the last fetch
-                if !scanner.cache.is_empty()
-                    && scanner.cache.len() < scanner.batch_size.try_into().unwrap()
-                {
+            while scanner.current >= scanner.cache.len() {
+                if scanner.eof {
                     return None;
                 }
+
                 // fill cache
-                // generate new bound range
-                let range = scanner.next_start_key.clone()..scanner.next_end_key.clone();
-                scanner.range = range.into();
                 if scanner.limit < scanner.batch_size {
                     scanner.batch_size = scanner.limit;
                 };
@@ -236,73 +365,97 @@ impl Buffer {
                 }
 
                 if scanner.cache.is_empty() {
-                    // scan ended
-                    return None;
+                    // this region scan ended, try next region
+                    continue;
                 }
 
                 scanner.limit -= scanner.cache.len() as u32;
+                if scanner.limit == 0 {
+                    scanner.eof = true;
+                }
+
                 // reset current index to start
                 scanner.current = 0;
-
-                // update bound range for next fetch
-                let last_key = scanner.cache.last().map(|kv| kv.0.clone()).unwrap();
-                if !scanner.reverse {
-                    scanner.next_start_key = last_key.next_key();
-                } else {
-                    scanner.next_end_key = last_key;
-                }
             }
 
             let ret = scanner.cache[scanner.current].clone();
 
+            // check the last key if out of range
+            if !scanner.reverse
+                && (scanner.next_end_key.len() > 0 && ret.key() >= scanner.next_end_key.as_ref())
+                || scanner.reverse
+                    && (scanner.next_start_key.len() > 0
+                        && ret.key() < scanner.next_start_key.as_ref())
+            {
+                scanner.eof = true;
+                return None;
+            }
+
             scanner.current += 1;
             Some((ret, scanner))
         });
-        let mut results = kv_stream
-            .map(|kv| kv.into())
-            .collect::<HashMap<Key, Value>>()
-            .await;
 
-        // override using local data
-        for (k, m) in mutation_range {
-            match m {
-                BufferEntry::Put(v) => {
-                    results.insert(k.clone(), v.clone());
+        let entry_map = self.entry_map.clone();
+        let kv_stream_filtered = kv_stream.filter_map(move |kv| {
+            let entry_map = entry_map.clone();
+            async move {
+                let mut entry_map = entry_map.write().await;
+                if let Some(BufferEntry::Del) = entry_map.get(kv.key()) {
+                    return None;
                 }
-                BufferEntry::Del => {
-                    results.remove(k);
+
+                // update local buffer
+                match entry_map.get(kv.key()) {
+                    Some(BufferEntry::Locked(None)) => {
+                        entry_map.insert(
+                            kv.key().clone(),
+                            BufferEntry::Locked(Some(Some(kv.value().clone()))),
+                        );
+                    }
+                    None => {
+                        entry_map.insert(
+                            kv.key().clone(),
+                            BufferEntry::Cached(Some(kv.value().clone())),
+                        );
+                    }
+                    _ => {}
                 }
-                _ => {}
+                Some(kv)
             }
-        }
+        });
 
-        // update local buffer
-        if update_cache {
-            for (k, v) in &results {
-                self.update_cache(k.clone(), Some(v.clone()));
-            }
-        }
-
-        let mut res = results
-            .into_iter()
-            .map(|(k, v)| KvPair::new(k, v))
+        // convert mutation puts into stream
+        let mutation_range_iter = mutation_range
+            .filter(|(_, v)| matches!(v, BufferEntry::Put(_)))
+            .map(|(k, v)| KvPair::from((k.clone(), v.get_value().unwrap().unwrap())))
             .collect::<Vec<_>>();
 
-        // TODO: use `BTreeMap` instead of `HashMap` to avoid sorting.
-        if reverse {
-            res.sort_unstable_by(|a, b| b.key().cmp(a.key()));
+        // fetch items from kv_stream and mutaiton_stream in order, override item from kv_stream if item exists in mutation_stream
+        let merged_stream = if !reverse {
+            ordered_stream::join(
+                FromStream::with_ordering(kv_stream_filtered, |kv| kv.0.clone()),
+                FromStream::with_ordering(stream::iter(mutation_range_iter), |kv| kv.0.clone()),
+            )
+            .into_stream()
+            .boxed()
         } else {
-            res.sort_unstable_by(|a, b| a.key().cmp(b.key()));
-        }
-
-        Ok(res.into_iter().take(limit as usize))
+            ordered_stream::join(
+                FromStream::with_ordering(kv_stream_filtered, |kv| Reverse(kv.0.clone())),
+                FromStream::with_ordering(stream::iter(mutation_range_iter), |kv| {
+                    Reverse(kv.0.clone())
+                }),
+            )
+            .into_stream()
+            .boxed()
+        };
+        Ok(merged_stream)
     }
 
     /// Lock the given key if necessary.
-    pub fn lock(&mut self, key: Key) {
+    pub async fn lock(&mut self, key: Key) {
         self.primary_key.get_or_insert_with(|| key.clone());
-        let value = self
-            .entry_map
+        let mut entry_map = self.entry_map.write().await;
+        let value = entry_map
             .entry(key)
             // Mutated keys don't need a lock.
             .or_insert(BufferEntry::Locked(None));
@@ -313,48 +466,57 @@ impl Buffer {
     }
 
     /// Unlock the given key if locked.
-    pub fn unlock(&mut self, key: &Key) {
-        if let Some(value) = self.entry_map.get_mut(key) {
+    pub async fn unlock(&mut self, key: &Key) {
+        if let Some(value) = self.entry_map.write().await.get_mut(key) {
             if let BufferEntry::Locked(v) = value {
                 if let Some(v) = v {
                     *value = BufferEntry::Cached(v.take());
                 } else {
-                    self.entry_map.remove(key);
+                    self.entry_map.write().await.remove(key);
                 }
             }
         }
     }
 
     /// Put a value into the buffer (does not write through).
-    pub fn put(&mut self, key: Key, value: Value) {
-        let mut entry = self.entry_map.entry(key.clone());
-        match entry {
+    pub async fn put(&mut self, key: Key, value: Value) {
+        let entry_map = self.entry_map.clone();
+        let mut entry_map = entry_map.write().await;
+        match entry_map.entry(key.clone()) {
             Entry::Occupied(ref mut o)
                 if matches!(o.get(), BufferEntry::Insert(_))
                     || matches!(o.get(), BufferEntry::CheckNotExist) =>
             {
                 o.insert(BufferEntry::Insert(value));
             }
-            _ => self.insert_entry(key, BufferEntry::Put(value)),
+            _ => {
+                drop(entry_map);
+                self.insert_entry(key, BufferEntry::Put(value)).await;
+            }
         }
     }
 
     /// Mark a value as Insert mutation into the buffer (does not write through).
-    pub fn insert(&mut self, key: Key, value: Value) {
-        let mut entry = self.entry_map.entry(key.clone());
-        match entry {
+    pub async fn insert(&mut self, key: Key, value: Value) {
+        let entry_map = self.entry_map.clone();
+        let mut entry_map = entry_map.write().await;
+        match entry_map.entry(key.clone()) {
             Entry::Occupied(ref mut o) if matches!(o.get(), BufferEntry::Del) => {
                 o.insert(BufferEntry::Put(value));
             }
-            _ => self.insert_entry(key, BufferEntry::Insert(value)),
+            _ => {
+                drop(entry_map);
+                self.insert_entry(key, BufferEntry::Insert(value)).await;
+            }
         }
     }
 
     /// Mark a value as deleted.
-    pub fn delete(&mut self, key: Key) {
+    pub async fn delete(&mut self, key: Key) {
         let is_pessimistic = self.is_pessimistic;
-        let mut entry = self.entry_map.entry(key.clone());
-
+        let entry_map = self.entry_map.clone();
+        let mut entry_map = entry_map.write().await;
+        let mut entry = entry_map.entry(key.clone());
         match entry {
             Entry::Occupied(ref mut o)
                 if !is_pessimistic
@@ -363,20 +525,27 @@ impl Buffer {
             {
                 o.insert(BufferEntry::CheckNotExist);
             }
-            _ => self.insert_entry(key, BufferEntry::Del),
+            _ => {
+                drop(entry_map);
+                self.insert_entry(key, BufferEntry::Del).await;
+            }
         }
     }
 
     /// Converts the buffered mutations to the proto buffer version
-    pub fn to_proto_mutations(&self) -> Vec<kvrpcpb::Mutation> {
+    pub async fn to_proto_mutations(&self) -> Vec<kvrpcpb::Mutation> {
         self.entry_map
+            .read()
+            .await
             .iter()
             .filter_map(|(key, mutation)| mutation.to_proto_with_key(key))
             .collect()
     }
 
-    pub fn get_write_size(&self) -> usize {
+    pub async fn get_write_size(&self) -> usize {
         self.entry_map
+            .read()
+            .await
             .iter()
             .map(|(k, v)| match v {
                 BufferEntry::Put(val) | BufferEntry::Insert(val) => val.len() + k.len(),
@@ -386,20 +555,23 @@ impl Buffer {
             .sum()
     }
 
-    fn get_from_mutations(&self, key: &Key) -> MutationValue {
+    async fn get_from_mutations(&self, key: &Key) -> MutationValue {
         self.entry_map
+            .read()
+            .await
             .get(key)
             .map(BufferEntry::get_value)
             .unwrap_or(MutationValue::Undetermined)
     }
 
-    fn update_cache(&mut self, key: Key, value: Option<Value>) {
-        match self.entry_map.get(&key) {
+    async fn update_cache(&mut self, key: Key, value: Option<Value>) {
+        let mut entry_map = self.entry_map.write().await;
+        match entry_map.get(&key) {
             Some(BufferEntry::Locked(None)) => {
-                self.entry_map.insert(key, BufferEntry::Locked(Some(value)));
+                entry_map.insert(key, BufferEntry::Locked(Some(value)));
             }
             None => {
-                self.entry_map.insert(key, BufferEntry::Cached(value));
+                entry_map.insert(key, BufferEntry::Cached(value));
             }
             Some(BufferEntry::Cached(v)) | Some(BufferEntry::Locked(Some(v))) => {
                 assert!(&value == v);
@@ -415,12 +587,12 @@ impl Buffer {
         }
     }
 
-    fn insert_entry(&mut self, key: impl Into<Key>, entry: BufferEntry) {
+    async fn insert_entry(&mut self, key: impl Into<Key>, entry: BufferEntry) {
         let key = key.into();
         if !matches!(entry, BufferEntry::Cached(_) | BufferEntry::CheckNotExist) {
             self.primary_key.get_or_insert_with(|| key.clone());
         }
-        self.entry_map.insert(key, entry);
+        self.entry_map.write().await.insert(key, entry);
     }
 }
 

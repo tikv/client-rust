@@ -49,6 +49,8 @@ pub trait PdClient: Send + Sync + 'static {
     /// In transactional API, the key and returned region are both decoded (keys in raw format).
     async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader>;
 
+    async fn region_for_endkey(&self, key: &Key) -> Result<RegionWithLeader>;
+
     /// In transactional API, the returned region is decoded (keys in raw format)
     async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader>;
 
@@ -59,6 +61,11 @@ pub trait PdClient: Send + Sync + 'static {
     /// In transactional API, `key` is in raw format
     async fn store_for_key(self: Arc<Self>, key: &Key) -> Result<RegionStore> {
         let region = self.region_for_key(key).await?;
+        self.map_region_to_store(region).await
+    }
+
+    async fn store_for_endkey(self: Arc<Self>, key: &Key) -> Result<RegionStore> {
+        let region = self.region_for_endkey(key).await?;
         self.map_region_to_store(region).await
     }
 
@@ -234,7 +241,23 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
             key.clone()
         };
 
-        let region = self.region_cache.get_region_by_key(&key).await?;
+        let region = self.region_cache.get_region_by_key(&key, false).await?;
+        Self::decode_region(region, enable_codec)
+    }
+
+    async fn region_for_endkey(&self, key: &Key) -> Result<RegionWithLeader> {
+        let enable_codec = self.enable_codec;
+        let key = if enable_codec {
+            key.to_encoded()
+        } else {
+            key.clone()
+        };
+
+        let mut region = self.region_cache.get_region_by_key(&key, false).await?;
+        // check if key is the start key of the region, if so, we need to get the previous region
+        if key == region.start_key() {
+            region = self.region_cache.get_region_by_key(&key, true).await?;
+        }
         Self::decode_region(region, enable_codec)
     }
 

@@ -171,6 +171,10 @@ impl PdClient for MockPdClient {
         Ok(region)
     }
 
+    async fn region_for_endkey(&self, key: &Key) -> Result<RegionWithLeader> {
+        self.region_for_key(key).await
+    }
+
     async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {
         match id {
             1 => Ok(Self::region1()),

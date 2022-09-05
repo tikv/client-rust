@@ -27,6 +27,7 @@ futures-timer = "3.0"
 grpcio = { version = "0.10", features = [ "prost-codec", "openssl-vendored" ], default-features = false }
 lazy_static = "1"
 log = "0.4"
+ordered-stream = "0.1.1"
 prometheus = { version = "0.12", features = [ "push", "process" ], default-features = false } 
 rand = "0.8"
 regex = "1"
