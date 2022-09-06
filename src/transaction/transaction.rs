@@ -346,6 +346,9 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.scan_inner(range, limit, false, false).await
     }
 
+    /// Create a 'scan' request.
+    ///
+    /// Similar to [`scan`](Transaction::scan), but return a stream.
     pub async fn scan_stream(
         &mut self,
         range: impl Into<BoundRange>,
@@ -394,6 +397,9 @@ impl<PdC: PdClient> Transaction<PdC> {
             .map(KvPair::into_key))
     }
 
+    /// Create a 'scan_keys' request.
+    ///
+    /// Similar to [`scan_keys`](Transaction::scan_keys), but return stream.
     pub async fn scan_keys_stream(
         &mut self,
         range: impl Into<BoundRange>,
@@ -418,6 +424,9 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.scan_inner(range, limit, false, true).await
     }
 
+    /// Create a 'scan_reverse' request.
+    ///
+    /// Similar to [`scan_reverse`](Transaction::scan_reverse), but return stream.
     pub async fn scan_reverse_stream(
         &mut self,
         range: impl Into<BoundRange>,
@@ -445,6 +454,9 @@ impl<PdC: PdClient> Transaction<PdC> {
             .map(KvPair::into_key))
     }
 
+    /// Create a 'scan_keys_reverse' request.
+    ///
+    /// Similar to [`scan_keys_reverse`](Transaction::scan_keys_reverse), but return stream.
     pub async fn scan_keys_reverse_stream(
         &mut self,
         range: impl Into<BoundRange>,

@@ -17,6 +17,7 @@ use futures::prelude::*;
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 use serial_test::serial;
 use std::{
+    assert_eq,
     collections::{HashMap, HashSet},
     convert::TryInto,
     iter,
@@ -885,6 +886,74 @@ async fn txn_scan() -> Result<()> {
 
 #[tokio::test]
 #[serial]
+async fn txn_scan_stream() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
+
+    let v = b"data".to_vec();
+
+    let option = TransactionOptions::new_pessimistic()
+        .drop_check(tikv_client::CheckLevel::Warn)
+        .scan_batch_size(16);
+    let mut t = client.begin_with_options(option.clone()).await?;
+    // put 1000 keys
+    for i in 0..1000 {
+        let mut key = "scan_key:".to_string().into_bytes();
+        let i: u32 = i;
+        key.extend_from_slice(&i.to_be_bytes());
+        t.put(Key::from(key), v.clone()).await?;
+    }
+    t.commit().await?;
+
+    let mut t2 = client.begin_with_options(option.clone()).await?;
+
+    let prefix = "scan_key:".to_string().into_bytes();
+    let mut start_key = prefix.clone();
+    start_key.extend_from_slice(&0u32.to_be_bytes());
+    let mut end_key = prefix.clone();
+    end_key.extend_from_slice(&1000u32.to_be_bytes());
+    let bound_range: BoundRange = (Key::from(start_key)..=Key::from(end_key)).into();
+
+    let mut iter = t2.scan(bound_range.clone(), u32::MAX).await?;
+    let mut idx: u32 = 0;
+    while let Some(kv) = iter.next() {
+        let mut key = "scan_key:".to_string().into_bytes();
+        key.extend_from_slice(&idx.to_be_bytes());
+        assert_eq!(kv.0, Key::from(key));
+        idx += 1;
+    }
+    assert_eq!(idx, 1000);
+
+    let mut iter = t2.scan_stream(bound_range.clone(), u32::MAX).await?;
+    idx = 0;
+    while let Some(kv) = iter.next().await {
+        let mut key = "scan_key:".to_string().into_bytes();
+        key.extend_from_slice(&idx.to_be_bytes());
+        assert_eq!(kv.0, Key::from(key));
+        idx += 1;
+    }
+    assert_eq!(idx, 1000);
+    t2.commit().await?;
+
+    // cleanup
+    let mut t3 = client.begin_with_options(option).await?;
+    let mut iter = t3.scan_keys_stream(bound_range, u32::MAX).await?;
+    idx = 0;
+    while let Some(k) = iter.next().await {
+        let mut key = "scan_key:".to_string().into_bytes();
+        key.extend_from_slice(&idx.to_be_bytes());
+        assert_eq!(k, Key::from(key));
+        idx += 1;
+        t3.delete(k).await?;
+    }
+    assert_eq!(idx, 1000);
+    t3.commit().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
 async fn txn_scan_reverse() -> Result<()> {
     init().await?;
     let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
@@ -899,7 +968,6 @@ async fn txn_scan_reverse() -> Result<()> {
         (Key::from(k1.clone()), v1.clone()),
     ];
 
-    // pessimistic
     let option = TransactionOptions::new_pessimistic().drop_check(tikv_client::CheckLevel::Warn);
     let mut t = client.begin_with_options(option.clone()).await?;
     t.put(k1.clone(), v1).await?;
@@ -916,6 +984,65 @@ async fn txn_scan_reverse() -> Result<()> {
     assert_eq!(resp, reverse_resp);
     t2.commit().await?;
 
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn txn_scan_reverse_stream() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
+
+    let v = b"data".to_vec();
+
+    let option = TransactionOptions::new_pessimistic()
+        .drop_check(tikv_client::CheckLevel::Warn)
+        .scan_batch_size(16);
+    let mut t = client.begin_with_options(option.clone()).await?;
+    // put 1000 keys
+    for i in 0..1000 {
+        let mut key = "scan_key:".to_string().into_bytes();
+        let i: u32 = i;
+        key.extend_from_slice(&i.to_be_bytes());
+        t.put(Key::from(key), v.clone()).await?;
+    }
+    t.commit().await?;
+
+    let mut t2 = client.begin_with_options(option.clone()).await?;
+
+    let prefix = "scan_key:".to_string().into_bytes();
+    let mut start_key = prefix.clone();
+    start_key.extend_from_slice(&0u32.to_be_bytes());
+    let mut end_key = prefix.clone();
+    end_key.extend_from_slice(&1000u32.to_be_bytes());
+    let bound_range: BoundRange = (Key::from(start_key)..=Key::from(end_key)).into();
+
+    let mut iter = t2
+        .scan_reverse_stream(bound_range.clone(), u32::MAX)
+        .await?;
+    let mut idx: u32 = 1000;
+    while let Some(kv) = iter.next().await {
+        let mut key = "scan_key:".to_string().into_bytes();
+        idx -= 1;
+        key.extend_from_slice(&idx.to_be_bytes());
+        assert_eq!(kv.0, Key::from(key));
+    }
+    assert_eq!(idx, 0);
+    t2.commit().await?;
+
+    // cleanup
+    let mut t3 = client.begin_with_options(option).await?;
+    let mut iter = t3.scan_keys_reverse_stream(bound_range, u32::MAX).await?;
+    idx = 1000;
+    while let Some(k) = iter.next().await {
+        let mut key = "scan_key:".to_string().into_bytes();
+        idx -= 1;
+        key.extend_from_slice(&idx.to_be_bytes());
+        assert_eq!(k, Key::from(key));
+        t3.delete(k).await?;
+    }
+    assert_eq!(idx, 0);
+    t3.commit().await?;
     Ok(())
 }
 

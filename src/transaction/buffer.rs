@@ -698,59 +698,88 @@ mod tests {
     #[test]
     fn set_and_get_from_buffer() {
         let mut buffer = Buffer::new(false);
-        buffer.put(b"key1".to_vec().into(), b"value1".to_vec());
-        buffer.put(b"key2".to_vec().into(), b"value2".to_vec());
-        assert_eq!(
-            block_on(
-                buffer.get_or_else(b"key1".to_vec().into(), move |_| ready(Err(internal_err!(
-                    ""
-                ))))
-            )
-            .unwrap()
-            .unwrap(),
-            b"value1".to_vec()
-        );
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
 
-        buffer.delete(b"key2".to_vec().into());
-        buffer.put(b"key1".to_vec().into(), b"value".to_vec());
-        assert_eq!(
-            block_on(buffer.batch_get_or_else(
-                vec![b"key2".to_vec().into(), b"key1".to_vec().into()].into_iter(),
-                move |_| ready(Ok(vec![])),
-            ))
-            .unwrap()
-            .collect::<Vec<_>>(),
-            vec![KvPair(Key::from(b"key1".to_vec()), b"value".to_vec(),),]
-        );
+        rt.block_on(async {
+            buffer
+                .put(b"key1".to_vec().into(), b"value1".to_vec())
+                .await;
+            buffer
+                .put(b"key2".to_vec().into(), b"value2".to_vec())
+                .await;
+            assert_eq!(
+                buffer
+                    .get_or_else(b"key1".to_vec().into(), move |_| ready(Err(internal_err!(
+                        ""
+                    ))))
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                b"value1".to_vec()
+            );
+
+            buffer.delete(b"key2".to_vec().into()).await;
+            buffer.put(b"key1".to_vec().into(), b"value".to_vec()).await;
+            assert_eq!(
+                buffer
+                    .batch_get_or_else(
+                        vec![b"key2".to_vec().into(), b"key1".to_vec().into()].into_iter(),
+                        move |_| ready(Ok(vec![])),
+                    )
+                    .await
+                    .unwrap()
+                    .collect::<Vec<_>>(),
+                vec![KvPair(Key::from(b"key1".to_vec()), b"value".to_vec(),),]
+            );
+        })
     }
 
     #[test]
     fn insert_and_get_from_buffer() {
         let mut buffer = Buffer::new(false);
-        buffer.insert(b"key1".to_vec().into(), b"value1".to_vec());
-        buffer.insert(b"key2".to_vec().into(), b"value2".to_vec());
-        assert_eq!(
-            block_on(
-                buffer.get_or_else(b"key1".to_vec().into(), move |_| ready(Err(internal_err!(
-                    ""
-                ))))
-            )
-            .unwrap()
-            .unwrap(),
-            b"value1".to_vec()
-        );
 
-        buffer.delete(b"key2".to_vec().into());
-        buffer.insert(b"key1".to_vec().into(), b"value".to_vec());
-        assert_eq!(
-            block_on(buffer.batch_get_or_else(
-                vec![b"key2".to_vec().into(), b"key1".to_vec().into()].into_iter(),
-                move |_| ready(Ok(vec![])),
-            ))
-            .unwrap()
-            .collect::<Vec<_>>(),
-            vec![KvPair(Key::from(b"key1".to_vec()), b"value".to_vec()),]
-        );
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        rt.block_on(async {
+            buffer
+                .insert(b"key1".to_vec().into(), b"value1".to_vec())
+                .await;
+            buffer
+                .insert(b"key2".to_vec().into(), b"value2".to_vec())
+                .await;
+            assert_eq!(
+                buffer
+                    .get_or_else(b"key1".to_vec().into(), move |_| ready(Err(internal_err!(
+                        ""
+                    ))))
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                b"value1".to_vec()
+            );
+
+            buffer.delete(b"key2".to_vec().into()).await;
+            buffer
+                .insert(b"key1".to_vec().into(), b"value".to_vec())
+                .await;
+            assert_eq!(
+                buffer
+                    .batch_get_or_else(
+                        vec![b"key2".to_vec().into(), b"key1".to_vec().into()].into_iter(),
+                        move |_| ready(Ok(vec![])),
+                    )
+                    .await
+                    .unwrap()
+                    .collect::<Vec<_>>(),
+                vec![KvPair(Key::from(b"key1".to_vec()), b"value".to_vec()),]
+            );
+        })
     }
 
     #[test]
@@ -801,65 +830,78 @@ mod tests {
     #[test]
     fn state_machine() {
         let mut buffer = Buffer::new(false);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
 
-        macro_rules! assert_entry {
-            ($key: ident, $p: pat) => {
-                assert!(matches!(buffer.entry_map.get(&$key), Some(&$p),))
-            };
-        }
+        rt.block_on(async {
+            macro_rules! assert_entry {
+                ($key: ident, $p: pat) => {
+                    assert!(matches!(
+                        buffer.entry_map.read().await.get(&$key),
+                        Some(&$p),
+                    ))
+                };
+            }
 
-        macro_rules! assert_entry_none {
-            ($key: ident) => {
-                assert!(matches!(buffer.entry_map.get(&$key), None,))
-            };
-        }
+            macro_rules! assert_entry_none {
+                ($key: ident) => {
+                    assert!(matches!(buffer.entry_map.read().await.get(&$key), None,))
+                };
+            }
 
-        // Insert + Delete = CheckNotExists
-        let key: Key = b"key1".to_vec().into();
-        buffer.insert(key.clone(), b"value1".to_vec());
-        buffer.delete(key.clone());
-        assert_entry!(key, BufferEntry::CheckNotExist);
+            // Insert + Delete = CheckNotExists
+            let key: Key = b"key1".to_vec().into();
+            buffer.insert(key.clone(), b"value1".to_vec()).await;
+            buffer.delete(key.clone()).await;
+            assert_entry!(key, BufferEntry::CheckNotExist);
 
-        // CheckNotExists + Delete = CheckNotExists
-        buffer.delete(key.clone());
-        assert_entry!(key, BufferEntry::CheckNotExist);
+            // CheckNotExists + Delete = CheckNotExists
+            buffer.delete(key.clone()).await;
+            assert_entry!(key, BufferEntry::CheckNotExist);
 
-        // CheckNotExists + Put = Insert
-        buffer.put(key.clone(), b"value2".to_vec());
-        assert_entry!(key, BufferEntry::Insert(_));
+            // CheckNotExists + Put = Insert
+            buffer.put(key.clone(), b"value2".to_vec()).await;
+            assert_entry!(key, BufferEntry::Insert(_));
 
-        // Insert + Put = Insert
-        let key: Key = b"key2".to_vec().into();
-        buffer.insert(key.clone(), b"value1".to_vec());
-        buffer.put(key.clone(), b"value2".to_vec());
-        assert_entry!(key, BufferEntry::Insert(_));
+            // Insert + Put = Insert
+            let key: Key = b"key2".to_vec().into();
+            buffer.insert(key.clone(), b"value1".to_vec()).await;
+            buffer.put(key.clone(), b"value2".to_vec()).await;
+            assert_entry!(key, BufferEntry::Insert(_));
 
-        // Delete + Insert = Put
-        let key: Key = b"key3".to_vec().into();
-        buffer.delete(key.clone());
-        buffer.insert(key.clone(), b"value1".to_vec());
-        assert_entry!(key, BufferEntry::Put(_));
+            // Delete + Insert = Put
+            let key: Key = b"key3".to_vec().into();
+            buffer.delete(key.clone()).await;
+            buffer.insert(key.clone(), b"value1".to_vec()).await;
+            assert_entry!(key, BufferEntry::Put(_));
 
-        // Lock + Unlock = None
-        let key: Key = b"key4".to_vec().into();
-        buffer.lock(key.clone());
-        buffer.unlock(&key);
-        assert_entry_none!(key);
+            // Lock + Unlock = None
+            let key: Key = b"key4".to_vec().into();
+            buffer.lock(key.clone()).await;
+            buffer.unlock(&key).await;
+            assert_entry_none!(key);
 
-        // Cached + Lock + Unlock = Cached
-        let key: Key = b"key5".to_vec().into();
-        let val: Value = b"value5".to_vec();
-        let val_ = val.clone();
-        let r = block_on(buffer.get_or_else(key.clone(), move |_| ready(Ok(Some(val_)))));
-        assert_eq!(r.unwrap().unwrap(), val);
-        buffer.lock(key.clone());
-        buffer.unlock(&key);
-        assert_entry!(key, BufferEntry::Cached(Some(_)));
-        assert_eq!(
-            block_on(buffer.get_or_else(key, move |_| ready(Err(internal_err!("")))))
-                .unwrap()
-                .unwrap(),
-            val
-        );
+            // Cached + Lock + Unlock = Cached
+            let key: Key = b"key5".to_vec().into();
+            let val: Value = b"value5".to_vec();
+            let val_ = val.clone();
+            let r = buffer
+                .get_or_else(key.clone(), move |_| ready(Ok(Some(val_))))
+                .await;
+            assert_eq!(r.unwrap().unwrap(), val);
+            buffer.lock(key.clone()).await;
+            buffer.unlock(&key).await;
+            assert_entry!(key, BufferEntry::Cached(Some(_)));
+            assert_eq!(
+                buffer
+                    .get_or_else(key, move |_| ready(Err(internal_err!(""))))
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                val
+            );
+        })
     }
 }
