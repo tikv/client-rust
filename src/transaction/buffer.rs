@@ -53,7 +53,7 @@ impl<PdC: PdClient> Scanner<PdC> {
         Self {
             pdc,
             timestamp,
-            range: range.clone(),
+            range,
             batch_size,
             current: 0,
             limit,
@@ -83,7 +83,7 @@ impl<PdC: PdClient> Scanner<PdC> {
         let (mut region_start, mut region_end) = region_store.region_with_leader.range();
         if !self.reverse {
             region_start = self.next_start_key.clone();
-            if !end_key.is_none() && !region_end.is_empty() && region_end > end_key.clone().unwrap()
+            if end_key.is_some() && !region_end.is_empty() && region_end > end_key.clone().unwrap()
             {
                 region_end = end_key.clone().unwrap();
             }
@@ -128,7 +128,7 @@ impl<PdC: PdClient> Scanner<PdC> {
                         || end_key.is_some() && self.next_start_key >= end_key.unwrap()))
                     || (self.reverse
                         && (region_start.is_empty()
-                            || start_key.len() > 0 && start_key >= self.next_end_key))
+                            || !start_key.is_empty() && start_key >= self.next_end_key))
                 {
                     self.eof = true;
                 }
@@ -382,9 +382,9 @@ impl Buffer {
 
             // check the last key if out of range
             if !scanner.reverse
-                && (scanner.next_end_key.len() > 0 && ret.key() >= scanner.next_end_key.as_ref())
+                && (!scanner.next_end_key.is_empty() && ret.key() >= scanner.next_end_key.as_ref())
                 || scanner.reverse
-                    && (scanner.next_start_key.len() > 0
+                    && (!scanner.next_start_key.is_empty()
                         && ret.key() < scanner.next_start_key.as_ref())
             {
                 scanner.eof = true;
