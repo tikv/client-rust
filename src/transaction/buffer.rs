@@ -467,12 +467,13 @@ impl Buffer {
 
     /// Unlock the given key if locked.
     pub async fn unlock(&mut self, key: &Key) {
-        if let Some(value) = self.entry_map.write().await.get_mut(key) {
+        let mut entry_map = self.entry_map.write().await;
+        if let Some(value) = entry_map.get_mut(key) {
             if let BufferEntry::Locked(v) = value {
                 if let Some(v) = v {
                     *value = BufferEntry::Cached(v.take());
                 } else {
-                    self.entry_map.write().await.remove(key);
+                    entry_map.remove(key);
                 }
             }
         }
