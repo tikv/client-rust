@@ -13,7 +13,7 @@ use futures::{
 use ordered_stream::{FromStream, OrderedStreamExt};
 use std::{
     cmp::Reverse,
-    collections::{btree_map::Entry, BTreeMap, HashMap},
+    collections::{btree_map::Entry, BTreeMap, HashMap, HashSet},
     future::Future,
     sync::Arc,
 };
@@ -395,10 +395,30 @@ impl Buffer {
             Some((ret, scanner))
         });
 
+        // convert mutation puts into stream
+        let mutation_range_puts = mutation_range
+            .filter(|(_, v)| matches!(v, BufferEntry::Put(_)))
+            .map(|(k, v)| KvPair::from((k.clone(), v.get_value().unwrap().unwrap())))
+            .collect::<Vec<_>>();
+
+        // convert mutation puts to hashset
+        let mutation_key_puts = Arc::new(RwLock::new(
+            mutation_range_puts
+                .iter()
+                .map(|kv| kv.key().clone())
+                .collect::<HashSet<Key>>(),
+        ));
+        // filter out mutation puts in kv_stream
         let entry_map = self.entry_map.clone();
         let kv_stream_filtered = kv_stream.filter_map(move |kv| {
             let entry_map = entry_map.clone();
+            let mutation_key_puts = mutation_key_puts.clone();
             async move {
+                let mutation_key_puts = mutation_key_puts.read().await;
+                if mutation_key_puts.contains(kv.key()) {
+                    return None;
+                }
+
                 let mut entry_map = entry_map.write().await;
                 if let Some(BufferEntry::Del) = entry_map.get(kv.key()) {
                     return None;
@@ -424,24 +444,18 @@ impl Buffer {
             }
         });
 
-        // convert mutation puts into stream
-        let mutation_range_iter = mutation_range
-            .filter(|(_, v)| matches!(v, BufferEntry::Put(_)))
-            .map(|(k, v)| KvPair::from((k.clone(), v.get_value().unwrap().unwrap())))
-            .collect::<Vec<_>>();
-
-        // fetch items from kv_stream and mutaiton_stream in order, override item from kv_stream if item exists in mutation_stream
+        // fetch items from kv_stream and mutaiton_stream in order
         let merged_stream = if !reverse {
             ordered_stream::join(
                 FromStream::with_ordering(kv_stream_filtered, |kv| kv.0.clone()),
-                FromStream::with_ordering(stream::iter(mutation_range_iter), |kv| kv.0.clone()),
+                FromStream::with_ordering(stream::iter(mutation_range_puts), |kv| kv.0.clone()),
             )
             .into_stream()
             .boxed()
         } else {
             ordered_stream::join(
                 FromStream::with_ordering(kv_stream_filtered, |kv| Reverse(kv.0.clone())),
-                FromStream::with_ordering(stream::iter(mutation_range_iter), |kv| {
+                FromStream::with_ordering(stream::iter(mutation_range_puts), |kv| {
                     Reverse(kv.0.clone())
                 }),
             )
