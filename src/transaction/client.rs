@@ -280,4 +280,31 @@ impl Client {
         let logger = self.logger.new(o!("child" => 1));
         Transaction::new(timestamp, self.pd.clone(), options, logger)
     }
+
+    /// Creates a new latest commit readonly [`Transaction`].
+    ///
+    /// Read operations will read the latest commit data which is not a snapshot read.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Config, TransactionClient};
+    /// # use futures::prelude::*;
+    /// # use tikv_client::TransactionOptions;
+    /// # futures::executor::block_on(async {
+    /// let client = TransactionClient::new(vec!["192.168.0.100"], None)
+    ///     .await
+    ///     .unwrap();
+    /// let options = TransactionOptions::new_optimistic();
+    /// let mut transaction = client.begin_latest_read(options);
+    /// // ... Issue some reads.
+    /// # });
+    /// ```
+    pub fn begin_latest_read(&self, options: TransactionOptions) -> Transaction {
+        debug!(
+            self.logger,
+            "creating new latest commit readonly transaction"
+        );
+        self.new_transaction(Timestamp::from_version(u64::MAX), options.read_only())
+    }
 }
