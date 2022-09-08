@@ -17,9 +17,10 @@ use futures::prelude::*;
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 use serial_test::serial;
 use std::{
+    assert_eq,
     collections::{HashMap, HashSet},
     convert::TryInto,
-    iter,
+    iter, matches,
 };
 use tikv_client::{
     transaction::HeartbeatOption, BoundRange, Error, Key, KvPair, RawClient, Result, Transaction,
@@ -939,6 +940,31 @@ async fn txn_key_exists() -> Result<()> {
     let mut t3 = client.begin_optimistic().await?;
     assert!(!t3.key_exists(not_exists_key).await?);
     t3.commit().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn txn_latest_read() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
+    let key = "key".to_owned();
+    let value = "value".to_owned();
+    let options = TransactionOptions::new_optimistic();
+    let mut t1 = client.begin_latest_read(options);
+    t1.get(key.clone()).await?;
+    t1.put(key.clone(), value.clone())
+        .await
+        .map_err(|_e| matches!(Error::OperationReadOnlyError, _e))
+        .unwrap_err();
+    // commit is no needed for readonly transaction, commit() will take no effect if called.
+    t1.commit().await?;
+
+    let options = TransactionOptions::new_pessimistic();
+    let mut t2 = client.begin_latest_read(options);
+    t2.get(key.clone()).await?;
+    // t2.commit().await?;
+
     Ok(())
 }
 

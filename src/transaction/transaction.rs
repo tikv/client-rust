@@ -113,7 +113,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```
     pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         debug!(self.logger, "invoking transactional get request");
-        self.check_allow_operation().await?;
+        self.check_allow_operation(true).await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         let key = key.into();
@@ -177,7 +177,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```
     pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         debug!(self.logger, "invoking transactional get_for_update request");
-        self.check_allow_operation().await?;
+        self.check_allow_operation(false).await?;
         if !self.is_pessimistic() {
             let key = key.into();
             self.lock_keys(iter::once(key.clone())).await?;
@@ -244,7 +244,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
         debug!(self.logger, "invoking transactional batch_get request");
-        self.check_allow_operation().await?;
+        self.check_allow_operation(true).await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         let retry_options = self.options.retry_options.clone();
@@ -299,7 +299,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.logger,
             "invoking transactional batch_get_for_update request"
         );
-        self.check_allow_operation().await?;
+        self.check_allow_operation(false).await?;
         let keys: Vec<Key> = keys.into_iter().map(|k| k.into()).collect();
         if !self.is_pessimistic() {
             self.lock_keys(keys.clone()).await?;
@@ -433,7 +433,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```
     pub async fn put(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
         debug!(self.logger, "invoking transactional put request");
-        self.check_allow_operation().await?;
+        self.check_allow_operation(false).await?;
         let key = key.into();
         if self.is_pessimistic() {
             self.pessimistic_lock(iter::once(key.clone()), false)
@@ -464,7 +464,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```
     pub async fn insert(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
         debug!(self.logger, "invoking transactional insert request");
-        self.check_allow_operation().await?;
+        self.check_allow_operation(false).await?;
         let key = key.into();
         if self.buffer.get(&key).is_some() {
             return Err(Error::DuplicateKeyInsertion);
@@ -499,7 +499,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```
     pub async fn delete(&mut self, key: impl Into<Key>) -> Result<()> {
         debug!(self.logger, "invoking transactional delete request");
-        self.check_allow_operation().await?;
+        self.check_allow_operation(false).await?;
         let key = key.into();
         if self.is_pessimistic() {
             self.pessimistic_lock(iter::once(key.clone()), false)
@@ -537,7 +537,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<()> {
         debug!(self.logger, "invoking transactional lock_keys request");
-        self.check_allow_operation().await?;
+        self.check_allow_operation(false).await?;
         match self.options.kind {
             TransactionKind::Optimistic => {
                 for key in keys {
@@ -569,6 +569,15 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```
     pub async fn commit(&mut self) -> Result<Option<Timestamp>> {
         debug!(self.logger, "commiting transaction");
+
+        {
+            // readonly transaction no need to commit
+            let status = self.status.read().await;
+            if *status == TransactionStatus::ReadOnly {
+                return Ok(None);
+            }
+        }
+
         {
             let mut status = self.status.write().await;
             if !matches!(
@@ -677,7 +686,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     #[doc(hidden)]
     pub async fn send_heart_beat(&mut self) -> Result<u64> {
         debug!(self.logger, "sending heart_beat");
-        self.check_allow_operation().await?;
+        self.check_allow_operation(true).await?;
         let primary_key = match self.buffer.get_primary_key() {
             Some(k) => k,
             None => return Err(Error::NoPrimaryKey),
@@ -703,7 +712,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         key_only: bool,
         reverse: bool,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.check_allow_operation().await?;
+        self.check_allow_operation(true).await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         let retry_options = self.options.retry_options.clone();
@@ -840,10 +849,17 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     /// Checks if the transaction can perform arbitrary operations.
-    async fn check_allow_operation(&self) -> Result<()> {
+    async fn check_allow_operation(&self, readonly: bool) -> Result<()> {
         let status = self.status.read().await;
         match *status {
-            TransactionStatus::ReadOnly | TransactionStatus::Active => Ok(()),
+            TransactionStatus::Active => Ok(()),
+            TransactionStatus::ReadOnly => {
+                if readonly {
+                    Ok(())
+                } else {
+                    Err(Error::OperationReadOnlyError)
+                }
+            }
             TransactionStatus::Committed
             | TransactionStatus::Rolledback
             | TransactionStatus::StartedCommit
