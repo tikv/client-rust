@@ -2,6 +2,7 @@
 
 use crate::{BoundRange, Key, KvPair, Result, Transaction, Value};
 use derive_new::new;
+use futures::Stream;
 use slog::Logger;
 
 /// A read-only transaction which reads at the given timestamp.
@@ -49,6 +50,16 @@ impl Snapshot {
         self.transaction.scan(range, limit).await
     }
 
+    /// Scan a range, return at most `limit` key-value pairs that lying in the range in stream.
+    pub async fn scan_stream(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Stream<Item = KvPair>> {
+        debug!(self.logger, "invoking scan_stream request on snapshot");
+        self.transaction.scan_stream(range, limit).await
+    }
+
     /// Scan a range, return at most `limit` keys that lying in the range.
     pub async fn scan_keys(
         &mut self,
@@ -59,6 +70,16 @@ impl Snapshot {
         self.transaction.scan_keys(range, limit).await
     }
 
+    /// Scan a range, return at most `limit` keys that lying in the range in stream.
+    pub async fn scan_keys_stream(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Stream<Item = Key>> {
+        debug!(self.logger, "invoking scan_keys_stream request on snapshot");
+        self.transaction.scan_keys_stream(range, limit).await
+    }
+
     /// Similar to scan, but in the reverse direction.
     pub async fn scan_reverse(
         &mut self,
@@ -67,6 +88,19 @@ impl Snapshot {
     ) -> Result<impl Iterator<Item = KvPair>> {
         debug!(self.logger, "invoking scan_reverse request on snapshot");
         self.transaction.scan_reverse(range, limit).await
+    }
+
+    /// Similar to scan, but in the reverse direction in stream.
+    pub async fn scan_reverse_stream(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Stream<Item = KvPair>> {
+        debug!(
+            self.logger,
+            "invoking scan_reverse_stream request on snapshot"
+        );
+        self.transaction.scan_reverse_stream(range, limit).await
     }
 
     /// Similar to scan_keys, but in the reverse direction.
@@ -80,5 +114,20 @@ impl Snapshot {
             "invoking scan_keys_reverse request on snapshot"
         );
         self.transaction.scan_keys_reverse(range, limit).await
+    }
+
+    /// Similar to scan_keys, but in the reverse direction in stream.
+    pub async fn scan_keys_reverse_stream(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Stream<Item = Key>> {
+        debug!(
+            self.logger,
+            "invoking scan_keys_reverse_stream request on snapshot"
+        );
+        self.transaction
+            .scan_keys_reverse_stream(range, limit)
+            .await
     }
 }
