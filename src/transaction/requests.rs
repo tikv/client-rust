@@ -531,6 +531,26 @@ impl Process<kvrpcpb::TxnHeartBeatResponse> for DefaultProcessor {
     }
 }
 
+pub fn new_check_txn_status_request(
+    primary_key: Vec<u8>,
+    lock_ts: u64,
+    caller_start_ts: u64,
+    current_ts: u64,
+    rollback_if_not_exist: bool,
+    force_sync_commit: bool,
+    resolving_pessimistic_lock: bool,
+) -> kvrpcpb::CheckTxnStatusRequest {
+    let mut req = kvrpcpb::CheckTxnStatusRequest::default();
+    req.set_primary_key(primary_key);
+    req.set_lock_ts(lock_ts);
+    req.set_caller_start_ts(caller_start_ts);
+    req.set_current_ts(current_ts);
+    req.set_rollback_if_not_exist(rollback_if_not_exist);
+    req.set_force_sync_commit(force_sync_commit);
+    req.set_resolving_pessimistic_lock(resolving_pessimistic_lock);
+    req
+}
+
 impl KvRequest for kvrpcpb::CheckTxnStatusRequest {
     type Response = kvrpcpb::CheckTxnStatusResponse;
 }
@@ -559,6 +579,8 @@ impl SingleKey for kvrpcpb::CheckTxnStatusRequest {
     }
 }
 
+collect_first!(kvrpcpb::CheckTxnStatusResponse);
+
 impl Process<kvrpcpb::CheckTxnStatusResponse> for DefaultProcessor {
     type Out = TransactionStatus;
 
@@ -571,6 +593,7 @@ impl Process<kvrpcpb::CheckTxnStatusResponse> for DefaultProcessor {
 pub struct TransactionStatus {
     pub kind: TransactionStatusKind,
     pub action: kvrpcpb::Action,
+    pub is_expired: bool, // Available only when kind is Locked.
 }
 
 impl From<kvrpcpb::CheckTxnStatusResponse> for TransactionStatus {
@@ -578,6 +601,7 @@ impl From<kvrpcpb::CheckTxnStatusResponse> for TransactionStatus {
         TransactionStatus {
             action: resp.get_action(),
             kind: (resp.commit_version, resp.lock_ttl, resp.lock_info).into(),
+            is_expired: false,
         }
     }
 }
@@ -586,7 +610,41 @@ impl From<kvrpcpb::CheckTxnStatusResponse> for TransactionStatus {
 pub enum TransactionStatusKind {
     Committed(Timestamp),
     RolledBack,
-    Locked(u64, kvrpcpb::LockInfo),
+    Locked(u64, kvrpcpb::LockInfo), // None of ttl means expired.
+}
+
+impl TransactionStatus {
+    pub fn check_ttl(&mut self, current: Timestamp) {
+        if let TransactionStatusKind::Locked(ref ttl, ref lock_info) = self.kind {
+            if current.physical - Timestamp::from_version(lock_info.lock_version).physical
+                >= *ttl as i64
+            {
+                self.is_expired = true
+            }
+        }
+    }
+
+    // is_cacheable checks whether the transaction status is certain.
+    // If transaction is already committed, the result could be cached.
+    // Otherwise:
+    //   If l.LockType is pessimistic lock type:
+    //       - if its primary lock is pessimistic too, the check txn status result should not be cached.
+    //       - if its primary lock is prewrite lock type, the check txn status could be cached.
+    //   If l.lockType is prewrite lock type:
+    //       - always cache the check txn status result.
+    // For prewrite locks, their primary keys should ALWAYS be the correct one and will NOT change.
+    pub fn is_cacheable(&self) -> bool {
+        match &self.kind {
+            TransactionStatusKind::RolledBack | TransactionStatusKind::Committed(..) => true,
+            TransactionStatusKind::Locked(_, lock_info) if self.is_expired => match self.action {
+                kvrpcpb::Action::NoAction
+                | kvrpcpb::Action::LockNotExistRollback
+                | kvrpcpb::Action::TtlExpireRollback => true,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
 }
 
 impl From<(u64, u64, Option<kvrpcpb::LockInfo>)> for TransactionStatusKind {

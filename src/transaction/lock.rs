@@ -6,7 +6,10 @@ use crate::{
     region::RegionVerId,
     request::{CollectSingle, Plan},
     timestamp::TimestampExt,
-    transaction::requests,
+    transaction::{
+        requests,
+        requests::{new_check_txn_status_request, TransactionStatus, TransactionStatusKind},
+    },
     Error, Result,
 };
 use log::debug;
@@ -15,6 +18,7 @@ use std::{
     sync::Arc,
 };
 use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use tokio::sync::RwLock;
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 
@@ -130,6 +134,103 @@ async fn resolve_lock_with_retry(
         }
     }
     Err(error.expect("no error is impossible"))
+}
+
+#[derive(Default)]
+pub struct LockResolver {
+    resolved: RwLock<HashMap<u64, Arc<TransactionStatus>>>, /* TODO: use a LRU cache to limit memory usage. */
+}
+
+impl LockResolver {
+    /// _Resolves_ the given locks. Returns whether all the given locks are resolved.
+    ///
+    /// Will rollback not finished transactions.
+    /// Use in GC only !
+    pub async fn batch_resolve_locks(
+        &mut self,
+        locks: Vec<kvrpcpb::LockInfo>,
+        pd_client: Arc<impl PdClient>, // TODO: make pd_client a member of LockResolver
+    ) -> Result<bool> {
+        if locks.is_empty() {
+            return Ok(true);
+        }
+
+        let txn_infos = HashMap::new();
+        for l in locks {
+            if txn_infos.contains_key(&l.get_lock_version()) {
+                continue;
+            }
+        }
+
+        Ok(true)
+    }
+
+    async fn get_txn_status(
+        &mut self,
+        pd_client: Arc<impl PdClient>,
+        txn_id: u64,
+        primary: Vec<u8>,
+        caller_start_ts: u64,
+        current_ts: u64,
+        rollback_if_not_exist: bool,
+        force_sync_commit: bool,
+        lock_info: Option<&kvrpcpb::LockInfo>,
+    ) -> Result<Arc<TransactionStatus>> {
+        if let Some(txn_status) = self.get_resolved(txn_id).await {
+            return Ok(txn_status);
+        }
+
+        // CheckTxnStatus may meet the following cases:
+        // 1. LOCK
+        // 1.1 Lock expired -- orphan lock, fail to update TTL, crash recovery etc.
+        // 1.2 Lock TTL -- active transaction holding the lock.
+        // 2. NO LOCK
+        // 2.1 Txn Committed
+        // 2.2 Txn Rollbacked -- rollback itself, rollback by others, GC tomb etc.
+        // 2.3 No lock -- pessimistic lock rollback, concurrence prewrite.
+
+        let resolving_pessimistic_lock = match lock_info {
+            Some(lock_info) => lock_info.get_lock_type() == kvrpcpb::Op::PessimisticLock,
+            _ => false,
+        };
+        let req = new_check_txn_status_request(
+            primary,
+            txn_id,
+            caller_start_ts,
+            current_ts,
+            rollback_if_not_exist,
+            force_sync_commit,
+            resolving_pessimistic_lock,
+        );
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), req)
+            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(crate::request::CollectSingle)
+            .post_process_default()
+            .plan();
+        let mut res: TransactionStatus = plan.execute().await?;
+
+        // TODO: remove this assert_eq.
+        if let TransactionStatusKind::Locked(_, lock_info) = &res.kind {
+            assert_eq!(lock_info.lock_version, txn_id);
+        }
+
+        let current = pd_client.clone().get_timestamp().await?;
+        res.check_ttl(current);
+        let res = Arc::new(res);
+        if res.is_cacheable() {
+            self.save_resolved(txn_id, res.clone());
+        }
+        Ok(res)
+    }
+
+    async fn get_resolved(&self, txn_id: u64) -> Option<Arc<TransactionStatus>> {
+        self.resolved.read().await.get(&txn_id).cloned()
+    }
+
+    async fn save_resolved(&mut self, txn_id: u64, txn_status: Arc<TransactionStatus>) {
+        self.resolved.write().await.insert(txn_id, txn_status);
+    }
 }
 
 pub trait HasLocks {

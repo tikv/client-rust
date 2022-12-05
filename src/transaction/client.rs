@@ -7,7 +7,7 @@ use crate::{
     pd::{PdClient, PdRpcClient},
     request::Plan,
     timestamp::TimestampExt,
-    transaction::{Snapshot, Transaction, TransactionOptions},
+    transaction::{lock::LockResolver, Snapshot, Transaction, TransactionOptions},
     Result,
 };
 use slog::{Drain, Logger};
@@ -279,5 +279,41 @@ impl Client {
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
         let logger = self.logger.new(o!("child" => 1));
         Transaction::new(timestamp, self.pd.clone(), options, logger)
+    }
+
+    pub async fn resolve_async_commit_locks(&self, safepoint: Timestamp) -> Result<bool> {
+        debug!(self.logger, "invoking resolve async commit locks");
+        // scan all locks with ts <= safepoint
+        // FIXME: (1) this is inefficient (2) when region error occurred
+        let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
+        let mut start_key = vec![];
+        loop {
+            let req = new_scan_lock_request(
+                mem::take(&mut start_key),
+                safepoint.version(),
+                SCAN_LOCK_BATCH_SIZE,
+            );
+
+            let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
+                .resolve_lock(OPTIMISTIC_BACKOFF)
+                .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                .merge(crate::request::Collect)
+                .plan();
+            let res: Vec<kvrpcpb::LockInfo> = plan.execute().await?;
+
+            if res.is_empty() {
+                break;
+            }
+            start_key = res.last().unwrap().key.clone();
+            start_key.push(0);
+            locks.extend(res.into_iter().filter(|l| l.use_async_commit));
+        }
+
+        // resolve locks
+        let mut lock_resolver = LockResolver::default();
+        let res = lock_resolver
+            .batch_resolve_locks(locks, self.pd.clone())
+            .await?;
+        Ok(res)
     }
 }
