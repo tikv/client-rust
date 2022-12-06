@@ -636,12 +636,12 @@ impl TransactionStatus {
     pub fn is_cacheable(&self) -> bool {
         match &self.kind {
             TransactionStatusKind::RolledBack | TransactionStatusKind::Committed(..) => true,
-            TransactionStatusKind::Locked(_, lock_info) if self.is_expired => match self.action {
+            TransactionStatusKind::Locked(..) if self.is_expired => matches!(
+                self.action,
                 kvrpcpb::Action::NoAction
-                | kvrpcpb::Action::LockNotExistRollback
-                | kvrpcpb::Action::TtlExpireRollback => true,
-                _ => false,
-            },
+                    | kvrpcpb::Action::LockNotExistRollback
+                    | kvrpcpb::Action::TtlExpireRollback
+            ),
             _ => false,
         }
     }
@@ -656,6 +656,16 @@ impl From<(u64, u64, Option<kvrpcpb::LockInfo>)> for TransactionStatusKind {
             _ => unreachable!(),
         }
     }
+}
+
+pub fn new_check_secondary_locks_request(
+    keys: Vec<Vec<u8>>,
+    start_version: u64,
+) -> kvrpcpb::CheckSecondaryLocksRequest {
+    let mut req = kvrpcpb::CheckSecondaryLocksRequest::default();
+    req.set_keys(keys);
+    req.set_start_version(start_version);
+    req
 }
 
 impl KvRequest for kvrpcpb::CheckSecondaryLocksRequest {

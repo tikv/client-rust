@@ -13,11 +13,12 @@ use crate::{
     Error, Result,
 };
 use log::debug;
+use slog::Logger;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use tikv_client_proto::{kvrpcpb, kvrpcpb::LockInfo, pdpb::Timestamp};
 use tokio::sync::RwLock;
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
@@ -136,12 +137,19 @@ async fn resolve_lock_with_retry(
     Err(error.expect("no error is impossible"))
 }
 
-#[derive(Default)]
 pub struct LockResolver {
+    logger: Logger,
     resolved: RwLock<HashMap<u64, Arc<TransactionStatus>>>, /* TODO: use a LRU cache to limit memory usage. */
 }
 
 impl LockResolver {
+    pub fn new(logger: Logger) -> Self {
+        Self {
+            logger,
+            resolved: Default::default(),
+        }
+    }
+
     /// _Resolves_ the given locks. Returns whether all the given locks are resolved.
     ///
     /// Will rollback not finished transactions.
@@ -155,17 +163,40 @@ impl LockResolver {
             return Ok(true);
         }
 
-        let txn_infos = HashMap::new();
+        // let txn_infos = HashMap::new();
         for l in locks {
-            if txn_infos.contains_key(&l.get_lock_version()) {
-                continue;
-            }
+            // if txn_infos.contains_key(&l.get_lock_version()) {
+            //     continue;
+            // }
+
+            // Use currentTS = math.MaxUint64 means rollback the txn, no matter the lock is expired or not!
+            let status = self
+                .get_txn_status(
+                    pd_client.clone(),
+                    l.get_lock_version(),
+                    l.get_primary_lock().to_vec(),
+                    0,
+                    u64::MAX,
+                    true,
+                    false,
+                    l.get_lock_type() == kvrpcpb::Op::PessimisticLock,
+                )
+                .await?;
+            info!(
+                self.logger,
+                "lock status, primary:{:?}, status:{:?}",
+                l.get_primary_lock(),
+                status,
+            );
+
+            if let TransactionStatusKind::Locked(_, lock_info) = &status.kind {}
         }
 
         Ok(true)
     }
 
-    async fn get_txn_status(
+    #[allow(clippy::too_many_arguments)]
+    pub async fn get_txn_status(
         &mut self,
         pd_client: Arc<impl PdClient>,
         txn_id: u64,
@@ -174,7 +205,7 @@ impl LockResolver {
         current_ts: u64,
         rollback_if_not_exist: bool,
         force_sync_commit: bool,
-        lock_info: Option<&kvrpcpb::LockInfo>,
+        resolving_pessimistic_lock: bool,
     ) -> Result<Arc<TransactionStatus>> {
         if let Some(txn_status) = self.get_resolved(txn_id).await {
             return Ok(txn_status);
@@ -188,11 +219,6 @@ impl LockResolver {
         // 2.1 Txn Committed
         // 2.2 Txn Rollbacked -- rollback itself, rollback by others, GC tomb etc.
         // 2.3 No lock -- pessimistic lock rollback, concurrence prewrite.
-
-        let resolving_pessimistic_lock = match lock_info {
-            Some(lock_info) => lock_info.get_lock_type() == kvrpcpb::Op::PessimisticLock,
-            _ => false,
-        };
         let req = new_check_txn_status_request(
             primary,
             txn_id,
@@ -203,9 +229,9 @@ impl LockResolver {
             resolving_pessimistic_lock,
         );
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), req)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
+            // .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
-            .merge(crate::request::CollectSingle)
+            .merge(CollectSingle)
             .post_process_default()
             .plan();
         let mut res: TransactionStatus = plan.execute().await?;
@@ -219,10 +245,12 @@ impl LockResolver {
         res.check_ttl(current);
         let res = Arc::new(res);
         if res.is_cacheable() {
-            self.save_resolved(txn_id, res.clone());
+            self.save_resolved(txn_id, res.clone()).await;
         }
         Ok(res)
     }
+
+    async fn check_all_secondaries(lock: &LockInfo, status: Arc<TransactionStatus>) {}
 
     async fn get_resolved(&self, txn_id: u64) -> Option<Arc<TransactionStatus>> {
         self.resolved.read().await.get(&txn_id).cloned()

@@ -24,3 +24,6 @@ mod lock;
 mod snapshot;
 #[allow(clippy::module_inception)]
 mod transaction;
+
+#[cfg(feature = "integration-tests")]
+pub use lock::LockResolver;

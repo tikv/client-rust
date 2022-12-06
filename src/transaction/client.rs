@@ -284,7 +284,6 @@ impl Client {
     pub async fn resolve_async_commit_locks(&self, safepoint: Timestamp) -> Result<bool> {
         debug!(self.logger, "invoking resolve async commit locks");
         // scan all locks with ts <= safepoint
-        // FIXME: (1) this is inefficient (2) when region error occurred
         let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
         let mut start_key = vec![];
         loop {
@@ -306,11 +305,13 @@ impl Client {
             }
             start_key = res.last().unwrap().key.clone();
             start_key.push(0);
-            locks.extend(res.into_iter().filter(|l| l.use_async_commit));
+            // locks.extend(res.into_iter().filter(|l| l.use_async_commit));
+            locks.extend(res);
         }
 
         // resolve locks
-        let mut lock_resolver = LockResolver::default();
+        // FIXME: (1) this is inefficient (2) when region error occurred
+        let mut lock_resolver = LockResolver::new(self.logger.clone());
         let res = lock_resolver
             .batch_resolve_locks(locks, self.pd.clone())
             .await?;
