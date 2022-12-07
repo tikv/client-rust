@@ -18,7 +18,7 @@ use futures::stream::BoxStream;
 use std::{cmp, collections::HashMap, iter, sync::Arc};
 use tikv_client_common::Error::PessimisticLockError;
 use tikv_client_proto::{
-    kvrpcpb::{self, TxnHeartBeatResponse},
+    kvrpcpb::{self, LockInfo, TxnHeartBeatResponse},
     pdpb::Timestamp,
 };
 
@@ -731,7 +731,12 @@ error_locks!(kvrpcpb::CheckTxnStatusResponse);
 error_locks!(kvrpcpb::CheckSecondaryLocksResponse);
 
 impl HasLocks for kvrpcpb::CleanupResponse {}
-impl HasLocks for kvrpcpb::ScanLockResponse {}
+
+impl HasLocks for kvrpcpb::ScanLockResponse {
+    fn take_locks(&mut self) -> Vec<LockInfo> {
+        self.take_locks()
+    }
+}
 
 impl HasLocks for kvrpcpb::PessimisticRollbackResponse {
     fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {

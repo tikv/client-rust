@@ -113,7 +113,7 @@ async fn txn_status() -> Result<()> {
 
     tokio::time::sleep(Duration::from_secs(1)).await;
     let safepoint = client.current_timestamp().await?;
-    client.resolve_async_commit_locks(safepoint).await?;
+    client.cleanup_async_commit_locks(safepoint).await?;
 
     fail::cfg("after-prewrite", "off").unwrap();
     let commit_ts = txn1_handle.await?.unwrap().unwrap();

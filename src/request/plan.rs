@@ -12,6 +12,7 @@ use tokio::sync::Semaphore;
 use crate::{
     backoff::Backoff,
     pd::PdClient,
+    region::RegionWithLeader,
     request::{KvRequest, Shardable},
     stats::tikv_stats,
     store::RegionStore,
@@ -429,6 +430,67 @@ where
             let pd_client = self.pd_client.clone();
             if resolve_locks(locks, pd_client.clone()).await? {
                 result = self.inner.execute().await?;
+            } else {
+                match clone.backoff.next_delay_duration() {
+                    None => return Err(Error::ResolveLockError),
+                    Some(delay_duration) => {
+                        futures_timer::Delay::new(delay_duration).await;
+                        result = clone.inner.execute().await?;
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub struct CleanupLocks<P: Plan, PdC: PdClient> {
+    pub logger: slog::Logger,
+    pub inner: P,
+    pub store: Option<RegionStore>,
+    pub pd_client: Arc<PdC>,
+    pub backoff: Backoff,
+}
+
+impl<P: Plan, PdC: PdClient> Clone for CleanupLocks<P, PdC> {
+    fn clone(&self) -> Self {
+        CleanupLocks {
+            logger: self.logger.clone(),
+            inner: self.inner.clone(),
+            store: None,
+            pd_client: self.pd_client.clone(),
+            backoff: self.backoff.clone(),
+        }
+    }
+}
+
+#[async_trait]
+impl<P: Plan, PdC: PdClient> Plan for CleanupLocks<P, PdC>
+where
+    P::Result: HasLocks,
+{
+    type Result = P::Result;
+
+    async fn execute(&self) -> Result<Self::Result> {
+        let mut result = self.inner.execute().await?;
+        let mut clone = self.clone();
+        loop {
+            let locks = result.take_locks();
+            if locks.is_empty() {
+                return Ok(result);
+            }
+            info!(self.logger, "CleanupLocks, locks:{}", locks.len());
+
+            if self.backoff.is_none() {
+                return Err(Error::ResolveLockError);
+            }
+
+            let pd_client = self.pd_client.clone();
+            let mut lock_resolver = crate::transaction::LockResolver::new(self.logger.clone());
+            if lock_resolver
+                .cleanup_locks(self.store.unwrap().clone(), locks, pd_client.clone())
+                .await?
+            {
+                return Ok(result);
             } else {
                 match clone.backoff.next_delay_duration() {
                     None => return Err(Error::ResolveLockError),

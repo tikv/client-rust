@@ -72,6 +72,12 @@ impl AsRef<Key> for kvrpcpb::Mutation {
     }
 }
 
+impl AsRef<Key> for kvrpcpb::LockInfo {
+    fn as_ref(&self) -> &Key {
+        self.primary_lock.as_ref()
+    }
+}
+
 impl Key {
     /// The empty key.
     pub const EMPTY: Self = Key(Vec::new());

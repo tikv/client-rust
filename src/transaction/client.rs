@@ -246,7 +246,6 @@ impl Client {
             );
 
             let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
-                .resolve_lock(OPTIMISTIC_BACKOFF)
                 .retry_multi_region(DEFAULT_REGION_BACKOFF)
                 .merge(crate::request::Collect)
                 .plan();
@@ -294,7 +293,6 @@ impl Client {
             );
 
             let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
-                .resolve_lock(OPTIMISTIC_BACKOFF)
                 .retry_multi_region(DEFAULT_REGION_BACKOFF)
                 .merge(crate::request::Collect)
                 .plan();
@@ -312,9 +310,36 @@ impl Client {
         // resolve locks
         // FIXME: (1) this is inefficient (2) when region error occurred
         let mut lock_resolver = LockResolver::new(self.logger.clone());
-        let res = lock_resolver
-            .batch_resolve_locks(locks, self.pd.clone())
-            .await?;
+        let res = lock_resolver.cleanup_locks(locks, self.pd.clone()).await?;
         Ok(res)
+    }
+
+    pub async fn cleanup_async_commit_locks(&self, safepoint: Timestamp) -> Result<bool> {
+        debug!(self.logger, "invoking cleanup async commit locks");
+        // scan all locks with ts <= safepoint
+        let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
+        let mut start_key = vec![];
+        loop {
+            let req = new_scan_lock_request(
+                mem::take(&mut start_key),
+                safepoint.version(),
+                SCAN_LOCK_BATCH_SIZE,
+            );
+            let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
+                .cleanup_locks(self.logger.clone(), OPTIMISTIC_BACKOFF)
+                .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                .merge(crate::request::Collect)
+                .plan();
+            let res: Vec<kvrpcpb::LockInfo> = plan.execute().await?;
+
+            if res.is_empty() {
+                break;
+            }
+            start_key = res.last().unwrap().key.clone();
+            start_key.push(0);
+            locks.extend(res);
+        }
+
+        Ok(true)
     }
 }

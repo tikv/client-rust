@@ -5,8 +5,9 @@ use crate::{
     backoff::Backoff,
     pd::PdClient,
     request::{
-        DefaultProcessor, Dispatch, ExtractError, KvRequest, Merge, MergeResponse, Plan, Process,
-        ProcessResponse, ResolveLock, RetryableMultiRegion, Shardable,
+        plan::CleanupLocks, DefaultProcessor, Dispatch, ExtractError, KvRequest, Merge,
+        MergeResponse, Plan, Process, ProcessResponse, ResolveLock, RetryableMultiRegion,
+        Shardable,
     },
     store::RegionStore,
     transaction::HasLocks,
@@ -61,6 +62,27 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
             pd_client: self.pd_client.clone(),
             plan: ResolveLock {
                 inner: self.plan,
+                backoff,
+                pd_client: self.pd_client,
+            },
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn cleanup_locks(
+        self,
+        logger: slog::Logger,
+        backoff: Backoff,
+    ) -> PlanBuilder<PdC, CleanupLocks<P, PdC>, Ph>
+    where
+        P::Result: HasLocks,
+    {
+        PlanBuilder {
+            pd_client: self.pd_client.clone(),
+            plan: CleanupLocks {
+                logger,
+                inner: self.plan,
+                store: None,
                 backoff,
                 pd_client: self.pd_client,
             },

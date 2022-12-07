@@ -3,7 +3,7 @@
 use super::plan::PreserveShard;
 use crate::{
     pd::PdClient,
-    request::{Dispatch, KvRequest, Plan, ResolveLock},
+    request::{plan::CleanupLocks, Dispatch, KvRequest, Plan, ResolveLock},
     store::RegionStore,
     Result,
 };
@@ -72,6 +72,22 @@ impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
 
 impl<P: Plan + Shardable, PdC: PdClient> Shardable for ResolveLock<P, PdC> {
     impl_inner_shardable!();
+}
+
+impl<P: Plan + Shardable, PdC: PdClient> Shardable for CleanupLocks<P, PdC> {
+    type Shard = P::Shard;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+        self.inner.shards(pd_client)
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
+        self.store = Some(store.clone());
+        self.inner.apply_shard(shard, store)
+    }
 }
 
 #[macro_export]

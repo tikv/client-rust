@@ -3,8 +3,9 @@
 use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     pd::PdClient,
-    region::RegionVerId,
+    region::{RegionVerId, RegionWithLeader},
     request::{Collect, CollectSingle, Plan},
+    store::RegionStore,
     timestamp::TimestampExt,
     transaction::{
         requests,
@@ -143,6 +144,9 @@ async fn resolve_lock_with_retry(
 pub struct LockResolver {
     logger: Logger,
     resolved: RwLock<HashMap<u64, Arc<TransactionStatus>>>, /* TODO: use a LRU cache to limit memory usage. */
+    // records the commit version of each primary lock (representing the status of the transaction)
+    commit_versions: RwLock<HashMap<u64, u64>>,
+    clean_regions: RwLock<HashMap<u64, HashSet<RegionVerId>>>,
 }
 
 impl LockResolver {
@@ -150,15 +154,17 @@ impl LockResolver {
         Self {
             logger,
             resolved: Default::default(),
+            commit_versions: Default::default(),
+            clean_regions: Default::default(),
         }
     }
 
-    /// _Resolves_ the given locks. Returns whether all the given locks are resolved.
+    /// _Cleanup_ the given locks. Returns whether all the given locks are resolved.
     ///
-    /// Will rollback not finished transactions.
-    /// Use in GC only !
-    pub async fn batch_resolve_locks(
+    /// Will rollback RUNNING transactions. ONLY use in GC.
+    pub async fn cleanup_locks(
         &mut self,
+        store: RegionStore,
         locks: Vec<kvrpcpb::LockInfo>,
         pd_client: Arc<impl PdClient>, // TODO: make pd_client a member of LockResolver
     ) -> Result<bool> {
