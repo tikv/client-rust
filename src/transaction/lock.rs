@@ -4,11 +4,14 @@ use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     pd::PdClient,
     region::RegionVerId,
-    request::{CollectSingle, Plan},
+    request::{Collect, CollectSingle, Plan},
     timestamp::TimestampExt,
     transaction::{
         requests,
-        requests::{new_check_txn_status_request, TransactionStatus, TransactionStatusKind},
+        requests::{
+            new_check_secondary_locks_request, new_check_txn_status_request, SecondaryLocksStatus,
+            TransactionStatus, TransactionStatusKind,
+        },
     },
     Error, Result,
 };
@@ -18,7 +21,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-use tikv_client_proto::{kvrpcpb, kvrpcpb::LockInfo, pdpb::Timestamp};
+use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
 use tokio::sync::RwLock;
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
@@ -163,17 +166,18 @@ impl LockResolver {
             return Ok(true);
         }
 
-        // let txn_infos = HashMap::new();
+        let mut txn_infos = HashMap::new();
         for l in locks {
-            // if txn_infos.contains_key(&l.get_lock_version()) {
-            //     continue;
-            // }
+            let txn_id = l.get_lock_version();
+            if txn_infos.contains_key(&txn_id) {
+                continue;
+            }
 
             // Use currentTS = math.MaxUint64 means rollback the txn, no matter the lock is expired or not!
-            let status = self
-                .get_txn_status(
+            let mut status = self
+                .check_txn_status(
                     pd_client.clone(),
-                    l.get_lock_version(),
+                    txn_id,
                     l.get_primary_lock().to_vec(),
                     0,
                     u64::MAX,
@@ -184,19 +188,74 @@ impl LockResolver {
                 .await?;
             info!(
                 self.logger,
-                "lock status, primary:{:?}, status:{:?}",
+                "lock status, txn_id:{}, primary:{:?}, status:{:?}",
+                txn_id,
                 l.get_primary_lock(),
                 status,
             );
 
-            if let TransactionStatusKind::Locked(_, lock_info) = &status.kind {}
+            // If the transaction uses async commit, check_txn_status will reject rolling back the primary lock.
+            // Then we need to check the secondary locks to determine the final status of the transaction.
+            if let TransactionStatusKind::Locked(_, lock_info) = &status.kind {
+                let secondary_status = self
+                    .check_all_secondaries(
+                        pd_client.clone(),
+                        lock_info.get_secondaries().to_vec(),
+                        txn_id,
+                    )
+                    .await?;
+                info!(
+                    self.logger,
+                    "secondary status, txn_id:{}, commit_ts:{:?}, min_commit_version:{}, fallback_2pc:{}",
+                    txn_id,
+                    secondary_status.commit_ts.as_ref().map_or(0, |ts| ts.version()),
+                    secondary_status.min_commit_ts,
+                    secondary_status.fallback_2pc,
+                );
+
+                if secondary_status.fallback_2pc {
+                    info!(
+                        self.logger,
+                        "fallback to 2pc, txn_id:{}, get_txn_status again", txn_id
+                    );
+                    status = self
+                        .check_txn_status(
+                            pd_client.clone(),
+                            txn_id,
+                            l.get_primary_lock().to_vec(),
+                            0,
+                            u64::MAX,
+                            true,
+                            true,
+                            l.get_lock_type() == kvrpcpb::Op::PessimisticLock,
+                        )
+                        .await?;
+                } else {
+                    let commit_ts = if let Some(commit_ts) = &secondary_status.commit_ts {
+                        commit_ts.version()
+                    } else {
+                        secondary_status.min_commit_ts
+                    };
+                    txn_infos.insert(txn_id, commit_ts);
+                    continue;
+                }
+            }
+
+            match &status.kind {
+                TransactionStatusKind::Locked(..) => {
+                    error!(self.logger, "batch_resolve_locks fail to clean locks, this result is not expected. txn_id:{}", txn_id);
+                    return Err(Error::ResolveLockError);
+                }
+                TransactionStatusKind::Committed(ts) => txn_infos.insert(txn_id, ts.version()),
+                TransactionStatusKind::RolledBack => txn_infos.insert(txn_id, 0),
+            };
         }
 
         Ok(true)
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn get_txn_status(
+    pub async fn check_txn_status(
         &mut self,
         pd_client: Arc<impl PdClient>,
         txn_id: u64,
@@ -250,7 +309,19 @@ impl LockResolver {
         Ok(res)
     }
 
-    async fn check_all_secondaries(lock: &LockInfo, status: Arc<TransactionStatus>) {}
+    async fn check_all_secondaries(
+        &mut self,
+        pd_client: Arc<impl PdClient>,
+        keys: Vec<Vec<u8>>,
+        txn_id: u64,
+    ) -> Result<SecondaryLocksStatus> {
+        let req = new_check_secondary_locks_request(keys, txn_id);
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), req)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(Collect)
+            .plan();
+        plan.execute().await
+    }
 
     async fn get_resolved(&self, txn_id: u64) -> Option<Arc<TransactionStatus>> {
         self.resolved.read().await.get(&txn_id).cloned()

@@ -15,7 +15,7 @@ use crate::{
 };
 use either::Either;
 use futures::stream::BoxStream;
-use std::{collections::HashMap, iter, sync::Arc};
+use std::{cmp, collections::HashMap, iter, sync::Arc};
 use tikv_client_common::Error::PessimisticLockError;
 use tikv_client_proto::{
     kvrpcpb::{self, TxnHeartBeatResponse},
@@ -679,13 +679,23 @@ impl Merge<kvrpcpb::CheckSecondaryLocksResponse> for Collect {
 
     fn merge(&self, input: Vec<Result<kvrpcpb::CheckSecondaryLocksResponse>>) -> Result<Self::Out> {
         let mut out = SecondaryLocksStatus {
-            locks: HashMap::new(),
+            locks: HashMap::new(), // TODO: remove this field.
             commit_ts: None,
+            min_commit_ts: 0,
+            fallback_2pc: false,
         };
         for resp in input {
             let resp = resp?;
-            out.locks
-                .extend(resp.locks.into_iter().map(|l| (l.key.clone().into(), l)));
+            for lock in resp.locks {
+                if !lock.use_async_commit {
+                    out.fallback_2pc = true;
+                    return Ok(out);
+                }
+                out.min_commit_ts = cmp::max(out.min_commit_ts, lock.min_commit_ts);
+                out.locks.insert(lock.key.clone().into(), lock);
+            }
+            // out.locks
+            //     .extend(resp.locks.into_iter().map(|l| (l.key.clone().into(), l)));
             out.commit_ts = match (
                 out.commit_ts.take(),
                 Timestamp::try_from_version(resp.commit_ts),
@@ -706,6 +716,8 @@ impl Merge<kvrpcpb::CheckSecondaryLocksResponse> for Collect {
 pub struct SecondaryLocksStatus {
     pub locks: HashMap<Key, kvrpcpb::LockInfo>,
     pub commit_ts: Option<Timestamp>,
+    pub min_commit_ts: u64,
+    pub fallback_2pc: bool,
 }
 
 pair_locks!(kvrpcpb::BatchGetResponse);
