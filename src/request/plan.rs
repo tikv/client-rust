@@ -15,7 +15,7 @@ use crate::{
     request::{KvRequest, Shardable},
     stats::tikv_stats,
     store::RegionStore,
-    transaction::{resolve_locks, HasLocks, ResolveLocksContext},
+    transaction::{resolve_locks, HasLocks, ResolveLocksContext, ResolveLocksOptions},
     util::iter::FlatMapOkIterExt,
     Error, Result,
 };
@@ -446,6 +446,7 @@ pub struct CleanupLocks<P: Plan, PdC: PdClient> {
     pub logger: slog::Logger,
     pub inner: P,
     pub ctx: ResolveLocksContext,
+    pub options: ResolveLocksOptions,
     pub store: Option<RegionStore>,
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
@@ -457,6 +458,7 @@ impl<P: Plan, PdC: PdClient> Clone for CleanupLocks<P, PdC> {
             logger: self.logger.clone(),
             inner: self.inner.clone(),
             ctx: self.ctx.clone(),
+            options: self.options.clone(),
             store: None,
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
@@ -475,11 +477,19 @@ where
         let mut result = self.inner.execute().await?;
         let mut clone = self.clone();
         loop {
-            let locks = result.take_locks();
+            let locks = if self.options.async_commit_only {
+                result
+                    .take_locks()
+                    .into_iter()
+                    .filter(|l| l.get_use_async_commit())
+                    .collect::<Vec<_>>()
+            } else {
+                result.take_locks()
+            };
             if locks.is_empty() {
                 return Ok(result);
             }
-            info!(self.logger, "CleanupLocks, locks:{}", locks.len());
+            debug!(self.logger, "CleanupLocks, locks:{}", locks.len());
 
             if self.backoff.is_none() {
                 return Err(Error::ResolveLockError);

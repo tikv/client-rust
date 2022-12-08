@@ -1,13 +1,15 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::{requests::new_scan_lock_request, resolve_locks};
+use super::requests::new_scan_lock_request;
 use crate::{
     backoff::DEFAULT_REGION_BACKOFF,
     config::Config,
     pd::{PdClient, PdRpcClient},
     request::Plan,
     timestamp::TimestampExt,
-    transaction::{ResolveLocksContext, Snapshot, Transaction, TransactionOptions},
+    transaction::{
+        lock::ResolveLocksOptions, ResolveLocksContext, Snapshot, Transaction, TransactionOptions,
+    },
     Backoff, Result,
 };
 use slog::{Drain, Logger};
@@ -235,33 +237,9 @@ impl Client {
     /// We skip the second step "delete ranges" which is an optimization for TiDB.
     pub async fn gc(&self, safepoint: Timestamp) -> Result<bool> {
         debug!(self.logger, "invoking transactional gc request");
-        // scan all locks with ts <= safepoint
-        let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
-        let mut start_key = vec![];
-        loop {
-            let req = new_scan_lock_request(
-                mem::take(&mut start_key),
-                safepoint.version(),
-                SCAN_LOCK_BATCH_SIZE,
-            );
 
-            let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
-                .retry_multi_region(DEFAULT_REGION_BACKOFF)
-                .merge(crate::request::Collect)
-                .plan();
-            let res: Vec<kvrpcpb::LockInfo> = plan.execute().await?;
-
-            if res.is_empty() {
-                break;
-            }
-            start_key = res.last().unwrap().key.clone();
-            start_key.push(0);
-            locks.extend(res);
-        }
-
-        // resolve locks
-        // FIXME: (1) this is inefficient (2) when region error occurred
-        resolve_locks(locks, self.pd.clone()).await?;
+        self.cleanup_locks(&safepoint, ResolveLocksOptions::default())
+            .await?;
 
         // update safepoint to PD
         let res: bool = self
@@ -280,7 +258,11 @@ impl Client {
         Transaction::new(timestamp, self.pd.clone(), options, logger)
     }
 
-    pub async fn cleanup_async_commit_locks(&self, safepoint: Timestamp) -> Result<bool> {
+    pub async fn cleanup_locks(
+        &self,
+        safepoint: &Timestamp,
+        options: ResolveLocksOptions,
+    ) -> Result<bool> {
         debug!(self.logger, "invoking cleanup async commit locks");
         // scan all locks with ts <= safepoint
         let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
@@ -294,7 +276,7 @@ impl Client {
                 SCAN_LOCK_BATCH_SIZE,
             );
             let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
-                .cleanup_locks(self.logger.clone(), ctx.clone(), backoff)
+                .cleanup_locks(self.logger.clone(), ctx.clone(), options, backoff)
                 .retry_multi_region(DEFAULT_REGION_BACKOFF)
                 .merge(crate::request::Collect)
                 .plan();
@@ -309,5 +291,36 @@ impl Client {
         }
 
         Ok(true)
+    }
+
+    // For test.
+    #[cfg(feature = "integration-tests")]
+    pub async fn scan_locks(
+        &self,
+        safepoint: &Timestamp,
+        mut start_key: Vec<u8>,
+    ) -> Result<Vec<kvrpcpb::LockInfo>> {
+        let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
+        loop {
+            let req = new_scan_lock_request(
+                mem::take(&mut start_key),
+                safepoint.version(),
+                SCAN_LOCK_BATCH_SIZE,
+            );
+            let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
+                .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                .merge(crate::request::Collect)
+                .plan();
+            let res: Vec<kvrpcpb::LockInfo> = plan.execute().await?;
+
+            if res.is_empty() {
+                break;
+            }
+            start_key = res.last().unwrap().key.clone();
+            start_key.push(0);
+            locks.extend(res);
+        }
+
+        Ok(locks)
     }
 }

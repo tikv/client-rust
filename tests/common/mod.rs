@@ -1,9 +1,13 @@
+#![allow(dead_code)]
+
 mod ctl;
 
 use futures_timer::Delay;
 use log::{info, warn};
-use std::{env, time::Duration};
-use tikv_client::{ColumnFamily, Key, RawClient, Result, TransactionClient};
+use rand::Rng;
+use slog::Drain;
+use std::{collections::HashSet, convert::TryInto, env, time::Duration};
+use tikv_client::{ColumnFamily, Key, RawClient, Result, Transaction, TransactionClient};
 
 const ENV_PD_ADDRS: &str = "PD_ADDRS";
 const ENV_ENABLE_MULIT_REGION: &str = "MULTI_REGION";
@@ -98,4 +102,48 @@ pub fn pd_addrs() -> Vec<String> {
         .split(',')
         .map(From::from)
         .collect()
+}
+
+#[allow(dead_code)]
+pub fn new_logger(level: slog::Level) -> slog::Logger {
+    let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
+    slog::Logger::root(
+        slog_term::FullFormat::new(plain)
+            .build()
+            .filter_level(level)
+            .fuse(),
+        slog::o!(),
+    )
+}
+
+// helper function
+#[allow(dead_code)]
+pub async fn get_u32(client: &RawClient, key: Vec<u8>) -> Result<u32> {
+    let x = client.get(key).await?.unwrap();
+    let boxed_slice = x.into_boxed_slice();
+    let array: Box<[u8; 4]> = boxed_slice
+        .try_into()
+        .expect("Value should not exceed u32 (4 * u8)");
+    Ok(u32::from_be_bytes(*array))
+}
+
+// helper function
+#[allow(dead_code)]
+pub async fn get_txn_u32(txn: &mut Transaction, key: Vec<u8>) -> Result<u32> {
+    let x = txn.get(key).await?.unwrap();
+    let boxed_slice = x.into_boxed_slice();
+    let array: Box<[u8; 4]> = boxed_slice
+        .try_into()
+        .expect("Value should not exceed u32 (4 * u8)");
+    Ok(u32::from_be_bytes(*array))
+}
+
+// helper function
+#[allow(dead_code)]
+pub fn gen_u32_keys(num: u32, rng: &mut impl Rng) -> HashSet<Vec<u8>> {
+    let mut set = HashSet::new();
+    for _ in 0..num {
+        set.insert(rng.gen::<u32>().to_be_bytes().to_vec());
+    }
+    set
 }

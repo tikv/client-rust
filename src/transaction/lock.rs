@@ -149,6 +149,11 @@ pub struct ResolveLocksContext {
     pub(crate) clean_regions: Arc<RwLock<HashMap<u64, HashSet<RegionVerId>>>>,
 }
 
+#[derive(Default, Clone, Copy, Debug)]
+pub struct ResolveLocksOptions {
+    pub async_commit_only: bool,
+}
+
 impl ResolveLocksContext {
     pub async fn get_resolved(&self, txn_id: u64) -> Option<Arc<TransactionStatus>> {
         self.resolved.read().await.get(&txn_id).cloned()
@@ -223,7 +228,7 @@ impl LockResolver {
                     l.get_lock_type() == kvrpcpb::Op::PessimisticLock,
                 )
                 .await?;
-            info!(
+            slog_debug!(
                 self.logger,
                 "lock status, txn_id:{}, primary:{:?}, status:{:?}",
                 txn_id,
@@ -241,7 +246,7 @@ impl LockResolver {
                         txn_id,
                     )
                     .await?;
-                info!(
+                slog_debug!(
                     self.logger,
                     "secondary status, txn_id:{}, commit_ts:{:?}, min_commit_version:{}, fallback_2pc:{}",
                     txn_id,
@@ -251,9 +256,10 @@ impl LockResolver {
                 );
 
                 if secondary_status.fallback_2pc {
-                    info!(
+                    slog_debug!(
                         self.logger,
-                        "fallback to 2pc, txn_id:{}, check_txn_status again", txn_id
+                        "fallback to 2pc, txn_id:{}, check_txn_status again",
+                        txn_id
                     );
                     status = self
                         .check_txn_status(
@@ -292,7 +298,7 @@ impl LockResolver {
             };
         }
 
-        info!(
+        slog_debug!(
             self.logger,
             "batch resolve locks, region:{:?}, txn:{:?}",
             store.region_with_leader.ver_id(),

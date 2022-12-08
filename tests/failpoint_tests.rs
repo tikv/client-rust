@@ -1,13 +1,15 @@
 #![cfg(feature = "integration-tests")]
 
 mod common;
-use common::{init, pd_addrs};
+
+use common::*;
 use fail::FailScenario;
+use rand::thread_rng;
 use serial_test::serial;
-use slog::{Drain, Logger};
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 use tikv_client::{
-    transaction::HeartbeatOption, Result, TimestampExt, TransactionClient, TransactionOptions,
+    transaction::{HeartbeatOption, ResolveLocksOptions},
+    Result, TimestampExt, TransactionClient, TransactionOptions,
 };
 use tikv_client_proto::pdpb::Timestamp;
 use tokio::task::JoinHandle;
@@ -75,61 +77,84 @@ async fn txn_optimistic_heartbeat() -> Result<()> {
     Ok(())
 }
 
+async fn must_committed(client: &TransactionClient, keys: HashSet<Vec<u8>>) {
+    let ts = client.current_timestamp().await.unwrap();
+    let mut snapshot = client.snapshot(ts, TransactionOptions::default());
+    for key in keys {
+        let val = snapshot.get(key.clone()).await.unwrap();
+        assert_eq!(Some(key), val);
+    }
+}
+
+async fn must_have_locks(client: &TransactionClient, count: usize) {
+    let ts = client.current_timestamp().await.unwrap();
+    let locks = client.scan_locks(&ts, vec![]).await.unwrap();
+    assert_eq!(locks.len(), count);
+}
+
+async fn must_no_lock(client: &TransactionClient) {
+    (must_have_locks(client, 0)).await;
+}
+
 #[tokio::test]
 #[serial]
-async fn txn_status() -> Result<()> {
-    let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-    let logger = Logger::root(
-        slog_term::FullFormat::new(plain)
-            .build()
-            .filter_level(slog::Level::Debug)
-            .fuse(),
-        slog::o!(),
-    );
+async fn txn_cleanup_async_commit_locks() -> Result<()> {
+    let logger = new_logger(slog::Level::Debug);
 
     init().await?;
     let scenario = FailScenario::setup();
-    fail::cfg("after-prewrite", "sleep(6000)").unwrap();
+    let mut rng = thread_rng();
 
-    let key1 = b"key1".to_vec();
-    let val1 = b"val1".to_vec();
-    let key2 = b"key2".to_vec();
-    let val2 = b"val2".to_vec();
-    let client = TransactionClient::new(pd_addrs(), Some(logger)).await?;
-    let mut txn1 = client
-        .begin_with_options(
-            TransactionOptions::new_optimistic()
-                // .use_async_commit()
-                .drop_check(tikv_client::CheckLevel::Warn),
-        )
-        .await?;
+    // no commit
+    {
+        // fail::cfg("after-prewrite", "sleep(6000)").unwrap();
+        fail::cfg("after-prewrite", "return").unwrap();
 
-    txn1.put(key1.clone(), val1.clone()).await?;
-    txn1.put(key2.clone(), val2.clone()).await?;
-    // let txn1_handle: JoinHandle<Result<Option<Timestamp>>> =
-    //     tokio::task::spawn(async move { txn1.commit().await });
-    let txn1_handle: JoinHandle<Result<Option<Timestamp>>> =
-        tokio::task::spawn_blocking(move || futures::executor::block_on(txn1.commit()));
+        let keys = gen_u32_keys(32, &mut rng);
+        let client = TransactionClient::new(pd_addrs(), Some(logger)).await?;
+        let mut txn = client
+            .begin_with_options(
+                TransactionOptions::new_optimistic()
+                    .use_async_commit()
+                    .drop_check(tikv_client::CheckLevel::Warn),
+            )
+            .await?;
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    let safepoint = client.current_timestamp().await?;
-    client.cleanup_async_commit_locks(safepoint).await?;
+        for key in &keys {
+            txn.put(key.to_owned(), key.to_owned()).await?;
+        }
+        // let txn_handle: JoinHandle<Result<Option<Timestamp>>> =
+        //     tokio::task::spawn_blocking(move || futures::executor::block_on(txn.commit()));
+        txn.commit().await.unwrap_err();
+        must_have_locks(&client, keys.len()).await;
+
+        // tokio::time::sleep(Duration::from_secs(1)).await;
+        let safepoint = client.current_timestamp().await?;
+        let options = ResolveLocksOptions {
+            async_commit_only: true,
+            ..Default::default()
+        };
+        client.cleanup_locks(&safepoint, options).await?;
+
+        must_committed(&client, keys).await;
+        must_no_lock(&client).await;
+    }
 
     fail::cfg("after-prewrite", "off").unwrap();
-    let commit_ts = txn1_handle.await?.unwrap().unwrap();
-    println!(
-        "commit_ts:{}, physical:{}",
-        commit_ts.version(),
-        commit_ts.get_physical()
-    );
+    // let commit_ts = txn1_handle.await?.unwrap().unwrap();
+    // println!(
+    //     "commit_ts:{}, physical:{}",
+    //     commit_ts.version(),
+    //     commit_ts.get_physical()
+    // );
 
     // check
-    {
-        let mut txn = client.begin_optimistic().await?;
-        assert_eq!(txn.get(key1).await?.unwrap(), val1);
-        assert_eq!(txn.get(key2).await?.unwrap(), val2);
-        txn.commit().await?;
-    }
+    // {
+    //     let mut txn = client.begin_optimistic().await?;
+    //     assert_eq!(txn.get(key1).await?.unwrap(), val1);
+    //     assert_eq!(txn.get(key2).await?.unwrap(), val2);
+    //     txn.commit().await?;
+    // }
 
     scenario.teardown();
     Ok(())

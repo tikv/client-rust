@@ -1142,7 +1142,11 @@ impl<PdC: PdClient> Committer<PdC> {
 
         let min_commit_ts = self.prewrite().await?;
 
-        fail_point!("after-prewrite");
+        fail_point!("after-prewrite", |_| {
+            Err(Error::StringError(
+                "after-prewrite error by failpoint".to_owned(),
+            ))
+        });
 
         // If we didn't use 1pc, prewrite will set `try_one_pc` to false.
         if self.options.try_one_pc {
