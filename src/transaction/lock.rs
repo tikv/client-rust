@@ -3,7 +3,7 @@
 use crate::{
     backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
     pd::PdClient,
-    region::{RegionVerId, RegionWithLeader},
+    region::RegionVerId,
     request::{Collect, CollectSingle, Plan},
     store::RegionStore,
     timestamp::TimestampExt,
@@ -22,7 +22,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use tikv_client_proto::{kvrpcpb, kvrpcpb::TxnInfo, pdpb::Timestamp};
 use tokio::sync::RwLock;
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
@@ -141,27 +141,55 @@ async fn resolve_lock_with_retry(
     Err(error.expect("no error is impossible"))
 }
 
+#[derive(Default, Clone)]
+pub struct ResolveLocksContext {
+    // Record the transaction status of each primary lock.
+    // TODO: use a LRU cache to limit memory usage.
+    pub(crate) resolved: Arc<RwLock<HashMap<u64, Arc<TransactionStatus>>>>,
+    pub(crate) clean_regions: Arc<RwLock<HashMap<u64, HashSet<RegionVerId>>>>,
+}
+
+impl ResolveLocksContext {
+    pub async fn get_resolved(&self, txn_id: u64) -> Option<Arc<TransactionStatus>> {
+        self.resolved.read().await.get(&txn_id).cloned()
+    }
+
+    pub async fn save_resolved(&mut self, txn_id: u64, txn_status: Arc<TransactionStatus>) {
+        self.resolved.write().await.insert(txn_id, txn_status);
+    }
+
+    pub async fn is_region_cleaned(&self, txn_id: u64, region: &RegionVerId) -> bool {
+        self.clean_regions
+            .read()
+            .await
+            .get(&txn_id)
+            .map(|regions| regions.contains(region))
+            .unwrap_or(false)
+    }
+
+    pub async fn save_cleaned_region(&mut self, txn_id: u64, region: RegionVerId) {
+        self.clean_regions
+            .write()
+            .await
+            .entry(txn_id)
+            .or_insert_with(HashSet::new)
+            .insert(region);
+    }
+}
+
 pub struct LockResolver {
     logger: Logger,
-    resolved: RwLock<HashMap<u64, Arc<TransactionStatus>>>, /* TODO: use a LRU cache to limit memory usage. */
-    // records the commit version of each primary lock (representing the status of the transaction)
-    commit_versions: RwLock<HashMap<u64, u64>>,
-    clean_regions: RwLock<HashMap<u64, HashSet<RegionVerId>>>,
+    ctx: ResolveLocksContext,
 }
 
 impl LockResolver {
-    pub fn new(logger: Logger) -> Self {
-        Self {
-            logger,
-            resolved: Default::default(),
-            commit_versions: Default::default(),
-            clean_regions: Default::default(),
-        }
+    pub fn new(logger: Logger, ctx: ResolveLocksContext) -> Self {
+        Self { logger, ctx }
     }
 
     /// _Cleanup_ the given locks. Returns whether all the given locks are resolved.
     ///
-    /// Will rollback RUNNING transactions. ONLY use in GC.
+    /// Note: Will rollback RUNNING transactions. ONLY use in GC.
     pub async fn cleanup_locks(
         &mut self,
         store: RegionStore,
@@ -172,10 +200,13 @@ impl LockResolver {
             return Ok(true);
         }
 
+        let region = store.region_with_leader.ver_id();
+
         let mut txn_infos = HashMap::new();
         for l in locks {
             let txn_id = l.get_lock_version();
-            if txn_infos.contains_key(&txn_id) {
+            if txn_infos.contains_key(&txn_id) || self.ctx.is_region_cleaned(txn_id, &region).await
+            {
                 continue;
             }
 
@@ -222,7 +253,7 @@ impl LockResolver {
                 if secondary_status.fallback_2pc {
                     info!(
                         self.logger,
-                        "fallback to 2pc, txn_id:{}, get_txn_status again", txn_id
+                        "fallback to 2pc, txn_id:{}, check_txn_status again", txn_id
                     );
                     status = self
                         .check_txn_status(
@@ -249,12 +280,40 @@ impl LockResolver {
 
             match &status.kind {
                 TransactionStatusKind::Locked(..) => {
-                    error!(self.logger, "batch_resolve_locks fail to clean locks, this result is not expected. txn_id:{}", txn_id);
+                    error!(
+                        self.logger,
+                        "cleanup_locks fail to clean locks, this result is not expected. txn_id:{}",
+                        txn_id
+                    );
                     return Err(Error::ResolveLockError);
                 }
                 TransactionStatusKind::Committed(ts) => txn_infos.insert(txn_id, ts.version()),
                 TransactionStatusKind::RolledBack => txn_infos.insert(txn_id, 0),
             };
+        }
+
+        info!(
+            self.logger,
+            "batch resolve locks, region:{:?}, txn:{:?}",
+            store.region_with_leader.ver_id(),
+            txn_infos
+        );
+        let mut txn_ids = Vec::with_capacity(txn_infos.len());
+        let mut txn_info_vec = Vec::with_capacity(txn_infos.len());
+        for (txn_id, commit_ts) in txn_infos.into_iter() {
+            txn_ids.push(txn_id);
+            txn_info_vec.push(TxnInfo {
+                txn: txn_id,
+                status: commit_ts,
+            });
+        }
+        let cleaned_region = self
+            .batch_resolve_locks(pd_client.clone(), store.clone(), txn_info_vec)
+            .await?;
+        for txn_id in txn_ids {
+            self.ctx
+                .save_cleaned_region(txn_id, cleaned_region.clone())
+                .await;
         }
 
         Ok(true)
@@ -272,7 +331,7 @@ impl LockResolver {
         force_sync_commit: bool,
         resolving_pessimistic_lock: bool,
     ) -> Result<Arc<TransactionStatus>> {
-        if let Some(txn_status) = self.get_resolved(txn_id).await {
+        if let Some(txn_status) = self.ctx.get_resolved(txn_id).await {
             return Ok(txn_status);
         }
 
@@ -297,6 +356,7 @@ impl LockResolver {
             // .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(CollectSingle)
+            .extract_error()
             .post_process_default()
             .plan();
         let mut res: TransactionStatus = plan.execute().await?;
@@ -310,7 +370,7 @@ impl LockResolver {
         res.check_ttl(current);
         let res = Arc::new(res);
         if res.is_cacheable() {
-            self.save_resolved(txn_id, res.clone()).await;
+            self.ctx.save_resolved(txn_id, res.clone()).await;
         }
         Ok(res)
     }
@@ -324,17 +384,30 @@ impl LockResolver {
         let req = new_check_secondary_locks_request(keys, txn_id);
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), req)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .extract_error()
             .merge(Collect)
             .plan();
         plan.execute().await
     }
 
-    async fn get_resolved(&self, txn_id: u64) -> Option<Arc<TransactionStatus>> {
-        self.resolved.read().await.get(&txn_id).cloned()
-    }
-
-    async fn save_resolved(&mut self, txn_id: u64, txn_status: Arc<TransactionStatus>) {
-        self.resolved.write().await.insert(txn_id, txn_status);
+    async fn batch_resolve_locks(
+        &mut self,
+        pd_client: Arc<impl PdClient>,
+        store: RegionStore,
+        txn_infos: Vec<TxnInfo>,
+    ) -> Result<RegionVerId> {
+        debug!("batch resolving locks");
+        // FIXME: Add backoff
+        let ver_id = store.region_with_leader.ver_id();
+        let request = requests::new_batch_resolve_lock_request(txn_infos.clone());
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
+            .single_region_with_store(store.clone())
+            .await?
+            .resolve_lock(Backoff::no_backoff())
+            .extract_error()
+            .plan();
+        let _ = plan.execute().await?;
+        Ok(ver_id)
     }
 }
 

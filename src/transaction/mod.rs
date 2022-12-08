@@ -21,7 +21,7 @@ pub mod lowering;
 #[macro_use]
 mod requests;
 mod lock;
-pub use lock::LockResolver;
+pub use lock::{LockResolver, ResolveLocksContext};
 mod snapshot;
 #[allow(clippy::module_inception)]
 mod transaction;

@@ -99,7 +99,7 @@ async fn txn_status() -> Result<()> {
     let mut txn1 = client
         .begin_with_options(
             TransactionOptions::new_optimistic()
-                .use_async_commit()
+                // .use_async_commit()
                 .drop_check(tikv_client::CheckLevel::Warn),
         )
         .await?;

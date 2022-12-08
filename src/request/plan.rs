@@ -12,11 +12,10 @@ use tokio::sync::Semaphore;
 use crate::{
     backoff::Backoff,
     pd::PdClient,
-    region::RegionWithLeader,
     request::{KvRequest, Shardable},
     stats::tikv_stats,
     store::RegionStore,
-    transaction::{resolve_locks, HasLocks},
+    transaction::{resolve_locks, HasLocks, ResolveLocksContext},
     util::iter::FlatMapOkIterExt,
     Error, Result,
 };
@@ -446,6 +445,7 @@ where
 pub struct CleanupLocks<P: Plan, PdC: PdClient> {
     pub logger: slog::Logger,
     pub inner: P,
+    pub ctx: ResolveLocksContext,
     pub store: Option<RegionStore>,
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
@@ -456,6 +456,7 @@ impl<P: Plan, PdC: PdClient> Clone for CleanupLocks<P, PdC> {
         CleanupLocks {
             logger: self.logger.clone(),
             inner: self.inner.clone(),
+            ctx: self.ctx.clone(),
             store: None,
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
@@ -485,11 +486,13 @@ where
             }
 
             let pd_client = self.pd_client.clone();
-            let mut lock_resolver = crate::transaction::LockResolver::new(self.logger.clone());
+            let mut lock_resolver =
+                crate::transaction::LockResolver::new(self.logger.clone(), self.ctx.clone());
             if lock_resolver
-                .cleanup_locks(self.store.unwrap().clone(), locks, pd_client.clone())
+                .cleanup_locks(self.store.clone().unwrap(), locks, pd_client.clone())
                 .await?
             {
+                // TODO: iterate to next batch of self.inner
                 return Ok(result);
             } else {
                 match clone.backoff.next_delay_duration() {

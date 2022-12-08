@@ -2,13 +2,13 @@
 
 use super::{requests::new_scan_lock_request, resolve_locks};
 use crate::{
-    backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
+    backoff::DEFAULT_REGION_BACKOFF,
     config::Config,
     pd::{PdClient, PdRpcClient},
     request::Plan,
     timestamp::TimestampExt,
-    transaction::{lock::LockResolver, Snapshot, Transaction, TransactionOptions},
-    Result,
+    transaction::{ResolveLocksContext, Snapshot, Transaction, TransactionOptions},
+    Backoff, Result,
 };
 use slog::{Drain, Logger};
 use std::{mem, sync::Arc};
@@ -280,53 +280,21 @@ impl Client {
         Transaction::new(timestamp, self.pd.clone(), options, logger)
     }
 
-    pub async fn resolve_async_commit_locks(&self, safepoint: Timestamp) -> Result<bool> {
-        debug!(self.logger, "invoking resolve async commit locks");
-        // scan all locks with ts <= safepoint
-        let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
-        let mut start_key = vec![];
-        loop {
-            let req = new_scan_lock_request(
-                mem::take(&mut start_key),
-                safepoint.version(),
-                SCAN_LOCK_BATCH_SIZE,
-            );
-
-            let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
-                .retry_multi_region(DEFAULT_REGION_BACKOFF)
-                .merge(crate::request::Collect)
-                .plan();
-            let res: Vec<kvrpcpb::LockInfo> = plan.execute().await?;
-
-            if res.is_empty() {
-                break;
-            }
-            start_key = res.last().unwrap().key.clone();
-            start_key.push(0);
-            // locks.extend(res.into_iter().filter(|l| l.use_async_commit));
-            locks.extend(res);
-        }
-
-        // resolve locks
-        // FIXME: (1) this is inefficient (2) when region error occurred
-        let mut lock_resolver = LockResolver::new(self.logger.clone());
-        let res = lock_resolver.cleanup_locks(locks, self.pd.clone()).await?;
-        Ok(res)
-    }
-
     pub async fn cleanup_async_commit_locks(&self, safepoint: Timestamp) -> Result<bool> {
         debug!(self.logger, "invoking cleanup async commit locks");
         // scan all locks with ts <= safepoint
         let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
         let mut start_key = vec![];
+        let ctx = ResolveLocksContext::default();
         loop {
+            let backoff = Backoff::equal_jitter_backoff(100, 10000, 50);
             let req = new_scan_lock_request(
                 mem::take(&mut start_key),
                 safepoint.version(),
                 SCAN_LOCK_BATCH_SIZE,
             );
             let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
-                .cleanup_locks(self.logger.clone(), OPTIMISTIC_BACKOFF)
+                .cleanup_locks(self.logger.clone(), ctx.clone(), backoff)
                 .retry_multi_region(DEFAULT_REGION_BACKOFF)
                 .merge(crate::request::Collect)
                 .plan();

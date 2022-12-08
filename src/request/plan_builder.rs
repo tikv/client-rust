@@ -10,7 +10,7 @@ use crate::{
         Shardable,
     },
     store::RegionStore,
-    transaction::HasLocks,
+    transaction::{HasLocks, ResolveLocksContext},
     Result,
 };
 use std::{marker::PhantomData, sync::Arc};
@@ -72,6 +72,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     pub fn cleanup_locks(
         self,
         logger: slog::Logger,
+        ctx: ResolveLocksContext,
         backoff: Backoff,
     ) -> PlanBuilder<PdC, CleanupLocks<P, PdC>, Ph>
     where
@@ -82,6 +83,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
             plan: CleanupLocks {
                 logger,
                 inner: self.plan,
+                ctx,
                 store: None,
                 backoff,
                 pd_client: self.pd_client,

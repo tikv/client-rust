@@ -18,7 +18,7 @@ use futures::stream::BoxStream;
 use std::{cmp, collections::HashMap, iter, sync::Arc};
 use tikv_client_common::Error::PessimisticLockError;
 use tikv_client_proto::{
-    kvrpcpb::{self, LockInfo, TxnHeartBeatResponse},
+    kvrpcpb::{self, LockInfo, TxnHeartBeatResponse, TxnInfo},
     pdpb::Timestamp,
 };
 
@@ -167,6 +167,12 @@ pub fn new_resolve_lock_request(
     req.set_start_version(start_version);
     req.set_commit_version(commit_version);
 
+    req
+}
+
+pub fn new_batch_resolve_lock_request(txn_infos: Vec<TxnInfo>) -> kvrpcpb::ResolveLockRequest {
+    let mut req = kvrpcpb::ResolveLockRequest::default();
+    req.set_txn_infos(txn_infos);
     req
 }
 
