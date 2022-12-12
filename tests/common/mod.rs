@@ -147,3 +147,33 @@ pub fn gen_u32_keys(num: u32, rng: &mut impl Rng) -> HashSet<Vec<u8>> {
     }
     set
 }
+
+/// Copied from https://github.com/tikv/tikv/blob/d86a449d7f5b656cef28576f166e73291f501d77/components/tikv_util/src/macros.rs#L55
+/// Simulates Go's defer.
+///
+/// Please note that, different from go, this defer is bound to scope.
+/// When exiting the scope, its deferred calls are executed in last-in-first-out
+/// order.
+#[macro_export]
+macro_rules! defer {
+    ($t:expr) => {
+        let __ctx = $crate::DeferContext::new(|| $t);
+    };
+}
+
+/// Invokes the wrapped closure when dropped.
+pub struct DeferContext<T: FnOnce()> {
+    t: Option<T>,
+}
+
+impl<T: FnOnce()> DeferContext<T> {
+    pub fn new(t: T) -> DeferContext<T> {
+        DeferContext { t: Some(t) }
+    }
+}
+
+impl<T: FnOnce()> Drop for DeferContext<T> {
+    fn drop(&mut self) {
+        self.t.take().unwrap()()
+    }
+}

@@ -16,13 +16,9 @@ use common::*;
 use futures::prelude::*;
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 use serial_test::serial;
-use std::{
-    collections::{HashMap, HashSet},
-    convert::TryInto,
-    iter,
-};
+use std::{collections::HashMap, iter};
 use tikv_client::{
-    transaction::HeartbeatOption, BoundRange, Error, Key, KvPair, RawClient, Result, Transaction,
+    transaction::HeartbeatOption, BoundRange, Error, Key, KvPair, RawClient, Result,
     TransactionClient, TransactionOptions, Value,
 };
 
