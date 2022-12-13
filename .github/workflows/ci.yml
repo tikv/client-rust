@@ -44,6 +44,7 @@ jobs:
         with:
           command: fmt
           args: --all -- --check
+
   clippy:
     name: clippy
     runs-on: ubuntu-latest
@@ -54,6 +55,11 @@ jobs:
           toolchain: nightly
           components: clippy
           override: true
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
+        with:
+          version: '3.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
         uses: Swatinem/rust-cache@v1.4.0
       - uses: actions-rs/clippy-check@v1
@@ -61,6 +67,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           args: --all-targets --all-features -- -D clippy::all
           name: Clippy Output
+
   unit-test:
     name: unit test
     env:
@@ -73,10 +80,16 @@ jobs:
           profile: minimal
           toolchain: nightly
           override: true
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
+        with:
+          version: '3.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
         uses: Swatinem/rust-cache@v1.4.0
       - name: unit test
         run: make unit-test
+
   integration-test:
     name: integration test
     env:
@@ -89,6 +102,11 @@ jobs:
           profile: minimal
           toolchain: nightly
           override: true
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
+        with:
+          version: '3.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
         uses: Swatinem/rust-cache@v1.4.0
       - name: install tiup
