@@ -187,7 +187,7 @@ async fn raw_bank_transfer() -> Result<()> {
     let mut sum: u32 = 0;
     for person in &people {
         let init = rng.gen::<u8>() as u32;
-        sum += init as u32;
+        sum += init;
         client
             .put(person.clone(), init.to_be_bytes().to_vec())
             .await?;
@@ -335,7 +335,7 @@ async fn txn_bank_transfer() -> Result<()> {
     let mut sum: u32 = 0;
     for person in &people {
         let init = rng.gen::<u8>() as u32;
-        sum += init as u32;
+        sum += init;
         txn.put(person.clone(), init.to_be_bytes().to_vec()).await?;
     }
     txn.commit().await?;

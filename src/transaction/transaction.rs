@@ -1326,7 +1326,7 @@ impl<PdC: PdClient> Committer<PdC> {
         if self.write_size > TXN_COMMIT_BATCH_SIZE {
             let size_mb = self.write_size as f64 / 1024.0 / 1024.0;
             lock_ttl = (TTL_FACTOR * size_mb.sqrt()) as u64;
-            lock_ttl = lock_ttl.min(MAX_TTL).max(DEFAULT_LOCK_TTL);
+            lock_ttl = lock_ttl.clamp(DEFAULT_LOCK_TTL, MAX_TTL);
         }
         lock_ttl
     }
@@ -1388,11 +1388,11 @@ mod tests {
             move |req: &dyn Any| {
                 if req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>().is_some() {
                     heartbeats_cloned.fetch_add(1, Ordering::SeqCst);
-                    Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>)
+                    Ok(Box::<kvrpcpb::TxnHeartBeatResponse>::default() as Box<dyn Any>)
                 } else if req.downcast_ref::<kvrpcpb::PrewriteRequest>().is_some() {
-                    Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
+                    Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>)
                 } else {
-                    Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
+                    Ok(Box::<kvrpcpb::CommitResponse>::default() as Box<dyn Any>)
                 }
             },
         )));
@@ -1432,16 +1432,16 @@ mod tests {
             move |req: &dyn Any| {
                 if req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>().is_some() {
                     heartbeats_cloned.fetch_add(1, Ordering::SeqCst);
-                    Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>)
+                    Ok(Box::<kvrpcpb::TxnHeartBeatResponse>::default() as Box<dyn Any>)
                 } else if req.downcast_ref::<kvrpcpb::PrewriteRequest>().is_some() {
-                    Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
+                    Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>)
                 } else if req
                     .downcast_ref::<kvrpcpb::PessimisticLockRequest>()
                     .is_some()
                 {
-                    Ok(Box::new(kvrpcpb::PessimisticLockResponse::default()) as Box<dyn Any>)
+                    Ok(Box::<kvrpcpb::PessimisticLockResponse>::default() as Box<dyn Any>)
                 } else {
-                    Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
+                    Ok(Box::<kvrpcpb::CommitResponse>::default() as Box<dyn Any>)
                 }
             },
         )));

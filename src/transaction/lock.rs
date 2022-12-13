@@ -159,7 +159,7 @@ mod tests {
                     };
                     Ok(Box::new(resp) as Box<dyn Any>)
                 });
-                Ok(Box::new(kvrpcpb::ResolveLockResponse::default()) as Box<dyn Any>)
+                Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>)
             },
         )));
 
