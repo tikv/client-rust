@@ -52,7 +52,7 @@ async fn scan(client: &Client, range: impl Into<BoundRange>, limit: u32) {
     txn.scan(range, limit)
         .await
         .expect("Could not scan key-value pairs in range")
-        .for_each(|pair| println!("{:?}", pair));
+        .for_each(|pair| println!("{pair:?}"));
     txn.commit().await.expect("Could not commit transaction");
 }
 
