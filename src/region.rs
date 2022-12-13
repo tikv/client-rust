@@ -2,7 +2,6 @@
 
 use crate::{Error, Key, Result};
 use derive_new::new;
-use std::ops::Bound;
 use tikv_client_proto::{kvrpcpb, metapb};
 
 /// The ID of a region
@@ -38,20 +37,6 @@ impl RegionWithLeader {
         let start_key = self.region.get_start_key();
         let end_key = self.region.get_end_key();
         key >= start_key && (key < end_key || end_key.is_empty())
-    }
-
-    pub fn contains_start_bound(&self, bound: Bound<&Key>) -> bool {
-        let start_key = self.region.get_start_key();
-        let end_key = self.region.get_end_key();
-
-        match bound {
-            Bound::Included(key) => self.contains(key),
-            Bound::Excluded(key) => {
-                let key: &[u8] = key.into();
-                key >= start_key && (key <= end_key || end_key.is_empty())
-            }
-            Bound::Unbounded => start_key.is_empty(),
-        }
     }
 
     pub fn context(&self) -> Result<kvrpcpb::Context> {

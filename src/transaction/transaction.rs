@@ -1273,8 +1273,6 @@ impl<PdC: PdClient> Committer<PdC> {
         #[cfg(not(feature = "integration-tests"))]
         let mutations = self.mutations.into_iter();
 
-        // #[cfg(feature = "integration-tests")]
-        // let mut mutations = self.mutations.into_iter().take(mutations_len).cloned();
         #[cfg(feature = "integration-tests")]
         let mutations = self.mutations.into_iter().take({
             // Truncate mutation to a new length as `percent/100`.

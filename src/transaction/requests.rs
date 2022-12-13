@@ -11,7 +11,7 @@ use crate::{
     timestamp::TimestampExt,
     transaction::HasLocks,
     util::iter::FlatMapOkIterExt,
-    BoundRange, KvPair, Result, Value,
+    KvPair, Result, Value,
 };
 use either::Either;
 use futures::stream::BoxStream;
@@ -477,18 +477,18 @@ impl Shardable for kvrpcpb::ScanLockRequest {
 }
 
 impl HasNextBatch for kvrpcpb::ScanLockResponse {
-    fn has_next_batch(&self) -> Option<BoundRange> {
+    fn has_next_batch(&self) -> Option<(Vec<u8>, Vec<u8>)> {
         self.get_locks().last().map(|lock| {
             let mut start_key: Vec<u8> = lock.get_key().to_vec();
             start_key.push(0);
-            BoundRange::range_from(start_key.into())
+            (start_key, vec![])
         })
     }
 }
 
 impl NextBatch for kvrpcpb::ScanLockRequest {
-    fn next_batch(&mut self, range: BoundRange) {
-        self.set_start_key(range.into_keys().0.into());
+    fn next_batch(&mut self, range: (Vec<u8>, Vec<u8>)) {
+        self.set_start_key(range.0);
     }
 }
 

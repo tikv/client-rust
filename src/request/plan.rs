@@ -1,6 +1,6 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{marker::PhantomData, ops::RangeBounds, sync::Arc};
+use std::{marker::PhantomData, sync::Arc};
 
 use async_recursion::async_recursion;
 use async_trait::async_trait;
@@ -548,7 +548,7 @@ where
 
             // Iterate to next batch of inner.
             match scan_lock_resp.has_next_batch() {
-                Some(range) if region.contains_start_bound(range.start_bound()) => {
+                Some(range) if region.contains(range.0.as_ref()) => {
                     debug!(self.logger, "CleanupLocks::execute, next range:{:?}", range);
                     inner.next_batch(range);
                 }
