@@ -5,7 +5,7 @@ use crate::{
     pd::PdClient,
     request::{plan::CleanupLocks, Dispatch, KvRequest, Plan, ResolveLock},
     store::RegionStore,
-    Result,
+    BoundRange, Result,
 };
 use futures::stream::BoxStream;
 use std::sync::Arc;
@@ -38,6 +38,17 @@ pub trait Shardable {
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()>;
 }
 
+// Use to iterate in a region for scan requests that have batch size limit.
+// HasNextBatch use to get the next batch according to previous response.
+pub trait HasNextBatch {
+    fn has_next_batch(&self) -> Option<BoundRange>;
+}
+
+// NextBatch use to change start key of request by result of `has_next_batch`.
+pub trait NextBatch {
+    fn next_batch(&mut self, _range: BoundRange);
+}
+
 impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
     type Shard = Req::Shard;
 
@@ -51,6 +62,12 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
         self.kv_client = Some(store.client.clone());
         self.request.apply_shard(shard, store)
+    }
+}
+
+impl<Req: KvRequest + NextBatch> NextBatch for Dispatch<Req> {
+    fn next_batch(&mut self, range: BoundRange) {
+        self.request.next_batch(range);
     }
 }
 

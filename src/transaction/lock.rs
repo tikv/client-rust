@@ -16,6 +16,7 @@ use crate::{
     },
     Error, Result,
 };
+use fail::fail_point;
 use log::debug;
 use slog::Logger;
 use std::{
@@ -143,15 +144,24 @@ async fn resolve_lock_with_retry(
 
 #[derive(Default, Clone)]
 pub struct ResolveLocksContext {
-    // Record the transaction status of each primary lock.
-    // TODO: use a LRU cache to limit memory usage.
+    // Record the status of each transaction.
     pub(crate) resolved: Arc<RwLock<HashMap<u64, Arc<TransactionStatus>>>>,
     pub(crate) clean_regions: Arc<RwLock<HashMap<u64, HashSet<RegionVerId>>>>,
 }
 
-#[derive(Default, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct ResolveLocksOptions {
     pub async_commit_only: bool,
+    pub batch_size: u32,
+}
+
+impl Default for ResolveLocksOptions {
+    fn default() -> Self {
+        Self {
+            async_commit_only: false,
+            batch_size: 1024,
+        }
+    }
 }
 
 impl ResolveLocksContext {
@@ -200,10 +210,12 @@ impl LockResolver {
         store: RegionStore,
         locks: Vec<kvrpcpb::LockInfo>,
         pd_client: Arc<impl PdClient>, // TODO: make pd_client a member of LockResolver
-    ) -> Result<bool> {
+    ) -> Result<()> {
         if locks.is_empty() {
-            return Ok(true);
+            return Ok(());
         }
+
+        fail_point!("before-cleanup-locks", |_| { Ok(()) });
 
         let region = store.region_with_leader.ver_id();
 
@@ -228,13 +240,6 @@ impl LockResolver {
                     l.get_lock_type() == kvrpcpb::Op::PessimisticLock,
                 )
                 .await?;
-            slog_debug!(
-                self.logger,
-                "lock status, txn_id:{}, primary:{:?}, status:{:?}",
-                txn_id,
-                l.get_primary_lock(),
-                status,
-            );
 
             // If the transaction uses async commit, check_txn_status will reject rolling back the primary lock.
             // Then we need to check the secondary locks to determine the final status of the transaction.
@@ -322,7 +327,7 @@ impl LockResolver {
                 .await;
         }
 
-        Ok(true)
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -359,18 +364,12 @@ impl LockResolver {
             resolving_pessimistic_lock,
         );
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), req)
-            // .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(CollectSingle)
             .extract_error()
             .post_process_default()
             .plan();
         let mut res: TransactionStatus = plan.execute().await?;
-
-        // TODO: remove this assert_eq.
-        if let TransactionStatusKind::Locked(_, lock_info) = &res.kind {
-            assert_eq!(lock_info.lock_version, txn_id);
-        }
 
         let current = pd_client.clone().get_timestamp().await?;
         res.check_ttl(current);
@@ -402,14 +401,11 @@ impl LockResolver {
         store: RegionStore,
         txn_infos: Vec<TxnInfo>,
     ) -> Result<RegionVerId> {
-        debug!("batch resolving locks");
-        // FIXME: Add backoff
         let ver_id = store.region_with_leader.ver_id();
         let request = requests::new_batch_resolve_lock_request(txn_infos.clone());
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
             .single_region_with_store(store.clone())
             .await?
-            .resolve_lock(Backoff::no_backoff())
             .extract_error()
             .plan();
         let _ = plan.execute().await?;

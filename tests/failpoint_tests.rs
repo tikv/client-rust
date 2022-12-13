@@ -7,11 +7,12 @@ use fail::FailScenario;
 use rand::thread_rng;
 use serial_test::serial;
 use slog::info;
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, thread, time::Duration};
 use tikv_client::{
     transaction::{Client, HeartbeatOption, ResolveLocksOptions},
     Result, TransactionClient, TransactionOptions,
 };
+use tikv_client_proto::kvrpcpb::LockInfo;
 
 #[tokio::test]
 #[serial]
@@ -76,68 +77,37 @@ async fn txn_optimistic_heartbeat() -> Result<()> {
     Ok(())
 }
 
-async fn must_committed(client: &TransactionClient, keys: HashSet<Vec<u8>>) {
-    let ts = client.current_timestamp().await.unwrap();
-    let mut snapshot = client.snapshot(ts, TransactionOptions::default());
-    for key in keys {
-        let val = snapshot.get(key.clone()).await.unwrap();
-        assert_eq!(Some(key), val);
-    }
-}
+#[tokio::test]
+#[serial]
+async fn txn_cleanup_locks_batch_size() -> Result<()> {
+    let logger = new_logger(slog::Level::Info);
 
-async fn must_rollbacked(client: &TransactionClient, keys: HashSet<Vec<u8>>) {
-    let ts = client.current_timestamp().await.unwrap();
-    let mut snapshot = client.snapshot(ts, TransactionOptions::default());
-    for key in keys {
-        let val = snapshot.get(key.clone()).await.unwrap();
-        assert_eq!(None, val);
-    }
-}
+    init().await?;
+    let scenario = FailScenario::setup();
 
-async fn must_have_locks(client: &TransactionClient, count: usize) {
-    let ts = client.current_timestamp().await.unwrap();
-    let locks = client.scan_locks(&ts, vec![]).await.unwrap();
-    assert_eq!(locks.len(), count);
-}
+    fail::cfg("after-prewrite", "return").unwrap();
+    fail::cfg("before-cleanup-locks", "return").unwrap();
+    defer! {{
+        fail::cfg("after-prewrite", "off").unwrap();
+        fail::cfg("before-cleanup-locks", "off").unwrap();
+    }}
 
-async fn must_no_lock(client: &TransactionClient) {
-    (must_have_locks(client, 0)).await;
-}
+    let client = TransactionClient::new(pd_addrs(), Some(logger.clone())).await?;
+    let keys = write_data(&client, true, true).await?;
+    must_have_locks(&client, keys.len()).await;
 
-const TXN_COUNT: usize = 16;
-const KEY_COUNT: usize = 64;
+    let safepoint = client.current_timestamp().await?;
+    let options = ResolveLocksOptions {
+        async_commit_only: false,
+        batch_size: 4,
+    };
+    let res = client.cleanup_locks(&safepoint, options).await?;
 
-async fn write_data(
-    client: &Client,
-    async_commit: bool,
-    commit_error: bool,
-) -> Result<HashSet<Vec<u8>>> {
-    let mut rng = thread_rng();
-    let keys = gen_u32_keys((TXN_COUNT * KEY_COUNT) as u32, &mut rng);
-    let mut txns = Vec::with_capacity(TXN_COUNT);
+    assert_eq!(res.meet_locks, keys.len());
+    must_have_locks(&client, keys.len()).await;
 
-    let mut options =
-        TransactionOptions::new_optimistic().drop_check(tikv_client::CheckLevel::Warn);
-    if async_commit {
-        options = options.use_async_commit();
-    }
-
-    for _ in 0..TXN_COUNT {
-        let txn = client.begin_with_options(options.clone()).await?;
-        txns.push(txn);
-    }
-
-    for (i, key) in keys.iter().enumerate() {
-        txns[i % TXN_COUNT]
-            .put(key.to_owned(), key.to_owned())
-            .await?;
-    }
-
-    for txn in &mut txns {
-        let res = txn.commit().await;
-        assert_eq!(res.is_err(), commit_error, "error: {:?}", res);
-    }
-    Ok(keys)
+    scenario.teardown();
+    Ok(())
 }
 
 #[tokio::test]
@@ -182,6 +152,7 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
 
         let client = TransactionClient::new(pd_addrs(), Some(logger.clone())).await?;
         let keys = write_data(&client, true, false).await?;
+        thread::sleep(Duration::from_secs(1)); // Wait for async commit to complete.
         must_have_locks(&client, keys.len() * percent / 100).await;
 
         let safepoint = client.current_timestamp().await?;
@@ -200,7 +171,6 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
         info!(logger, "test all committed");
         let client = TransactionClient::new(pd_addrs(), Some(logger.clone())).await?;
         let keys = write_data(&client, true, false).await?;
-        must_no_lock(&client).await;
 
         let safepoint = client.current_timestamp().await?;
         let options = ResolveLocksOptions {
@@ -212,6 +182,10 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
         must_committed(&client, keys).await;
         must_no_lock(&client).await;
     }
+
+    // TODO: test rollback
+
+    // TODO: test region error
 
     scenario.teardown();
     Ok(())
@@ -276,4 +250,72 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
 
     scenario.teardown();
     Ok(())
+}
+
+async fn must_committed(client: &TransactionClient, keys: HashSet<Vec<u8>>) {
+    let ts = client.current_timestamp().await.unwrap();
+    let mut snapshot = client.snapshot(ts, TransactionOptions::default());
+    for key in keys {
+        let val = snapshot.get(key.clone()).await.unwrap();
+        assert_eq!(Some(key), val);
+    }
+}
+
+async fn must_rollbacked(client: &TransactionClient, keys: HashSet<Vec<u8>>) {
+    let ts = client.current_timestamp().await.unwrap();
+    let mut snapshot = client.snapshot(ts, TransactionOptions::default());
+    for key in keys {
+        let val = snapshot.get(key.clone()).await.unwrap();
+        assert_eq!(None, val);
+    }
+}
+
+async fn scan_locks(client: &TransactionClient, batch_size: u32) -> Vec<LockInfo> {
+    let ts = client.current_timestamp().await.unwrap();
+    client.scan_locks(&ts, vec![], batch_size).await.unwrap()
+}
+
+async fn must_have_locks(client: &TransactionClient, count: usize) {
+    let locks = scan_locks(client, 1024).await;
+    assert_eq!(locks.len(), count);
+}
+
+async fn must_no_lock(client: &TransactionClient) {
+    (must_have_locks(client, 0)).await;
+}
+
+const TXN_COUNT: usize = 16;
+const KEY_COUNT: usize = 64;
+
+async fn write_data(
+    client: &Client,
+    async_commit: bool,
+    commit_error: bool,
+) -> Result<HashSet<Vec<u8>>> {
+    let mut rng = thread_rng();
+    let keys = gen_u32_keys((TXN_COUNT * KEY_COUNT) as u32, &mut rng);
+    let mut txns = Vec::with_capacity(TXN_COUNT);
+
+    let mut options =
+        TransactionOptions::new_optimistic().drop_check(tikv_client::CheckLevel::Warn);
+    if async_commit {
+        options = options.use_async_commit();
+    }
+
+    for _ in 0..TXN_COUNT {
+        let txn = client.begin_with_options(options.clone()).await?;
+        txns.push(txn);
+    }
+
+    for (i, key) in keys.iter().enumerate() {
+        txns[i % TXN_COUNT]
+            .put(key.to_owned(), key.to_owned())
+            .await?;
+    }
+
+    for txn in &mut txns {
+        let res = txn.commit().await;
+        assert_eq!(res.is_err(), commit_error, "error: {:?}", res);
+    }
+    Ok(keys)
 }

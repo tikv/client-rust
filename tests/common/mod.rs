@@ -104,7 +104,6 @@ pub fn pd_addrs() -> Vec<String> {
         .collect()
 }
 
-#[allow(dead_code)]
 pub fn new_logger(level: slog::Level) -> slog::Logger {
     let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
     slog::Logger::root(
@@ -117,7 +116,6 @@ pub fn new_logger(level: slog::Level) -> slog::Logger {
 }
 
 // helper function
-#[allow(dead_code)]
 pub async fn get_u32(client: &RawClient, key: Vec<u8>) -> Result<u32> {
     let x = client.get(key).await?.unwrap();
     let boxed_slice = x.into_boxed_slice();
@@ -128,7 +126,6 @@ pub async fn get_u32(client: &RawClient, key: Vec<u8>) -> Result<u32> {
 }
 
 // helper function
-#[allow(dead_code)]
 pub async fn get_txn_u32(txn: &mut Transaction, key: Vec<u8>) -> Result<u32> {
     let x = txn.get(key).await?.unwrap();
     let boxed_slice = x.into_boxed_slice();
@@ -139,7 +136,6 @@ pub async fn get_txn_u32(txn: &mut Transaction, key: Vec<u8>) -> Result<u32> {
 }
 
 // helper function
-#[allow(dead_code)]
 pub fn gen_u32_keys(num: u32, rng: &mut impl Rng) -> HashSet<Vec<u8>> {
     let mut set = HashSet::new();
     for _ in 0..num {

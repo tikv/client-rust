@@ -1,6 +1,6 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{marker::PhantomData, sync::Arc};
+use std::{marker::PhantomData, ops::RangeBounds, sync::Arc};
 
 use async_recursion::async_recursion;
 use async_trait::async_trait;
@@ -12,7 +12,7 @@ use tokio::sync::Semaphore;
 use crate::{
     backoff::Backoff,
     pd::PdClient,
-    request::{KvRequest, Shardable},
+    request::{shard::HasNextBatch, KvRequest, NextBatch, Shardable},
     stats::tikv_stats,
     store::RegionStore,
     transaction::{resolve_locks, HasLocks, ResolveLocksContext, ResolveLocksOptions},
@@ -442,6 +442,50 @@ where
     }
 }
 
+#[derive(Default)]
+pub struct CleanupLocksResult {
+    pub region_error: Option<errorpb::Error>,
+    pub key_error: Option<Vec<Error>>,
+    pub meet_locks: usize,
+    // TODO: pub resolved_locks: usize,
+}
+
+impl Clone for CleanupLocksResult {
+    fn clone(&self) -> Self {
+        Self {
+            meet_locks: self.meet_locks,
+            ..Default::default() // Ignore errors, which should be extracted by `extract_error()`.
+        }
+    }
+}
+
+impl HasRegionError for CleanupLocksResult {
+    fn region_error(&mut self) -> Option<errorpb::Error> {
+        self.region_error.take()
+    }
+}
+
+impl HasKeyErrors for CleanupLocksResult {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
+        self.key_error.take()
+    }
+}
+
+impl Merge<CleanupLocksResult> for Collect {
+    type Out = CleanupLocksResult;
+
+    fn merge(&self, input: Vec<Result<CleanupLocksResult>>) -> Result<Self::Out> {
+        input
+            .into_iter()
+            .fold(Ok(CleanupLocksResult::default()), |acc, x| {
+                Ok(CleanupLocksResult {
+                    meet_locks: acc.unwrap().meet_locks + x?.meet_locks,
+                    ..Default::default()
+                })
+            })
+    }
+}
+
 pub struct CleanupLocks<P: Plan, PdC: PdClient> {
     pub logger: slog::Logger,
     pub inner: P,
@@ -467,53 +511,97 @@ impl<P: Plan, PdC: PdClient> Clone for CleanupLocks<P, PdC> {
 }
 
 #[async_trait]
-impl<P: Plan, PdC: PdClient> Plan for CleanupLocks<P, PdC>
+impl<P: Plan + Shardable + NextBatch, PdC: PdClient> Plan for CleanupLocks<P, PdC>
 where
-    P::Result: HasLocks,
+    P::Result: HasLocks + HasNextBatch + HasKeyErrors + HasRegionError,
 {
-    type Result = P::Result;
+    type Result = CleanupLocksResult;
 
     async fn execute(&self) -> Result<Self::Result> {
-        let mut result = self.inner.execute().await?;
-        let mut clone = self.clone();
-        loop {
-            let locks = if self.options.async_commit_only {
-                result
-                    .take_locks()
+        let mut result = CleanupLocksResult::default();
+        let mut inner = self.inner.clone();
+        let mut lock_resolver =
+            crate::transaction::LockResolver::new(self.logger.clone(), self.ctx.clone());
+        let region = &self.store.as_ref().unwrap().region_with_leader;
+        let mut has_more_batch = true;
+
+        while has_more_batch {
+            let mut scan_lock_resp = inner.execute().await?;
+
+            // Propagate errors to `retry_multi_region` for retry.
+            if let Some(e) = scan_lock_resp.key_errors() {
+                info!(
+                    self.logger,
+                    "CleanupLocks::execute, inner key errors:{:?}", e
+                );
+                result.key_error = Some(e);
+                return Ok(result);
+            } else if let Some(e) = scan_lock_resp.region_error() {
+                info!(
+                    self.logger,
+                    "CleanupLocks::execute, inner region error:{}",
+                    e.get_message()
+                );
+                result.region_error = Some(e);
+                return Ok(result);
+            }
+
+            // Iterate to next batch of inner.
+            match scan_lock_resp.has_next_batch() {
+                Some(range) if region.contains_start_bound(range.start_bound()) => {
+                    debug!(self.logger, "CleanupLocks::execute, next range:{:?}", range);
+                    inner.next_batch(range);
+                }
+                _ => has_more_batch = false,
+            }
+
+            let mut locks = scan_lock_resp.take_locks();
+            if locks.is_empty() {
+                break;
+            }
+            if locks.len() < self.options.batch_size as usize {
+                has_more_batch = false;
+            }
+
+            if self.options.async_commit_only {
+                locks = locks
                     .into_iter()
                     .filter(|l| l.get_use_async_commit())
-                    .collect::<Vec<_>>()
-            } else {
-                result.take_locks()
-            };
-            if locks.is_empty() {
-                return Ok(result);
+                    .collect::<Vec<_>>();
             }
-            debug!(self.logger, "CleanupLocks, locks:{}", locks.len());
+            debug!(
+                self.logger,
+                "CleanupLocks::execute, meet locks:{}",
+                locks.len()
+            );
+            result.meet_locks += locks.len();
 
-            if self.backoff.is_none() {
-                return Err(Error::ResolveLockError);
-            }
-
-            let pd_client = self.pd_client.clone();
-            let mut lock_resolver =
-                crate::transaction::LockResolver::new(self.logger.clone(), self.ctx.clone());
-            if lock_resolver
-                .cleanup_locks(self.store.clone().unwrap(), locks, pd_client.clone())
-                .await?
+            match lock_resolver
+                .cleanup_locks(self.store.clone().unwrap(), locks, self.pd_client.clone())
+                .await
             {
-                // TODO: iterate to next batch of self.inner
-                return Ok(result);
-            } else {
-                match clone.backoff.next_delay_duration() {
-                    None => return Err(Error::ResolveLockError),
-                    Some(delay_duration) => {
-                        futures_timer::Delay::new(delay_duration).await;
-                        result = clone.inner.execute().await?;
+                Ok(()) => {}
+                Err(Error::ExtractedErrors(mut errors)) => {
+                    // Propagate errors to `retry_multi_region` for retry.
+                    if let Error::RegionError(e) = errors.pop().unwrap() {
+                        result.region_error = Some(e);
+                    } else {
+                        result.key_error = Some(errors);
                     }
+                    return Ok(result);
+                }
+                Err(e) => {
+                    return Err(e);
                 }
             }
+
+            // TODO: improve backoff
+            // if self.backoff.is_none() {
+            //     return Err(Error::ResolveLockError);
+            // }
         }
+
+        Ok(result)
     }
 }
 

@@ -4,18 +4,18 @@ use crate::{
     collect_first,
     pd::PdClient,
     request::{
-        Collect, CollectSingle, CollectWithShard, DefaultProcessor, KvRequest, Merge, Process,
-        ResponseWithShard, Shardable, SingleKey,
+        Collect, CollectSingle, CollectWithShard, DefaultProcessor, HasNextBatch, KvRequest, Merge,
+        NextBatch, Process, ResponseWithShard, Shardable, SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_range_by_start_key, RegionStore},
     timestamp::TimestampExt,
     transaction::HasLocks,
     util::iter::FlatMapOkIterExt,
-    Key, KvPair, Result, Value,
+    BoundRange, KvPair, Result, Value,
 };
 use either::Either;
 use futures::stream::BoxStream;
-use std::{cmp, collections::HashMap, iter, sync::Arc};
+use std::{cmp, iter, sync::Arc};
 use tikv_client_common::Error::PessimisticLockError;
 use tikv_client_proto::{
     kvrpcpb::{self, LockInfo, TxnHeartBeatResponse, TxnInfo},
@@ -476,6 +476,22 @@ impl Shardable for kvrpcpb::ScanLockRequest {
     }
 }
 
+impl HasNextBatch for kvrpcpb::ScanLockResponse {
+    fn has_next_batch(&self) -> Option<BoundRange> {
+        self.get_locks().last().map(|lock| {
+            let mut start_key: Vec<u8> = lock.get_key().to_vec();
+            start_key.push(0);
+            BoundRange::range_from(start_key.into())
+        })
+    }
+}
+
+impl NextBatch for kvrpcpb::ScanLockRequest {
+    fn next_batch(&mut self, range: BoundRange) {
+        self.set_start_key(range.into_keys().0.into());
+    }
+}
+
 impl Merge<kvrpcpb::ScanLockResponse> for Collect {
     type Out = Vec<kvrpcpb::LockInfo>;
 
@@ -685,7 +701,6 @@ impl Merge<kvrpcpb::CheckSecondaryLocksResponse> for Collect {
 
     fn merge(&self, input: Vec<Result<kvrpcpb::CheckSecondaryLocksResponse>>) -> Result<Self::Out> {
         let mut out = SecondaryLocksStatus {
-            locks: HashMap::new(), // TODO: remove this field.
             commit_ts: None,
             min_commit_ts: 0,
             fallback_2pc: false,
@@ -698,10 +713,7 @@ impl Merge<kvrpcpb::CheckSecondaryLocksResponse> for Collect {
                     return Ok(out);
                 }
                 out.min_commit_ts = cmp::max(out.min_commit_ts, lock.min_commit_ts);
-                out.locks.insert(lock.key.clone().into(), lock);
             }
-            // out.locks
-            //     .extend(resp.locks.into_iter().map(|l| (l.key.clone().into(), l)));
             out.commit_ts = match (
                 out.commit_ts.take(),
                 Timestamp::try_from_version(resp.commit_ts),
@@ -720,7 +732,6 @@ impl Merge<kvrpcpb::CheckSecondaryLocksResponse> for Collect {
 }
 
 pub struct SecondaryLocksStatus {
-    pub locks: HashMap<Key, kvrpcpb::LockInfo>,
     pub commit_ts: Option<Timestamp>,
     pub min_commit_ts: u64,
     pub fallback_2pc: bool,
