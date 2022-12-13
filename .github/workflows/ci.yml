@@ -17,6 +17,11 @@ jobs:
           profile: minimal
           toolchain: nightly
           override: true
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
+        with:
+          version: '3.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
         uses: Swatinem/rust-cache@v1.4.0
       - uses: actions-rs/cargo@v1
