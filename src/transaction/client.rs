@@ -14,7 +14,7 @@ use crate::{
 };
 use slog::{Drain, Logger};
 use std::{mem, sync::Arc};
-use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use tikv_client_proto::pdpb::Timestamp;
 
 // FIXME: cargo-culted value
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
@@ -287,7 +287,8 @@ impl Client {
         safepoint: &Timestamp,
         mut start_key: Vec<u8>,
         batch_size: u32,
-    ) -> Result<Vec<kvrpcpb::LockInfo>> {
+    ) -> Result<Vec<tikv_client_proto::kvrpcpb::LockInfo>> {
+        use tikv_client_proto::kvrpcpb;
         let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
         loop {
             let req =

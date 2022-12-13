@@ -12,7 +12,6 @@ use tikv_client::{
     transaction::{Client, HeartbeatOption, ResolveLocksOptions},
     Result, TransactionClient, TransactionOptions,
 };
-use tikv_client_proto::kvrpcpb::LockInfo;
 
 #[tokio::test]
 #[serial]
@@ -94,7 +93,7 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
 
     let client = TransactionClient::new(pd_addrs(), Some(logger.clone())).await?;
     let keys = write_data(&client, true, true).await?;
-    must_have_locks(&client, keys.len()).await;
+    assert_eq!(count_locks(&client).await?, keys.len());
 
     let safepoint = client.current_timestamp().await?;
     let options = ResolveLocksOptions {
@@ -104,7 +103,7 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
     let res = client.cleanup_locks(&safepoint, options).await?;
 
     assert_eq!(res.meet_locks, keys.len());
-    must_have_locks(&client, keys.len()).await;
+    assert_eq!(count_locks(&client).await?, keys.len());
 
     scenario.teardown();
     Ok(())
@@ -128,7 +127,7 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
 
         let client = TransactionClient::new(pd_addrs(), Some(logger.clone())).await?;
         let keys = write_data(&client, true, true).await?;
-        must_have_locks(&client, keys.len()).await;
+        assert_eq!(count_locks(&client).await?, keys.len());
 
         let safepoint = client.current_timestamp().await?;
         let options = ResolveLocksOptions {
@@ -138,7 +137,7 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
         client.cleanup_locks(&safepoint, options).await?;
 
         must_committed(&client, keys).await;
-        must_no_lock(&client).await;
+        assert_eq!(count_locks(&client).await?, 0);
     }
 
     // partial commit
@@ -153,7 +152,7 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
         let client = TransactionClient::new(pd_addrs(), Some(logger.clone())).await?;
         let keys = write_data(&client, true, false).await?;
         thread::sleep(Duration::from_secs(1)); // Wait for async commit to complete.
-        must_have_locks(&client, keys.len() * percent / 100).await;
+        assert_eq!(count_locks(&client).await?, keys.len() * percent / 100);
 
         let safepoint = client.current_timestamp().await?;
         let options = ResolveLocksOptions {
@@ -163,7 +162,7 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
         client.cleanup_locks(&safepoint, options).await?;
 
         must_committed(&client, keys).await;
-        must_no_lock(&client).await;
+        assert_eq!(count_locks(&client).await?, 0);
     }
 
     // all committed
@@ -180,7 +179,7 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
         client.cleanup_locks(&safepoint, options).await?;
 
         must_committed(&client, keys).await;
-        must_no_lock(&client).await;
+        assert_eq!(count_locks(&client).await?, 0);
     }
 
     // TODO: test rollback
@@ -209,7 +208,7 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
 
         let client = TransactionClient::new(pd_addrs(), Some(logger.clone())).await?;
         let keys = write_data(&client, false, true).await?;
-        must_have_locks(&client, keys.len()).await;
+        assert_eq!(count_locks(&client).await?, keys.len());
 
         let safepoint = client.current_timestamp().await?;
         {
@@ -218,7 +217,7 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
                 ..Default::default()
             };
             client.cleanup_locks(&safepoint, options).await?;
-            must_have_locks(&client, keys.len()).await;
+            assert_eq!(count_locks(&client).await?, keys.len());
         }
         let options = ResolveLocksOptions {
             async_commit_only: false,
@@ -227,7 +226,7 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
         client.cleanup_locks(&safepoint, options).await?;
 
         must_rollbacked(&client, keys).await;
-        must_no_lock(&client).await;
+        assert_eq!(count_locks(&client).await?, 0);
     }
 
     // all committed
@@ -235,7 +234,7 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
         info!(logger, "test all committed");
         let client = TransactionClient::new(pd_addrs(), Some(logger.clone())).await?;
         let keys = write_data(&client, false, false).await?;
-        must_no_lock(&client).await;
+        assert_eq!(count_locks(&client).await?, 0);
 
         let safepoint = client.current_timestamp().await?;
         let options = ResolveLocksOptions {
@@ -245,7 +244,7 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
         client.cleanup_locks(&safepoint, options).await?;
 
         must_committed(&client, keys).await;
-        must_no_lock(&client).await;
+        assert_eq!(count_locks(&client).await?, 0);
     }
 
     scenario.teardown();
@@ -270,18 +269,10 @@ async fn must_rollbacked(client: &TransactionClient, keys: HashSet<Vec<u8>>) {
     }
 }
 
-async fn scan_locks(client: &TransactionClient, batch_size: u32) -> Vec<LockInfo> {
+async fn count_locks(client: &TransactionClient) -> Result<usize> {
     let ts = client.current_timestamp().await.unwrap();
-    client.scan_locks(&ts, vec![], batch_size).await.unwrap()
-}
-
-async fn must_have_locks(client: &TransactionClient, count: usize) {
-    let locks = scan_locks(client, 1024).await;
-    assert_eq!(locks.len(), count);
-}
-
-async fn must_no_lock(client: &TransactionClient) {
-    (must_have_locks(client, 0)).await;
+    let locks = client.scan_locks(&ts, vec![], 1024).await?;
+    Ok(locks.len())
 }
 
 const TXN_COUNT: usize = 16;
