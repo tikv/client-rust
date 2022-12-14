@@ -7,7 +7,7 @@ use fail::FailScenario;
 use rand::thread_rng;
 use serial_test::serial;
 use slog::info;
-use std::{collections::HashSet, thread, time::Duration};
+use std::{collections::HashSet, iter::FromIterator, thread, time::Duration};
 use tikv_client::{
     transaction::{Client, HeartbeatOption, ResolveLocksOptions},
     Backoff, Result, RetryOptions, TransactionClient, TransactionOptions,
@@ -272,7 +272,10 @@ async fn must_rollbacked(client: &TransactionClient, keys: HashSet<Vec<u8>>) {
 async fn count_locks(client: &TransactionClient) -> Result<usize> {
     let ts = client.current_timestamp().await.unwrap();
     let locks = client.scan_locks(&ts, vec![], 1024).await?;
-    Ok(locks.len())
+    // De-duplicated as `scan_locks` will return duplicated locks due to retry on region changes.
+    let locks_set: HashSet<Vec<u8>> =
+        HashSet::from_iter(locks.into_iter().map(|mut l| l.take_key()));
+    Ok(locks_set.len())
 }
 
 // Note: too many transactions or keys will make CI unstable due to timeout.
