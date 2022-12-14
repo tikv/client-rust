@@ -1142,7 +1142,11 @@ impl<PdC: PdClient> Committer<PdC> {
 
         let min_commit_ts = self.prewrite().await?;
 
-        fail_point!("after-prewrite");
+        fail_point!("after-prewrite", |_| {
+            Err(Error::StringError(
+                "failpoint: after-prewrite return error".to_owned(),
+            ))
+        });
 
         // If we didn't use 1pc, prewrite will set `try_one_pc` to false.
         if self.options.try_one_pc {
@@ -1266,7 +1270,37 @@ impl<PdC: PdClient> Committer<PdC> {
         debug!(self.logger, "committing secondary");
         let mutations_len = self.mutations.len();
         let primary_only = mutations_len == 1;
+        #[cfg(not(feature = "integration-tests"))]
         let mutations = self.mutations.into_iter();
+
+        #[cfg(feature = "integration-tests")]
+        let mutations = self.mutations.into_iter().take({
+            // Truncate mutation to a new length as `percent/100`.
+            // Return error when truncate to zero.
+            let logger = self.logger.clone();
+            let fp = || -> Result<usize> {
+                let mut new_len = mutations_len;
+                fail_point!("before-commit-secondary", |percent| {
+                    let percent = percent.unwrap().parse::<usize>().unwrap();
+                    new_len = mutations_len * percent / 100;
+                    if new_len == 0 {
+                        Err(Error::StringError(
+                            "failpoint: before-commit-secondary return error".to_owned(),
+                        ))
+                    } else {
+                        debug!(
+                            logger,
+                            "failpoint: before-commit-secondary truncate mutation {} -> {}",
+                            mutations_len,
+                            new_len
+                        );
+                        Ok(new_len)
+                    }
+                });
+                Ok(new_len)
+            };
+            fp()?
+        });
 
         let req = if self.options.async_commit {
             let keys = mutations.map(|m| m.key.into());

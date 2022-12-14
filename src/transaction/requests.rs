@@ -4,21 +4,21 @@ use crate::{
     collect_first,
     pd::PdClient,
     request::{
-        Collect, CollectSingle, CollectWithShard, DefaultProcessor, KvRequest, Merge, Process,
-        ResponseWithShard, Shardable, SingleKey,
+        Collect, CollectSingle, CollectWithShard, DefaultProcessor, HasNextBatch, KvRequest, Merge,
+        NextBatch, Process, ResponseWithShard, Shardable, SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_range_by_start_key, RegionStore},
     timestamp::TimestampExt,
     transaction::HasLocks,
     util::iter::FlatMapOkIterExt,
-    Key, KvPair, Result, Value,
+    KvPair, Result, Value,
 };
 use either::Either;
 use futures::stream::BoxStream;
-use std::{collections::HashMap, iter, sync::Arc};
+use std::{cmp, iter, sync::Arc};
 use tikv_client_common::Error::PessimisticLockError;
 use tikv_client_proto::{
-    kvrpcpb::{self, TxnHeartBeatResponse},
+    kvrpcpb::{self, LockInfo, TxnHeartBeatResponse, TxnInfo},
     pdpb::Timestamp,
 };
 
@@ -167,6 +167,12 @@ pub fn new_resolve_lock_request(
     req.set_start_version(start_version);
     req.set_commit_version(commit_version);
 
+    req
+}
+
+pub fn new_batch_resolve_lock_request(txn_infos: Vec<TxnInfo>) -> kvrpcpb::ResolveLockRequest {
+    let mut req = kvrpcpb::ResolveLockRequest::default();
+    req.set_txn_infos(txn_infos);
     req
 }
 
@@ -470,6 +476,22 @@ impl Shardable for kvrpcpb::ScanLockRequest {
     }
 }
 
+impl HasNextBatch for kvrpcpb::ScanLockResponse {
+    fn has_next_batch(&self) -> Option<(Vec<u8>, Vec<u8>)> {
+        self.get_locks().last().map(|lock| {
+            let mut start_key: Vec<u8> = lock.get_key().to_vec();
+            start_key.push(0);
+            (start_key, vec![])
+        })
+    }
+}
+
+impl NextBatch for kvrpcpb::ScanLockRequest {
+    fn next_batch(&mut self, range: (Vec<u8>, Vec<u8>)) {
+        self.set_start_key(range.0);
+    }
+}
+
 impl Merge<kvrpcpb::ScanLockResponse> for Collect {
     type Out = Vec<kvrpcpb::LockInfo>;
 
@@ -531,6 +553,26 @@ impl Process<kvrpcpb::TxnHeartBeatResponse> for DefaultProcessor {
     }
 }
 
+pub fn new_check_txn_status_request(
+    primary_key: Vec<u8>,
+    lock_ts: u64,
+    caller_start_ts: u64,
+    current_ts: u64,
+    rollback_if_not_exist: bool,
+    force_sync_commit: bool,
+    resolving_pessimistic_lock: bool,
+) -> kvrpcpb::CheckTxnStatusRequest {
+    let mut req = kvrpcpb::CheckTxnStatusRequest::default();
+    req.set_primary_key(primary_key);
+    req.set_lock_ts(lock_ts);
+    req.set_caller_start_ts(caller_start_ts);
+    req.set_current_ts(current_ts);
+    req.set_rollback_if_not_exist(rollback_if_not_exist);
+    req.set_force_sync_commit(force_sync_commit);
+    req.set_resolving_pessimistic_lock(resolving_pessimistic_lock);
+    req
+}
+
 impl KvRequest for kvrpcpb::CheckTxnStatusRequest {
     type Response = kvrpcpb::CheckTxnStatusResponse;
 }
@@ -559,6 +601,8 @@ impl SingleKey for kvrpcpb::CheckTxnStatusRequest {
     }
 }
 
+collect_first!(kvrpcpb::CheckTxnStatusResponse);
+
 impl Process<kvrpcpb::CheckTxnStatusResponse> for DefaultProcessor {
     type Out = TransactionStatus;
 
@@ -571,6 +615,7 @@ impl Process<kvrpcpb::CheckTxnStatusResponse> for DefaultProcessor {
 pub struct TransactionStatus {
     pub kind: TransactionStatusKind,
     pub action: kvrpcpb::Action,
+    pub is_expired: bool, // Available only when kind is Locked.
 }
 
 impl From<kvrpcpb::CheckTxnStatusResponse> for TransactionStatus {
@@ -578,6 +623,7 @@ impl From<kvrpcpb::CheckTxnStatusResponse> for TransactionStatus {
         TransactionStatus {
             action: resp.get_action(),
             kind: (resp.commit_version, resp.lock_ttl, resp.lock_info).into(),
+            is_expired: false,
         }
     }
 }
@@ -586,7 +632,41 @@ impl From<kvrpcpb::CheckTxnStatusResponse> for TransactionStatus {
 pub enum TransactionStatusKind {
     Committed(Timestamp),
     RolledBack,
-    Locked(u64, kvrpcpb::LockInfo),
+    Locked(u64, kvrpcpb::LockInfo), // None of ttl means expired.
+}
+
+impl TransactionStatus {
+    pub fn check_ttl(&mut self, current: Timestamp) {
+        if let TransactionStatusKind::Locked(ref ttl, ref lock_info) = self.kind {
+            if current.physical - Timestamp::from_version(lock_info.lock_version).physical
+                >= *ttl as i64
+            {
+                self.is_expired = true
+            }
+        }
+    }
+
+    // is_cacheable checks whether the transaction status is certain.
+    // If transaction is already committed, the result could be cached.
+    // Otherwise:
+    //   If l.LockType is pessimistic lock type:
+    //       - if its primary lock is pessimistic too, the check txn status result should not be cached.
+    //       - if its primary lock is prewrite lock type, the check txn status could be cached.
+    //   If l.lockType is prewrite lock type:
+    //       - always cache the check txn status result.
+    // For prewrite locks, their primary keys should ALWAYS be the correct one and will NOT change.
+    pub fn is_cacheable(&self) -> bool {
+        match &self.kind {
+            TransactionStatusKind::RolledBack | TransactionStatusKind::Committed(..) => true,
+            TransactionStatusKind::Locked(..) if self.is_expired => matches!(
+                self.action,
+                kvrpcpb::Action::NoAction
+                    | kvrpcpb::Action::LockNotExistRollback
+                    | kvrpcpb::Action::TtlExpireRollback
+            ),
+            _ => false,
+        }
+    }
 }
 
 impl From<(u64, u64, Option<kvrpcpb::LockInfo>)> for TransactionStatusKind {
@@ -600,6 +680,16 @@ impl From<(u64, u64, Option<kvrpcpb::LockInfo>)> for TransactionStatusKind {
     }
 }
 
+pub fn new_check_secondary_locks_request(
+    keys: Vec<Vec<u8>>,
+    start_version: u64,
+) -> kvrpcpb::CheckSecondaryLocksRequest {
+    let mut req = kvrpcpb::CheckSecondaryLocksRequest::default();
+    req.set_keys(keys);
+    req.set_start_version(start_version);
+    req
+}
+
 impl KvRequest for kvrpcpb::CheckSecondaryLocksRequest {
     type Response = kvrpcpb::CheckSecondaryLocksResponse;
 }
@@ -611,13 +701,19 @@ impl Merge<kvrpcpb::CheckSecondaryLocksResponse> for Collect {
 
     fn merge(&self, input: Vec<Result<kvrpcpb::CheckSecondaryLocksResponse>>) -> Result<Self::Out> {
         let mut out = SecondaryLocksStatus {
-            locks: HashMap::new(),
             commit_ts: None,
+            min_commit_ts: 0,
+            fallback_2pc: false,
         };
         for resp in input {
             let resp = resp?;
-            out.locks
-                .extend(resp.locks.into_iter().map(|l| (l.key.clone().into(), l)));
+            for lock in resp.locks {
+                if !lock.use_async_commit {
+                    out.fallback_2pc = true;
+                    return Ok(out);
+                }
+                out.min_commit_ts = cmp::max(out.min_commit_ts, lock.min_commit_ts);
+            }
             out.commit_ts = match (
                 out.commit_ts.take(),
                 Timestamp::try_from_version(resp.commit_ts),
@@ -636,8 +732,9 @@ impl Merge<kvrpcpb::CheckSecondaryLocksResponse> for Collect {
 }
 
 pub struct SecondaryLocksStatus {
-    pub locks: HashMap<Key, kvrpcpb::LockInfo>,
     pub commit_ts: Option<Timestamp>,
+    pub min_commit_ts: u64,
+    pub fallback_2pc: bool,
 }
 
 pair_locks!(kvrpcpb::BatchGetResponse);
@@ -651,7 +748,12 @@ error_locks!(kvrpcpb::CheckTxnStatusResponse);
 error_locks!(kvrpcpb::CheckSecondaryLocksResponse);
 
 impl HasLocks for kvrpcpb::CleanupResponse {}
-impl HasLocks for kvrpcpb::ScanLockResponse {}
+
+impl HasLocks for kvrpcpb::ScanLockResponse {
+    fn take_locks(&mut self) -> Vec<LockInfo> {
+        self.take_locks()
+    }
+}
 
 impl HasLocks for kvrpcpb::PessimisticRollbackResponse {
     fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {

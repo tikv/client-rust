@@ -5,11 +5,12 @@ use crate::{
     backoff::Backoff,
     pd::PdClient,
     request::{
-        DefaultProcessor, Dispatch, ExtractError, KvRequest, Merge, MergeResponse, Plan, Process,
-        ProcessResponse, ResolveLock, RetryableMultiRegion, Shardable,
+        plan::CleanupLocks, shard::HasNextBatch, DefaultProcessor, Dispatch, ExtractError,
+        KvRequest, Merge, MergeResponse, NextBatch, Plan, Process, ProcessResponse, ResolveLock,
+        RetryableMultiRegion, Shardable,
     },
     store::RegionStore,
-    transaction::HasLocks,
+    transaction::{HasLocks, ResolveLocksContext, ResolveLocksOptions},
     Result,
 };
 use std::{marker::PhantomData, sync::Arc};
@@ -61,6 +62,32 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
             pd_client: self.pd_client.clone(),
             plan: ResolveLock {
                 inner: self.plan,
+                backoff,
+                pd_client: self.pd_client,
+            },
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn cleanup_locks(
+        self,
+        logger: slog::Logger, // TODO: add logger to PlanBuilder.
+        ctx: ResolveLocksContext,
+        options: ResolveLocksOptions,
+        backoff: Backoff,
+    ) -> PlanBuilder<PdC, CleanupLocks<P, PdC>, Ph>
+    where
+        P: Shardable + NextBatch,
+        P::Result: HasLocks + HasNextBatch + HasRegionError + HasKeyErrors,
+    {
+        PlanBuilder {
+            pd_client: self.pd_client.clone(),
+            plan: CleanupLocks {
+                logger,
+                inner: self.plan,
+                ctx,
+                options,
+                store: None,
                 backoff,
                 pd_client: self.pd_client,
             },

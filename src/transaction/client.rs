@@ -1,18 +1,20 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::{requests::new_scan_lock_request, resolve_locks};
+use super::requests::new_scan_lock_request;
 use crate::{
-    backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
+    backoff::DEFAULT_REGION_BACKOFF,
     config::Config,
     pd::{PdClient, PdRpcClient},
-    request::Plan,
+    request::{plan::CleanupLocksResult, Plan},
     timestamp::TimestampExt,
-    transaction::{Snapshot, Transaction, TransactionOptions},
-    Result,
+    transaction::{
+        lock::ResolveLocksOptions, ResolveLocksContext, Snapshot, Transaction, TransactionOptions,
+    },
+    Backoff, Result,
 };
 use slog::{Drain, Logger};
 use std::{mem, sync::Arc};
-use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use tikv_client_proto::pdpb::Timestamp;
 
 // FIXME: cargo-culted value
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
@@ -235,34 +237,12 @@ impl Client {
     /// We skip the second step "delete ranges" which is an optimization for TiDB.
     pub async fn gc(&self, safepoint: Timestamp) -> Result<bool> {
         debug!(self.logger, "invoking transactional gc request");
-        // scan all locks with ts <= safepoint
-        let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
-        let mut start_key = vec![];
-        loop {
-            let req = new_scan_lock_request(
-                mem::take(&mut start_key),
-                safepoint.version(),
-                SCAN_LOCK_BATCH_SIZE,
-            );
 
-            let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
-                .resolve_lock(OPTIMISTIC_BACKOFF)
-                .retry_multi_region(DEFAULT_REGION_BACKOFF)
-                .merge(crate::request::Collect)
-                .plan();
-            let res: Vec<kvrpcpb::LockInfo> = plan.execute().await?;
-
-            if res.is_empty() {
-                break;
-            }
-            start_key = res.last().unwrap().key.clone();
-            start_key.push(0);
-            locks.extend(res);
-        }
-
-        // resolve locks
-        // FIXME: (1) this is inefficient (2) when region error occurred
-        resolve_locks(locks, self.pd.clone()).await?;
+        let options = ResolveLocksOptions {
+            batch_size: SCAN_LOCK_BATCH_SIZE,
+            ..Default::default()
+        };
+        self.cleanup_locks(&safepoint, options).await?;
 
         // update safepoint to PD
         let res: bool = self
@@ -274,6 +254,47 @@ impl Client {
             info!(self.logger, "new safepoint != user-specified safepoint");
         }
         Ok(res)
+    }
+
+    pub async fn cleanup_locks(
+        &self,
+        safepoint: &Timestamp,
+        options: ResolveLocksOptions,
+    ) -> Result<CleanupLocksResult> {
+        debug!(self.logger, "invoking cleanup async commit locks");
+        // scan all locks with ts <= safepoint
+        let mut start_key = vec![];
+        let ctx = ResolveLocksContext::default();
+        let backoff = Backoff::equal_jitter_backoff(100, 10000, 50);
+        let req = new_scan_lock_request(
+            mem::take(&mut start_key),
+            safepoint.version(),
+            options.batch_size,
+        );
+        let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
+            .cleanup_locks(self.logger.clone(), ctx.clone(), options, backoff)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(crate::request::Collect)
+            .extract_error()
+            .plan();
+        plan.execute().await
+    }
+
+    // For test.
+    // Note: `batch_size` must be >= expected number of locks.
+    #[cfg(feature = "integration-tests")]
+    pub async fn scan_locks(
+        &self,
+        safepoint: &Timestamp,
+        mut start_key: Vec<u8>,
+        batch_size: u32,
+    ) -> Result<Vec<tikv_client_proto::kvrpcpb::LockInfo>> {
+        let req = new_scan_lock_request(mem::take(&mut start_key), safepoint.version(), batch_size);
+        let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(crate::request::Collect)
+            .plan();
+        plan.execute().await
     }
 
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
