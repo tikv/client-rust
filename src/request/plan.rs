@@ -584,7 +584,7 @@ where
                 Err(Error::ExtractedErrors(mut errors)) => {
                     // Propagate errors to `retry_multi_region` for retry.
                     if let Error::RegionError(e) = errors.pop().unwrap() {
-                        result.region_error = Some(e);
+                        result.region_error = Some(*e);
                     } else {
                         result.key_error = Some(errors);
                     }

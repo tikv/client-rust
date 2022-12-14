@@ -281,6 +281,7 @@ impl Client {
     }
 
     // For test.
+    // Note: `batch_size` must be >= expected number of locks.
     #[cfg(feature = "integration-tests")]
     pub async fn scan_locks(
         &self,
@@ -288,26 +289,12 @@ impl Client {
         mut start_key: Vec<u8>,
         batch_size: u32,
     ) -> Result<Vec<tikv_client_proto::kvrpcpb::LockInfo>> {
-        use tikv_client_proto::kvrpcpb;
-        let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
-        loop {
-            let req =
-                new_scan_lock_request(mem::take(&mut start_key), safepoint.version(), batch_size);
-            let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
-                .retry_multi_region(DEFAULT_REGION_BACKOFF)
-                .merge(crate::request::Collect)
-                .plan();
-            let res: Vec<kvrpcpb::LockInfo> = plan.execute().await?;
-
-            if res.is_empty() {
-                break;
-            }
-            start_key = res.last().unwrap().key.clone();
-            start_key.push(0);
-            locks.extend(res);
-        }
-
-        Ok(locks)
+        let req = new_scan_lock_request(mem::take(&mut start_key), safepoint.version(), batch_size);
+        let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(crate::request::Collect)
+            .plan();
+        plan.execute().await
     }
 
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {

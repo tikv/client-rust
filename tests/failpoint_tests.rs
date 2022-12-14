@@ -144,7 +144,7 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
     {
         info!(logger, "test partial commit");
         let percent = 50;
-        fail::cfg("before-commit-secondary", &format!("return({})", percent)).unwrap();
+        fail::cfg("before-commit-secondary", &format!("return({percent})")).unwrap();
         defer! {
             fail::cfg("before-commit-secondary", "off").unwrap()
         }
@@ -275,8 +275,9 @@ async fn count_locks(client: &TransactionClient) -> Result<usize> {
     Ok(locks.len())
 }
 
+// Note: too many transactions or keys will make CI unstable due to timeout.
 const TXN_COUNT: usize = 16;
-const KEY_COUNT: usize = 64;
+const KEY_COUNT: usize = 32;
 const REGION_BACKOFF: Backoff = Backoff::no_jitter_backoff(2, 5000, 20);
 const OPTIMISTIC_BACKOFF: Backoff = Backoff::no_jitter_backoff(2, 500, 10);
 
@@ -312,7 +313,7 @@ async fn write_data(
 
     for txn in &mut txns {
         let res = txn.commit().await;
-        assert_eq!(res.is_err(), commit_error, "error: {:?}", res);
+        assert_eq!(res.is_err(), commit_error, "error: {res:?}");
     }
     Ok(keys)
 }
