@@ -10,7 +10,7 @@ use slog::info;
 use std::{collections::HashSet, thread, time::Duration};
 use tikv_client::{
     transaction::{Client, HeartbeatOption, ResolveLocksOptions},
-    Result, TransactionClient, TransactionOptions,
+    Backoff, Result, RetryOptions, TransactionClient, TransactionOptions,
 };
 
 #[tokio::test]
@@ -277,6 +277,8 @@ async fn count_locks(client: &TransactionClient) -> Result<usize> {
 
 const TXN_COUNT: usize = 16;
 const KEY_COUNT: usize = 64;
+const REGION_BACKOFF: Backoff = Backoff::no_jitter_backoff(2, 5000, 20);
+const OPTIMISTIC_BACKOFF: Backoff = Backoff::no_jitter_backoff(2, 500, 10);
 
 async fn write_data(
     client: &Client,
@@ -287,8 +289,12 @@ async fn write_data(
     let keys = gen_u32_keys((TXN_COUNT * KEY_COUNT) as u32, &mut rng);
     let mut txns = Vec::with_capacity(TXN_COUNT);
 
-    let mut options =
-        TransactionOptions::new_optimistic().drop_check(tikv_client::CheckLevel::Warn);
+    let mut options = TransactionOptions::new_optimistic()
+        .retry_options(RetryOptions {
+            region_backoff: REGION_BACKOFF,
+            lock_backoff: OPTIMISTIC_BACKOFF,
+        })
+        .drop_check(tikv_client::CheckLevel::Warn);
     if async_commit {
         options = options.use_async_commit();
     }
