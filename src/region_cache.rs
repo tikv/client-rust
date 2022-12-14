@@ -111,8 +111,7 @@ impl<C: RetryClientTrait> RegionCache<C> {
             }
         }
         Err(Error::StringError(format!(
-            "Concurrent PD requests failed for {} times",
-            MAX_RETRY_WAITING_CONCURRENT_REQUEST
+            "Concurrent PD requests failed for {MAX_RETRY_WAITING_CONCURRENT_REQUEST} times"
         )))
     }
 

@@ -155,7 +155,7 @@ where
                     )
                     .await
                 }
-                None => Err(Error::RegionError(e)),
+                None => Err(Error::RegionError(Box::new(e))),
             }
         } else {
             Ok(vec![Ok(resp)])
@@ -213,7 +213,7 @@ where
             || e.has_raft_entry_too_large()
             || e.has_max_timestamp_not_synced()
         {
-            Err(Error::RegionError(e))
+            Err(Error::RegionError(Box::new(e)))
         } else {
             // TODO: pass the logger around
             // info!("unknwon region error: {:?}", e);
@@ -638,7 +638,10 @@ where
             Err(Error::ExtractedErrors(errors))
         } else if let Some(errors) = result.region_errors() {
             Err(Error::ExtractedErrors(
-                errors.into_iter().map(Error::RegionError).collect(),
+                errors
+                    .into_iter()
+                    .map(|e| Error::RegionError(Box::new(e)))
+                    .collect(),
             ))
         } else {
             Ok(result)
