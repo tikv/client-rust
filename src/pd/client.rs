@@ -285,7 +285,7 @@ fn thread_name(prefix: &str) -> String {
     thread::current()
         .name()
         .and_then(|name| name.split("::").skip(1).last())
-        .map(|tag| format!("{}::{}", prefix, tag))
+        .map(|tag| format!("{prefix}::{tag}"))
         .unwrap_or_else(|| prefix.to_owned())
 }
 
