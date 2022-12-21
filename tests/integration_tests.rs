@@ -596,9 +596,7 @@ async fn txn_pessimistic_rollback() -> Result<()> {
 #[serial]
 async fn txn_pessimistic_delete() -> Result<()> {
     init().await?;
-    let client =
-        TransactionClient::new_with_config(vec!["127.0.0.1:2379"], Default::default(), None)
-            .await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default(), None).await?;
 
     // The transaction will lock the keys and must release the locks on commit,
     // even when values are not written to the DB.
