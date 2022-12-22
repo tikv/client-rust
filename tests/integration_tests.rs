@@ -12,17 +12,13 @@
 //! requirements on the region boundaries.
 
 mod common;
-use common::{init, pd_addrs};
+use common::*;
 use futures::prelude::*;
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 use serial_test::serial;
-use std::{
-    collections::{HashMap, HashSet},
-    convert::TryInto,
-    iter,
-};
+use std::{collections::HashMap, iter};
 use tikv_client::{
-    transaction::HeartbeatOption, BoundRange, Error, Key, KvPair, RawClient, Result, Transaction,
+    transaction::HeartbeatOption, BoundRange, Error, Key, KvPair, RawClient, Result,
     TransactionClient, TransactionOptions, Value,
 };
 
@@ -187,7 +183,7 @@ async fn raw_bank_transfer() -> Result<()> {
     let mut sum: u32 = 0;
     for person in &people {
         let init = rng.gen::<u8>() as u32;
-        sum += init as u32;
+        sum += init;
         client
             .put(person.clone(), init.to_be_bytes().to_vec())
             .await?;
@@ -335,7 +331,7 @@ async fn txn_bank_transfer() -> Result<()> {
     let mut sum: u32 = 0;
     for person in &people {
         let init = rng.gen::<u8>() as u32;
-        sum += init as u32;
+        sum += init;
         txn.put(person.clone(), init.to_be_bytes().to_vec()).await?;
     }
     txn.commit().await?;
@@ -940,33 +936,4 @@ async fn txn_key_exists() -> Result<()> {
     assert!(!t3.key_exists(not_exists_key).await?);
     t3.commit().await?;
     Ok(())
-}
-
-// helper function
-async fn get_u32(client: &RawClient, key: Vec<u8>) -> Result<u32> {
-    let x = client.get(key).await?.unwrap();
-    let boxed_slice = x.into_boxed_slice();
-    let array: Box<[u8; 4]> = boxed_slice
-        .try_into()
-        .expect("Value should not exceed u32 (4 * u8)");
-    Ok(u32::from_be_bytes(*array))
-}
-
-// helper function
-async fn get_txn_u32(txn: &mut Transaction, key: Vec<u8>) -> Result<u32> {
-    let x = txn.get(key).await?.unwrap();
-    let boxed_slice = x.into_boxed_slice();
-    let array: Box<[u8; 4]> = boxed_slice
-        .try_into()
-        .expect("Value should not exceed u32 (4 * u8)");
-    Ok(u32::from_be_bytes(*array))
-}
-
-// helper function
-fn gen_u32_keys(num: u32, rng: &mut impl Rng) -> HashSet<Vec<u8>> {
-    let mut set = HashSet::new();
-    for _ in 0..num {
-        set.insert(rng.gen::<u32>().to_be_bytes().to_vec());
-    }
-    set
 }

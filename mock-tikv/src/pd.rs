@@ -32,7 +32,7 @@ impl MockPd {
     fn store() -> tikv_client_proto::metapb::Store {
         // TODO: start_timestamp?
         tikv_client_proto::metapb::Store {
-            address: format!("localhost:{}", MOCK_TIKV_PORT),
+            address: format!("localhost:{MOCK_TIKV_PORT}"),
             ..Default::default()
         }
     }
@@ -58,7 +58,7 @@ impl Pd for MockPd {
     ) {
         let member = Member {
             name: "mock tikv".to_owned(),
-            client_urls: vec![format!("localhost:{}", MOCK_PD_PORT)],
+            client_urls: vec![format!("localhost:{MOCK_PD_PORT}")],
             ..Default::default()
         };
         let resp = GetMembersResponse {

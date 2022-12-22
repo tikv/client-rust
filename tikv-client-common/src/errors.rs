@@ -48,13 +48,13 @@ pub enum Error {
     Canceled(#[from] futures::channel::oneshot::Canceled),
     /// Errors caused by changes of region information
     #[error("Region error: {0:?}")]
-    RegionError(tikv_client_proto::errorpb::Error),
+    RegionError(Box<tikv_client_proto::errorpb::Error>),
     /// Whether the transaction is committed or not is undetermined
     #[error("Whether the transaction is committed or not is undetermined")]
     UndeterminedError(Box<Error>),
     /// Wraps `tikv_client_proto::kvrpcpb::KeyError`
     #[error("{0:?}")]
-    KeyError(tikv_client_proto::kvrpcpb::KeyError),
+    KeyError(Box<tikv_client_proto::kvrpcpb::KeyError>),
     /// Multiple errors generated from the ExtractError plan.
     #[error("Multiple errors: {0:?}")]
     ExtractedErrors(Vec<Error>),
@@ -97,13 +97,13 @@ pub enum Error {
 
 impl From<tikv_client_proto::errorpb::Error> for Error {
     fn from(e: tikv_client_proto::errorpb::Error) -> Error {
-        Error::RegionError(e)
+        Error::RegionError(Box::new(e))
     }
 }
 
 impl From<tikv_client_proto::kvrpcpb::KeyError> for Error {
     fn from(e: tikv_client_proto::kvrpcpb::KeyError) -> Error {
-        Error::KeyError(e)
+        Error::KeyError(Box::new(e))
     }
 }
 

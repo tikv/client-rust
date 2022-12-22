@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
     //
     // Here we set the key `TiKV` to have the value `Rust` associated with it.
     client.put(KEY.to_owned(), VALUE.to_owned()).await.unwrap(); // Returns a `tikv_client::Error` on failure.
-    println!("Put key {:?}, value {:?}.", KEY, VALUE);
+    println!("Put key {KEY:?}, value {VALUE:?}.");
 
     // Unlike a standard Rust HashMap all calls take owned values. This is because under the hood
     // protobufs must take ownership of the data. If we only took a borrow we'd need to internally
@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
     // types are supported as well, but it all ends up as `Vec<u8>` in the end.
     let value: Option<Value> = client.get(KEY.to_owned()).await?;
     assert_eq!(value, Some(Value::from(VALUE.to_owned())));
-    println!("Get key `{}` returned value {:?}.", KEY, value);
+    println!("Get key `{KEY}` returned value {value:?}.");
 
     // You can also set the `ColumnFamily` used by the request.
     // This is *advanced usage* and should have some special considerations.
@@ -56,7 +56,7 @@ async fn main() -> Result<()> {
         .delete(KEY.to_owned())
         .await
         .expect("Could not delete value");
-    println!("Key: `{}` deleted", KEY);
+    println!("Key: `{KEY}` deleted");
 
     // Here we check if the key has been deleted from the key-value store.
     let value: Option<Value> = client
@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
         .batch_get(keys.clone())
         .await
         .expect("Could not get values");
-    println!("Found values: {:?} for keys: {:?}", values, keys);
+    println!("Found values: {values:?} for keys: {keys:?}");
 
     // Scanning a range of keys is also possible giving it two bounds
     // it will returns all entries between these two.
@@ -96,7 +96,7 @@ async fn main() -> Result<()> {
         &keys,
         &[Key::from("k1".to_owned()), Key::from("k2".to_owned()),]
     );
-    println!("Scaning from {:?} to {:?} gives: {:?}", start, end, keys);
+    println!("Scanning from {start:?} to {end:?} gives: {keys:?}");
 
     let k1 = "k1";
     let k2 = "k2";
@@ -126,10 +126,7 @@ async fn main() -> Result<()> {
             "v3".to_owned()
         ]
     );
-    println!(
-        "Scaning batch scan from {:?} gives: {:?}",
-        batch_scan_keys, vals
-    );
+    println!("Scanning batch scan from {batch_scan_keys:?} gives: {vals:?}");
 
     // Cleanly exit.
     Ok(())

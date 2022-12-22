@@ -3,7 +3,7 @@
 use super::plan::PreserveShard;
 use crate::{
     pd::PdClient,
-    request::{Dispatch, KvRequest, Plan, ResolveLock},
+    request::{plan::CleanupLocks, Dispatch, KvRequest, Plan, ResolveLock},
     store::RegionStore,
     Result,
 };
@@ -38,6 +38,17 @@ pub trait Shardable {
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()>;
 }
 
+// Use to iterate in a region for scan requests that have batch size limit.
+// HasNextBatch use to get the next batch according to previous response.
+pub trait HasNextBatch {
+    fn has_next_batch(&self) -> Option<(Vec<u8>, Vec<u8>)>;
+}
+
+// NextBatch use to change start key of request by result of `has_next_batch`.
+pub trait NextBatch {
+    fn next_batch(&mut self, _range: (Vec<u8>, Vec<u8>));
+}
+
 impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
     type Shard = Req::Shard;
 
@@ -51,6 +62,12 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
         self.kv_client = Some(store.client.clone());
         self.request.apply_shard(shard, store)
+    }
+}
+
+impl<Req: KvRequest + NextBatch> NextBatch for Dispatch<Req> {
+    fn next_batch(&mut self, range: (Vec<u8>, Vec<u8>)) {
+        self.request.next_batch(range);
     }
 }
 
@@ -72,6 +89,22 @@ impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
 
 impl<P: Plan + Shardable, PdC: PdClient> Shardable for ResolveLock<P, PdC> {
     impl_inner_shardable!();
+}
+
+impl<P: Plan + Shardable, PdC: PdClient> Shardable for CleanupLocks<P, PdC> {
+    type Shard = P::Shard;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+        self.inner.shards(pd_client)
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
+        self.store = Some(store.clone());
+        self.inner.apply_shard(shard, store)
+    }
 }
 
 #[macro_export]
