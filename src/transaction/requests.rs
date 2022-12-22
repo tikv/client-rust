@@ -97,7 +97,7 @@ impl Process<kvrpcpb::GetResponse> for DefaultProcessor {
 
 pub fn new_batch_get_request(keys: Vec<Vec<u8>>, timestamp: u64) -> kvrpcpb::BatchGetRequest {
     let mut req = kvrpcpb::BatchGetRequest::default();
-    req.set_keys(keys);
+    req.set_keys(keys.into());
     req.set_version(timestamp);
     req
 }
@@ -172,7 +172,7 @@ pub fn new_resolve_lock_request(
 
 pub fn new_batch_resolve_lock_request(txn_infos: Vec<TxnInfo>) -> kvrpcpb::ResolveLockRequest {
     let mut req = kvrpcpb::ResolveLockRequest::default();
-    req.set_txn_infos(txn_infos);
+    req.set_txn_infos(txn_infos.into());
     req
 }
 
@@ -219,7 +219,7 @@ pub fn new_prewrite_request(
     lock_ttl: u64,
 ) -> kvrpcpb::PrewriteRequest {
     let mut req = kvrpcpb::PrewriteRequest::default();
-    req.set_mutations(mutations);
+    req.set_mutations(mutations.into());
     req.set_primary_lock(primary_lock);
     req.set_start_version(start_version);
     req.set_lock_ttl(lock_ttl);
@@ -264,7 +264,7 @@ impl Shardable for kvrpcpb::PrewriteRequest {
 
         // Only need to set secondary keys if we're sending the primary key.
         if self.use_async_commit && !self.mutations.iter().any(|m| m.key == self.primary_lock) {
-            self.set_secondaries(vec![]);
+            self.set_secondaries(vec![].into());
         }
 
         // Only if there is only one request to send
@@ -272,7 +272,7 @@ impl Shardable for kvrpcpb::PrewriteRequest {
             self.set_try_one_pc(false);
         }
 
-        self.set_mutations(shard);
+        self.set_mutations(shard.into());
         Ok(())
     }
 }
@@ -283,7 +283,7 @@ pub fn new_commit_request(
     commit_version: u64,
 ) -> kvrpcpb::CommitRequest {
     let mut req = kvrpcpb::CommitRequest::default();
-    req.set_keys(keys);
+    req.set_keys(keys.into());
     req.set_start_version(start_version);
     req.set_commit_version(commit_version);
 
@@ -301,7 +301,7 @@ pub fn new_batch_rollback_request(
     start_version: u64,
 ) -> kvrpcpb::BatchRollbackRequest {
     let mut req = kvrpcpb::BatchRollbackRequest::default();
-    req.set_keys(keys);
+    req.set_keys(keys.into());
     req.set_start_version(start_version);
 
     req
@@ -319,7 +319,7 @@ pub fn new_pessimistic_rollback_request(
     for_update_ts: u64,
 ) -> kvrpcpb::PessimisticRollbackRequest {
     let mut req = kvrpcpb::PessimisticRollbackRequest::default();
-    req.set_keys(keys);
+    req.set_keys(keys.into());
     req.set_start_version(start_version);
     req.set_for_update_ts(for_update_ts);
 
@@ -341,7 +341,7 @@ pub fn new_pessimistic_lock_request(
     need_value: bool,
 ) -> kvrpcpb::PessimisticLockRequest {
     let mut req = kvrpcpb::PessimisticLockRequest::default();
-    req.set_mutations(mutations);
+    req.set_mutations(mutations.into());
     req.set_primary_lock(primary_lock);
     req.set_start_version(start_version);
     req.set_lock_ttl(lock_ttl);
@@ -375,7 +375,7 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
         self.set_context(store.region_with_leader.context()?);
-        self.set_mutations(shard);
+        self.set_mutations(shard.into());
         Ok(())
     }
 }
@@ -413,7 +413,7 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
                 .into_iter()
                 .map(Result::unwrap)
                 .flat_map(|ResponseWithShard(mut resp, mutations)| {
-                    let values = resp.take_values();
+                    let values: Vec<Vec<u8>> = resp.take_values().into();
                     let values_len = values.len();
                     let not_founds = resp.take_not_founds();
                     let kvpairs = mutations
@@ -619,10 +619,10 @@ pub struct TransactionStatus {
 }
 
 impl From<kvrpcpb::CheckTxnStatusResponse> for TransactionStatus {
-    fn from(resp: kvrpcpb::CheckTxnStatusResponse) -> TransactionStatus {
+    fn from(mut resp: kvrpcpb::CheckTxnStatusResponse) -> TransactionStatus {
         TransactionStatus {
             action: resp.get_action(),
-            kind: (resp.commit_version, resp.lock_ttl, resp.lock_info).into(),
+            kind: (resp.commit_version, resp.lock_ttl, resp.lock_info.take()).into(),
             is_expired: false,
         }
     }
@@ -685,7 +685,7 @@ pub fn new_check_secondary_locks_request(
     start_version: u64,
 ) -> kvrpcpb::CheckSecondaryLocksRequest {
     let mut req = kvrpcpb::CheckSecondaryLocksRequest::default();
-    req.set_keys(keys);
+    req.set_keys(keys.into());
     req.set_start_version(start_version);
     req
 }
@@ -707,7 +707,7 @@ impl Merge<kvrpcpb::CheckSecondaryLocksResponse> for Collect {
         };
         for resp in input {
             let resp = resp?;
-            for lock in resp.locks {
+            for lock in resp.locks.into_iter() {
                 if !lock.use_async_commit {
                     out.fallback_2pc = true;
                     return Ok(out);
@@ -751,7 +751,7 @@ impl HasLocks for kvrpcpb::CleanupResponse {}
 
 impl HasLocks for kvrpcpb::ScanLockResponse {
     fn take_locks(&mut self) -> Vec<LockInfo> {
-        self.take_locks()
+        self.take_locks().into()
     }
 }
 
@@ -799,11 +799,11 @@ mod tests {
 
         let resp1 = ResponseWithShard(
             kvrpcpb::PessimisticLockResponse {
-                values: vec![value1.to_vec()],
+                values: vec![value1.to_vec()].into(),
                 ..Default::default()
             },
             vec![kvrpcpb::Mutation {
-                op: kvrpcpb::Op::PessimisticLock as i32,
+                op: kvrpcpb::Op::PessimisticLock.into(),
                 key: key1.to_vec(),
                 ..Default::default()
             }],
@@ -811,7 +811,7 @@ mod tests {
 
         let resp_empty_value = ResponseWithShard(
             kvrpcpb::PessimisticLockResponse {
-                values: vec![value_empty.to_vec()],
+                values: vec![value_empty.to_vec()].into(),
                 ..Default::default()
             },
             vec![kvrpcpb::Mutation {

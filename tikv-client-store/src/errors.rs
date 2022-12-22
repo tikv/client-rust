@@ -224,16 +224,18 @@ mod test {
     #[test]
     fn result_haslocks() {
         let mut resp: Result<_, Error> = Ok(kvrpcpb::CommitResponse {
-            region_error: None,
-            error: None,
+            region_error: None.into(),
+            error: None.into(),
             commit_version: 0,
+            ..Default::default()
         });
         assert!(resp.key_errors().is_none());
 
         let mut resp: Result<_, Error> = Ok(kvrpcpb::CommitResponse {
-            region_error: None,
-            error: Some(kvrpcpb::KeyError::default()),
+            region_error: None.into(),
+            error: Some(kvrpcpb::KeyError::default()).into(),
             commit_version: 0,
+            ..Default::default()
         });
         assert!(resp.key_errors().is_some());
 

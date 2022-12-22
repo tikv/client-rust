@@ -61,7 +61,7 @@ pub fn new_raw_batch_get_request(
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawBatchGetRequest {
     let mut req = kvrpcpb::RawBatchGetRequest::default();
-    req.set_keys(keys);
+    req.set_keys(keys.into());
     req.maybe_set_cf(cf);
 
     req
@@ -117,7 +117,7 @@ pub fn new_raw_batch_put_request(
     atomic: bool,
 ) -> kvrpcpb::RawBatchPutRequest {
     let mut req = kvrpcpb::RawBatchPutRequest::default();
-    req.set_pairs(pairs);
+    req.set_pairs(pairs.into());
     req.maybe_set_cf(cf);
     req.set_for_cas(atomic);
 
@@ -145,7 +145,7 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
         self.set_context(store.region_with_leader.context()?);
-        self.set_pairs(shard);
+        self.set_pairs(shard.into());
         Ok(())
     }
 }
@@ -180,7 +180,7 @@ pub fn new_raw_batch_delete_request(
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawBatchDeleteRequest {
     let mut req = kvrpcpb::RawBatchDeleteRequest::default();
-    req.set_keys(keys);
+    req.set_keys(keys.into());
     req.maybe_set_cf(cf);
 
     req
@@ -252,7 +252,7 @@ pub fn new_raw_batch_scan_request(
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawBatchScanRequest {
     let mut req = kvrpcpb::RawBatchScanRequest::default();
-    req.set_ranges(ranges);
+    req.set_ranges(ranges.into());
     req.set_each_limit(each_limit);
     req.set_key_only(key_only);
     req.maybe_set_cf(cf);
@@ -271,12 +271,12 @@ impl Shardable for kvrpcpb::RawBatchScanRequest {
         &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
-        store_stream_for_ranges(self.ranges.clone(), pd_client.clone())
+        store_stream_for_ranges(self.ranges.clone().into(), pd_client.clone())
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
         self.set_context(store.region_with_leader.context()?);
-        self.set_ranges(shard);
+        self.set_ranges(shard.into());
         Ok(())
     }
 }
@@ -346,7 +346,7 @@ pub fn new_raw_coprocessor_request(
     let mut inner = kvrpcpb::RawCoprocessorRequest::default();
     inner.set_copr_name(copr_name);
     inner.set_copr_version_req(copr_version_req);
-    inner.set_ranges(ranges);
+    inner.set_ranges(ranges.into());
     RawCoprocessorRequest {
         inner,
         data_builder,
@@ -389,12 +389,12 @@ impl Shardable for RawCoprocessorRequest {
         &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
-        store_stream_for_ranges(self.inner.ranges.clone(), pd_client.clone())
+        store_stream_for_ranges(self.inner.ranges.clone().into(), pd_client.clone())
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
         self.inner.set_context(store.region_with_leader.context()?);
-        self.inner.set_ranges(shard.clone());
+        self.inner.set_ranges(shard.clone().into());
         self.inner.set_data((self.data_builder)(
             store.region_with_leader.region.clone(),
             shard,

@@ -13,8 +13,22 @@ default = [ "protobuf-codec" ]
 # Enable integration tests with a running TiKV and PD instance.
 # Use $PD_ADDRS, comma separated, to set the addresses the tests use.
 integration-tests = []
-protobuf-codec = ["tikv-client-proto/protobuf-codec", "grpcio/protobuf-codec"]
-prost-codec = ["tikv-client-proto/prost-codec", "grpcio/prost-codec"]
+protobuf-codec = [
+    "grpcio/protobuf-codec",
+    "tikv-client-proto/protobuf-codec",
+    "tikv-client-common/protobuf-codec",
+    "tikv-client-pd/protobuf-codec",
+    "tikv-client-store/protobuf-codec",
+    "mock-tikv/protobuf-codec",
+]
+prost-codec = [
+    "grpcio/prost-codec",
+    "tikv-client-proto/prost-codec",
+    "tikv-client-common/prost-codec",
+    "tikv-client-pd/prost-codec",
+    "tikv-client-store/prost-codec",
+    "mock-tikv/prost-codec",
+]
 
 [lib]
 name = "tikv_client"
@@ -26,7 +40,7 @@ either = "1.6"
 fail = "0.4"
 futures = { version = "0.3", features = ["async-await", "thread-pool"] }
 futures-timer = "3.0"
-grpcio = { version = "0.10", features = [ "openssl-vendored" ], default-features = false }
+grpcio = { version = "0.10.4", features = [ "openssl-vendored" ], default-features = false }
 lazy_static = "1"
 log = "0.4"
 prometheus = { version = "0.12", features = [ "push", "process" ], default-features = false } 

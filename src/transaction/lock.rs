@@ -312,11 +312,12 @@ impl LockResolver {
         let mut txn_ids = Vec::with_capacity(txn_infos.len());
         let mut txn_info_vec = Vec::with_capacity(txn_infos.len());
         for (txn_id, commit_ts) in txn_infos.into_iter() {
+            let mut txn_info = TxnInfo::default();
+            txn_info.set_txn(txn_id);
+            txn_info.set_status(commit_ts);
+
             txn_ids.push(txn_id);
-            txn_info_vec.push(TxnInfo {
-                txn: txn_id,
-                status: commit_ts,
-            });
+            txn_info_vec.push(txn_info);
         }
         let cleaned_region = self
             .batch_resolve_locks(pd_client.clone(), store.clone(), txn_info_vec)

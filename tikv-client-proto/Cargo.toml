@@ -16,10 +16,10 @@ prost-codec = ["prost", "prost-derive", "protobuf-build/grpcio-prost-codec", "gr
 protobuf-build = { version = "0.13", default-features = false }
 
 [dependencies]
-protobuf = "2.8"
+protobuf = "=2.8.0"
 prost = { version = "0.9", optional = true }
 prost-derive = { version = "0.9", optional = true }
 futures = "0.3"
-grpcio = { version = "0.10", default-features = false }
+grpcio = { version = "0.10.4", default-features = false }
 lazy_static = { version = "1" }
 raft-proto = { version = "0.7.0", default-features = false }

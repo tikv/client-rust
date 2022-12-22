@@ -1,4 +1,8 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
+
+// To support both prost & rust-protobuf.
+#![cfg_attr(feature = "prost-codec", allow(clippy::useless_conversion))]
+
 mod pd;
 mod server;
 mod store;
