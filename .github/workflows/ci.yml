@@ -33,50 +33,14 @@ jobs:
       - name: make check
         run: ${{ matrix.env }} make check
 
-  fmt:
-    name: rustfmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          override: true
-      - run: rustup component add rustfmt
-      - uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
-
-  clippy:
-    name: clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          components: clippy
-          override: true
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v1
-        with:
-          version: '3.x'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v1.4.0
-      - uses: actions-rs/clippy-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-targets --all-features -- -D clippy::all
-          name: Clippy Output
-
   unit-test:
     name: unit test
     env:
       CARGO_INCREMENTAL: 0
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [ '', 'RUST_PROTOBUF=1' ]
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -91,14 +55,19 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
         uses: Swatinem/rust-cache@v1.4.0
+        with:
+          key: ${{ matrix.env }}
       - name: unit test
-        run: make unit-test
+        run: ${{ matrix.env }} make unit-test
 
   integration-test:
     name: integration test
     env:
       CARGO_INCREMENTAL: 0
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [ '', 'RUST_PROTOBUF=1' ]
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -113,6 +82,8 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
         uses: Swatinem/rust-cache@v1.4.0
+        with:
+          key: ${{ matrix.env }}
       - name: install tiup
         run: curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
       - name: start tiup playground
@@ -125,4 +96,4 @@ jobs:
             sleep 1
           done
       - name: integration test
-        run: MULTI_REGION=1 make integration-test
+        run: ${{ matrix.env }} MULTI_REGION=1 make integration-test
