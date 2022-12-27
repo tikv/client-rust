@@ -28,7 +28,6 @@ unit-test:
 	cargo test --all --no-default-features --features "${ENABLE_FEATURES}"
 
 integration-test:
-# MULTI_REGION shall be set manually if needed
 	cargo test txn_ --all ${INTEGRATION_TEST_ARGS} -- --nocapture
 	cargo test raw_ --all ${INTEGRATION_TEST_ARGS} -- --nocapture
 	cargo test misc_ --all ${INTEGRATION_TEST_ARGS} -- --nocapture

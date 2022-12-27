@@ -182,7 +182,6 @@ mod test {
             |_: &dyn Any| {
                 Ok(Box::new(kvrpcpb::CommitResponse {
                     error: Some(kvrpcpb::KeyError::default()).into(),
-                    commit_version: 0,
                     ..Default::default()
                 }) as Box<dyn Any>)
             },
