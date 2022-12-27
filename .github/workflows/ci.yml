@@ -20,6 +20,7 @@ jobs:
           profile: minimal
           toolchain: nightly
           override: true
+      - run: rustup component add rustfmt clippy
       - name: Install Protoc
         uses: arduino/setup-protoc@v1
         with:
@@ -27,6 +28,8 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
         uses: Swatinem/rust-cache@v1.4.0
+        with:
+          key: ${{ matrix.env }}
       - name: make check
         run: ${{ matrix.env }} make check
 
