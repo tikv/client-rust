@@ -436,7 +436,7 @@ mod tests {
             |_: &dyn Any| {
                 fail::fail_point!("region-error", |_| {
                     let resp = kvrpcpb::ResolveLockResponse {
-                        region_error: Some(errorpb::Error::default()),
+                        region_error: Some(errorpb::Error::default()).into(),
                         ..Default::default()
                     };
                     Ok(Box::new(resp) as Box<dyn Any>)

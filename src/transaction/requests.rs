@@ -783,6 +783,7 @@ impl HasLocks for kvrpcpb::PrewriteResponse {
 }
 
 #[cfg(test)]
+#[cfg_attr(feature = "protobuf-codec", allow(clippy::useless_conversion))]
 mod tests {
     use crate::{
         request::{plan::Merge, CollectWithShard, ResponseWithShard},
@@ -815,7 +816,7 @@ mod tests {
                 ..Default::default()
             },
             vec![kvrpcpb::Mutation {
-                op: kvrpcpb::Op::PessimisticLock as i32,
+                op: kvrpcpb::Op::PessimisticLock.into(),
                 key: key2.to_vec(),
                 ..Default::default()
             }],
@@ -823,18 +824,18 @@ mod tests {
 
         let resp_not_found = ResponseWithShard(
             kvrpcpb::PessimisticLockResponse {
-                values: vec![value_empty.to_vec(), value4.to_vec()],
+                values: vec![value_empty.to_vec(), value4.to_vec()].into(),
                 not_founds: vec![true, false],
                 ..Default::default()
             },
             vec![
                 kvrpcpb::Mutation {
-                    op: kvrpcpb::Op::PessimisticLock as i32,
+                    op: kvrpcpb::Op::PessimisticLock.into(),
                     key: key3.to_vec(),
                     ..Default::default()
                 },
                 kvrpcpb::Mutation {
-                    op: kvrpcpb::Op::PessimisticLock as i32,
+                    op: kvrpcpb::Op::PessimisticLock.into(),
                     key: key4.to_vec(),
                     ..Default::default()
                 },
