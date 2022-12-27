@@ -10,6 +10,9 @@ jobs:
   check:
     name: check
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [ '', 'RUST_PROTOBUF=1' ]
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -24,10 +27,8 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
         uses: Swatinem/rust-cache@v1.4.0
-      - uses: actions-rs/cargo@v1
-        with:
-          command: check
-          args: --all-targets --all-features
+      - name: make check
+        run: ${{ matrix.env }} make check
 
   fmt:
     name: rustfmt
