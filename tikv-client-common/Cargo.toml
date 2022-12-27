@@ -14,7 +14,7 @@ prost-codec = ["grpcio/prost-codec"]
 [dependencies]
 thiserror = "1"
 futures = { version = "0.3", features = ["compat", "async-await", "thread-pool"] }
-grpcio = { version = "0.10.4", default-features = false }
+grpcio = { version = "0.10", default-features = false }
 lazy_static = "1"
 log = "0.4"
 regex = "1"
