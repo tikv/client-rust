@@ -181,9 +181,8 @@ mod test {
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |_: &dyn Any| {
                 Ok(Box::new(kvrpcpb::CommitResponse {
-                    region_error: None,
-                    error: Some(kvrpcpb::KeyError::default()),
-                    commit_version: 0,
+                    error: Some(kvrpcpb::KeyError::default()).into(),
+                    ..Default::default()
                 }) as Box<dyn Any>)
             },
         )));

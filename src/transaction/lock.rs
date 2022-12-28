@@ -313,10 +313,10 @@ impl LockResolver {
         let mut txn_info_vec = Vec::with_capacity(txn_infos.len());
         for (txn_id, commit_ts) in txn_infos.into_iter() {
             txn_ids.push(txn_id);
-            txn_info_vec.push(TxnInfo {
-                txn: txn_id,
-                status: commit_ts,
-            });
+            let mut txn_info = TxnInfo::default();
+            txn_info.set_txn(txn_id);
+            txn_info.set_status(commit_ts);
+            txn_info_vec.push(txn_info);
         }
         let cleaned_region = self
             .batch_resolve_locks(pd_client.clone(), store.clone(), txn_info_vec)
@@ -435,7 +435,7 @@ mod tests {
             |_: &dyn Any| {
                 fail::fail_point!("region-error", |_| {
                     let resp = kvrpcpb::ResolveLockResponse {
-                        region_error: Some(errorpb::Error::default()),
+                        region_error: Some(errorpb::Error::default()).into(),
                         ..Default::default()
                     };
                     Ok(Box::new(resp) as Box<dyn Any>)

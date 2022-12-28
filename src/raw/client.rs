@@ -744,11 +744,19 @@ impl<PdC: PdClient> Client<PdC> {
     }
 
     fn assert_non_atomic(&self) -> Result<()> {
-        (!self.atomic).then_some(()).ok_or(Error::UnsupportedMode)
+        if !self.atomic {
+            Ok(())
+        } else {
+            Err(Error::UnsupportedMode)
+        }
     }
 
     fn assert_atomic(&self) -> Result<()> {
-        self.atomic.then_some(()).ok_or(Error::UnsupportedMode)
+        if self.atomic {
+            Ok(())
+        } else {
+            Err(Error::UnsupportedMode)
+        }
     }
 }
 

@@ -7,10 +7,14 @@ authors = ["The TiKV Project Authors"]
 repository = "https://github.com/tikv/client-rust"
 description = "Common components of the TiKV Rust client"
 
+[features]
+protobuf-codec = ["grpcio/protobuf-codec"]
+prost-codec = ["grpcio/prost-codec"]
+
 [dependencies]
 thiserror = "1"
 futures = { version = "0.3", features = ["compat", "async-await", "thread-pool"] }
-grpcio = { version = "0.10", features = [ "prost-codec" ], default-features = false }
+grpcio = { version = "0.10", default-features = false }
 lazy_static = "1"
 log = "0.4"
 regex = "1"

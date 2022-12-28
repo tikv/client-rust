@@ -152,16 +152,11 @@ impl<'a> Stream for TsoRequestStream<'a> {
         }
 
         if !requests.is_empty() {
-            let req = TsoRequest {
-                header: Some(RequestHeader {
-                    cluster_id: self.cluster_id,
-                    // TODO
-                    sender_id: 0,
-                }),
-                count: requests.len() as u32,
-                // TODO
-                dc_location: String::new(),
-            };
+            let mut req = TsoRequest::default();
+            req.mut_header().set_cluster_id(self.cluster_id);
+            req.mut_header().set_sender_id(0);
+            req.set_count(requests.len() as u32);
+            req.set_dc_location(String::new());
 
             let request_group = RequestGroup {
                 tso_request: req.clone(),
@@ -206,11 +201,10 @@ fn allocate_timestamps(
 
         for request in requests {
             offset -= 1;
-            let ts = Timestamp {
-                physical: tail_ts.physical,
-                logical: tail_ts.logical - offset as i64,
-                suffix_bits: tail_ts.get_suffix_bits(),
-            };
+            let mut ts = Timestamp::default();
+            ts.set_physical(tail_ts.physical);
+            ts.set_logical(tail_ts.logical - offset as i64);
+            ts.set_suffix_bits(tail_ts.get_suffix_bits());
             let _ = request.send(ts);
         }
     } else {
