@@ -445,11 +445,13 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
 
 pub fn new_scan_lock_request(
     start_key: Vec<u8>,
+    end_key: Vec<u8>,
     safepoint: u64,
     limit: u32,
 ) -> kvrpcpb::ScanLockRequest {
     let mut req = kvrpcpb::ScanLockRequest::default();
     req.set_start_key(start_key);
+    req.set_end_key(end_key);
     req.set_max_version(safepoint);
     req.set_limit(limit);
     req

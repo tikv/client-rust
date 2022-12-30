@@ -165,7 +165,7 @@ pub fn new_scan_lock_request(
     safepoint: Timestamp,
     limit: u32,
 ) -> kvrpcpb::ScanLockRequest {
-    requests::new_scan_lock_request(start_key.into(), safepoint.version(), limit)
+    requests::new_scan_lock_request(start_key.into(), vec![], safepoint.version(), limit)
 }
 
 pub fn new_heart_beat_request(

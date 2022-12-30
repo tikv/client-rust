@@ -267,7 +267,8 @@ impl Client {
         let ctx = ResolveLocksContext::default();
         let backoff = Backoff::equal_jitter_backoff(100, 10000, 50);
         let req = new_scan_lock_request(
-            mem::take(&mut start_key),
+            options.start_key.clone(),
+            options.end_key.clone(),
             safepoint.version(),
             options.batch_size,
         );
@@ -289,7 +290,12 @@ impl Client {
         mut start_key: Vec<u8>,
         batch_size: u32,
     ) -> Result<Vec<tikv_client_proto::kvrpcpb::LockInfo>> {
-        let req = new_scan_lock_request(mem::take(&mut start_key), safepoint.version(), batch_size);
+        let req = new_scan_lock_request(
+            mem::take(&mut start_key),
+            vec![],
+            safepoint.version(),
+            batch_size,
+        );
         let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(crate::request::Collect)
