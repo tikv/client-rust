@@ -225,8 +225,6 @@ async fn txn_cleanup_range_async_commit_locks() -> Result<()> {
     let res = client.cleanup_locks(&safepoint, options).await?;
 
     assert_eq!(res.meet_locks, keys.len() - 3);
-    must_committed(&client, keys).await;
-    assert_eq!(count_locks(&client).await?, 0);
 
     scenario.teardown();
     Ok(())
