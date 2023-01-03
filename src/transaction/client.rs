@@ -287,11 +287,12 @@ impl Client {
         &self,
         safepoint: &Timestamp,
         mut start_key: Vec<u8>,
+        mut end_key: Vec<u8>,
         batch_size: u32,
     ) -> Result<Vec<tikv_client_proto::kvrpcpb::LockInfo>> {
         let req = new_scan_lock_request(
             std::mem::take(&mut start_key),
-            vec![],
+            std::mem::take(&mut end_key),
             safepoint.version(),
             batch_size,
         );
