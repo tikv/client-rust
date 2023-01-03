@@ -13,7 +13,7 @@ use crate::{
     Backoff, Result,
 };
 use slog::{Drain, Logger};
-use std::{mem, sync::Arc};
+use std::sync::Arc;
 use tikv_client_proto::pdpb::Timestamp;
 
 // FIXME: cargo-culted value
@@ -263,7 +263,6 @@ impl Client {
     ) -> Result<CleanupLocksResult> {
         debug!(self.logger, "invoking cleanup async commit locks");
         // scan all locks with ts <= safepoint
-        let mut start_key = vec![];
         let ctx = ResolveLocksContext::default();
         let backoff = Backoff::equal_jitter_backoff(100, 10000, 50);
         let req = new_scan_lock_request(
@@ -291,7 +290,7 @@ impl Client {
         batch_size: u32,
     ) -> Result<Vec<tikv_client_proto::kvrpcpb::LockInfo>> {
         let req = new_scan_lock_request(
-            mem::take(&mut start_key),
+            std::mem::take(&mut start_key),
             vec![],
             safepoint.version(),
             batch_size,

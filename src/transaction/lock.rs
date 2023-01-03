@@ -149,7 +149,7 @@ pub struct ResolveLocksContext {
     pub(crate) clean_regions: Arc<RwLock<HashMap<u64, HashSet<RegionVerId>>>>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct ResolveLocksOptions {
     pub async_commit_only: bool,
     pub start_key: Vec<u8>,
