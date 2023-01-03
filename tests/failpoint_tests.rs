@@ -193,6 +193,47 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
 
 #[tokio::test]
 #[serial]
+async fn txn_cleanup_range_async_commit_locks() -> Result<()> {
+    let logger = new_logger(slog::Level::Info);
+
+    init().await?;
+    let scenario = FailScenario::setup();
+
+    info!(logger, "test range clean lock");
+    fail::cfg("after-prewrite", "return").unwrap();
+    defer! {
+        fail::cfg("after-prewrite", "off").unwrap()
+    }
+
+    let client = TransactionClient::new(pd_addrs(), Some(logger.clone())).await?;
+    let keys = write_data(&client, true, true).await?;
+    assert_eq!(count_locks(&client).await?, keys.len());
+
+    info!(logger, "total keys {}", keys.len());
+    let mut sorted_keys: Vec<Vec<u8>> = Vec::from_iter(keys.clone().into_iter());
+    sorted_keys.sort();
+    let start_key = sorted_keys[1].clone();
+    let end_key = sorted_keys[sorted_keys.len() - 2].clone();
+
+    let safepoint = client.current_timestamp().await?;
+    let options = ResolveLocksOptions {
+        async_commit_only: true,
+        start_key,
+        end_key,
+        ..Default::default()
+    };
+    let res = client.cleanup_locks(&safepoint, options).await?;
+
+    assert_eq!(res.meet_locks, keys.len() - 3);
+    must_committed(&client, keys).await;
+    assert_eq!(count_locks(&client).await?, 0);
+
+    scenario.teardown();
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
 async fn txn_cleanup_2pc_locks() -> Result<()> {
     let logger = new_logger(slog::Level::Info);
 
