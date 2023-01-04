@@ -894,7 +894,7 @@ async fn txn_scan_reverse() -> Result<()> {
     ];
 
     // pessimistic
-    let option = TransactionOptions::new_pessimistic().drop_check(tikv_client::CheckLevel::Warn);
+    let option = TransactionOptions::new_optimistic().drop_check(tikv_client::CheckLevel::Warn);
     let mut t = client.begin_with_options(option.clone()).await?;
     t.put(k1.clone(), v1).await?;
     t.put(k2.clone(), v2).await?;

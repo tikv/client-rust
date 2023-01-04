@@ -479,7 +479,7 @@ impl Merge<CleanupLocksResult> for Collect {
             .into_iter()
             .fold(Ok(CleanupLocksResult::default()), |acc, x| {
                 Ok(CleanupLocksResult {
-                    meet_locks: acc.unwrap().meet_locks + x?.meet_locks,
+                    meet_locks: acc?.meet_locks + x?.meet_locks,
                     ..Default::default()
                 })
             })
