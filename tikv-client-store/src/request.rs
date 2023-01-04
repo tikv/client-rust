@@ -126,3 +126,8 @@ impl_request!(
     "kv_delete_range"
 );
 impl_request!(SplitRegionRequest, split_region_async_opt, "split_region");
+impl_request!(
+    UnsafeDestroyRangeRequest,
+    unsafe_destroy_range_async_opt,
+    "unsafe_destroy_range"
+);

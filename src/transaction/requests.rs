@@ -792,6 +792,16 @@ pub fn new_split_region_request(
     req
 }
 
+pub fn new_unsafe_destroy_range_request(
+    start_key: Vec<u8>,
+    end_key: Vec<u8>,
+) -> kvrpcpb::UnsafeDestroyRangeRequest {
+    let mut req = kvrpcpb::UnsafeDestroyRangeRequest::default();
+    req.set_start_key(start_key);
+    req.set_end_key(end_key);
+    req
+}
+
 // Note: SplitRegionRequest is sent to a specified region without keys. So it's not Shardable.
 // And we don't automatically retry on its region errors (in the Plan level).
 // The region error must be manually handled (in the upper level).
@@ -800,6 +810,15 @@ impl KvRequest for kvrpcpb::SplitRegionRequest {
 }
 
 impl HasLocks for kvrpcpb::SplitRegionResponse {}
+
+// Note: UnsafeDestroyRangeRequest is sent to all stores cover the range. So it's not Shardable.
+// And we don't automatically retry on its errors (in the Plan level).
+// The errors must be manually handled (in the upper level).
+impl KvRequest for kvrpcpb::UnsafeDestroyRangeRequest {
+    type Response = kvrpcpb::UnsafeDestroyRangeResponse;
+}
+
+impl HasLocks for kvrpcpb::UnsafeDestroyRangeResponse {}
 
 #[cfg(test)]
 #[cfg_attr(feature = "protobuf-codec", allow(clippy::useless_conversion))]

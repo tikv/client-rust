@@ -6,21 +6,24 @@ use crate::{
     config::Config,
     pd::{PdClient, PdRpcClient},
     request::{plan::CleanupLocksResult, Plan},
+    store::RegionStore,
     timestamp::TimestampExt,
     transaction::{
-        lock::ResolveLocksOptions, requests, ResolveLocksContext, Snapshot, Transaction,
-        TransactionOptions,
+        lock::ResolveLocksOptions, requests, requests::new_unsafe_destroy_range_request,
+        ResolveLocksContext, Snapshot, Transaction, TransactionOptions,
     },
-    Backoff, Result,
+    Backoff, BoundRange, Result,
 };
+use futures::{future::try_join_all, StreamExt};
 use slog::{Drain, Logger};
-use std::{mem, sync::Arc};
+use std::{collections::HashMap, mem, sync::Arc};
 use tikv_client_common::Error;
 use tikv_client_proto::{metapb::Region, pdpb::Timestamp};
 
 // FIXME: cargo-culted value
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
 const SPLIT_REGION_RETRY_LIMIT: usize = 10;
+const UNSAFE_DESTROY_RANGE_RETRY_LIMIT: usize = 10;
 
 /// The TiKV transactional `Client` is used to interact with TiKV using transactional requests.
 ///
@@ -338,5 +341,76 @@ impl Client {
             }
         }
         Err(error.expect("no error is impossible"))
+    }
+
+    pub async fn unsafe_destroy_range(&self, start_key: Vec<u8>, end_key: Vec<u8>) -> Result<()> {
+        debug!(self.logger, "invoking unsafe destroy range");
+        let stores = self
+            .list_stores_for_unsafe_destroy(start_key.clone(), end_key.clone())
+            .await?;
+        let mut handles = Vec::with_capacity(stores.len());
+        for store in stores.into_values() {
+            let logger = self.logger.clone();
+            let start_key = start_key.clone();
+            let end_key = end_key.clone();
+            let pd = self.pd.clone();
+            let task = async move {
+                let mut error = None;
+                for i in 0..UNSAFE_DESTROY_RANGE_RETRY_LIMIT {
+                    debug!(logger, "unsafe destroy range {}", (i + 1));
+                    let request =
+                        new_unsafe_destroy_range_request(start_key.clone(), end_key.clone());
+                    let plan = crate::request::PlanBuilder::new(pd.clone(), request)
+                        .single_region_with_store(store.clone())
+                        .await?
+                        .extract_error()
+                        .plan();
+                    match plan.execute().await {
+                        Ok(_) => return Ok(()),
+                        Err(e) => {
+                            warn!(logger, "unsafe destroy range error: {:?}", e);
+                            error = Some(e);
+                            continue;
+                        }
+                    }
+                }
+                Err(error.expect("no error is impossible"))
+            };
+            handles.push(tokio::spawn(task));
+        }
+
+        let results = try_join_all(handles).await?;
+        match results.into_iter().find(|x| x.is_err()) {
+            Some(r) => r,
+            None => Ok(()),
+        }
+    }
+
+    async fn list_stores_for_unsafe_destroy(
+        &self,
+        start_key: Vec<u8>,
+        end_key: Vec<u8>,
+    ) -> Result<HashMap<u64, RegionStore>> {
+        let mut stores = HashMap::new();
+        let bnd_range = BoundRange::from((start_key, end_key));
+        self.pd
+            .clone()
+            .stores_for_range(bnd_range)
+            .map(|store| -> Result<()> {
+                let store = store?;
+                let store_id = store
+                    .region_with_leader
+                    .leader
+                    .as_ref()
+                    .unwrap()
+                    .get_store_id();
+                stores.entry(store_id).or_insert(store);
+                Ok(())
+            })
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<_>>()?;
+        Ok(stores)
     }
 }
