@@ -198,7 +198,6 @@ async fn txn_cleanup_range_async_commit_locks() -> Result<()> {
 
     init().await?;
     let scenario = FailScenario::setup();
-
     info!(logger, "test range clean lock");
     fail::cfg("after-prewrite", "return").unwrap();
     defer! {
@@ -225,6 +224,15 @@ async fn txn_cleanup_range_async_commit_locks() -> Result<()> {
     let res = client.cleanup_locks(&safepoint, options).await?;
 
     assert_eq!(res.meet_locks, keys.len() - 3);
+
+    // cleanup all locks to avoid affecting following cases.
+    let options = ResolveLocksOptions {
+        async_commit_only: false,
+        ..Default::default()
+    };
+    client.cleanup_locks(&safepoint, options).await?;
+    must_committed(&client, keys).await;
+    assert_eq!(count_locks(&client).await?, 0);
 
     scenario.teardown();
     Ok(())
