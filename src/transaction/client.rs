@@ -325,7 +325,7 @@ impl Client {
                 .extract_error()
                 .plan();
             match plan.execute().await {
-                Ok(mut resp) => return Ok(resp.take_regions()),
+                Ok(mut resp) => return Ok(resp.take_regions().into()),
                 Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
                     e @ Some(Error::RegionError(_)) => {
                         error = e;
