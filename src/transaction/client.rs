@@ -8,16 +8,19 @@ use crate::{
     request::{plan::CleanupLocksResult, Plan},
     timestamp::TimestampExt,
     transaction::{
-        lock::ResolveLocksOptions, ResolveLocksContext, Snapshot, Transaction, TransactionOptions,
+        lock::ResolveLocksOptions, requests, ResolveLocksContext, Snapshot, Transaction,
+        TransactionOptions,
     },
     Backoff, Result,
 };
 use slog::{Drain, Logger};
 use std::{mem, sync::Arc};
-use tikv_client_proto::pdpb::Timestamp;
+use tikv_client_common::Error;
+use tikv_client_proto::{metapb::Region, pdpb::Timestamp};
 
 // FIXME: cargo-culted value
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
+const SPLIT_REGION_RETRY_LIMIT: usize = 10;
 
 /// The TiKV transactional `Client` is used to interact with TiKV using transactional requests.
 ///
@@ -300,5 +303,40 @@ impl Client {
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
         let logger = self.logger.new(o!("child" => 1));
         Transaction::new(timestamp, self.pd.clone(), options, logger)
+    }
+
+    pub async fn split_region_with_retry(
+        &self,
+        #[allow(clippy::ptr_arg)] key: &Vec<u8>,
+        split_keys: Vec<Vec<u8>>,
+        is_raw_kv: bool,
+    ) -> Result<Vec<Region>> {
+        debug!(self.logger, "invoking split region with retry");
+        // FIXME: Add backoff
+        let mut error = None;
+        for i in 0..SPLIT_REGION_RETRY_LIMIT {
+            debug!(self.logger, "split region: attempt {}", (i + 1));
+            let store = self.pd.clone().store_for_key(key.into()).await?;
+            // let ver_id = store.region_with_leader.ver_id();
+            let request = requests::new_split_region_request(split_keys.clone(), is_raw_kv);
+            let plan = crate::request::PlanBuilder::new(self.pd.clone(), request)
+                .single_region_with_store(store)
+                .await?
+                .extract_error()
+                .plan();
+            match plan.execute().await {
+                Ok(mut resp) => return Ok(resp.take_regions()),
+                Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
+                    e @ Some(Error::RegionError(_)) => {
+                        error = e;
+                        continue;
+                    }
+                    Some(e) => return Err(e),
+                    None => unreachable!(),
+                },
+                Err(e) => return Err(e),
+            }
+        }
+        Err(error.expect("no error is impossible"))
     }
 }
