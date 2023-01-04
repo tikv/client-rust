@@ -22,8 +22,6 @@ use tikv_client_proto::{metapb::Region, pdpb::Timestamp};
 
 // FIXME: cargo-culted value
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
-const SPLIT_REGION_RETRY_LIMIT: usize = 10;
-const UNSAFE_DESTROY_RANGE_RETRY_LIMIT: usize = 10;
 
 /// The TiKV transactional `Client` is used to interact with TiKV using transactional requests.
 ///
@@ -315,12 +313,12 @@ impl Client {
         is_raw_kv: bool,
     ) -> Result<Vec<Region>> {
         debug!(self.logger, "invoking split region with retry");
-        // FIXME: Add backoff
-        let mut error = None;
-        for i in 0..SPLIT_REGION_RETRY_LIMIT {
-            debug!(self.logger, "split region: attempt {}", (i + 1));
+        let mut backoff = DEFAULT_REGION_BACKOFF;
+        let mut i = 0;
+        'retry: loop {
+            i += 1;
+            debug!(self.logger, "split region: attempt {}", i);
             let store = self.pd.clone().store_for_key(key.into()).await?;
-            // let ver_id = store.region_with_leader.ver_id();
             let request = requests::new_split_region_request(split_keys.clone(), is_raw_kv);
             let plan = crate::request::PlanBuilder::new(self.pd.clone(), request)
                 .single_region_with_store(store)
@@ -330,21 +328,24 @@ impl Client {
             match plan.execute().await {
                 Ok(mut resp) => return Ok(resp.take_regions().into()),
                 Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
-                    e @ Some(Error::RegionError(_)) => {
-                        error = e;
-                        continue;
-                    }
+                    Some(e @ Error::RegionError(_)) => match backoff.next_delay_duration() {
+                        Some(duration) => {
+                            futures_timer::Delay::new(duration).await;
+                            continue 'retry;
+                        }
+                        None => return Err(e),
+                    },
                     Some(e) => return Err(e),
                     None => unreachable!(),
                 },
                 Err(e) => return Err(e),
             }
         }
-        Err(error.expect("no error is impossible"))
     }
 
     pub async fn unsafe_destroy_range(&self, start_key: Vec<u8>, end_key: Vec<u8>) -> Result<()> {
         debug!(self.logger, "invoking unsafe destroy range");
+        let backoff = DEFAULT_REGION_BACKOFF;
         let stores = self
             .list_stores_for_unsafe_destroy(start_key.clone(), end_key.clone())
             .await?;
@@ -354,10 +355,12 @@ impl Client {
             let start_key = start_key.clone();
             let end_key = end_key.clone();
             let pd = self.pd.clone();
+            let mut backoff = backoff.clone();
             let task = async move {
-                let mut error = None;
-                for i in 0..UNSAFE_DESTROY_RANGE_RETRY_LIMIT {
-                    debug!(logger, "unsafe destroy range {}", (i + 1));
+                let mut i = 0;
+                'retry: loop {
+                    i += 1;
+                    debug!(logger, "unsafe destroy range: attempt {}", i);
                     let request =
                         new_unsafe_destroy_range_request(start_key.clone(), end_key.clone());
                     let plan = crate::request::PlanBuilder::new(pd.clone(), request)
@@ -369,12 +372,16 @@ impl Client {
                         Ok(_) => return Ok(()),
                         Err(e) => {
                             warn!(logger, "unsafe destroy range error: {:?}", e);
-                            error = Some(e);
-                            continue;
+                            match backoff.next_delay_duration() {
+                                Some(duration) => {
+                                    futures_timer::Delay::new(duration).await;
+                                    continue 'retry;
+                                }
+                                None => return Err(e),
+                            }
                         }
                     }
                 }
-                Err(error.expect("no error is impossible"))
             };
             handles.push(tokio::spawn(task));
         }
