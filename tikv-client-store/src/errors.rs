@@ -66,6 +66,8 @@ has_region_error!(kvrpcpb::RawScanResponse);
 has_region_error!(kvrpcpb::RawBatchScanResponse);
 has_region_error!(kvrpcpb::RawCasResponse);
 has_region_error!(kvrpcpb::RawCoprocessorResponse);
+has_region_error!(kvrpcpb::SplitRegionResponse);
+has_region_error!(kvrpcpb::UnsafeDestroyRangeResponse);
 
 macro_rules! has_key_error {
     ($type:ty) => {
@@ -118,6 +120,7 @@ has_str_error!(kvrpcpb::RawCasResponse);
 has_str_error!(kvrpcpb::RawCoprocessorResponse);
 has_str_error!(kvrpcpb::ImportResponse);
 has_str_error!(kvrpcpb::DeleteRangeResponse);
+has_str_error!(kvrpcpb::UnsafeDestroyRangeResponse);
 
 impl HasKeyErrors for kvrpcpb::ScanResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
@@ -164,6 +167,12 @@ impl HasKeyErrors for kvrpcpb::PessimisticLockResponse {
 impl HasKeyErrors for kvrpcpb::PessimisticRollbackResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
         extract_errors(self.take_errors().into_iter().map(Some))
+    }
+}
+
+impl HasKeyErrors for kvrpcpb::SplitRegionResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
+        None
     }
 }
 

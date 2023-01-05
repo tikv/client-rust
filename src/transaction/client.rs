@@ -5,16 +5,23 @@ use crate::{
     backoff::DEFAULT_REGION_BACKOFF,
     config::Config,
     pd::{PdClient, PdRpcClient},
-    request::{plan::CleanupLocksResult, Plan},
+    request::{
+        plan::{handle_region_error, CleanupLocksResult},
+        Plan,
+    },
+    store::RegionStore,
     timestamp::TimestampExt,
     transaction::{
-        lock::ResolveLocksOptions, ResolveLocksContext, Snapshot, Transaction, TransactionOptions,
+        lock::ResolveLocksOptions, requests, requests::new_unsafe_destroy_range_request,
+        ResolveLocksContext, Snapshot, Transaction, TransactionOptions,
     },
-    Backoff, Result,
+    Backoff, BoundRange, Result,
 };
+use futures::{future::try_join_all, StreamExt};
 use slog::{Drain, Logger};
-use std::{mem, sync::Arc};
-use tikv_client_proto::pdpb::Timestamp;
+use std::{collections::HashMap, mem, sync::Arc};
+use tikv_client_common::Error;
+use tikv_client_proto::{metapb::Region, pdpb::Timestamp};
 
 // FIXME: cargo-culted value
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
@@ -300,5 +307,126 @@ impl Client {
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
         let logger = self.logger.new(o!("child" => 1));
         Transaction::new(timestamp, self.pd.clone(), options, logger)
+    }
+
+    // FIXME: make the loop a plan.
+    pub async fn split_region_with_retry(
+        &self,
+        #[allow(clippy::ptr_arg)] key: &Vec<u8>,
+        split_keys: Vec<Vec<u8>>,
+        is_raw_kv: bool,
+    ) -> Result<Vec<Region>> {
+        debug!(self.logger, "invoking split region with retry");
+        let mut backoff = DEFAULT_REGION_BACKOFF;
+        let mut i = 0;
+        'retry: loop {
+            i += 1;
+            debug!(self.logger, "split region: attempt {}", i);
+            let store = self.pd.clone().store_for_key(key.into()).await?;
+            let request = requests::new_split_region_request(split_keys.clone(), is_raw_kv);
+            let plan = crate::request::PlanBuilder::new(self.pd.clone(), request)
+                .single_region_with_store(store.clone())
+                .await?
+                .extract_error()
+                .plan();
+            match plan.execute().await {
+                Ok(mut resp) => return Ok(resp.take_regions().into()),
+                Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
+                    Some(Error::RegionError(e)) => match backoff.next_delay_duration() {
+                        Some(duration) => {
+                            let region_error_resolved =
+                                handle_region_error(self.pd.clone(), *e, store).await?;
+                            if !region_error_resolved {
+                                futures_timer::Delay::new(duration).await;
+                            }
+                            continue 'retry;
+                        }
+                        None => return Err(Error::RegionError(e)),
+                    },
+                    Some(e) => return Err(e),
+                    None => unreachable!(),
+                },
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    // FIXME: make list stores and retry a plan.
+    pub async fn unsafe_destroy_range(&self, start_key: Vec<u8>, end_key: Vec<u8>) -> Result<()> {
+        debug!(self.logger, "invoking unsafe destroy range");
+        let backoff = DEFAULT_REGION_BACKOFF;
+        let stores = self
+            .list_stores_for_unsafe_destroy(start_key.clone(), end_key.clone())
+            .await?;
+        let mut handles = Vec::with_capacity(stores.len());
+        for store in stores.into_values() {
+            let logger = self.logger.clone();
+            let start_key = start_key.clone();
+            let end_key = end_key.clone();
+            let pd = self.pd.clone();
+            let mut backoff = backoff.clone();
+            let task = async move {
+                let mut i = 0;
+                'retry: loop {
+                    i += 1;
+                    debug!(logger, "unsafe destroy range: attempt {}", i);
+                    let request =
+                        new_unsafe_destroy_range_request(start_key.clone(), end_key.clone());
+                    let plan = crate::request::PlanBuilder::new(pd.clone(), request)
+                        .single_region_with_store(store.clone())
+                        .await?
+                        .extract_error()
+                        .plan();
+                    match plan.execute().await {
+                        Ok(_) => return Ok(()),
+                        Err(e) => {
+                            warn!(logger, "unsafe destroy range error: {:?}", e);
+                            match backoff.next_delay_duration() {
+                                Some(duration) => {
+                                    futures_timer::Delay::new(duration).await;
+                                    continue 'retry;
+                                }
+                                None => return Err(e),
+                            }
+                        }
+                    }
+                }
+            };
+            handles.push(tokio::spawn(task));
+        }
+
+        let results = try_join_all(handles).await?;
+        match results.into_iter().find(|x| x.is_err()) {
+            Some(r) => r,
+            None => Ok(()),
+        }
+    }
+
+    async fn list_stores_for_unsafe_destroy(
+        &self,
+        start_key: Vec<u8>,
+        end_key: Vec<u8>,
+    ) -> Result<HashMap<u64, RegionStore>> {
+        let mut stores = HashMap::new();
+        let bnd_range = BoundRange::from((start_key, end_key));
+        self.pd
+            .clone()
+            .stores_for_range(bnd_range)
+            .map(|store| -> Result<()> {
+                let store = store?;
+                let store_id = store
+                    .region_with_leader
+                    .leader
+                    .as_ref()
+                    .unwrap()
+                    .get_store_id();
+                stores.entry(store_id).or_insert(store);
+                Ok(())
+            })
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<_>>()?;
+        Ok(stores)
     }
 }

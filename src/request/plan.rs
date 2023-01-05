@@ -141,7 +141,7 @@ where
             match backoff.next_delay_duration() {
                 Some(duration) => {
                     let region_error_resolved =
-                        Self::handle_region_error(pd_client.clone(), e, region_store).await?;
+                        handle_region_error(pd_client.clone(), e, region_store).await?;
                     // don't sleep if we have resolved the region error
                     if !region_error_resolved {
                         futures_timer::Delay::new(duration).await;
@@ -160,107 +160,6 @@ where
         } else {
             Ok(vec![Ok(resp)])
         }
-    }
-
-    // Returns
-    // 1. Ok(true): error has been resolved, retry immediately
-    // 2. Ok(false): backoff, and then retry
-    // 3. Err(Error): can't be resolved, return the error to upper level
-    async fn handle_region_error(
-        pd_client: Arc<PdC>,
-        mut e: errorpb::Error,
-        region_store: RegionStore,
-    ) -> Result<bool> {
-        let ver_id = region_store.region_with_leader.ver_id();
-        if e.has_not_leader() {
-            let not_leader = e.get_not_leader();
-            if not_leader.has_leader() {
-                match pd_client
-                    .update_leader(
-                        region_store.region_with_leader.ver_id(),
-                        not_leader.get_leader().clone(),
-                    )
-                    .await
-                {
-                    Ok(_) => Ok(true),
-                    Err(e) => {
-                        pd_client.invalidate_region_cache(ver_id).await;
-                        Err(e)
-                    }
-                }
-            } else {
-                // The peer doesn't know who is the current leader. Generally it's because
-                // the Raft group is in an election, but it's possible that the peer is
-                // isolated and removed from the Raft group. So it's necessary to reload
-                // the region from PD.
-                pd_client.invalidate_region_cache(ver_id).await;
-                Ok(false)
-            }
-        } else if e.has_store_not_match() {
-            pd_client.invalidate_region_cache(ver_id).await;
-            Ok(false)
-        } else if e.has_epoch_not_match() {
-            Self::on_region_epoch_not_match(
-                pd_client.clone(),
-                region_store,
-                e.take_epoch_not_match(),
-            )
-            .await
-        } else if e.has_stale_command() || e.has_region_not_found() {
-            pd_client.invalidate_region_cache(ver_id).await;
-            Ok(false)
-        } else if e.has_server_is_busy()
-            || e.has_raft_entry_too_large()
-            || e.has_max_timestamp_not_synced()
-        {
-            Err(Error::RegionError(Box::new(e)))
-        } else {
-            // TODO: pass the logger around
-            // info!("unknwon region error: {:?}", e);
-            pd_client.invalidate_region_cache(ver_id).await;
-            Ok(false)
-        }
-    }
-
-    // Returns
-    // 1. Ok(true): error has been resolved, retry immediately
-    // 2. Ok(false): backoff, and then retry
-    // 3. Err(Error): can't be resolved, return the error to upper level
-    async fn on_region_epoch_not_match(
-        pd_client: Arc<PdC>,
-        region_store: RegionStore,
-        error: EpochNotMatch,
-    ) -> Result<bool> {
-        let ver_id = region_store.region_with_leader.ver_id();
-        if error.get_current_regions().is_empty() {
-            pd_client.invalidate_region_cache(ver_id).await;
-            return Ok(true);
-        }
-
-        for r in error.get_current_regions() {
-            if r.get_id() == region_store.region_with_leader.id() {
-                let returned_conf_ver = r.get_region_epoch().get_conf_ver();
-                let returned_version = r.get_region_epoch().get_version();
-                let current_conf_ver = region_store
-                    .region_with_leader
-                    .region
-                    .get_region_epoch()
-                    .get_conf_ver();
-                let current_version = region_store
-                    .region_with_leader
-                    .region
-                    .get_region_epoch()
-                    .get_version();
-
-                // Find whether the current region is ahead of TiKV's. If so, backoff.
-                if returned_conf_ver < current_conf_ver || returned_version < current_version {
-                    return Ok(false);
-                }
-            }
-        }
-        // TODO: finer grained processing
-        pd_client.invalidate_region_cache(ver_id).await;
-        Ok(false)
     }
 }
 
@@ -296,6 +195,102 @@ where
         )
         .await
     }
+}
+
+// Returns
+// 1. Ok(true): error has been resolved, retry immediately
+// 2. Ok(false): backoff, and then retry
+// 3. Err(Error): can't be resolved, return the error to upper level
+pub async fn handle_region_error<PdC: PdClient>(
+    pd_client: Arc<PdC>,
+    mut e: errorpb::Error,
+    region_store: RegionStore,
+) -> Result<bool> {
+    let ver_id = region_store.region_with_leader.ver_id();
+    if e.has_not_leader() {
+        let not_leader = e.get_not_leader();
+        if not_leader.has_leader() {
+            match pd_client
+                .update_leader(
+                    region_store.region_with_leader.ver_id(),
+                    not_leader.get_leader().clone(),
+                )
+                .await
+            {
+                Ok(_) => Ok(true),
+                Err(e) => {
+                    pd_client.invalidate_region_cache(ver_id).await;
+                    Err(e)
+                }
+            }
+        } else {
+            // The peer doesn't know who is the current leader. Generally it's because
+            // the Raft group is in an election, but it's possible that the peer is
+            // isolated and removed from the Raft group. So it's necessary to reload
+            // the region from PD.
+            pd_client.invalidate_region_cache(ver_id).await;
+            Ok(false)
+        }
+    } else if e.has_store_not_match() {
+        pd_client.invalidate_region_cache(ver_id).await;
+        Ok(false)
+    } else if e.has_epoch_not_match() {
+        on_region_epoch_not_match(pd_client.clone(), region_store, e.take_epoch_not_match()).await
+    } else if e.has_stale_command() || e.has_region_not_found() {
+        pd_client.invalidate_region_cache(ver_id).await;
+        Ok(false)
+    } else if e.has_server_is_busy()
+        || e.has_raft_entry_too_large()
+        || e.has_max_timestamp_not_synced()
+    {
+        Err(Error::RegionError(Box::new(e)))
+    } else {
+        // TODO: pass the logger around
+        // info!("unknwon region error: {:?}", e);
+        pd_client.invalidate_region_cache(ver_id).await;
+        Ok(false)
+    }
+}
+
+// Returns
+// 1. Ok(true): error has been resolved, retry immediately
+// 2. Ok(false): backoff, and then retry
+// 3. Err(Error): can't be resolved, return the error to upper level
+async fn on_region_epoch_not_match<PdC: PdClient>(
+    pd_client: Arc<PdC>,
+    region_store: RegionStore,
+    error: EpochNotMatch,
+) -> Result<bool> {
+    let ver_id = region_store.region_with_leader.ver_id();
+    if error.get_current_regions().is_empty() {
+        pd_client.invalidate_region_cache(ver_id).await;
+        return Ok(true);
+    }
+
+    for r in error.get_current_regions() {
+        if r.get_id() == region_store.region_with_leader.id() {
+            let returned_conf_ver = r.get_region_epoch().get_conf_ver();
+            let returned_version = r.get_region_epoch().get_version();
+            let current_conf_ver = region_store
+                .region_with_leader
+                .region
+                .get_region_epoch()
+                .get_conf_ver();
+            let current_version = region_store
+                .region_with_leader
+                .region
+                .get_region_epoch()
+                .get_version();
+
+            // Find whether the current region is ahead of TiKV's. If so, backoff.
+            if returned_conf_ver < current_conf_ver || returned_version < current_version {
+                return Ok(false);
+            }
+        }
+    }
+    // TODO: finer grained processing
+    pd_client.invalidate_region_cache(ver_id).await;
+    Ok(false)
 }
 
 /// A technique for merging responses into a single result (with type `Out`).
