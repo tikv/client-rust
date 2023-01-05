@@ -149,9 +149,11 @@ pub struct ResolveLocksContext {
     pub(crate) clean_regions: Arc<RwLock<HashMap<u64, HashSet<RegionVerId>>>>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct ResolveLocksOptions {
     pub async_commit_only: bool,
+    pub start_key: Vec<u8>,
+    pub end_key: Vec<u8>,
     pub batch_size: u32,
 }
 
@@ -159,6 +161,8 @@ impl Default for ResolveLocksOptions {
     fn default() -> Self {
         Self {
             async_commit_only: false,
+            start_key: vec![],
+            end_key: vec![],
             batch_size: 1024,
         }
     }

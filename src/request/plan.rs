@@ -502,7 +502,7 @@ impl<P: Plan, PdC: PdClient> Clone for CleanupLocks<P, PdC> {
             logger: self.logger.clone(),
             inner: self.inner.clone(),
             ctx: self.ctx.clone(),
-            options: self.options,
+            options: self.options.clone(),
             store: None,
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),

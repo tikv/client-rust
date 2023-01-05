@@ -162,10 +162,11 @@ pub fn new_pessimistic_lock_request(
 
 pub fn new_scan_lock_request(
     start_key: Key,
+    end_key: Key,
     safepoint: Timestamp,
     limit: u32,
 ) -> kvrpcpb::ScanLockRequest {
-    requests::new_scan_lock_request(start_key.into(), safepoint.version(), limit)
+    requests::new_scan_lock_request(start_key.into(), end_key.into(), safepoint.version(), limit)
 }
 
 pub fn new_heart_beat_request(

@@ -13,7 +13,7 @@ use crate::{
     Backoff, Result,
 };
 use slog::{Drain, Logger};
-use std::{mem, sync::Arc};
+use std::sync::Arc;
 use tikv_client_proto::pdpb::Timestamp;
 
 // FIXME: cargo-culted value
@@ -263,11 +263,11 @@ impl Client {
     ) -> Result<CleanupLocksResult> {
         debug!(self.logger, "invoking cleanup async commit locks");
         // scan all locks with ts <= safepoint
-        let mut start_key = vec![];
         let ctx = ResolveLocksContext::default();
         let backoff = Backoff::equal_jitter_backoff(100, 10000, 50);
         let req = new_scan_lock_request(
-            mem::take(&mut start_key),
+            options.start_key.clone(),
+            options.end_key.clone(),
             safepoint.version(),
             options.batch_size,
         );
@@ -287,9 +287,15 @@ impl Client {
         &self,
         safepoint: &Timestamp,
         mut start_key: Vec<u8>,
+        mut end_key: Vec<u8>,
         batch_size: u32,
     ) -> Result<Vec<tikv_client_proto::kvrpcpb::LockInfo>> {
-        let req = new_scan_lock_request(mem::take(&mut start_key), safepoint.version(), batch_size);
+        let req = new_scan_lock_request(
+            std::mem::take(&mut start_key),
+            std::mem::take(&mut end_key),
+            safepoint.version(),
+            batch_size,
+        );
         let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(crate::request::Collect)

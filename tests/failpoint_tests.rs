@@ -99,6 +99,7 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
     let options = ResolveLocksOptions {
         async_commit_only: false,
         batch_size: 4,
+        ..Default::default()
     };
     let res = client.cleanup_locks(&safepoint, options).await?;
 
@@ -192,6 +193,53 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
 
 #[tokio::test]
 #[serial]
+async fn txn_cleanup_range_async_commit_locks() -> Result<()> {
+    let logger = new_logger(slog::Level::Info);
+
+    init().await?;
+    let scenario = FailScenario::setup();
+    info!(logger, "test range clean lock");
+    fail::cfg("after-prewrite", "return").unwrap();
+    defer! {
+        fail::cfg("after-prewrite", "off").unwrap()
+    }
+
+    let client = TransactionClient::new(pd_addrs(), Some(logger.clone())).await?;
+    let keys = write_data(&client, true, true).await?;
+    assert_eq!(count_locks(&client).await?, keys.len());
+
+    info!(logger, "total keys' count {}", keys.len());
+    let mut sorted_keys: Vec<Vec<u8>> = Vec::from_iter(keys.clone().into_iter());
+    sorted_keys.sort();
+    let start_key = sorted_keys[1].clone();
+    let end_key = sorted_keys[sorted_keys.len() - 2].clone();
+
+    let safepoint = client.current_timestamp().await?;
+    let options = ResolveLocksOptions {
+        async_commit_only: true,
+        start_key,
+        end_key,
+        ..Default::default()
+    };
+    let res = client.cleanup_locks(&safepoint, options).await?;
+
+    assert_eq!(res.meet_locks, keys.len() - 3);
+
+    // cleanup all locks to avoid affecting following cases.
+    let options = ResolveLocksOptions {
+        async_commit_only: false,
+        ..Default::default()
+    };
+    client.cleanup_locks(&safepoint, options).await?;
+    must_committed(&client, keys).await;
+    assert_eq!(count_locks(&client).await?, 0);
+
+    scenario.teardown();
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
 async fn txn_cleanup_2pc_locks() -> Result<()> {
     let logger = new_logger(slog::Level::Info);
 
@@ -271,7 +319,7 @@ async fn must_rollbacked(client: &TransactionClient, keys: HashSet<Vec<u8>>) {
 
 async fn count_locks(client: &TransactionClient) -> Result<usize> {
     let ts = client.current_timestamp().await.unwrap();
-    let locks = client.scan_locks(&ts, vec![], 1024).await?;
+    let locks = client.scan_locks(&ts, vec![], vec![], 1024).await?;
     // De-duplicated as `scan_locks` will return duplicated locks due to retry on region changes.
     let locks_set: HashSet<Vec<u8>> =
         HashSet::from_iter(locks.into_iter().map(|mut l| l.take_key()));
