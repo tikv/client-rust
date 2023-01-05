@@ -5,7 +5,10 @@ use crate::{
     backoff::DEFAULT_REGION_BACKOFF,
     config::Config,
     pd::{PdClient, PdRpcClient},
-    request::{plan::CleanupLocksResult, Plan},
+    request::{
+        plan::{handle_region_error, CleanupLocksResult},
+        Plan,
+    },
     store::RegionStore,
     timestamp::TimestampExt,
     transaction::{
@@ -306,6 +309,7 @@ impl Client {
         Transaction::new(timestamp, self.pd.clone(), options, logger)
     }
 
+    // FIXME: make the loop a plan.
     pub async fn split_region_with_retry(
         &self,
         #[allow(clippy::ptr_arg)] key: &Vec<u8>,
@@ -321,19 +325,23 @@ impl Client {
             let store = self.pd.clone().store_for_key(key.into()).await?;
             let request = requests::new_split_region_request(split_keys.clone(), is_raw_kv);
             let plan = crate::request::PlanBuilder::new(self.pd.clone(), request)
-                .single_region_with_store(store)
+                .single_region_with_store(store.clone())
                 .await?
                 .extract_error()
                 .plan();
             match plan.execute().await {
                 Ok(mut resp) => return Ok(resp.take_regions().into()),
                 Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
-                    Some(e @ Error::RegionError(_)) => match backoff.next_delay_duration() {
+                    Some(Error::RegionError(e)) => match backoff.next_delay_duration() {
                         Some(duration) => {
-                            futures_timer::Delay::new(duration).await;
+                            let region_error_resolved =
+                                handle_region_error(self.pd.clone(), *e, store).await?;
+                            if !region_error_resolved {
+                                futures_timer::Delay::new(duration).await;
+                            }
                             continue 'retry;
                         }
-                        None => return Err(e),
+                        None => return Err(Error::RegionError(e)),
                     },
                     Some(e) => return Err(e),
                     None => unreachable!(),
@@ -343,6 +351,7 @@ impl Client {
         }
     }
 
+    // FIXME: make list stores and retry a plan.
     pub async fn unsafe_destroy_range(&self, start_key: Vec<u8>, end_key: Vec<u8>) -> Result<()> {
         debug!(self.logger, "invoking unsafe destroy range");
         let backoff = DEFAULT_REGION_BACKOFF;
