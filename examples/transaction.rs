@@ -81,7 +81,7 @@ async fn main() {
         Config::default()
     };
 
-    let txn = Client::new_with_config(args.pd, config, None)
+    let client = Client::new_with_config(args.pd, config, None)
         .await
         .expect("Could not connect to tikv");
 
@@ -90,18 +90,18 @@ async fn main() {
     let value1: Value = b"value1".to_vec();
     let key2: Key = b"key2".to_vec().into();
     let value2: Value = b"value2".to_vec();
-    puts(&txn, vec![(key1, value1), (key2, value2)]).await;
+    puts(&client, vec![(key1, value1), (key2, value2)]).await;
 
     // get
     let key1: Key = b"key1".to_vec().into();
-    let value1 = get(&txn, key1.clone()).await;
+    let value1 = get(&client, key1.clone()).await;
     println!("{:?}", (key1, value1));
 
     // check key exists
     let key1: Key = b"key1".to_vec().into();
-    let key1_exists = key_exists(&txn, key1.clone()).await;
+    let key1_exists = key_exists(&client, key1.clone()).await;
     let key2: Key = b"key_not_exist".to_vec().into();
-    let key2_exists = key_exists(&txn, key2.clone()).await;
+    let key2_exists = key_exists(&client, key2.clone()).await;
     println!(
         "check exists {:?}",
         vec![(key1, key1_exists), (key2, key2_exists)]
@@ -109,10 +109,18 @@ async fn main() {
 
     // scan
     let key1: Key = b"key1".to_vec().into();
-    scan(&txn, key1.., 10).await;
+    scan(&client, key1.., 10).await;
 
     // delete
     let key1: Key = b"key1".to_vec().into();
     let key2: Key = b"key2".to_vec().into();
-    dels(&txn, vec![key1, key2]).await;
+    dels(&client, vec![key1, key2]).await;
+
+    // delete range
+    let start_key: Key = b"a".to_vec().into();
+    let end_key: Key = b"z".to_vec().into();
+    client
+        .delete_range(start_key..end_key)
+        .await
+        .expect("delete_range error");
 }

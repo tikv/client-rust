@@ -175,3 +175,15 @@ pub fn new_heart_beat_request(
 ) -> kvrpcpb::TxnHeartBeatRequest {
     requests::new_heart_beat_request(start_ts.version(), primary_lock.into(), ttl)
 }
+
+pub fn new_delete_range_request(
+    range: BoundRange,
+    notify_only: bool,
+) -> kvrpcpb::DeleteRangeRequest {
+    let (start_key, end_key) = range.into_keys();
+    requests::new_delete_range_request(
+        start_key.into(),
+        end_key.unwrap_or_default().into(),
+        notify_only,
+    )
+}

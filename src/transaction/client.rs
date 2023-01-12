@@ -10,7 +10,8 @@ use crate::{
     transaction::{
         lock::ResolveLocksOptions, ResolveLocksContext, Snapshot, Transaction, TransactionOptions,
     },
-    Backoff, Result,
+    transaction_lowering::new_delete_range_request,
+    Backoff, BoundRange, Result,
 };
 use slog::{Drain, Logger};
 use std::{mem, sync::Arc};
@@ -278,6 +279,22 @@ impl Client {
             .extract_error()
             .plan();
         plan.execute().await
+    }
+
+    /// DeleteRange delete all versions of all keys in the range[startKey,endKey) immediately.
+    ///
+    /// Be careful while using this API. This API doesn't keep recent MVCC versions, but will delete
+    /// all versions of all keys in the range immediately. Also notice that frequent invocation to
+    /// this API may cause performance problems to TiKV.
+    pub async fn delete_range(&self, range: impl Into<BoundRange>) -> Result<()> {
+        debug!(self.logger, "invoking delete_range request");
+        let req = new_delete_range_request(range.into(), false);
+        let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .extract_error()
+            .plan();
+        plan.execute().await?;
+        Ok(())
     }
 
     // For test.

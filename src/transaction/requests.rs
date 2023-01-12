@@ -18,7 +18,9 @@ use futures::stream::BoxStream;
 use std::{cmp, iter, sync::Arc};
 use tikv_client_common::Error::PessimisticLockError;
 use tikv_client_proto::{
-    kvrpcpb::{self, LockInfo, TxnHeartBeatResponse, TxnInfo},
+    kvrpcpb::{
+        self, DeleteRangeRequest, DeleteRangeResponse, LockInfo, TxnHeartBeatResponse, TxnInfo,
+    },
     pdpb::Timestamp,
 };
 
@@ -737,6 +739,24 @@ pub struct SecondaryLocksStatus {
     pub fallback_2pc: bool,
 }
 
+pub fn new_delete_range_request(
+    start_key: Vec<u8>,
+    end_key: Vec<u8>,
+    notify_only: bool,
+) -> kvrpcpb::DeleteRangeRequest {
+    let mut req = kvrpcpb::DeleteRangeRequest::default();
+    req.set_start_key(start_key);
+    req.set_end_key(end_key);
+    req.set_notify_only(notify_only);
+    req
+}
+
+impl KvRequest for DeleteRangeRequest {
+    type Response = DeleteRangeResponse;
+}
+
+shardable_range!(kvrpcpb::DeleteRangeRequest);
+
 pair_locks!(kvrpcpb::BatchGetResponse);
 pair_locks!(kvrpcpb::ScanResponse);
 error_locks!(kvrpcpb::GetResponse);
@@ -781,6 +801,8 @@ impl HasLocks for kvrpcpb::PrewriteResponse {
             .collect()
     }
 }
+
+impl HasLocks for kvrpcpb::DeleteRangeResponse {}
 
 #[cfg(test)]
 #[cfg_attr(feature = "protobuf-codec", allow(clippy::useless_conversion))]
