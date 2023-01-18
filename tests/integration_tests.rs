@@ -893,7 +893,7 @@ async fn txn_scan_reverse() -> Result<()> {
         (Key::from(k1.clone()), v1.clone()),
     ];
 
-    // pessimistic
+    // Pessimistic option is not stable in this case. Use optimistic options instead.
     let option = TransactionOptions::new_optimistic().drop_check(tikv_client::CheckLevel::Warn);
     let mut t = client.begin_with_options(option.clone()).await?;
     t.put(k1.clone(), v1).await?;
