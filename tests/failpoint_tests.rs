@@ -10,7 +10,7 @@ use slog::info;
 use std::{collections::HashSet, iter::FromIterator, thread, time::Duration};
 use tikv_client::{
     transaction::{Client, HeartbeatOption, ResolveLocksOptions},
-    Backoff, Result, RetryOptions, TransactionClient, TransactionOptions,
+    Backoff, CheckLevel, Result, RetryOptions, TransactionClient, TransactionOptions,
 };
 
 #[tokio::test]
@@ -19,6 +19,9 @@ async fn txn_optimistic_heartbeat() -> Result<()> {
     init().await?;
     let scenario = FailScenario::setup();
     fail::cfg("after-prewrite", "sleep(6000)").unwrap();
+    defer! {{
+        fail::cfg("after-prewrite", "off").unwrap();
+    }}
 
     let key1 = "key1".to_owned();
     let key2 = "key2".to_owned();
@@ -27,7 +30,8 @@ async fn txn_optimistic_heartbeat() -> Result<()> {
     let mut heartbeat_txn = client
         .begin_with_options(
             TransactionOptions::new_optimistic()
-                .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_secs(1))),
+                .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_secs(1)))
+                .drop_check(CheckLevel::Warn),
         )
         .await?;
     heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
@@ -36,7 +40,7 @@ async fn txn_optimistic_heartbeat() -> Result<()> {
         .begin_with_options(
             TransactionOptions::new_optimistic()
                 .heartbeat_option(HeartbeatOption::NoHeartbeat)
-                .drop_check(tikv_client::CheckLevel::Warn),
+                .drop_check(CheckLevel::Warn),
         )
         .await?;
     txn_without_heartbeat
@@ -61,13 +65,15 @@ async fn txn_optimistic_heartbeat() -> Result<()> {
             TransactionOptions::new_optimistic()
                 .no_resolve_locks()
                 .heartbeat_option(HeartbeatOption::NoHeartbeat)
-                .drop_check(tikv_client::CheckLevel::Warn),
+                .drop_check(CheckLevel::Warn),
         )
         .await?;
     t3.put(key1.clone(), "gee").await?;
     assert!(t3.commit().await.is_err());
 
-    let mut t4 = client.begin_optimistic().await?;
+    let mut t4 = client
+        .begin_with_options(TransactionOptions::new_optimistic().drop_check(CheckLevel::Warn))
+        .await?;
     t4.put(key2.clone(), "geee").await?;
     t4.commit().await?;
 
@@ -88,18 +94,6 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
     let scenario = FailScenario::setup();
     let full_range = vec![]..;
 
-    let client = TransactionClient::new(pd_addrs(), Some(logger.clone())).await?;
-    // Clean all locks at the beginning to avoid other cases' side effect.
-    let safepoint = client.current_timestamp().await?;
-    let options = ResolveLocksOptions {
-        async_commit_only: false,
-        ..Default::default()
-    };
-    client
-        .cleanup_locks(&safepoint, full_range.clone(), options)
-        .await
-        .unwrap();
-
     fail::cfg("after-prewrite", "return").unwrap();
     fail::cfg("before-cleanup-locks", "return").unwrap();
     defer! {{
@@ -107,6 +101,7 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
         fail::cfg("before-cleanup-locks", "off").unwrap();
     }}
 
+    let client = TransactionClient::new(pd_addrs(), Some(logger.clone())).await?;
     let keys = write_data(&client, true, true).await?;
     assert_eq!(count_locks(&client).await?, keys.len());
 
@@ -376,7 +371,7 @@ async fn write_data(
             region_backoff: REGION_BACKOFF,
             lock_backoff: OPTIMISTIC_BACKOFF,
         })
-        .drop_check(tikv_client::CheckLevel::Warn);
+        .drop_check(CheckLevel::Warn);
     if async_commit {
         options = options.use_async_commit();
     }
