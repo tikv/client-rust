@@ -574,13 +574,15 @@ where
                 "CleanupLocks::execute, meet locks:{}",
                 locks.len()
             );
-            result.meet_locks += locks.len();
 
+            let lock_size = locks.len();
             match lock_resolver
                 .cleanup_locks(self.store.clone().unwrap(), locks, self.pd_client.clone())
                 .await
             {
-                Ok(()) => {}
+                Ok(()) => {
+                    result.meet_locks += lock_size;
+                }
                 Err(Error::ExtractedErrors(mut errors)) => {
                     // Propagate errors to `retry_multi_region` for retry.
                     if let Error::RegionError(e) = errors.pop().unwrap() {

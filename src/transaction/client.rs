@@ -1,6 +1,5 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::requests::new_scan_lock_request;
 use crate::{
     backoff::DEFAULT_REGION_BACKOFF,
     config::Config,
@@ -10,7 +9,8 @@ use crate::{
     transaction::{
         lock::ResolveLocksOptions, ResolveLocksContext, Snapshot, Transaction, TransactionOptions,
     },
-    Backoff, Result,
+    transaction_lowering::new_scan_lock_request,
+    Backoff, BoundRange, Result,
 };
 use slog::{Drain, Logger};
 use std::sync::Arc;
@@ -242,7 +242,7 @@ impl Client {
             batch_size: SCAN_LOCK_BATCH_SIZE,
             ..Default::default()
         };
-        self.cleanup_locks(&safepoint, options).await?;
+        self.cleanup_locks(&safepoint, vec![].., options).await?;
 
         // update safepoint to PD
         let res: bool = self
@@ -259,18 +259,14 @@ impl Client {
     pub async fn cleanup_locks(
         &self,
         safepoint: &Timestamp,
+        range: impl Into<BoundRange>,
         options: ResolveLocksOptions,
     ) -> Result<CleanupLocksResult> {
         debug!(self.logger, "invoking cleanup async commit locks");
         // scan all locks with ts <= safepoint
         let ctx = ResolveLocksContext::default();
         let backoff = Backoff::equal_jitter_backoff(100, 10000, 50);
-        let req = new_scan_lock_request(
-            options.start_key.clone(),
-            options.end_key.clone(),
-            safepoint.version(),
-            options.batch_size,
-        );
+        let req = new_scan_lock_request(range.into(), safepoint, options.batch_size);
         let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
             .cleanup_locks(self.logger.clone(), ctx.clone(), options, backoff)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
@@ -286,16 +282,10 @@ impl Client {
     pub async fn scan_locks(
         &self,
         safepoint: &Timestamp,
-        mut start_key: Vec<u8>,
-        mut end_key: Vec<u8>,
+        range: impl Into<BoundRange>,
         batch_size: u32,
     ) -> Result<Vec<tikv_client_proto::kvrpcpb::LockInfo>> {
-        let req = new_scan_lock_request(
-            std::mem::take(&mut start_key),
-            std::mem::take(&mut end_key),
-            safepoint.version(),
-            batch_size,
-        );
+        let req = new_scan_lock_request(range.into(), safepoint, batch_size);
         let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(crate::request::Collect)

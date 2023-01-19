@@ -83,6 +83,19 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
 
     init().await?;
     let scenario = FailScenario::setup();
+    let full_range = vec![]..;
+
+    let client = TransactionClient::new(pd_addrs(), Some(logger.clone())).await?;
+    // Clean all locks at the beginning to avoid other cases' side effect.
+    let safepoint = client.current_timestamp().await?;
+    let options = ResolveLocksOptions {
+        async_commit_only: false,
+        ..Default::default()
+    };
+    client
+        .cleanup_locks(&safepoint, full_range.clone(), options)
+        .await
+        .unwrap();
 
     fail::cfg("after-prewrite", "return").unwrap();
     fail::cfg("before-cleanup-locks", "return").unwrap();
@@ -91,7 +104,6 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
         fail::cfg("before-cleanup-locks", "off").unwrap();
     }}
 
-    let client = TransactionClient::new(pd_addrs(), Some(logger.clone())).await?;
     let keys = write_data(&client, true, true).await?;
     assert_eq!(count_locks(&client).await?, keys.len());
 
@@ -101,7 +113,9 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
         batch_size: 4,
         ..Default::default()
     };
-    let res = client.cleanup_locks(&safepoint, options).await?;
+    let res = client
+        .cleanup_locks(&safepoint, full_range, options)
+        .await?;
 
     assert_eq!(res.meet_locks, keys.len());
     assert_eq!(count_locks(&client).await?, keys.len());
@@ -117,6 +131,7 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
 
     init().await?;
     let scenario = FailScenario::setup();
+    let full_range = vec![]..;
 
     // no commit
     {
@@ -135,7 +150,9 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
             async_commit_only: true,
             ..Default::default()
         };
-        client.cleanup_locks(&safepoint, options).await?;
+        client
+            .cleanup_locks(&safepoint, full_range.clone(), options)
+            .await?;
 
         must_committed(&client, keys).await;
         assert_eq!(count_locks(&client).await?, 0);
@@ -160,7 +177,9 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
             async_commit_only: true,
             ..Default::default()
         };
-        client.cleanup_locks(&safepoint, options).await?;
+        client
+            .cleanup_locks(&safepoint, full_range.clone(), options)
+            .await?;
 
         must_committed(&client, keys).await;
         assert_eq!(count_locks(&client).await?, 0);
@@ -177,7 +196,9 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
             async_commit_only: true,
             ..Default::default()
         };
-        client.cleanup_locks(&safepoint, options).await?;
+        client
+            .cleanup_locks(&safepoint, full_range, options)
+            .await?;
 
         must_committed(&client, keys).await;
         assert_eq!(count_locks(&client).await?, 0);
@@ -217,11 +238,11 @@ async fn txn_cleanup_range_async_commit_locks() -> Result<()> {
     let safepoint = client.current_timestamp().await?;
     let options = ResolveLocksOptions {
         async_commit_only: true,
-        start_key,
-        end_key,
         ..Default::default()
     };
-    let res = client.cleanup_locks(&safepoint, options).await?;
+    let res = client
+        .cleanup_locks(&safepoint, start_key..end_key, options)
+        .await?;
 
     assert_eq!(res.meet_locks, keys.len() - 3);
 
@@ -230,7 +251,7 @@ async fn txn_cleanup_range_async_commit_locks() -> Result<()> {
         async_commit_only: false,
         ..Default::default()
     };
-    client.cleanup_locks(&safepoint, options).await?;
+    client.cleanup_locks(&safepoint, vec![].., options).await?;
     must_committed(&client, keys).await;
     assert_eq!(count_locks(&client).await?, 0);
 
@@ -245,6 +266,7 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
 
     init().await?;
     let scenario = FailScenario::setup();
+    let full_range = vec![]..;
 
     // no commit
     {
@@ -264,14 +286,18 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
                 async_commit_only: true, // Skip 2pc locks.
                 ..Default::default()
             };
-            client.cleanup_locks(&safepoint, options).await?;
+            client
+                .cleanup_locks(&safepoint, full_range.clone(), options)
+                .await?;
             assert_eq!(count_locks(&client).await?, keys.len());
         }
         let options = ResolveLocksOptions {
             async_commit_only: false,
             ..Default::default()
         };
-        client.cleanup_locks(&safepoint, options).await?;
+        client
+            .cleanup_locks(&safepoint, full_range.clone(), options)
+            .await?;
 
         must_rollbacked(&client, keys).await;
         assert_eq!(count_locks(&client).await?, 0);
@@ -289,7 +315,9 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
             async_commit_only: false,
             ..Default::default()
         };
-        client.cleanup_locks(&safepoint, options).await?;
+        client
+            .cleanup_locks(&safepoint, full_range, options)
+            .await?;
 
         must_committed(&client, keys).await;
         assert_eq!(count_locks(&client).await?, 0);
@@ -319,7 +347,7 @@ async fn must_rollbacked(client: &TransactionClient, keys: HashSet<Vec<u8>>) {
 
 async fn count_locks(client: &TransactionClient) -> Result<usize> {
     let ts = client.current_timestamp().await.unwrap();
-    let locks = client.scan_locks(&ts, vec![], vec![], 1024).await?;
+    let locks = client.scan_locks(&ts, vec![].., 1024).await?;
     // De-duplicated as `scan_locks` will return duplicated locks due to retry on region changes.
     let locks_set: HashSet<Vec<u8>> =
         HashSet::from_iter(locks.into_iter().map(|mut l| l.take_key()));
