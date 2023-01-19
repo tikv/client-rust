@@ -450,6 +450,12 @@ pub struct CleanupLocksResult {
     // TODO: pub resolved_locks: usize,
 }
 
+impl CleanupLocksResult {
+    fn has_error(&self) -> bool {
+        self.key_error.is_some() || self.region_error.is_some()
+    }
+}
+
 impl Clone for CleanupLocksResult {
     fn clone(&self) -> Self {
         Self {
@@ -478,8 +484,14 @@ impl Merge<CleanupLocksResult> for Collect {
         input
             .into_iter()
             .fold(Ok(CleanupLocksResult::default()), |acc, x| {
+                let new_ret = x?;
+                let new_lock_cnt = if new_ret.has_error() {
+                    0
+                } else {
+                    new_ret.meet_locks
+                };
                 Ok(CleanupLocksResult {
-                    meet_locks: acc?.meet_locks + x?.meet_locks,
+                    meet_locks: acc?.meet_locks + new_lock_cnt,
                     ..Default::default()
                 })
             })
