@@ -34,7 +34,9 @@ async fn txn_optimistic_heartbeat() -> Result<()> {
 
     let mut txn_without_heartbeat = client
         .begin_with_options(
-            TransactionOptions::new_optimistic().heartbeat_option(HeartbeatOption::NoHeartbeat),
+            TransactionOptions::new_optimistic()
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(tikv_client::CheckLevel::Warn),
         )
         .await?;
     txn_without_heartbeat
@@ -58,7 +60,8 @@ async fn txn_optimistic_heartbeat() -> Result<()> {
         .begin_with_options(
             TransactionOptions::new_optimistic()
                 .no_resolve_locks()
-                .heartbeat_option(HeartbeatOption::NoHeartbeat),
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(tikv_client::CheckLevel::Warn),
         )
         .await?;
     t3.put(key1.clone(), "gee").await?;
