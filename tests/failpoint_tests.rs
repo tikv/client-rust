@@ -111,7 +111,6 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
     let options = ResolveLocksOptions {
         async_commit_only: false,
         batch_size: 4,
-        ..Default::default()
     };
     let res = client
         .cleanup_locks(&safepoint, full_range, options)
