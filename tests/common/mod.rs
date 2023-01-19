@@ -53,7 +53,7 @@ pub async fn init() -> Result<()> {
     clear_tikv().await;
     let region_cnt = ctl::get_region_count().await?;
     // print log for debug convenience
-    println!("init finish with {} regions", region_cnt);
+    println!("init finish with {region_cnt} regions");
     Ok(())
 }
 
