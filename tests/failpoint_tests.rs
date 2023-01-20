@@ -27,6 +27,8 @@ async fn txn_optimistic_heartbeat() -> Result<()> {
     let key2 = "key2".to_owned();
     let client = TransactionClient::new(pd_addrs(), None).await?;
 
+    // CheckLevel::Panic makes the case unstable, change to Warn level for now.
+    // See https://github.com/tikv/client-rust/issues/389
     let mut heartbeat_txn = client
         .begin_with_options(
             TransactionOptions::new_optimistic()
