@@ -46,10 +46,14 @@ pub async fn init() -> Result<()> {
             .take(count as usize - 1)
             .map(|x| x.to_be_bytes().to_vec());
 
-        ensure_region_split(keys_1.chain(keys_2), 80).await?;
+        // about 43 regions with above keys.
+        ensure_region_split(keys_1.chain(keys_2), 40).await?;
     }
 
     clear_tikv().await;
+    let region_cnt = ctl::get_region_count().await?;
+    // print log for debug convenience
+    println!("init finish with {region_cnt} regions");
     Ok(())
 }
 

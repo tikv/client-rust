@@ -7,7 +7,7 @@ use crate::{
         Collect, CollectSingle, CollectWithShard, DefaultProcessor, HasNextBatch, KvRequest, Merge,
         NextBatch, Process, ResponseWithShard, Shardable, SingleKey,
     },
-    store::{store_stream_for_keys, store_stream_for_range_by_start_key, RegionStore},
+    store::{store_stream_for_keys, store_stream_for_range, RegionStore},
     timestamp::TimestampExt,
     transaction::HasLocks,
     util::iter::FlatMapOkIterExt,
@@ -445,11 +445,13 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
 
 pub fn new_scan_lock_request(
     start_key: Vec<u8>,
+    end_key: Vec<u8>,
     safepoint: u64,
     limit: u32,
 ) -> kvrpcpb::ScanLockRequest {
     let mut req = kvrpcpb::ScanLockRequest::default();
     req.set_start_key(start_key);
+    req.set_end_key(end_key);
     req.set_max_version(safepoint);
     req.set_limit(limit);
     req
@@ -460,18 +462,21 @@ impl KvRequest for kvrpcpb::ScanLockRequest {
 }
 
 impl Shardable for kvrpcpb::ScanLockRequest {
-    type Shard = Vec<u8>;
+    type Shard = (Vec<u8>, Vec<u8>);
 
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
-        store_stream_for_range_by_start_key(self.start_key.clone().into(), pd_client.clone())
+        store_stream_for_range(
+            (self.start_key.clone(), self.end_key.clone()),
+            pd_client.clone(),
+        )
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
         self.set_context(store.region_with_leader.context()?);
-        self.set_start_key(shard);
+        self.set_start_key(shard.0);
         Ok(())
     }
 }
@@ -479,6 +484,7 @@ impl Shardable for kvrpcpb::ScanLockRequest {
 impl HasNextBatch for kvrpcpb::ScanLockResponse {
     fn has_next_batch(&self) -> Option<(Vec<u8>, Vec<u8>)> {
         self.get_locks().last().map(|lock| {
+            // TODO: if last key is larger or equal than ScanLockRequest.end_key, return None.
             let mut start_key: Vec<u8> = lock.get_key().to_vec();
             start_key.push(0);
             (start_key, vec![])

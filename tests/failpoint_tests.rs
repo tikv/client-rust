@@ -10,7 +10,7 @@ use slog::info;
 use std::{collections::HashSet, iter::FromIterator, thread, time::Duration};
 use tikv_client::{
     transaction::{Client, HeartbeatOption, ResolveLocksOptions},
-    Backoff, Result, RetryOptions, TransactionClient, TransactionOptions,
+    Backoff, CheckLevel, Result, RetryOptions, TransactionClient, TransactionOptions,
 };
 
 #[tokio::test]
@@ -19,22 +19,30 @@ async fn txn_optimistic_heartbeat() -> Result<()> {
     init().await?;
     let scenario = FailScenario::setup();
     fail::cfg("after-prewrite", "sleep(6000)").unwrap();
+    defer! {{
+        fail::cfg("after-prewrite", "off").unwrap();
+    }}
 
     let key1 = "key1".to_owned();
     let key2 = "key2".to_owned();
     let client = TransactionClient::new(pd_addrs(), None).await?;
 
+    // CheckLevel::Panic makes the case unstable, change to Warn level for now.
+    // See https://github.com/tikv/client-rust/issues/389
     let mut heartbeat_txn = client
         .begin_with_options(
             TransactionOptions::new_optimistic()
-                .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_secs(1))),
+                .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_secs(1)))
+                .drop_check(CheckLevel::Warn),
         )
         .await?;
     heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
 
     let mut txn_without_heartbeat = client
         .begin_with_options(
-            TransactionOptions::new_optimistic().heartbeat_option(HeartbeatOption::NoHeartbeat),
+            TransactionOptions::new_optimistic()
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(CheckLevel::Warn),
         )
         .await?;
     txn_without_heartbeat
@@ -58,13 +66,16 @@ async fn txn_optimistic_heartbeat() -> Result<()> {
         .begin_with_options(
             TransactionOptions::new_optimistic()
                 .no_resolve_locks()
-                .heartbeat_option(HeartbeatOption::NoHeartbeat),
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(CheckLevel::Warn),
         )
         .await?;
     t3.put(key1.clone(), "gee").await?;
     assert!(t3.commit().await.is_err());
 
-    let mut t4 = client.begin_optimistic().await?;
+    let mut t4 = client
+        .begin_with_options(TransactionOptions::new_optimistic().drop_check(CheckLevel::Warn))
+        .await?;
     t4.put(key2.clone(), "geee").await?;
     t4.commit().await?;
 
@@ -83,6 +94,7 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
 
     init().await?;
     let scenario = FailScenario::setup();
+    let full_range = ..;
 
     fail::cfg("after-prewrite", "return").unwrap();
     fail::cfg("before-cleanup-locks", "return").unwrap();
@@ -100,9 +112,11 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
         async_commit_only: false,
         batch_size: 4,
     };
-    let res = client.cleanup_locks(&safepoint, options).await?;
+    let res = client
+        .cleanup_locks(full_range, &safepoint, options)
+        .await?;
 
-    assert_eq!(res.meet_locks, keys.len());
+    assert_eq!(res.resolved_locks, keys.len());
     assert_eq!(count_locks(&client).await?, keys.len());
 
     scenario.teardown();
@@ -116,6 +130,7 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
 
     init().await?;
     let scenario = FailScenario::setup();
+    let full_range = ..;
 
     // no commit
     {
@@ -134,7 +149,9 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
             async_commit_only: true,
             ..Default::default()
         };
-        client.cleanup_locks(&safepoint, options).await?;
+        client
+            .cleanup_locks(full_range, &safepoint, options)
+            .await?;
 
         must_committed(&client, keys).await;
         assert_eq!(count_locks(&client).await?, 0);
@@ -159,7 +176,9 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
             async_commit_only: true,
             ..Default::default()
         };
-        client.cleanup_locks(&safepoint, options).await?;
+        client
+            .cleanup_locks(full_range, &safepoint, options)
+            .await?;
 
         must_committed(&client, keys).await;
         assert_eq!(count_locks(&client).await?, 0);
@@ -176,7 +195,9 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
             async_commit_only: true,
             ..Default::default()
         };
-        client.cleanup_locks(&safepoint, options).await?;
+        client
+            .cleanup_locks(full_range, &safepoint, options)
+            .await?;
 
         must_committed(&client, keys).await;
         assert_eq!(count_locks(&client).await?, 0);
@@ -192,11 +213,59 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
 
 #[tokio::test]
 #[serial]
+async fn txn_cleanup_range_async_commit_locks() -> Result<()> {
+    let logger = new_logger(slog::Level::Info);
+
+    init().await?;
+    let scenario = FailScenario::setup();
+    info!(logger, "test range clean lock");
+    fail::cfg("after-prewrite", "return").unwrap();
+    defer! {
+        fail::cfg("after-prewrite", "off").unwrap()
+    }
+
+    let client = TransactionClient::new(pd_addrs(), Some(logger.clone())).await?;
+    let keys = write_data(&client, true, true).await?;
+    assert_eq!(count_locks(&client).await?, keys.len());
+
+    info!(logger, "total keys' count {}", keys.len());
+    let mut sorted_keys: Vec<Vec<u8>> = Vec::from_iter(keys.clone().into_iter());
+    sorted_keys.sort();
+    let start_key = sorted_keys[1].clone();
+    let end_key = sorted_keys[sorted_keys.len() - 2].clone();
+
+    let safepoint = client.current_timestamp().await?;
+    let options = ResolveLocksOptions {
+        async_commit_only: true,
+        ..Default::default()
+    };
+    let res = client
+        .cleanup_locks(start_key..end_key, &safepoint, options)
+        .await?;
+
+    assert_eq!(res.resolved_locks, keys.len() - 3);
+
+    // cleanup all locks to avoid affecting following cases.
+    let options = ResolveLocksOptions {
+        async_commit_only: false,
+        ..Default::default()
+    };
+    client.cleanup_locks(.., &safepoint, options).await?;
+    must_committed(&client, keys).await;
+    assert_eq!(count_locks(&client).await?, 0);
+
+    scenario.teardown();
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
 async fn txn_cleanup_2pc_locks() -> Result<()> {
     let logger = new_logger(slog::Level::Info);
 
     init().await?;
     let scenario = FailScenario::setup();
+    let full_range = ..;
 
     // no commit
     {
@@ -216,14 +285,18 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
                 async_commit_only: true, // Skip 2pc locks.
                 ..Default::default()
             };
-            client.cleanup_locks(&safepoint, options).await?;
+            client
+                .cleanup_locks(full_range, &safepoint, options)
+                .await?;
             assert_eq!(count_locks(&client).await?, keys.len());
         }
         let options = ResolveLocksOptions {
             async_commit_only: false,
             ..Default::default()
         };
-        client.cleanup_locks(&safepoint, options).await?;
+        client
+            .cleanup_locks(full_range, &safepoint, options)
+            .await?;
 
         must_rollbacked(&client, keys).await;
         assert_eq!(count_locks(&client).await?, 0);
@@ -241,7 +314,9 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
             async_commit_only: false,
             ..Default::default()
         };
-        client.cleanup_locks(&safepoint, options).await?;
+        client
+            .cleanup_locks(full_range, &safepoint, options)
+            .await?;
 
         must_committed(&client, keys).await;
         assert_eq!(count_locks(&client).await?, 0);
@@ -271,7 +346,7 @@ async fn must_rollbacked(client: &TransactionClient, keys: HashSet<Vec<u8>>) {
 
 async fn count_locks(client: &TransactionClient) -> Result<usize> {
     let ts = client.current_timestamp().await.unwrap();
-    let locks = client.scan_locks(&ts, vec![], 1024).await?;
+    let locks = client.scan_locks(&ts, vec![].., 1024).await?;
     // De-duplicated as `scan_locks` will return duplicated locks due to retry on region changes.
     let locks_set: HashSet<Vec<u8>> =
         HashSet::from_iter(locks.into_iter().map(|mut l| l.take_key()));
@@ -298,7 +373,7 @@ async fn write_data(
             region_backoff: REGION_BACKOFF,
             lock_backoff: OPTIMISTIC_BACKOFF,
         })
-        .drop_check(tikv_client::CheckLevel::Warn);
+        .drop_check(CheckLevel::Warn);
     if async_commit {
         options = options.use_async_commit();
     }

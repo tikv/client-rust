@@ -446,14 +446,13 @@ where
 pub struct CleanupLocksResult {
     pub region_error: Option<errorpb::Error>,
     pub key_error: Option<Vec<Error>>,
-    pub meet_locks: usize,
-    // TODO: pub resolved_locks: usize,
+    pub resolved_locks: usize,
 }
 
 impl Clone for CleanupLocksResult {
     fn clone(&self) -> Self {
         Self {
-            meet_locks: self.meet_locks,
+            resolved_locks: self.resolved_locks,
             ..Default::default() // Ignore errors, which should be extracted by `extract_error()`.
         }
     }
@@ -479,7 +478,7 @@ impl Merge<CleanupLocksResult> for Collect {
             .into_iter()
             .fold(Ok(CleanupLocksResult::default()), |acc, x| {
                 Ok(CleanupLocksResult {
-                    meet_locks: acc.unwrap().meet_locks + x?.meet_locks,
+                    resolved_locks: acc?.resolved_locks + x?.resolved_locks,
                     ..Default::default()
                 })
             })
@@ -574,13 +573,15 @@ where
                 "CleanupLocks::execute, meet locks:{}",
                 locks.len()
             );
-            result.meet_locks += locks.len();
 
+            let lock_size = locks.len();
             match lock_resolver
                 .cleanup_locks(self.store.clone().unwrap(), locks, self.pd_client.clone())
                 .await
             {
-                Ok(()) => {}
+                Ok(()) => {
+                    result.resolved_locks += lock_size;
+                }
                 Err(Error::ExtractedErrors(mut errors)) => {
                     // Propagate errors to `retry_multi_region` for retry.
                     if let Error::RegionError(e) = errors.pop().unwrap() {
