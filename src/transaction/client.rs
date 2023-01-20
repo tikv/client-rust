@@ -242,7 +242,7 @@ impl Client {
             batch_size: SCAN_LOCK_BATCH_SIZE,
             ..Default::default()
         };
-        self.cleanup_locks(&safepoint, vec![].., options).await?;
+        self.cleanup_locks(.., &safepoint, options).await?;
 
         // update safepoint to PD
         let res: bool = self
@@ -258,8 +258,8 @@ impl Client {
 
     pub async fn cleanup_locks(
         &self,
-        safepoint: &Timestamp,
         range: impl Into<BoundRange>,
+        safepoint: &Timestamp,
         options: ResolveLocksOptions,
     ) -> Result<CleanupLocksResult> {
         debug!(self.logger, "invoking cleanup async commit locks");
@@ -270,8 +270,8 @@ impl Client {
         let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
             .cleanup_locks(self.logger.clone(), ctx.clone(), options, backoff)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
-            .merge(crate::request::Collect)
             .extract_error()
+            .merge(crate::request::Collect)
             .plan();
         plan.execute().await
     }

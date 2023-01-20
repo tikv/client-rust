@@ -94,7 +94,7 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
 
     init().await?;
     let scenario = FailScenario::setup();
-    let full_range = vec![]..;
+    let full_range = ..;
 
     fail::cfg("after-prewrite", "return").unwrap();
     fail::cfg("before-cleanup-locks", "return").unwrap();
@@ -113,10 +113,10 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
         batch_size: 4,
     };
     let res = client
-        .cleanup_locks(&safepoint, full_range, options)
+        .cleanup_locks(full_range, &safepoint, options)
         .await?;
 
-    assert_eq!(res.meet_locks, keys.len());
+    assert_eq!(res.resolved_locks, keys.len());
     assert_eq!(count_locks(&client).await?, keys.len());
 
     scenario.teardown();
@@ -130,7 +130,7 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
 
     init().await?;
     let scenario = FailScenario::setup();
-    let full_range = vec![]..;
+    let full_range = ..;
 
     // no commit
     {
@@ -150,7 +150,7 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
             ..Default::default()
         };
         client
-            .cleanup_locks(&safepoint, full_range.clone(), options)
+            .cleanup_locks(full_range, &safepoint, options)
             .await?;
 
         must_committed(&client, keys).await;
@@ -177,7 +177,7 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
             ..Default::default()
         };
         client
-            .cleanup_locks(&safepoint, full_range.clone(), options)
+            .cleanup_locks(full_range, &safepoint, options)
             .await?;
 
         must_committed(&client, keys).await;
@@ -196,7 +196,7 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
             ..Default::default()
         };
         client
-            .cleanup_locks(&safepoint, full_range, options)
+            .cleanup_locks(full_range, &safepoint, options)
             .await?;
 
         must_committed(&client, keys).await;
@@ -240,17 +240,17 @@ async fn txn_cleanup_range_async_commit_locks() -> Result<()> {
         ..Default::default()
     };
     let res = client
-        .cleanup_locks(&safepoint, start_key..end_key, options)
+        .cleanup_locks(start_key..end_key, &safepoint, options)
         .await?;
 
-    assert_eq!(res.meet_locks, keys.len() - 3);
+    assert_eq!(res.resolved_locks, keys.len() - 3);
 
     // cleanup all locks to avoid affecting following cases.
     let options = ResolveLocksOptions {
         async_commit_only: false,
         ..Default::default()
     };
-    client.cleanup_locks(&safepoint, vec![].., options).await?;
+    client.cleanup_locks(.., &safepoint, options).await?;
     must_committed(&client, keys).await;
     assert_eq!(count_locks(&client).await?, 0);
 
@@ -265,7 +265,7 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
 
     init().await?;
     let scenario = FailScenario::setup();
-    let full_range = vec![]..;
+    let full_range = ..;
 
     // no commit
     {
@@ -286,7 +286,7 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
                 ..Default::default()
             };
             client
-                .cleanup_locks(&safepoint, full_range.clone(), options)
+                .cleanup_locks(full_range, &safepoint, options)
                 .await?;
             assert_eq!(count_locks(&client).await?, keys.len());
         }
@@ -295,7 +295,7 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
             ..Default::default()
         };
         client
-            .cleanup_locks(&safepoint, full_range.clone(), options)
+            .cleanup_locks(full_range, &safepoint, options)
             .await?;
 
         must_rollbacked(&client, keys).await;
@@ -315,7 +315,7 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
             ..Default::default()
         };
         client
-            .cleanup_locks(&safepoint, full_range, options)
+            .cleanup_locks(full_range, &safepoint, options)
             .await?;
 
         must_committed(&client, keys).await;
