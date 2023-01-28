@@ -171,6 +171,44 @@ async fn txn_pessimistic() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+#[serial]
+async fn txn_split_batch() -> Result<()> {
+    init().await?;
+
+    let client = TransactionClient::new(pd_addrs(), None).await?;
+    let mut txn = client.begin_optimistic().await?;
+    let mut rng = thread_rng();
+
+    // testing with raft-entry-max-size = "1MB"
+    let keys_count: usize = 1000;
+    let val_len = 15000;
+
+    let values: Vec<_> = (0..keys_count)
+        .map(|_| (0..val_len).map(|_| rng.gen::<u8>()).collect::<Vec<_>>())
+        .collect();
+
+    for (i, value) in values.iter().enumerate() {
+        let key = Key::from(i.to_be_bytes().to_vec());
+        txn.put(key, value.clone()).await?;
+    }
+
+    txn.commit().await?;
+
+    let mut snapshot = client.snapshot(
+        client.current_timestamp().await?,
+        TransactionOptions::new_optimistic(),
+    );
+
+    for (i, value) in values.iter().enumerate() {
+        let key = Key::from(i.to_be_bytes().to_vec());
+        let from_snapshot = snapshot.get(key).await?.unwrap();
+        assert_eq!(from_snapshot, value.clone());
+    }
+
+    Ok(())
+}
+
 /// bank transfer mainly tests raw put and get
 #[tokio::test]
 #[serial]
