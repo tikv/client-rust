@@ -15,7 +15,7 @@ pub use self::{
         ResponseWithShard, RetryableMultiRegion,
     },
     plan_builder::{PlanBuilder, SingleKey},
-    shard::{HasNextBatch, NextBatch, Shardable},
+    shard::{Batchable, HasNextBatch, NextBatch, Shardable},
 };
 
 pub mod plan;

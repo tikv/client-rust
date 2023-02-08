@@ -4,8 +4,8 @@ use crate::{
     collect_first,
     pd::PdClient,
     request::{
-        Collect, CollectSingle, CollectWithShard, DefaultProcessor, HasNextBatch, KvRequest, Merge,
-        NextBatch, Process, ResponseWithShard, Shardable, SingleKey,
+        Batchable, Collect, CollectSingle, CollectWithShard, DefaultProcessor, HasNextBatch,
+        KvRequest, Merge, NextBatch, Process, ResponseWithShard, Shardable, SingleKey,
     },
     store::{store_stream_for_keys, store_stream_for_range, RegionStore},
     timestamp::TimestampExt,
@@ -14,13 +14,18 @@ use crate::{
     KvPair, Result, Value,
 };
 use either::Either;
-use futures::stream::BoxStream;
+use futures::{
+    stream::{self, BoxStream},
+    StreamExt,
+};
 use std::{cmp, iter, sync::Arc};
 use tikv_client_common::Error::PessimisticLockError;
 use tikv_client_proto::{
     kvrpcpb::{self, LockInfo, TxnHeartBeatResponse, TxnInfo},
     pdpb::Timestamp,
 };
+
+use super::transaction::TXN_COMMIT_BATCH_SIZE;
 
 // implement HasLocks for a response type that has a `pairs` field,
 // where locks can be extracted from both the `pairs` and `error` fields
@@ -256,7 +261,18 @@ impl Shardable for kvrpcpb::PrewriteRequest {
     ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
         let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
+
         store_stream_for_keys(mutations.into_iter(), pd_client.clone())
+            .flat_map(|result| match result {
+                Ok((mutations, store)) => stream::iter(kvrpcpb::PrewriteRequest::batches(
+                    mutations,
+                    TXN_COMMIT_BATCH_SIZE,
+                ))
+                .map(move |batch| Ok((batch, store.clone())))
+                .boxed(),
+                Err(e) => stream::iter(Err(e)).boxed(),
+            })
+            .boxed()
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
@@ -277,6 +293,16 @@ impl Shardable for kvrpcpb::PrewriteRequest {
     }
 }
 
+impl Batchable for kvrpcpb::PrewriteRequest {
+    type Item = kvrpcpb::Mutation;
+
+    fn item_size(item: &Self::Item) -> u64 {
+        let mut size = item.get_key().len() as u64;
+        size += item.get_value().len() as u64;
+        size
+    }
+}
+
 pub fn new_commit_request(
     keys: Vec<Vec<u8>>,
     start_version: u64,
@@ -294,7 +320,42 @@ impl KvRequest for kvrpcpb::CommitRequest {
     type Response = kvrpcpb::CommitResponse;
 }
 
-shardable_keys!(kvrpcpb::CommitRequest);
+impl Shardable for kvrpcpb::CommitRequest {
+    type Shard = Vec<Vec<u8>>;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+        let mut keys = self.keys.clone();
+        keys.sort();
+
+        store_stream_for_keys(keys.into_iter(), pd_client.clone())
+            .flat_map(|result| match result {
+                Ok((keys, store)) => {
+                    stream::iter(kvrpcpb::CommitRequest::batches(keys, TXN_COMMIT_BATCH_SIZE))
+                        .map(move |batch| Ok((batch, store.clone())))
+                        .boxed()
+                }
+                Err(e) => stream::iter(Err(e)).boxed(),
+            })
+            .boxed()
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
+        self.set_context(store.region_with_leader.context()?);
+        self.set_keys(shard.into_iter().map(Into::into).collect());
+        Ok(())
+    }
+}
+
+impl Batchable for kvrpcpb::CommitRequest {
+    type Item = Vec<u8>;
+
+    fn item_size(item: &Self::Item) -> u64 {
+        item.len() as u64
+    }
+}
 
 pub fn new_batch_rollback_request(
     keys: Vec<Vec<u8>>,

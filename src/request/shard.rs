@@ -38,6 +38,33 @@ pub trait Shardable {
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()>;
 }
 
+pub trait Batchable {
+    type Item;
+
+    fn batches(items: Vec<Self::Item>, batch_size: u64) -> Vec<Vec<Self::Item>> {
+        let mut batches: Vec<Vec<Self::Item>> = Vec::new();
+        let mut batch: Vec<Self::Item> = Vec::new();
+        let mut size = 0;
+
+        for item in items {
+            let item_size = Self::item_size(&item);
+            if size + item_size >= batch_size && !batch.is_empty() {
+                batches.push(batch);
+                batch = Vec::new();
+                size = 0;
+            }
+            size += item_size;
+            batch.push(item);
+        }
+        if !batch.is_empty() {
+            batches.push(batch)
+        }
+        batches
+    }
+
+    fn item_size(item: &Self::Item) -> u64;
+}
+
 // Use to iterate in a region for scan requests that have batch size limit.
 // HasNextBatch use to get the next batch according to previous response.
 pub trait HasNextBatch {
@@ -199,4 +226,61 @@ macro_rules! shardable_range {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod test {
+    use rand::{thread_rng, Rng};
+
+    use super::Batchable;
+
+    #[test]
+    fn test_batches() {
+        let mut rng = thread_rng();
+
+        let items: Vec<_> = (0..3)
+            .map(|_| (0..2).map(|_| rng.gen::<u8>()).collect::<Vec<_>>())
+            .collect();
+
+        let batch_size = 5;
+
+        let batches = BatchableTest::batches(items.clone(), batch_size);
+
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0].len(), 2);
+        assert_eq!(batches[1].len(), 1);
+        assert_eq!(batches[0][0], items[0]);
+        assert_eq!(batches[0][1], items[1]);
+        assert_eq!(batches[1][0], items[2]);
+    }
+
+    #[test]
+    fn test_batches_big_item() {
+        let mut rng = thread_rng();
+
+        let items: Vec<_> = (0..3)
+            .map(|_| (0..3).map(|_| rng.gen::<u8>()).collect::<Vec<_>>())
+            .collect();
+
+        let batch_size = 2;
+
+        let batches = BatchableTest::batches(items.clone(), batch_size);
+
+        assert_eq!(batches.len(), 3);
+        for i in 0..items.len() {
+            let batch = &batches[i];
+            assert_eq!(batch.len(), 1);
+            assert_eq!(batch[0], items[i]);
+        }
+    }
+
+    struct BatchableTest;
+
+    impl Batchable for BatchableTest {
+        type Item = Vec<u8>;
+
+        fn item_size(item: &Self::Item) -> u64 {
+            item.len() as u64
+        }
+    }
 }

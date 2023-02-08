@@ -945,7 +945,7 @@ const DEFAULT_LOCK_TTL: u64 = 3000;
 const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(MAX_TTL / 2);
 /// TiKV recommends each RPC packet should be less than around 1MB. We keep KV size of
 /// each request below 16KB.
-const TXN_COMMIT_BATCH_SIZE: u64 = 16 * 1024;
+pub const TXN_COMMIT_BATCH_SIZE: u64 = 16 * 1024;
 const TTL_FACTOR: f64 = 6000.0;
 
 /// Optimistic or pessimistic transaction.
