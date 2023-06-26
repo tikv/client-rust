@@ -39,10 +39,10 @@ where
     pd_client
         .clone()
         .group_keys_by_region(key_data)
-        .and_then(move |(region_id, key)| {
+        .and_then(move |(region, key)| {
             pd_client
                 .clone()
-                .store_for_id(region_id)
+                .map_region_to_store(region)
                 .map_ok(move |store| (key, store))
         })
         .boxed()
@@ -53,7 +53,11 @@ pub fn store_stream_for_range<PdC: PdClient>(
     range: (Vec<u8>, Vec<u8>),
     pd_client: Arc<PdC>,
 ) -> BoxStream<'static, Result<((Vec<u8>, Vec<u8>), RegionStore)>> {
-    let bnd_range = BoundRange::from(range.clone());
+    let bnd_range = if range.1.is_empty() {
+        BoundRange::range_from(range.0.clone().into())
+    } else {
+        BoundRange::from(range.clone())
+    };
     pd_client
         .stores_for_range(bnd_range)
         .map_ok(move |store| {
@@ -63,25 +67,6 @@ pub fn store_stream_for_range<PdC: PdClient>(
                 (range.0.clone().into(), range.1.clone().into()),
             );
             ((result_range.0.into(), result_range.1.into()), store)
-        })
-        .boxed()
-}
-
-pub fn store_stream_for_range_by_start_key<PdC: PdClient>(
-    start_key: Key,
-    pd_client: Arc<PdC>,
-) -> BoxStream<'static, Result<(Vec<u8>, RegionStore)>> {
-    let bnd_range = BoundRange::range_from(start_key.clone());
-    pd_client
-        .stores_for_range(bnd_range)
-        .map_ok(move |store| {
-            let region_range = store.region_with_leader.range();
-            (
-                range_intersection(region_range, (start_key.clone(), vec![].into()))
-                    .0
-                    .into(),
-                store,
-            )
         })
         .boxed()
 }
@@ -106,10 +91,10 @@ pub fn store_stream_for_ranges<PdC: PdClient>(
     pd_client
         .clone()
         .group_ranges_by_region(ranges)
-        .and_then(move |(region_id, range)| {
+        .and_then(move |(region, range)| {
             pd_client
                 .clone()
-                .store_for_id(region_id)
+                .map_region_to_store(region)
                 .map_ok(move |store| (range, store))
         })
         .boxed()

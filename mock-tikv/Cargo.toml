@@ -3,9 +3,13 @@ name = "mock-tikv"
 version = "0.0.0"
 edition = "2018"
 
+[features]
+protobuf-codec = ["grpcio/protobuf-codec"]
+prost-codec = ["grpcio/prost-codec"]
+
 [dependencies]
 derive-new = "0.5"
 futures = "0.3"
-grpcio = { version = "0.9", features = [ "secure", "prost-codec", "use-bindgen" ], default-features = false }
+grpcio = { version = "0.10", default-features = false }
 log = "0.4"
 tikv-client-proto = { path = "../tikv-client-proto"}

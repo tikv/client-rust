@@ -3,6 +3,8 @@ package raft_serverpb;
 
 import "eraftpb.proto";
 import "metapb.proto";
+import "kvrpcpb.proto";
+import "disk_usage.proto";
 import "rustproto.proto";
 
 option (rustproto.lite_runtime_all) = true;
@@ -24,6 +26,8 @@ message RaftMessage {
     metapb.Region merge_target = 9;
     ExtraMessage extra_msg = 10;
     bytes extra_ctx = 11;
+
+    disk_usage.DiskUsage disk_usage = 12;
 }
 
 message RaftTruncatedState {
@@ -40,7 +44,7 @@ message SnapshotCFFile {
 message SnapshotMeta {
     repeated SnapshotCFFile cf_files = 1;
     // true means this snapshot is triggered for load balance
-    bool for_balance = 2; 
+    bool for_balance = 2;
 }
 
 message SnapshotChunk {
@@ -66,6 +70,7 @@ message RaftSnapshotData {
 message StoreIdent {
     uint64 cluster_id = 1;
     uint64 store_id = 2;
+    kvrpcpb.APIVersion api_version = 3;
 }
 
 message RaftLocalState {

@@ -15,7 +15,7 @@ mod test {
         let mut tikv_server = start_mock_tikv_server();
         let _pd_server = start_mock_pd_server();
 
-        let client = RawClient::new(vec![format!("localhost:{}", MOCK_PD_PORT)], None)
+        let client = RawClient::new(vec![format!("localhost:{MOCK_PD_PORT}")], None)
             .await
             .unwrap();
 
@@ -24,8 +24,8 @@ mod test {
         assert_eq!(res.unwrap(), None);
 
         // empty; put then batch_get
-        let _ = client.put("k1".to_owned(), "v1".to_owned()).await.unwrap();
-        let _ = client.put("k2".to_owned(), "v2".to_owned()).await.unwrap();
+        client.put("k1".to_owned(), "v1".to_owned()).await.unwrap();
+        client.put("k2".to_owned(), "v2".to_owned()).await.unwrap();
 
         let res = client
             .batch_get(vec!["k1".to_owned(), "k2".to_owned(), "k3".to_owned()])
@@ -36,7 +36,7 @@ mod test {
         assert_eq!(res[1].1, "v2".as_bytes());
 
         // k1,k2; batch_put then batch_get
-        let _ = client
+        client
             .batch_put(vec![
                 KvPair::new("k3".to_owned(), "v3".to_owned()),
                 KvPair::new("k4".to_owned(), "v4".to_owned()),

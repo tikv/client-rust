@@ -9,10 +9,26 @@ description = "The Rust language implementation of TiKV client."
 edition = "2018"
 
 [features]
-default = []
+default = [ "prost-codec", "prometheus/process" ]
 # Enable integration tests with a running TiKV and PD instance.
 # Use $PD_ADDRS, comma separated, to set the addresses the tests use.
 integration-tests = []
+protobuf-codec = [
+    "grpcio/protobuf-codec",
+    "tikv-client-proto/protobuf-codec",
+    "tikv-client-common/protobuf-codec",
+    "tikv-client-pd/protobuf-codec",
+    "tikv-client-store/protobuf-codec",
+    "mock-tikv/protobuf-codec",
+]
+prost-codec = [
+    "grpcio/prost-codec",
+    "tikv-client-proto/prost-codec",
+    "tikv-client-common/prost-codec",
+    "tikv-client-pd/prost-codec",
+    "tikv-client-store/prost-codec",
+    "mock-tikv/prost-codec",
+]
 
 [lib]
 name = "tikv_client"
@@ -24,13 +40,13 @@ either = "1.6"
 fail = "0.4"
 futures = { version = "0.3", features = ["async-await", "thread-pool"] }
 futures-timer = "3.0"
-grpcio = { version = "0.9", features = [ "secure", "prost-codec", "use-bindgen", "openssl-vendored" ], default-features = false }
+grpcio = { version = "0.10", features = [ "openssl-vendored" ], default-features = false }
 lazy_static = "1"
 log = "0.4"
-prometheus = { version = "0.12", features = [ "push", "process" ], default-features = false } 
+prometheus = { version = "0.13", features = [ "push" ], default-features = false }
 rand = "0.8"
 regex = "1"
-semver = "0.11"
+semver = "1.0"
 serde = "1.0"
 serde_derive = "1.0"
 slog = { version = "2.3", features = ["max_level_trace", "release_max_level_debug"] }
@@ -70,3 +86,8 @@ members = [
 name = "failpoint_tests"
 path = "tests/failpoint_tests.rs"
 required-features = ["fail/failpoints"]
+
+[patch.crates-io]
+raft-proto = { git = "https://github.com/tikv/raft-rs", rev="95c532612ee6a83591fce9a8b51d6afe87b58835"}
+protobuf-codegen = { git = "https://github.com/pingcap/rust-protobuf", rev="82b49fea7e696fd647b5aca0a6c6ec944eab3189" }
+protobuf = { git = "https://github.com/pingcap/rust-protobuf", rev="82b49fea7e696fd647b5aca0a6c6ec944eab3189" }

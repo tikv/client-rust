@@ -8,13 +8,18 @@ repository = "https://github.com/tikv/client-rust"
 description = "Protobuf specs for the TiKV Rust client"
 build = "build.rs"
 
+[features]
+protobuf-codec = ["protobuf-build/grpcio-protobuf-codec", "raft-proto/protobuf-codec", "grpcio/protobuf-codec"]
+prost-codec = ["prost", "prost-derive", "protobuf-build/grpcio-prost-codec", "grpcio/prost-codec", "raft-proto/prost-codec"]
+
 [build-dependencies]
-protobuf-build = { version = "0.12", default-features = false, features = ["grpcio-prost-codec"] }
+protobuf-build = { version = "0.13", default-features = false }
 
 [dependencies]
-protobuf = "2.8"
-prost = { version = "0.7" }
-prost-derive = { version = "0.7" }
+protobuf = "=2.8.0"
+prost = { version = "0.9", optional = true }
+prost-derive = { version = "0.9", optional = true }
 futures = "0.3"
-grpcio = { version = "0.9", default-features = false, features = ["secure", "prost-codec", "use-bindgen"] }
+grpcio = { version = "0.10", default-features = false }
 lazy_static = { version = "1" }
+raft-proto = { version = "0.7.0", default-features = false }

@@ -23,6 +23,7 @@ pub fn new_scan_request(
     timestamp: Timestamp,
     limit: u32,
     key_only: bool,
+    reverse: bool,
 ) -> kvrpcpb::ScanRequest {
     let (start_key, end_key) = range.into_keys();
     requests::new_scan_request(
@@ -31,6 +32,7 @@ pub fn new_scan_request(
         timestamp.version(),
         limit,
         key_only,
+        reverse,
     )
 }
 
@@ -159,11 +161,17 @@ pub fn new_pessimistic_lock_request(
 }
 
 pub fn new_scan_lock_request(
-    start_key: Key,
-    safepoint: Timestamp,
+    range: BoundRange,
+    safepoint: &Timestamp,
     limit: u32,
 ) -> kvrpcpb::ScanLockRequest {
-    requests::new_scan_lock_request(start_key.into(), safepoint.version(), limit)
+    let (start_key, end_key) = range.into_keys();
+    requests::new_scan_lock_request(
+        start_key.into(),
+        end_key.unwrap_or_default().into(),
+        safepoint.version(),
+        limit,
+    )
 }
 
 pub fn new_heart_beat_request(

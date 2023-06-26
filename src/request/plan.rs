@@ -12,10 +12,11 @@ use tokio::sync::Semaphore;
 use crate::{
     backoff::Backoff,
     pd::PdClient,
-    request::{KvRequest, Shardable},
+    request::{shard::HasNextBatch, KvRequest, NextBatch, Shardable},
     stats::tikv_stats,
     store::RegionStore,
-    transaction::{resolve_locks, HasLocks},
+    transaction::{resolve_locks, HasLocks, ResolveLocksContext, ResolveLocksOptions},
+    util::iter::FlatMapOkIterExt,
     Error, Result,
 };
 
@@ -63,6 +64,11 @@ pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
     pub(super) inner: P,
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
+
+    /// Preserve all regions' results for other downstream plans to handle.
+    /// If true, return Ok and preserve all regions' results, even if some of them are Err.
+    /// Otherwise, return the first Err if there is any.
+    pub preserve_region_results: bool,
 }
 
 impl<P: Plan + Shardable, PdC: PdClient> RetryableMultiRegion<P, PdC>
@@ -76,6 +82,7 @@ where
         current_plan: P,
         backoff: Backoff,
         permits: Arc<Semaphore>,
+        preserve_region_results: bool,
     ) -> Result<<Self as Plan>::Result> {
         let shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
         let mut handles = Vec::new();
@@ -89,16 +96,29 @@ where
                 region_store,
                 backoff.clone(),
                 permits.clone(),
+                preserve_region_results,
             ));
             handles.push(handle);
         }
-        Ok(try_join_all(handles)
-            .await?
-            .into_iter()
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .flatten()
-            .collect())
+
+        let results = try_join_all(handles).await?;
+        if preserve_region_results {
+            Ok(results
+                .into_iter()
+                .flat_map_ok(|x| x)
+                .map(|x| match x {
+                    Ok(r) => r,
+                    Err(e) => Err(e),
+                })
+                .collect())
+        } else {
+            Ok(results
+                .into_iter()
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
+                .flatten()
+                .collect())
+        }
     }
 
     #[async_recursion]
@@ -108,6 +128,7 @@ where
         region_store: RegionStore,
         mut backoff: Backoff,
         permits: Arc<Semaphore>,
+        preserve_region_results: bool,
     ) -> Result<<Self as Plan>::Result> {
         // limit concurrent requests
         let permit = permits.acquire().await.unwrap();
@@ -125,9 +146,16 @@ where
                     if !region_error_resolved {
                         futures_timer::Delay::new(duration).await;
                     }
-                    Self::single_plan_handler(pd_client, plan, backoff, permits).await
+                    Self::single_plan_handler(
+                        pd_client,
+                        plan,
+                        backoff,
+                        permits,
+                        preserve_region_results,
+                    )
+                    .await
                 }
-                None => Err(Error::RegionError(e)),
+                None => Err(Error::RegionError(Box::new(e))),
             }
         } else {
             Ok(vec![Ok(resp)])
@@ -185,7 +213,7 @@ where
             || e.has_raft_entry_too_large()
             || e.has_max_timestamp_not_synced()
         {
-            Err(Error::RegionError(e))
+            Err(Error::RegionError(Box::new(e)))
         } else {
             // TODO: pass the logger around
             // info!("unknwon region error: {:?}", e);
@@ -242,6 +270,7 @@ impl<P: Plan, PdC: PdClient> Clone for RetryableMultiRegion<P, PdC> {
             inner: self.inner.clone(),
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
+            preserve_region_results: self.preserve_region_results,
         }
     }
 }
@@ -263,6 +292,7 @@ where
             self.inner.clone(),
             self.backoff.clone(),
             concurrency_permits.clone(),
+            self.preserve_region_results,
         )
         .await
     }
@@ -412,6 +442,170 @@ where
     }
 }
 
+#[derive(Default)]
+pub struct CleanupLocksResult {
+    pub region_error: Option<errorpb::Error>,
+    pub key_error: Option<Vec<Error>>,
+    pub resolved_locks: usize,
+}
+
+impl Clone for CleanupLocksResult {
+    fn clone(&self) -> Self {
+        Self {
+            resolved_locks: self.resolved_locks,
+            ..Default::default() // Ignore errors, which should be extracted by `extract_error()`.
+        }
+    }
+}
+
+impl HasRegionError for CleanupLocksResult {
+    fn region_error(&mut self) -> Option<errorpb::Error> {
+        self.region_error.take()
+    }
+}
+
+impl HasKeyErrors for CleanupLocksResult {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
+        self.key_error.take()
+    }
+}
+
+impl Merge<CleanupLocksResult> for Collect {
+    type Out = CleanupLocksResult;
+
+    fn merge(&self, input: Vec<Result<CleanupLocksResult>>) -> Result<Self::Out> {
+        input
+            .into_iter()
+            .fold(Ok(CleanupLocksResult::default()), |acc, x| {
+                Ok(CleanupLocksResult {
+                    resolved_locks: acc?.resolved_locks + x?.resolved_locks,
+                    ..Default::default()
+                })
+            })
+    }
+}
+
+pub struct CleanupLocks<P: Plan, PdC: PdClient> {
+    pub logger: slog::Logger,
+    pub inner: P,
+    pub ctx: ResolveLocksContext,
+    pub options: ResolveLocksOptions,
+    pub store: Option<RegionStore>,
+    pub pd_client: Arc<PdC>,
+    pub backoff: Backoff,
+}
+
+impl<P: Plan, PdC: PdClient> Clone for CleanupLocks<P, PdC> {
+    fn clone(&self) -> Self {
+        CleanupLocks {
+            logger: self.logger.clone(),
+            inner: self.inner.clone(),
+            ctx: self.ctx.clone(),
+            options: self.options,
+            store: None,
+            pd_client: self.pd_client.clone(),
+            backoff: self.backoff.clone(),
+        }
+    }
+}
+
+#[async_trait]
+impl<P: Plan + Shardable + NextBatch, PdC: PdClient> Plan for CleanupLocks<P, PdC>
+where
+    P::Result: HasLocks + HasNextBatch + HasKeyErrors + HasRegionError,
+{
+    type Result = CleanupLocksResult;
+
+    async fn execute(&self) -> Result<Self::Result> {
+        let mut result = CleanupLocksResult::default();
+        let mut inner = self.inner.clone();
+        let mut lock_resolver =
+            crate::transaction::LockResolver::new(self.logger.clone(), self.ctx.clone());
+        let region = &self.store.as_ref().unwrap().region_with_leader;
+        let mut has_more_batch = true;
+
+        while has_more_batch {
+            let mut scan_lock_resp = inner.execute().await?;
+
+            // Propagate errors to `retry_multi_region` for retry.
+            if let Some(e) = scan_lock_resp.key_errors() {
+                info!(
+                    self.logger,
+                    "CleanupLocks::execute, inner key errors:{:?}", e
+                );
+                result.key_error = Some(e);
+                return Ok(result);
+            } else if let Some(e) = scan_lock_resp.region_error() {
+                info!(
+                    self.logger,
+                    "CleanupLocks::execute, inner region error:{}",
+                    e.get_message()
+                );
+                result.region_error = Some(e);
+                return Ok(result);
+            }
+
+            // Iterate to next batch of inner.
+            match scan_lock_resp.has_next_batch() {
+                Some(range) if region.contains(range.0.as_ref()) => {
+                    debug!(self.logger, "CleanupLocks::execute, next range:{:?}", range);
+                    inner.next_batch(range);
+                }
+                _ => has_more_batch = false,
+            }
+
+            let mut locks = scan_lock_resp.take_locks();
+            if locks.is_empty() {
+                break;
+            }
+            if locks.len() < self.options.batch_size as usize {
+                has_more_batch = false;
+            }
+
+            if self.options.async_commit_only {
+                locks = locks
+                    .into_iter()
+                    .filter(|l| l.get_use_async_commit())
+                    .collect::<Vec<_>>();
+            }
+            debug!(
+                self.logger,
+                "CleanupLocks::execute, meet locks:{}",
+                locks.len()
+            );
+
+            let lock_size = locks.len();
+            match lock_resolver
+                .cleanup_locks(self.store.clone().unwrap(), locks, self.pd_client.clone())
+                .await
+            {
+                Ok(()) => {
+                    result.resolved_locks += lock_size;
+                }
+                Err(Error::ExtractedErrors(mut errors)) => {
+                    // Propagate errors to `retry_multi_region` for retry.
+                    if let Error::RegionError(e) = errors.pop().unwrap() {
+                        result.region_error = Some(*e);
+                    } else {
+                        result.key_error = Some(errors);
+                    }
+                    return Ok(result);
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+            }
+
+            // TODO: improve backoff
+            // if self.backoff.is_none() {
+            //     return Err(Error::ResolveLockError);
+            // }
+        }
+
+        Ok(result)
+    }
+}
+
 /// When executed, the plan extracts errors from its inner plan, and returns an
 /// `Err` wrapping the error.
 ///
@@ -445,7 +639,10 @@ where
             Err(Error::ExtractedErrors(errors))
         } else if let Some(errors) = result.region_errors() {
             Err(Error::ExtractedErrors(
-                errors.into_iter().map(Error::RegionError).collect(),
+                errors
+                    .into_iter()
+                    .map(|e| Error::RegionError(Box::new(e)))
+                    .collect(),
             ))
         } else {
             Ok(result)
@@ -556,6 +753,7 @@ mod test {
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),
+            preserve_region_results: false,
         };
         assert!(plan.execute().await.is_err())
     }

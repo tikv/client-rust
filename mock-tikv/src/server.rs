@@ -1,5 +1,7 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
+#![allow(clippy::useless_conversion)] // To support both prost & rust-protobuf.
+
 use crate::{spawn_unary_success, KvStore};
 use derive_new::new;
 use futures::{FutureExt, TryFutureExt};
@@ -192,7 +194,7 @@ impl Tikv for MockTikv {
         sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::RawBatchGetResponse>,
     ) {
         let mut resp = tikv_client_proto::kvrpcpb::RawBatchGetResponse::default();
-        resp.set_pairs(self.inner.raw_batch_get(req.take_keys()));
+        resp.set_pairs(self.inner.raw_batch_get(req.take_keys().into()).into());
         spawn_unary_success!(ctx, req, resp, sink);
     }
 
@@ -214,7 +216,7 @@ impl Tikv for MockTikv {
         mut req: tikv_client_proto::kvrpcpb::RawBatchPutRequest,
         sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::RawBatchPutResponse>,
     ) {
-        let pairs = req.take_pairs();
+        let pairs = req.take_pairs().into();
         self.inner.raw_batch_put(pairs);
         let resp = RawBatchPutResponse::default();
         spawn_unary_success!(ctx, req, resp, sink);
@@ -238,7 +240,7 @@ impl Tikv for MockTikv {
         mut req: tikv_client_proto::kvrpcpb::RawBatchDeleteRequest,
         sink: grpcio::UnarySink<tikv_client_proto::kvrpcpb::RawBatchDeleteResponse>,
     ) {
-        let keys = req.take_keys();
+        let keys = req.take_keys().into();
         self.inner.raw_batch_delete(keys);
         let resp = RawBatchDeleteResponse::default();
         spawn_unary_success!(ctx, req, resp, sink);

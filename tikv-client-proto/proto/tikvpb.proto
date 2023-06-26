@@ -51,6 +51,7 @@ service Tikv {
     rpc RawGetKeyTTL(kvrpcpb.RawGetKeyTTLRequest) returns (kvrpcpb.RawGetKeyTTLResponse) {}
     // Compare if the value in database equals to `RawCASRequest.previous_value` before putting the new value. If not, this request will have no effect and the value in the database will be returned.
     rpc RawCompareAndSwap(kvrpcpb.RawCASRequest) returns (kvrpcpb.RawCASResponse) {}
+    rpc RawChecksum(kvrpcpb.RawChecksumRequest) returns (kvrpcpb.RawChecksumResponse) {}
 
     // Store commands (sent to a each TiKV node in a cluster, rather than a certain region).
     rpc UnsafeDestroyRange(kvrpcpb.UnsafeDestroyRangeRequest) returns (kvrpcpb.UnsafeDestroyRangeResponse) {}
@@ -89,6 +90,7 @@ service Tikv {
     rpc DispatchMPPTask(mpp.DispatchTaskRequest) returns (mpp.DispatchTaskResponse) {}
     rpc CancelMPPTask(mpp.CancelTaskRequest) returns (mpp.CancelTaskResponse) {}
     rpc EstablishMPPConnection(mpp.EstablishMPPConnectionRequest) returns (stream mpp.MPPDataPacket) {}
+    rpc IsAlive(mpp.IsAliveRequest) returns (mpp.IsAliveResponse) {}
 
     /// CheckLeader sends all information (includes region term and epoch) to other stores.
     /// Once a store receives a request, it checks term and epoch for each region, and sends the regions whose

@@ -106,6 +106,8 @@ message PrewriteRequest {
     // The max commit ts is reserved for limiting the commit ts of 1PC or async commit, which can be used to avoid
     // inconsistency with schema change.
     uint64 max_commit_ts = 14;
+    // The level of assertion to use on this prewrte request.
+    AssertionLevel assertion_level = 15;
 }
 
 message PrewriteResponse {
@@ -142,7 +144,7 @@ message PessimisticLockRequest {
     int64 wait_timeout = 8;
     // If it is true, TiKV will acquire the pessimistic lock regardless of write conflict
     // and return the latest value. It's only supported for single mutation.
-    bool force = 9;
+    bool force = 9 [deprecated = true];
     // If it is true, TiKV will return values of the keys if no error, so TiDB can cache the values for
     // later read in the same transaction.
     // When 'force' is set to true, this field is ignored.
@@ -150,14 +152,19 @@ message PessimisticLockRequest {
     // If min_commit_ts > 0, this is large transaction proto, the final commit_ts
     // would be infered from min_commit_ts.
     uint64 min_commit_ts = 11;
+    // If set to true, it means TiKV need to check if the key exists, and return the result in
+    // the `not_founds` feild in the response. This works no matter if `return_values` is set. If
+    // `return_values` is set, it simply makes no difference; otherwise, the `value` field of the
+    // repsonse will be empty while the `not_founds` field still indicates the keys' existence.
+    bool check_existence = 12;
 }
 
 message PessimisticLockResponse {
     errorpb.Error region_error = 1;
     repeated KeyError errors = 2;
     // It carries the latest value and its commit ts if force in PessimisticLockRequest is true.
-    uint64 commit_ts = 3;
-    bytes value = 4;
+    uint64 commit_ts = 3 [deprecated = true];
+    bytes value = 4 [deprecated = true];
     // The values is set if 'return_values' is true in the request and no error.
     // If 'force' is true, this field is not used.
     repeated bytes values = 5;
@@ -459,7 +466,10 @@ message RawBatchPutRequest {
     Context context = 1;
     repeated KvPair pairs = 2;
     string cf = 3;
-    uint64 ttl = 4;
+    // The time-to-live for each keys in seconds, and if the length of `ttls`
+    // is exactly one, the ttl will be applied to all keys. Otherwise, the length
+    // mismatch between `ttls` and `pairs` will return an error.
+    repeated uint64 ttls = 4;
     bool for_cas = 5;
 }
 
@@ -594,6 +604,8 @@ message SplitRegionRequest {
     Context context = 1;
     bytes split_key = 2 [deprecated=true];
     repeated bytes split_keys = 3; // when use it to do batch split, `split_key` should be empty.
+    // Once enabled, the split_key will not be encoded.
+    bool is_raw_kv = 4;
 }
 
 message SplitRegionResponse {
@@ -667,6 +679,8 @@ message Context {
     bool record_scan_stat = 11;
 
     bool replica_read = 12;
+    // Read requests can ignore locks belonging to these transactions because either
+    // these transactions are rolled back or theirs commit_ts > read request's start_ts.
     repeated uint64 resolved_locks = 13;
     uint64 max_execution_duration_ms = 14;
 
@@ -683,6 +697,68 @@ message Context {
 
     // Any additional serialized information about the request.
     bytes resource_group_tag = 18;
+
+    // Used to tell TiKV whether operations are allowed or not on different disk usages.
+    DiskFullOpt disk_full_opt = 19;
+
+    // Indicates the request is a retry request and the same request may have been sent before.
+    bool is_retry_request = 20;
+
+    // API version implies the encode of the key and value.
+    APIVersion api_version = 21;
+
+    // Read request should read through locks belonging to these transactions because these
+    // transactions are committed and theirs commit_ts <= read request's start_ts.
+    repeated uint64 committed_locks = 22;
+}
+
+// The API version the server and the client is using.
+// See more details in https://github.com/tikv/rfcs/blob/master/text/0069-api-v2.md.
+enum APIVersion {
+    // Mainly for TxnKV and not safe to use RawKV along with TxnKV.
+    //
+    // V1 server only accepts V1 requests. Except that the V1 raw requests with TTL
+    // will be rejected.
+    V1 = 0;
+    // Only RawKV is available, and then 8 bytes representing the unix timestamp in
+    // seconds for expiring time will be append to the value of all RawKV kv pairs.
+    //
+    // ------------------------------------------------------------
+    // | User value     | Expire Ts                               |
+    // ------------------------------------------------------------
+    // | 0x12 0x34 0x56 | 0x00 0x00 0x00 0x00 0x00 0x00 0xff 0xff |
+    // ------------------------------------------------------------
+    //
+    // V1TTL server only accepts V1 raw requests.
+    // V1 client should not use `V1TTL` in request. V1 client should always send `V1`.
+    V1TTL = 1;
+    // TxnKV keys start with `x{keyspace id}`, `m`, or `t`.
+    //
+    // RawKV keys must be in `default` CF and all start with `r{keyspace id}` prefix,
+    // where the keyspace id is in varint format (little endian), whose bytes expect
+    // the last one always sets the most significant bit to 1.
+    //
+    // The last byte in the raw value must be a meta flag. For example:
+    //
+    // --------------------------------------
+    // | User value     | Meta flags        |
+    // --------------------------------------
+    // | 0x12 0x34 0x56 | 0x00 (0b00000000) |
+    // --------------------------------------
+    //
+    // As shown in the example below, the least significant bit of the meta flag
+    // indicates whether the value contains 8 bytes expire ts at the very left to the
+    // meta flags.
+    //
+    // --------------------------------------------------------------------------------
+    // | User value     | Expire Ts                               | Meta flags        |
+    // --------------------------------------------------------------------------------
+    // | 0x12 0x34 0x56 | 0x00 0x00 0x00 0x00 0x00 0x00 0xff 0xff | 0x01 (0b00000001) |
+    // --------------------------------------------------------------------------------
+    //
+    // V2 server accpets V2 requests and V1 txn requests that statrts with TiDB key
+    // prefix (`m` and `t`).
+    V2 = 2;
 }
 
 message LockInfo {
@@ -710,6 +786,7 @@ message KeyError {
     CommitTsExpired commit_ts_expired = 7; // Commit ts is earlier than min commit ts of a transaction.
     TxnNotFound txn_not_found = 8; // Txn not found when checking txn status.
     CommitTsTooLarge commit_ts_too_large = 9; // Calculated commit TS exceeds the limit given by the user.
+    AssertionFailed assertion_failed = 10; // Assertion of a `Mutation` is evaluated as a failure.
 }
 
 message WriteConflict {
@@ -747,6 +824,14 @@ message CommitTsTooLarge {
     uint64 commit_ts = 1; // The calculated commit TS.
 }
 
+message AssertionFailed {
+    uint64 start_ts = 1;
+    bytes key = 2;
+    Assertion assertion = 3;
+    uint64 existing_start_ts = 4;
+    uint64 existing_commit_ts = 5;
+}
+
 enum CommandPri {
     Normal = 0; // Normal is the default value.
     Low = 1;
@@ -756,6 +841,13 @@ enum CommandPri {
 enum IsolationLevel {
     SI = 0; // SI = snapshot isolation
     RC = 1; // RC = read committed
+}
+
+// Operation allowed info during each TiKV storage threshold.
+enum DiskFullOpt {
+    NotAllowedOnFull = 0; // The default value, means operations are not allowed either under almost full or already full.
+    AllowedOnAlmostFull = 1; // Means operations will be allowed when disk is almost full.
+    AllowedOnAlreadyFull = 2; // Means operations will be allowed when disk is already full.
 }
 
 message TimeDetail {
@@ -791,6 +883,10 @@ message ScanDetailV2 {
     // For Coprocessor requests, it includes keys that has been filtered out by
     // Selection.
     uint64 processed_versions = 1;
+
+    // Number of bytes of user key-value pairs scanned from the storage, i.e.
+    // total size of data returned from MVCC layer.
+    uint64 processed_versions_size = 8;
 
     // Approximate number of MVCC keys meet during scanning. It includes
     // deleted versions, but does not include RocksDB tombstone keys.
@@ -860,6 +956,15 @@ enum Assertion {
      NotExist = 2;
 }
 
+enum AssertionLevel {
+    // No assertion.
+    Off = 0;
+    // Assertion is enabled, but not enforced when it might affect performance.
+    Fast = 1;
+    // Assertion is enabled and enforced.
+    Strict = 2;
+}
+
 message Mutation {
     Op op = 1;
     bytes key = 2;
@@ -872,6 +977,9 @@ message MvccWrite {
     uint64 start_ts = 2;
     uint64 commit_ts = 3;
     bytes short_value = 4;
+    bool has_overlapped_rollback = 5;
+    bool has_gc_fence = 6;
+    uint64 gc_fence = 7;
 }
 
 message MvccValue {
@@ -884,6 +992,12 @@ message MvccLock {
     uint64 start_ts = 2;
     bytes primary = 3;
     bytes short_value = 4;
+    uint64 ttl = 5;
+    uint64 for_update_ts = 6;
+    uint64 txn_size = 7;
+    bool use_async_commit = 8;
+    repeated bytes secondaries = 9;
+    repeated uint64 rollback_ts = 10;
 }
 
 message MvccInfo {
@@ -1011,4 +1125,22 @@ message RawCoprocessorResponse {
     // or on a version mismatch between plugin_api and the coprocessor.
     string error = 2;
     bytes data = 3;
+}
+
+enum ChecksumAlgorithm {
+    Crc64_Xor = 0;
+}
+
+message RawChecksumRequest {
+    Context context = 1;
+    ChecksumAlgorithm algorithm = 2;
+    repeated KeyRange ranges = 3;
+}
+
+message RawChecksumResponse {
+    errorpb.Error region_error = 1;
+    string error = 2;
+    uint64 checksum = 3;
+    uint64 total_kvs = 4;
+    uint64 total_bytes = 5;
 }

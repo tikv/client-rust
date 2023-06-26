@@ -15,7 +15,7 @@ pub use self::{
         ResponseWithShard, RetryableMultiRegion,
     },
     plan_builder::{PlanBuilder, SingleKey},
-    shard::Shardable,
+    shard::{Batchable, HasNextBatch, NextBatch, Shardable},
 };
 
 pub mod plan;
@@ -181,19 +181,8 @@ mod test {
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |_: &dyn Any| {
                 Ok(Box::new(kvrpcpb::CommitResponse {
-                    region_error: None,
-                    error: Some(kvrpcpb::KeyError {
-                        locked: None,
-                        retryable: String::new(),
-                        abort: String::new(),
-                        conflict: None,
-                        already_exist: None,
-                        deadlock: None,
-                        commit_ts_expired: None,
-                        txn_not_found: None,
-                        commit_ts_too_large: None,
-                    }),
-                    commit_version: 0,
+                    error: Some(kvrpcpb::KeyError::default()).into(),
+                    ..Default::default()
                 }) as Box<dyn Any>)
             },
         )));

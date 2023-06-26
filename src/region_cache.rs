@@ -100,18 +100,18 @@ impl<C: RetryClientTrait> RegionCache<C> {
 
             // check concurrent requests
             let notify = region_cache_guard.on_my_way_id.get(&id).cloned();
+            let notified = notify.as_ref().map(|notify| notify.notified());
             drop(region_cache_guard);
 
-            if let Some(n) = notify {
-                n.notified().await;
+            if let Some(n) = notified {
+                n.await;
                 continue;
             } else {
                 return self.read_through_region_by_id(id).await;
             }
         }
         Err(Error::StringError(format!(
-            "Concurrent PD requests failed for {} times",
-            MAX_RETRY_WAITING_CONCURRENT_REQUEST
+            "Concurrent PD requests failed for {MAX_RETRY_WAITING_CONCURRENT_REQUEST} times"
         )))
     }
 
@@ -206,11 +206,11 @@ impl<C: RetryClientTrait> RegionCache<C> {
         leader: metapb::Peer,
     ) -> Result<()> {
         let mut cache = self.region_cache.write().await;
-        let region_entry = cache
-            .ver_id_to_region
-            .get_mut(&ver_id)
-            .ok_or(Error::EntryNotFoundInRegionCache)?;
-        region_entry.leader = Some(leader);
+        let region_entry = cache.ver_id_to_region.get_mut(&ver_id);
+        if let Some(region) = region_entry {
+            region.leader = Some(leader);
+        }
+
         Ok(())
     }
 

@@ -223,27 +223,12 @@ mod test {
     use tikv_client_proto::kvrpcpb;
     #[test]
     fn result_haslocks() {
-        let mut resp: Result<_, Error> = Ok(kvrpcpb::CommitResponse {
-            region_error: None,
-            error: None,
-            commit_version: 0,
-        });
+        let mut resp: Result<_, Error> = Ok(kvrpcpb::CommitResponse::default());
         assert!(resp.key_errors().is_none());
 
         let mut resp: Result<_, Error> = Ok(kvrpcpb::CommitResponse {
-            region_error: None,
-            error: Some(kvrpcpb::KeyError {
-                locked: None,
-                retryable: String::new(),
-                abort: String::new(),
-                conflict: None,
-                already_exist: None,
-                deadlock: None,
-                commit_ts_expired: None,
-                txn_not_found: None,
-                commit_ts_too_large: None,
-            }),
-            commit_version: 0,
+            error: Some(kvrpcpb::KeyError::default()).into(),
+            ..Default::default()
         });
         assert!(resp.key_errors().is_some());
 

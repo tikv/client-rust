@@ -9,20 +9,18 @@ use tikv_client_proto::pdpb::*;
 pub const MOCK_PD_PORT: u16 = 50021;
 /// This is mock pd server, used with mock tikv server.
 #[derive(Debug, Clone)]
-pub struct MockPd {
-    ts: i64,
-}
+pub struct MockPd {}
 
 impl MockPd {
     fn new() -> MockPd {
-        MockPd { ts: 0 }
+        MockPd {}
     }
 
     fn region() -> tikv_client_proto::metapb::Region {
         tikv_client_proto::metapb::Region {
             start_key: vec![],
             end_key: vec![],
-            peers: vec![Self::leader()],
+            peers: vec![Self::leader()].into(),
             ..Default::default()
         }
     }
@@ -34,7 +32,7 @@ impl MockPd {
     fn store() -> tikv_client_proto::metapb::Store {
         // TODO: start_timestamp?
         tikv_client_proto::metapb::Store {
-            address: format!("localhost:{}", MOCK_TIKV_PORT),
+            address: format!("localhost:{MOCK_TIKV_PORT}"),
             ..Default::default()
         }
     }
@@ -60,12 +58,12 @@ impl Pd for MockPd {
     ) {
         let member = Member {
             name: "mock tikv".to_owned(),
-            client_urls: vec![format!("localhost:{}", MOCK_PD_PORT)],
+            client_urls: vec![format!("localhost:{MOCK_PD_PORT}")].into(),
             ..Default::default()
         };
         let resp = GetMembersResponse {
-            members: vec![member.clone()],
-            leader: Some(member),
+            members: vec![member.clone()].into(),
+            leader: Some(member).into(),
             ..Default::default()
         };
         spawn_unary_success!(ctx, req, resp, sink);
@@ -122,7 +120,7 @@ impl Pd for MockPd {
         sink: ::grpcio::UnarySink<GetStoreResponse>,
     ) {
         let resp = GetStoreResponse {
-            store: Some(Self::store()),
+            store: Some(Self::store()).into(),
             ..Default::default()
         };
         spawn_unary_success!(ctx, req, resp, sink);
@@ -171,8 +169,8 @@ impl Pd for MockPd {
         sink: ::grpcio::UnarySink<GetRegionResponse>,
     ) {
         let resp = GetRegionResponse {
-            region: Some(Self::region()),
-            leader: Some(Self::leader()),
+            region: Some(Self::region()).into(),
+            leader: Some(Self::leader()).into(),
             ..Default::default()
         };
         spawn_unary_success!(ctx, req, resp, sink);
@@ -194,8 +192,8 @@ impl Pd for MockPd {
         sink: ::grpcio::UnarySink<GetRegionResponse>,
     ) {
         let resp = GetRegionResponse {
-            region: Some(Self::region()),
-            leader: Some(Self::leader()),
+            region: Some(Self::region()).into(),
+            leader: Some(Self::leader()).into(),
             ..Default::default()
         };
         spawn_unary_success!(ctx, req, resp, sink);

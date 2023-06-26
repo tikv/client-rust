@@ -70,7 +70,7 @@ pub trait PdClient: Send + Sync + 'static {
     fn group_keys_by_region<K, K2>(
         self: Arc<Self>,
         keys: impl Iterator<Item = K> + Send + Sync + 'static,
-    ) -> BoxStream<'static, Result<(RegionId, Vec<K2>)>>
+    ) -> BoxStream<'static, Result<(RegionWithLeader, Vec<K2>)>>
     where
         K: AsRef<Key> + Into<K2> + Send + Sync + 'static,
         K2: Send + Sync + 'static,
@@ -81,7 +81,6 @@ pub trait PdClient: Send + Sync + 'static {
             async move {
                 if let Some(key) = keys.next() {
                     let region = this.region_for_key(key.as_ref()).await?;
-                    let id = region.id();
                     let mut grouped = vec![key.into()];
                     while let Some(key) = keys.peek() {
                         if !region.contains(key.as_ref()) {
@@ -89,7 +88,7 @@ pub trait PdClient: Send + Sync + 'static {
                         }
                         grouped.push(keys.next().unwrap().into());
                     }
-                    Ok(Some((keys, (id, grouped))))
+                    Ok(Some((keys, (region, grouped))))
                 } else {
                     Ok(None)
                 }
@@ -133,7 +132,7 @@ pub trait PdClient: Send + Sync + 'static {
     fn group_ranges_by_region(
         self: Arc<Self>,
         mut ranges: Vec<kvrpcpb::KeyRange>,
-    ) -> BoxStream<'static, Result<(RegionId, Vec<kvrpcpb::KeyRange>)>> {
+    ) -> BoxStream<'static, Result<(RegionWithLeader, Vec<kvrpcpb::KeyRange>)>> {
         ranges.reverse();
         stream_fn(Some(ranges), move |ranges| {
             let this = self.clone();
@@ -147,20 +146,13 @@ pub trait PdClient: Send + Sync + 'static {
                     let start_key: Key = range.start_key.clone().into();
                     let end_key: Key = range.end_key.clone().into();
                     let region = this.region_for_key(&start_key).await?;
-                    let id = region.id();
                     let region_start = region.start_key();
                     let region_end = region.end_key();
                     let mut grouped = vec![];
                     if !region_end.is_empty() && (end_key > region_end || end_key.is_empty()) {
-                        grouped.push(kvrpcpb::KeyRange {
-                            start_key: start_key.into(),
-                            end_key: region_end.clone().into(),
-                        });
-                        ranges.push(kvrpcpb::KeyRange {
-                            start_key: region_end.into(),
-                            end_key: end_key.into(),
-                        });
-                        return Ok(Some((Some(ranges), (id, grouped))));
+                        grouped.push(make_key_range(start_key.into(), region_end.clone().into()));
+                        ranges.push(make_key_range(region_end.into(), end_key.into()));
+                        return Ok(Some((Some(ranges), (region, grouped))));
                     }
                     grouped.push(range);
 
@@ -172,19 +164,14 @@ pub trait PdClient: Send + Sync + 'static {
                             break;
                         }
                         if !region_end.is_empty() && (end_key > region_end || end_key.is_empty()) {
-                            grouped.push(kvrpcpb::KeyRange {
-                                start_key: start_key.into(),
-                                end_key: region_end.clone().into(),
-                            });
-                            ranges.push(kvrpcpb::KeyRange {
-                                start_key: region_end.into(),
-                                end_key: end_key.into(),
-                            });
-                            return Ok(Some((Some(ranges), (id, grouped))));
+                            grouped
+                                .push(make_key_range(start_key.into(), region_end.clone().into()));
+                            ranges.push(make_key_range(region_end.into(), end_key.into()));
+                            return Ok(Some((Some(ranges), (region, grouped))));
                         }
                         grouped.push(range);
                     }
-                    Ok(Some((Some(ranges), (id, grouped))))
+                    Ok(Some((Some(ranges), (region, grouped))))
                 } else {
                     Ok(None)
                 }
@@ -195,8 +182,8 @@ pub trait PdClient: Send + Sync + 'static {
 
     fn decode_region(mut region: RegionWithLeader, enable_codec: bool) -> Result<RegionWithLeader> {
         if enable_codec {
-            codec::decode_bytes_in_place(&mut region.region.mut_start_key(), false)?;
-            codec::decode_bytes_in_place(&mut region.region.mut_end_key(), false)?;
+            codec::decode_bytes_in_place(region.region.mut_start_key(), false)?;
+            codec::decode_bytes_in_place(region.region.mut_end_key(), false)?;
         }
         Ok(region)
     }
@@ -287,7 +274,7 @@ fn thread_name(prefix: &str) -> String {
     thread::current()
         .name()
         .and_then(|name| name.split("::").skip(1).last())
-        .map(|tag| format!("{}::{}", prefix, tag))
+        .map(|tag| format!("{prefix}::{tag}"))
         .unwrap_or_else(|| prefix.to_owned())
 }
 
@@ -348,6 +335,13 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             Err(e) => Err(e),
         }
     }
+}
+
+fn make_key_range(start_key: Vec<u8>, end_key: Vec<u8>) -> kvrpcpb::KeyRange {
+    let mut key_range = kvrpcpb::KeyRange::default();
+    key_range.set_start_key(start_key);
+    key_range.set_end_key(end_key);
+    key_range
 }
 
 #[cfg(test)]
@@ -432,18 +426,9 @@ pub mod test {
         let k3 = vec![11, 4];
         let k4 = vec![16, 4];
         let k_split = vec![10];
-        let range1 = kvrpcpb::KeyRange {
-            start_key: k1.clone(),
-            end_key: k2.clone(),
-        };
-        let range2 = kvrpcpb::KeyRange {
-            start_key: k1.clone(),
-            end_key: k3.clone(),
-        };
-        let range3 = kvrpcpb::KeyRange {
-            start_key: k2.clone(),
-            end_key: k4.clone(),
-        };
+        let range1 = make_key_range(k1.clone(), k2.clone());
+        let range2 = make_key_range(k1.clone(), k3.clone());
+        let range3 = make_key_range(k2.clone(), k4.clone());
         let ranges = vec![range1, range2, range3];
 
         let mut stream = executor::block_on_stream(client.group_ranges_by_region(ranges));
@@ -452,44 +437,20 @@ pub mod test {
         let ranges3 = stream.next().unwrap().unwrap();
         let ranges4 = stream.next().unwrap().unwrap();
 
-        assert_eq!(ranges1.0, 1);
+        assert_eq!(ranges1.0.id(), 1);
         assert_eq!(
             ranges1.1,
             vec![
-                kvrpcpb::KeyRange {
-                    start_key: k1.clone(),
-                    end_key: k2.clone()
-                },
-                kvrpcpb::KeyRange {
-                    start_key: k1,
-                    end_key: k_split.clone()
-                }
+                make_key_range(k1.clone(), k2.clone()),
+                make_key_range(k1, k_split.clone()),
             ]
         );
-        assert_eq!(ranges2.0, 2);
-        assert_eq!(
-            ranges2.1,
-            vec![kvrpcpb::KeyRange {
-                start_key: k_split.clone(),
-                end_key: k3
-            }]
-        );
-        assert_eq!(ranges3.0, 1);
-        assert_eq!(
-            ranges3.1,
-            vec![kvrpcpb::KeyRange {
-                start_key: k2,
-                end_key: k_split.clone()
-            }]
-        );
-        assert_eq!(ranges4.0, 2);
-        assert_eq!(
-            ranges4.1,
-            vec![kvrpcpb::KeyRange {
-                start_key: k_split,
-                end_key: k4
-            }]
-        );
+        assert_eq!(ranges2.0.id(), 2);
+        assert_eq!(ranges2.1, vec![make_key_range(k_split.clone(), k3)]);
+        assert_eq!(ranges3.0.id(), 1);
+        assert_eq!(ranges3.1, vec![make_key_range(k2, k_split.clone())]);
+        assert_eq!(ranges4.0.id(), 2);
+        assert_eq!(ranges4.1, vec![make_key_range(k_split, k4)]);
         assert!(stream.next().is_none());
     }
 }

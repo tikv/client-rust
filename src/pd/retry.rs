@@ -193,11 +193,11 @@ impl fmt::Debug for RetryClient {
 }
 
 fn region_from_response(
-    resp: pdpb::GetRegionResponse,
+    mut resp: pdpb::GetRegionResponse,
     err: impl FnOnce() -> Error,
 ) -> Result<RegionWithLeader> {
-    let region = resp.region.ok_or_else(err)?;
-    Ok(RegionWithLeader::new(region, resp.leader))
+    let region = resp.region.take().ok_or_else(err)?;
+    Ok(RegionWithLeader::new(region, resp.leader.take()))
 }
 
 // A node-like thing that can be connected to.
