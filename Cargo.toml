@@ -1,6 +1,6 @@
 [package]
 name = "tikv-client"
-version = "0.1.0"
+version = "0.2.0"
 keywords = ["TiKV", "KV", "distributed-systems"]
 license = "Apache-2.0"
 authors = ["The TiKV Project Authors"]
@@ -55,10 +55,10 @@ thiserror = "1"
 tokio = { version = "1", features = [ "sync", "rt-multi-thread", "macros" ] }
 async-recursion = "0.3"
 
-tikv-client-common = { version = "0.1.0", path = "tikv-client-common" }
-tikv-client-pd = { version = "0.1.0", path = "tikv-client-pd" }
-tikv-client-proto = { version = "0.1.0", path = "tikv-client-proto" }
-tikv-client-store = { version = "0.1.0", path = "tikv-client-store" }
+tikv-client-common = { version = "0.2.0", path = "tikv-client-common" }
+tikv-client-pd = { version = "0.2.0", path = "tikv-client-pd" }
+tikv-client-proto = { version = "0.2.0", path = "tikv-client-proto" }
+tikv-client-store = { version = "0.2.0", path = "tikv-client-store" }
 
 
 [dev-dependencies]
