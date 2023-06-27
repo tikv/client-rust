@@ -510,7 +510,7 @@ mod tests {
 
         macro_rules! assert_entry_none {
             ($key: ident) => {
-                assert!(matches!(buffer.entry_map.get(&$key), None,))
+                assert!(buffer.entry_map.get(&$key).is_none())
             };
         }
 
