@@ -19,7 +19,6 @@ protobuf-codec = [
     "tikv-client-common/protobuf-codec",
     "tikv-client-pd/protobuf-codec",
     "tikv-client-store/protobuf-codec",
-    "mock-tikv/protobuf-codec",
 ]
 prost-codec = [
     "grpcio/prost-codec",
@@ -27,7 +26,6 @@ prost-codec = [
     "tikv-client-common/prost-codec",
     "tikv-client-pd/prost-codec",
     "tikv-client-store/prost-codec",
-    "mock-tikv/prost-codec",
 ]
 
 [lib]
@@ -64,7 +62,7 @@ tikv-client-store = { version = "0.2.0", path = "tikv-client-store" }
 [dev-dependencies]
 clap = "2"
 fail = { version = "0.4", features = [ "failpoints" ] }
-mock-tikv = {path = "mock-tikv"}
+mock-tikv = { path = "mock-tikv", features = ["protobuf-codec", "prost-codec"]}
 proptest = "1"
 proptest-derive = "0.3"
 serial_test = "0.5.0"
