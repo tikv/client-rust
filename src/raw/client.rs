@@ -10,6 +10,7 @@ use tikv_client_proto::metapb;
 use crate::{
     backoff::DEFAULT_REGION_BACKOFF,
     config::Config,
+    kv::KvPairWithTTL,
     pd::{PdClient, PdRpcClient},
     raw::lowering::*,
     request::{Collect, CollectSingle, Plan},
@@ -245,6 +246,17 @@ impl<PdC: PdClient> Client<PdC> {
             .map(|r| r.into_iter().map(Into::into).collect())
     }
 
+    pub async fn get_key_ttl_secs(&self, key: impl Into<Key>) -> Result<Option<u64>> {
+        debug!(self.logger, "invoking raw get_key_ttl_secs request");
+        let request = new_raw_get_key_ttl_request(key.into(), self.cf.clone());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectSingle)
+            .post_process_default()
+            .plan();
+        plan.execute().await
+    }
+
     /// Create a new 'put' request.
     ///
     /// Once resolved this request will result in the setting of the value associated with the given key.
@@ -262,18 +274,25 @@ impl<PdC: PdClient> Client<PdC> {
     /// # });
     /// ```
     pub async fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        self.put_opt(key, value, DEFAULT_REGION_BACKOFF).await
+        self.put_opt(key, value, DEFAULT_REGION_BACKOFF, 0).await
     }
 
-    /// Same as [`put`](Client::put) but with custom [`backoff`](crate::Backoff) strategy.
+    /// Same as [`put`](Client::put) but with custom [`backoff`](crate::Backoff) strategy and ttl.
     pub async fn put_opt(
         &self,
         key: impl Into<Key>,
         value: impl Into<Value>,
         backoff: Backoff,
+        ttl_secs: u64,
     ) -> Result<()> {
         debug!(self.logger, "invoking raw put request");
-        let request = new_raw_put_request(key.into(), value.into(), self.cf.clone(), self.atomic);
+        let request = new_raw_put_request(
+            key.into(),
+            value.into(),
+            self.cf.clone(),
+            ttl_secs,
+            self.atomic,
+        );
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
             .retry_multi_region(backoff)
             .merge(CollectSingle)
@@ -307,10 +326,10 @@ impl<PdC: PdClient> Client<PdC> {
         self.batch_put_opt(pairs, DEFAULT_REGION_BACKOFF).await
     }
 
-    /// Same as [`batch_put`](Client::batch_put) but with custom [`backoff`](crate::Backoff) strategy.
+    /// Same as [`batch_put`](Client::batch_put) but with custom [`backoff`](crate::Backoff) strategy and the optionally add a TTL to the key value pairs.
     pub async fn batch_put_opt(
         &self,
-        pairs: impl IntoIterator<Item = impl Into<KvPair>>,
+        pairs: impl IntoIterator<Item = impl Into<KvPairWithTTL>>,
         backoff: Backoff,
     ) -> Result<()> {
         debug!(self.logger, "invoking raw batch_put request");
