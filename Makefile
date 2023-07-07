@@ -2,20 +2,12 @@ export RUSTFLAGS=-Dwarnings
 
 .PHONY: default check unit-test integration-tests test doc docker-pd docker-kv docker all
 
-ENABLE_FEATURES ?=
 PD_ADDRS ?= "127.0.0.1:2379"
 MULTI_REGION ?= 1
 
-# Use Rust-protobuf instead of Prost to encode and decode protocol buffers.
-ifeq ($(RUST_PROTOBUF),1)
-ENABLE_FEATURES += protobuf-codec
-else
-ENABLE_FEATURES += prost-codec
-endif
+ALL_FEATURES := integration-tests
 
-ALL_FEATURES := ${ENABLE_FEATURES} integration-tests
-
-INTEGRATION_TEST_ARGS := --no-default-features --features "${ENABLE_FEATURES} integration-tests"
+INTEGRATION_TEST_ARGS := --no-default-features --features "integration-tests"
 
 default: check
 
@@ -25,7 +17,7 @@ check:
 	cargo clippy --all-targets --no-default-features --features "${ALL_FEATURES}" -- -D clippy::all
 
 unit-test:
-	cargo test --all --no-default-features --features "${ENABLE_FEATURES}"
+	cargo test --all --no-default-features
 
 integration-test:
 	cargo test txn_ --all ${INTEGRATION_TEST_ARGS} -- --nocapture

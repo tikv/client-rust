@@ -12,6 +12,8 @@ const VALUE: &str = "Rust";
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::init();
+
     // You can try running this example by passing your pd endpoints
     // (and SSL options if necessary) through command line arguments.
     let args = parse_args("raw");
@@ -27,7 +29,6 @@ async fn main() -> Result<()> {
     // When we first create a client we receive a `Connect` structure which must be resolved before
     // the client is actually connected and usable.
     let client = Client::new_with_config(args.pd, config, None).await?;
-    let client = client.clone();
 
     // Requests are created from the connected client. These calls return structures which
     // implement `Future`. This means the `Future` must be resolved before the action ever takes

@@ -348,8 +348,7 @@ async fn count_locks(client: &TransactionClient) -> Result<usize> {
     let ts = client.current_timestamp().await.unwrap();
     let locks = client.scan_locks(&ts, vec![].., 1024).await?;
     // De-duplicated as `scan_locks` will return duplicated locks due to retry on region changes.
-    let locks_set: HashSet<Vec<u8>> =
-        HashSet::from_iter(locks.into_iter().map(|mut l| l.take_key()));
+    let locks_set: HashSet<Vec<u8>> = HashSet::from_iter(locks.into_iter().map(|l| l.key));
     Ok(locks_set.len())
 }
 

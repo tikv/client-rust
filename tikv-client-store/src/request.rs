@@ -33,7 +33,7 @@ macro_rules! impl_request {
                     .clone()
                     .$fun(req)
                     .await
-                    .map(|r| Box::new(r) as Box<dyn Any>)
+                    .map(|r| Box::new(r.into_inner()) as Box<dyn Any>)
                     .map_err(Error::GrpcAPI)
             }
 

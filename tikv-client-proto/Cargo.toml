@@ -17,3 +17,6 @@ futures = "0.3"
 lazy_static = { version = "1" }
 tonic = "0.9"
 prost = "0.11"
+
+[lib]
+doctest = false

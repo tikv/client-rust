@@ -72,27 +72,25 @@ impl SecurityManager {
     where
         Factory: FnOnce(Channel) -> Client,
     {
+        let addr = "http://".to_string() + &SCHEME_REG.replace(addr, "");
+
         info!("connect to rpc server at endpoint: {:?}", addr);
 
-        let addr = SCHEME_REG.replace(addr, "").into_owned();
+        let mut builder = Channel::from_shared(addr)?
+            .tcp_keepalive(Some(Duration::from_secs(10)))
+            .keep_alive_timeout(Duration::from_secs(3));
 
-        let tls = if self.ca.is_empty() {
-            ClientTlsConfig::default()
-        } else {
-            ClientTlsConfig::new()
+        if !self.ca.is_empty() {
+            let tls = ClientTlsConfig::new()
                 .ca_certificate(Certificate::from_pem(&self.ca))
                 .identity(Identity::from_pem(
                     &self.cert,
                     load_pem_file("private key", &self.key)?,
-                ))
+                ));
+            builder = builder.tls_config(tls)?;
         };
 
-        let ch = Channel::from_shared(addr)?
-            .tcp_keepalive(Some(Duration::from_secs(10)))
-            .keep_alive_timeout(Duration::from_secs(3))
-            .tls_config(tls)?
-            .connect()
-            .await?;
+        let ch = builder.connect().await?;
 
         Ok(factory(ch))
     }
