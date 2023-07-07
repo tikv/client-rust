@@ -229,7 +229,7 @@ async fn txn_cleanup_range_async_commit_locks() -> Result<()> {
     assert_eq!(count_locks(&client).await?, keys.len());
 
     info!(logger, "total keys' count {}", keys.len());
-    let mut sorted_keys: Vec<Vec<u8>> = Vec::from_iter(keys.clone().into_iter());
+    let mut sorted_keys: Vec<Vec<u8>> = Vec::from_iter(keys.clone());
     sorted_keys.sort();
     let start_key = sorted_keys[1].clone();
     let end_key = sorted_keys[sorted_keys.len() - 2].clone();

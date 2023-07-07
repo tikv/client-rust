@@ -101,7 +101,7 @@ impl Buffer {
             self.update_cache(key, value);
         }
 
-        let results = cached_results.chain(fetched_results.into_iter());
+        let results = cached_results.chain(fetched_results);
         Ok(results)
     }
 

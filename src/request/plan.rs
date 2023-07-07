@@ -471,9 +471,9 @@ impl Merge<CleanupLocksResult> for Collect {
     fn merge(&self, input: Vec<Result<CleanupLocksResult>>) -> Result<Self::Out> {
         input
             .into_iter()
-            .fold(Ok(CleanupLocksResult::default()), |acc, x| {
+            .try_fold(CleanupLocksResult::default(), |acc, x| {
                 Ok(CleanupLocksResult {
-                    resolved_locks: acc?.resolved_locks + x?.resolved_locks,
+                    resolved_locks: acc.resolved_locks + x?.resolved_locks,
                     ..Default::default()
                 })
             })

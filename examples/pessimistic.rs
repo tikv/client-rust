@@ -34,7 +34,7 @@ async fn main() {
         .begin_optimistic()
         .await
         .expect("Could not begin a transaction");
-    for (key, value) in vec![(key1.clone(), value1), (key2, value2)] {
+    for (key, value) in [(key1.clone(), value1), (key2, value2)] {
         txn0.put(key, value).await.expect("Could not set key value");
     }
     txn0.commit().await.expect("Could not commit");
