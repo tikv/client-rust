@@ -1,8 +1,7 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{timestamp::TimestampOracle, Error, Result, SecurityManager};
+use crate::{timestamp::TimestampOracle, Result, SecurityManager};
 use async_trait::async_trait;
-use grpcio::{CallOption, Environment};
 use std::{
     collections::HashSet,
     sync::Arc,
@@ -10,11 +9,12 @@ use std::{
 };
 use tikv_client_common::internal_err;
 use tikv_client_proto::pdpb::{self, Timestamp};
+use tonic::{transport::Channel, IntoRequest, Request};
 
 /// A PD cluster.
 pub struct Cluster {
     id: u64,
-    client: pdpb::PdClient,
+    client: pdpb::pd_client::PdClient<Channel>,
     members: pdpb::GetMembersResponse,
     tso: TimestampOracle,
 }
@@ -23,8 +23,8 @@ macro_rules! pd_request {
     ($cluster_id:expr, $type:ty) => {{
         let mut request = <$type>::default();
         let mut header = ::tikv_client_proto::pdpb::RequestHeader::default();
-        header.set_cluster_id($cluster_id);
-        request.set_header(header);
+        header.cluster_id = $cluster_id;
+        request.header = Some(header);
         request
     }};
 }
@@ -32,34 +32,41 @@ macro_rules! pd_request {
 // These methods make a single attempt to make a request.
 impl Cluster {
     pub async fn get_region(
-        &self,
+        &mut self,
         key: Vec<u8>,
         timeout: Duration,
     ) -> Result<pdpb::GetRegionResponse> {
         let mut req = pd_request!(self.id, pdpb::GetRegionRequest);
-        req.set_region_key(key.clone());
-        req.send(&self.client, timeout).await
+        req.region_key = key.clone();
+        req.send(&mut self.client, timeout).await
     }
 
     pub async fn get_region_by_id(
-        &self,
+        &mut self,
         id: u64,
         timeout: Duration,
     ) -> Result<pdpb::GetRegionResponse> {
         let mut req = pd_request!(self.id, pdpb::GetRegionByIdRequest);
-        req.set_region_id(id);
-        req.send(&self.client, timeout).await
+        req.region_id = id;
+        req.send(&mut self.client, timeout).await
     }
 
-    pub async fn get_store(&self, id: u64, timeout: Duration) -> Result<pdpb::GetStoreResponse> {
+    pub async fn get_store(
+        &mut self,
+        id: u64,
+        timeout: Duration,
+    ) -> Result<pdpb::GetStoreResponse> {
         let mut req = pd_request!(self.id, pdpb::GetStoreRequest);
-        req.set_store_id(id);
-        req.send(&self.client, timeout).await
+        req.store_id = id;
+        req.send(&mut self.client, timeout).await
     }
 
-    pub async fn get_all_stores(&self, timeout: Duration) -> Result<pdpb::GetAllStoresResponse> {
+    pub async fn get_all_stores(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<pdpb::GetAllStoresResponse> {
         let req = pd_request!(self.id, pdpb::GetAllStoresRequest);
-        req.send(&self.client, timeout).await
+        req.send(&mut self.client, timeout).await
     }
 
     pub async fn get_timestamp(&self) -> Result<Timestamp> {
@@ -67,25 +74,24 @@ impl Cluster {
     }
 
     pub async fn update_safepoint(
-        &self,
+        &mut self,
         safepoint: u64,
         timeout: Duration,
     ) -> Result<pdpb::UpdateGcSafePointResponse> {
         let mut req = pd_request!(self.id, pdpb::UpdateGcSafePointRequest);
-        req.set_safe_point(safepoint);
-        req.send(&self.client, timeout).await
+        req.safe_point = safepoint;
+        req.send(&mut self.client, timeout).await
     }
 }
 
 /// An object for connecting and reconnecting to a PD cluster.
 pub struct Connection {
-    env: Arc<Environment>,
     security_mgr: Arc<SecurityManager>,
 }
 
 impl Connection {
-    pub fn new(env: Arc<Environment>, security_mgr: Arc<SecurityManager>) -> Connection {
-        Connection { env, security_mgr }
+    pub fn new(security_mgr: Arc<SecurityManager>) -> Connection {
+        Connection { security_mgr }
     }
 
     pub async fn connect_cluster(
@@ -95,7 +101,7 @@ impl Connection {
     ) -> Result<Cluster> {
         let members = self.validate_endpoints(endpoints, timeout).await?;
         let (client, members) = self.try_connect_leader(&members, timeout).await?;
-        let id = members.get_header().get_cluster_id();
+        let id = members.header.as_ref().unwrap().cluster_id;
         let tso = TimestampOracle::new(id, &client)?;
         let cluster = Cluster {
             id,
@@ -147,7 +153,7 @@ impl Connection {
             };
 
             // Check cluster ID.
-            let cid = resp.get_header().get_cluster_id();
+            let cid = resp.header.as_ref().unwrap().cluster_id;
             if let Some(sample) = cluster_id {
                 if sample != cid {
                     return Err(internal_err!(
@@ -178,16 +184,16 @@ impl Connection {
     async fn connect(
         &self,
         addr: &str,
-        timeout: Duration,
-    ) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
-        let client = self
+        _timeout: Duration,
+    ) -> Result<(pdpb::pd_client::PdClient<Channel>, pdpb::GetMembersResponse)> {
+        let mut client = self
             .security_mgr
-            .connect(self.env.clone(), addr, pdpb::PdClient::new)?;
-        let option = CallOption::default().timeout(timeout);
-        let resp = client
-            .get_members_async_opt(&pdpb::GetMembersRequest::default(), option)
-            .map_err(Error::from)?
+            .connect(addr, pdpb::pd_client::PdClient::<Channel>::new)
             .await?;
+        let resp: pdpb::GetMembersResponse = client
+            .get_members(pdpb::GetMembersRequest::default())
+            .await?
+            .into_inner();
         Ok((client, resp))
     }
 
@@ -196,7 +202,7 @@ impl Connection {
         addr: &str,
         cluster_id: u64,
         timeout: Duration,
-    ) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
+    ) -> Result<(pdpb::pd_client::PdClient<Channel>, pdpb::GetMembersResponse)> {
         let (client, r) = self.connect(addr, timeout).await?;
         Connection::validate_cluster_id(addr, &r, cluster_id)?;
         Ok((client, r))
@@ -207,7 +213,7 @@ impl Connection {
         members: &pdpb::GetMembersResponse,
         cluster_id: u64,
     ) -> Result<()> {
-        let new_cluster_id = members.get_header().get_cluster_id();
+        let new_cluster_id = members.header.as_ref().unwrap().cluster_id;
         if new_cluster_id != cluster_id {
             Err(internal_err!(
                 "{} no longer belongs to cluster {}, it is in {}",
@@ -224,10 +230,10 @@ impl Connection {
         &self,
         previous: &pdpb::GetMembersResponse,
         timeout: Duration,
-    ) -> Result<(pdpb::PdClient, pdpb::GetMembersResponse)> {
-        let previous_leader = previous.get_leader();
-        let members = previous.get_members();
-        let cluster_id = previous.get_header().get_cluster_id();
+    ) -> Result<(pdpb::pd_client::PdClient<Channel>, pdpb::GetMembersResponse)> {
+        let previous_leader = previous.leader.as_ref().unwrap();
+        let members = &previous.members;
+        let cluster_id = previous.header.as_ref().unwrap().cluster_id;
 
         let mut resp = None;
         // Try to connect to other members, then the previous leader.
@@ -236,7 +242,7 @@ impl Connection {
             .filter(|m| *m != previous_leader)
             .chain(Some(previous_leader))
         {
-            for ep in m.get_client_urls() {
+            for ep in &m.client_urls {
                 match self.try_connect(ep.as_str(), cluster_id, timeout).await {
                     Ok((_, r)) => {
                         resp = Some(r);
@@ -252,8 +258,8 @@ impl Connection {
 
         // Then try to connect the PD cluster leader.
         if let Some(resp) = resp {
-            let leader = resp.get_leader();
-            for ep in leader.get_client_urls() {
+            let leader = resp.leader.as_ref().unwrap();
+            for ep in &leader.client_urls {
                 let r = self.try_connect(ep.as_str(), cluster_id, timeout).await;
                 if r.is_ok() {
                     return r;
@@ -265,20 +271,28 @@ impl Connection {
     }
 }
 
-type GrpcResult<T> = std::result::Result<T, grpcio::Error>;
+type GrpcResult<T> = std::result::Result<T, tonic::Status>;
 
 #[async_trait]
-trait PdMessage {
+trait PdMessage: Sized {
     type Response: PdResponse;
 
-    async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response>;
+    async fn rpc(
+        req: Request<Self>,
+        client: &mut pdpb::pd_client::PdClient<Channel>,
+    ) -> GrpcResult<Self::Response>;
 
-    async fn send(&self, client: &pdpb::PdClient, timeout: Duration) -> Result<Self::Response> {
-        let option = CallOption::default().timeout(timeout);
-        let response = self.rpc(client, option).await?;
+    async fn send(
+        self,
+        client: &mut pdpb::pd_client::PdClient<Channel>,
+        timeout: Duration,
+    ) -> Result<Self::Response> {
+        let mut req = self.into_request();
+        req.set_timeout(timeout);
+        let response = Self::rpc(req, client).await?;
 
-        if response.header().has_error() {
-            Err(internal_err!(response.header().get_error().get_message()))
+        if let Some(err) = &response.header().error {
+            Err(internal_err!(err.message))
         } else {
             Ok(response)
         }
@@ -289,8 +303,11 @@ trait PdMessage {
 impl PdMessage for pdpb::GetRegionRequest {
     type Response = pdpb::GetRegionResponse;
 
-    async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
-        client.get_region_async_opt(self, opt)?.await
+    async fn rpc(
+        req: Request<Self>,
+        client: &mut pdpb::pd_client::PdClient<Channel>,
+    ) -> GrpcResult<Self::Response> {
+        Ok(client.get_region(req).await?.into_inner())
     }
 }
 
@@ -298,8 +315,11 @@ impl PdMessage for pdpb::GetRegionRequest {
 impl PdMessage for pdpb::GetRegionByIdRequest {
     type Response = pdpb::GetRegionResponse;
 
-    async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
-        client.get_region_by_id_async_opt(self, opt)?.await
+    async fn rpc(
+        req: Request<Self>,
+        client: &mut pdpb::pd_client::PdClient<Channel>,
+    ) -> GrpcResult<Self::Response> {
+        Ok(client.get_region_by_id(req).await?.into_inner())
     }
 }
 
@@ -307,8 +327,11 @@ impl PdMessage for pdpb::GetRegionByIdRequest {
 impl PdMessage for pdpb::GetStoreRequest {
     type Response = pdpb::GetStoreResponse;
 
-    async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
-        client.get_store_async_opt(self, opt)?.await
+    async fn rpc(
+        req: Request<Self>,
+        client: &mut pdpb::pd_client::PdClient<Channel>,
+    ) -> GrpcResult<Self::Response> {
+        Ok(client.get_store(req).await?.into_inner())
     }
 }
 
@@ -316,8 +339,11 @@ impl PdMessage for pdpb::GetStoreRequest {
 impl PdMessage for pdpb::GetAllStoresRequest {
     type Response = pdpb::GetAllStoresResponse;
 
-    async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
-        client.get_all_stores_async_opt(self, opt)?.await
+    async fn rpc(
+        req: Request<Self>,
+        client: &mut pdpb::pd_client::PdClient<Channel>,
+    ) -> GrpcResult<Self::Response> {
+        Ok(client.get_all_stores(req).await?.into_inner())
     }
 }
 
@@ -325,8 +351,11 @@ impl PdMessage for pdpb::GetAllStoresRequest {
 impl PdMessage for pdpb::UpdateGcSafePointRequest {
     type Response = pdpb::UpdateGcSafePointResponse;
 
-    async fn rpc(&self, client: &pdpb::PdClient, opt: CallOption) -> GrpcResult<Self::Response> {
-        client.update_gc_safe_point_async_opt(self, opt)?.await
+    async fn rpc(
+        req: Request<Self>,
+        client: &mut pdpb::pd_client::PdClient<Channel>,
+    ) -> GrpcResult<Self::Response> {
+        Ok(client.update_gc_safe_point(req).await?.into_inner())
     }
 }
 
@@ -336,24 +365,24 @@ trait PdResponse {
 
 impl PdResponse for pdpb::GetStoreResponse {
     fn header(&self) -> &pdpb::ResponseHeader {
-        self.get_header()
+        self.header.as_ref().unwrap()
     }
 }
 
 impl PdResponse for pdpb::GetRegionResponse {
     fn header(&self) -> &pdpb::ResponseHeader {
-        self.get_header()
+        self.header.as_ref().unwrap()
     }
 }
 
 impl PdResponse for pdpb::GetAllStoresResponse {
     fn header(&self) -> &pdpb::ResponseHeader {
-        self.get_header()
+        self.header.as_ref().unwrap()
     }
 }
 
 impl PdResponse for pdpb::UpdateGcSafePointResponse {
     fn header(&self) -> &pdpb::ResponseHeader {
-        self.get_header()
+        self.header.as_ref().unwrap()
     }
 }

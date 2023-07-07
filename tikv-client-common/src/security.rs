@@ -1,15 +1,15 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::Result;
-use grpcio::{Channel, ChannelBuilder, ChannelCredentialsBuilder, Environment};
+// use grpcio::{Channel, ChannelBuilder, ChannelCredentialsBuilder, Environment};
 use regex::Regex;
 use std::{
     fs::File,
     io::Read,
     path::{Path, PathBuf},
-    sync::Arc,
     time::Duration,
 };
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 
 lazy_static::lazy_static! {
     static ref SCHEME_REG: Regex = Regex::new(r"^\s*(https?://)").unwrap();
@@ -63,9 +63,9 @@ impl SecurityManager {
     }
 
     /// Connect to gRPC server using TLS connection. If TLS is not configured, use normal connection.
-    pub fn connect<Factory, Client>(
+    pub async fn connect<Factory, Client>(
         &self,
-        env: Arc<Environment>,
+        // env: Arc<Environment>,
         addr: &str,
         factory: Factory,
     ) -> Result<Client>
@@ -74,24 +74,27 @@ impl SecurityManager {
     {
         info!("connect to rpc server at endpoint: {:?}", addr);
 
-        let addr = SCHEME_REG.replace(addr, "");
+        let addr = SCHEME_REG.replace(addr, "").into_owned();
 
-        let cb = ChannelBuilder::new(env)
-            .keepalive_time(Duration::from_secs(10))
-            .keepalive_timeout(Duration::from_secs(3))
-            .use_local_subchannel_pool(true);
-
-        let channel = if self.ca.is_empty() {
-            cb.connect(&addr)
+        let tls = if self.ca.is_empty() {
+            ClientTlsConfig::default()
         } else {
-            let cred = ChannelCredentialsBuilder::new()
-                .root_cert(self.ca.clone())
-                .cert(self.cert.clone(), load_pem_file("private key", &self.key)?)
-                .build();
-            cb.secure_connect(&addr, cred)
+            ClientTlsConfig::new()
+                .ca_certificate(Certificate::from_pem(&self.ca))
+                .identity(Identity::from_pem(
+                    &self.cert,
+                    load_pem_file("private key", &self.key)?,
+                ))
         };
 
-        Ok(factory(channel))
+        let ch = Channel::from_shared(addr)?
+            .tcp_keepalive(Some(Duration::from_secs(10)))
+            .keep_alive_timeout(Duration::from_secs(3))
+            .tls_config(tls)?
+            .connect()
+            .await?;
+
+        Ok(factory(ch))
     }
 }
 

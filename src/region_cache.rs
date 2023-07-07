@@ -244,7 +244,7 @@ mod test {
         },
     };
     use tikv_client_common::Error;
-    use tikv_client_proto::metapb;
+    use tikv_client_proto::metapb::{self, RegionEpoch};
     use tokio::sync::Mutex;
 
     #[derive(Default)]
@@ -316,6 +316,10 @@ mod test {
                     id: 1,
                     start_key: vec![],
                     end_key: vec![100],
+                    region_epoch: Some(RegionEpoch {
+                        conf_ver: 0,
+                        version: 0,
+                    }),
                     ..Default::default()
                 },
                 leader: Some(metapb::Peer {
@@ -331,6 +335,10 @@ mod test {
                     id: 2,
                     start_key: vec![101],
                     end_key: vec![],
+                    region_epoch: Some(RegionEpoch {
+                        conf_ver: 0,
+                        version: 0,
+                    }),
                     ..Default::default()
                 },
                 leader: Some(metapb::Peer {
@@ -484,9 +492,13 @@ mod test {
 
     fn region(id: RegionId, start_key: Vec<u8>, end_key: Vec<u8>) -> RegionWithLeader {
         let mut region = RegionWithLeader::default();
-        region.region.set_id(id);
-        region.region.set_start_key(start_key);
-        region.region.set_end_key(end_key);
+        region.region.id = id;
+        region.region.start_key = start_key;
+        region.region.end_key = end_key;
+        region.region.region_epoch = Some(RegionEpoch {
+            conf_ver: 0,
+            version: 0,
+        });
         // We don't care about other fields here
 
         region

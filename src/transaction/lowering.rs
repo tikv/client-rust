@@ -146,9 +146,9 @@ pub fn new_pessimistic_lock_request(
         locks
             .map(|pl| {
                 let mut mutation = kvrpcpb::Mutation::default();
-                mutation.set_op(kvrpcpb::Op::PessimisticLock);
-                mutation.set_assertion(pl.assertion());
-                mutation.set_key(pl.key().into());
+                mutation.op = kvrpcpb::Op::PessimisticLock.into();
+                mutation.assertion = pl.assertion().into();
+                mutation.key = pl.key().into();
                 mutation
             })
             .collect(),

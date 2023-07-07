@@ -7,15 +7,15 @@ authors = ["The TiKV Project Authors"]
 repository = "https://github.com/tikv/client-rust"
 description = "Low level TiKV node components of the TiKV Rust client"
 
-[features]
-protobuf-codec = ["grpcio/protobuf-codec"]
-prost-codec = ["grpcio/prost-codec"]
-
 [dependencies]
 async-trait = "0.1"
 derive-new = "0.5"
-futures = { version = "0.3", features = ["compat", "async-await", "thread-pool"] }
-grpcio = { version = "0.10", default-features = false }
+futures = { version = "0.3", features = [
+  "compat",
+  "async-await",
+  "thread-pool",
+] }
 log = "0.4"
 tikv-client-common = { version = "0.2.0", path = "../tikv-client-common" }
 tikv-client-proto = { version = "0.2.0", path = "../tikv-client-proto" }
+tonic = "0.9"

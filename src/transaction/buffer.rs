@@ -343,18 +343,18 @@ impl BufferEntry {
         match self {
             BufferEntry::Cached(_) => return None,
             BufferEntry::Put(v) => {
-                pb.set_op(kvrpcpb::Op::Put);
-                pb.set_value(v.clone());
+                pb.op = kvrpcpb::Op::Put.into();
+                pb.value = v.clone();
             }
-            BufferEntry::Del => pb.set_op(kvrpcpb::Op::Del),
-            BufferEntry::Locked(_) => pb.set_op(kvrpcpb::Op::Lock),
+            BufferEntry::Del => pb.op = kvrpcpb::Op::Del.into(),
+            BufferEntry::Locked(_) => pb.op = kvrpcpb::Op::Lock.into(),
             BufferEntry::Insert(v) => {
-                pb.set_op(kvrpcpb::Op::Insert);
-                pb.set_value(v.clone());
+                pb.op = kvrpcpb::Op::Insert.into();
+                pb.value = v.clone();
             }
-            BufferEntry::CheckNotExist => pb.set_op(kvrpcpb::Op::CheckNotExists),
+            BufferEntry::CheckNotExist => pb.op = kvrpcpb::Op::CheckNotExists.into(),
         };
-        pb.set_key(key.clone().into());
+        pb.key = key.clone().into();
         Some(pb)
     }
 

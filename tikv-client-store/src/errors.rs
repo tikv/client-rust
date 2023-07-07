@@ -28,11 +28,7 @@ macro_rules! has_region_error {
     ($type:ty) => {
         impl HasRegionError for $type {
             fn region_error(&mut self) -> Option<tikv_client_proto::errorpb::Error> {
-                if self.has_region_error() {
-                    Some(self.take_region_error().into())
-                } else {
-                    None
-                }
+                self.region_error.take().map(|e| e.into())
             }
         }
     };
@@ -71,11 +67,7 @@ macro_rules! has_key_error {
     ($type:ty) => {
         impl HasKeyErrors for $type {
             fn key_errors(&mut self) -> Option<Vec<Error>> {
-                if self.has_error() {
-                    Some(vec![self.take_error().into()])
-                } else {
-                    None
-                }
+                self.error.take().map(|e| vec![e.into()])
             }
         }
     };
@@ -96,11 +88,11 @@ macro_rules! has_str_error {
     ($type:ty) => {
         impl HasKeyErrors for $type {
             fn key_errors(&mut self) -> Option<Vec<Error>> {
-                if self.get_error().is_empty() {
+                if self.error.is_empty() {
                     None
                 } else {
                     Some(vec![Error::KvError {
-                        message: self.take_error(),
+                        message: std::mem::take(&mut self.error),
                     }])
                 }
             }
@@ -151,19 +143,19 @@ impl HasKeyErrors for kvrpcpb::RawBatchScanResponse {
 
 impl HasKeyErrors for kvrpcpb::PrewriteResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
-        extract_errors(self.take_errors().into_iter().map(Some))
+        extract_errors(std::mem::take(&mut self.errors).into_iter().map(Some))
     }
 }
 
 impl HasKeyErrors for kvrpcpb::PessimisticLockResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
-        extract_errors(self.take_errors().into_iter().map(Some))
+        extract_errors(std::mem::take(&mut self.errors).into_iter().map(Some))
     }
 }
 
 impl HasKeyErrors for kvrpcpb::PessimisticRollbackResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
-        extract_errors(self.take_errors().into_iter().map(Some))
+        extract_errors(std::mem::take(&mut self.errors).into_iter().map(Some))
     }
 }
 

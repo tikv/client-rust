@@ -263,8 +263,8 @@ impl From<BoundRange> for kvrpcpb::KeyRange {
     fn from(bound_range: BoundRange) -> Self {
         let (start, end) = bound_range.into_keys();
         let mut range = kvrpcpb::KeyRange::default();
-        range.set_start_key(start.into());
-        range.set_end_key(end.unwrap_or_default().into());
+        range.start_key = start.into();
+        range.end_key = end.unwrap_or_default().into();
         range
     }
 }

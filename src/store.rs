@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::{pd::PdClient, region::RegionWithLeader, BoundRange, Key, Result};
+use async_trait::async_trait;
 use derive_new::new;
 use futures::{prelude::*, stream::BoxStream};
 use std::{
@@ -16,10 +17,15 @@ pub struct RegionStore {
     pub client: Arc<dyn KvClient + Send + Sync>,
 }
 
+#[async_trait]
 pub trait KvConnectStore: KvConnect {
-    fn connect_to_store(&self, region: RegionWithLeader, address: String) -> Result<RegionStore> {
+    async fn connect_to_store(
+        &self,
+        region: RegionWithLeader,
+        address: String,
+    ) -> Result<RegionStore> {
         log::info!("connect to tikv endpoint: {:?}", &address);
-        let client = self.connect(address.as_str())?;
+        let client = self.connect(address.as_str()).await?;
         Ok(RegionStore::new(region, Arc::new(client)))
     }
 }

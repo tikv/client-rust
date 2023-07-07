@@ -40,9 +40,18 @@ pub enum Error {
     /// Wraps a `std::io::Error`.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    /// Wraps a `std::io::Error`.
+    #[error("tokio channel error: {0}")]
+    Channel(#[from] tokio::sync::oneshot::error::RecvError),
     /// Wraps a `grpcio::Error`.
     #[error("gRPC error: {0}")]
-    Grpc(#[from] grpcio::Error),
+    Grpc(#[from] tonic::transport::Error),
+    /// Wraps a `grpcio::Error`.
+    #[error("gRPC api error: {0}")]
+    GrpcAPI(#[from] tonic::Status),
+    /// Wraps a `grpcio::Error`.
+    #[error("url error: {0}")]
+    Url(#[from] tonic::codegen::http::uri::InvalidUri),
     /// Represents that a futures oneshot channel was cancelled.
     #[error("A futures oneshot channel was canceled. {0}")]
     Canceled(#[from] futures::channel::oneshot::Canceled),

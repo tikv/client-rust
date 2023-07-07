@@ -70,14 +70,15 @@ mod test {
         transaction::lowering::new_commit_request,
         Error, Key, Result,
     };
-    use grpcio::CallOption;
     use std::{
         any::Any,
         iter,
         sync::{atomic::AtomicUsize, Arc},
+        time::Duration,
     };
-    use tikv_client_proto::{kvrpcpb, pdpb::Timestamp, tikvpb::TikvClient};
+    use tikv_client_proto::{kvrpcpb, pdpb::Timestamp, tikvpb::tikv_client::TikvClient};
     use tikv_client_store::HasRegionError;
+    use tonic::transport::Channel;
 
     #[tokio::test]
     async fn test_region_retry() {
@@ -105,7 +106,7 @@ mod test {
 
         #[async_trait]
         impl Request for MockKvRequest {
-            async fn dispatch(&self, _: &TikvClient, _: CallOption) -> Result<Box<dyn Any>> {
+            async fn dispatch(&self, _: &TikvClient<Channel>, _: Duration) -> Result<Box<dyn Any>> {
                 Ok(Box::new(MockRpcResponse {}))
             }
 
@@ -181,7 +182,7 @@ mod test {
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |_: &dyn Any| {
                 Ok(Box::new(kvrpcpb::CommitResponse {
-                    error: Some(kvrpcpb::KeyError::default()).into(),
+                    error: Some(kvrpcpb::KeyError::default()),
                     ..Default::default()
                 }) as Box<dyn Any>)
             },
