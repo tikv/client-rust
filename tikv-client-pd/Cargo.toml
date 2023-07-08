@@ -10,14 +10,12 @@ description = "Low level PD components for the TiKV Rust client"
 [dependencies]
 async-trait = "0.1"
 futures = "0.3"
-# futures = { version = "0.3", features = ["compat", "async-await", "thread-pool"] }
 log = "0.4"
+pin-project = "1"
 tikv-client-common = { version = "0.2.0", path = "../tikv-client-common" }
 tikv-client-proto = { version = "0.2.0", path = "../tikv-client-proto" }
-tonic = "0.9"
-pin-project = "1"
 tokio = { version = "1", features = ["sync"] }
-
+tonic = "0.9"
 
 [dev-dependencies]
 clap = "2"

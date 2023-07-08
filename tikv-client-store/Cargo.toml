@@ -11,9 +11,9 @@ description = "Low level TiKV node components of the TiKV Rust client"
 async-trait = "0.1"
 derive-new = "0.5"
 futures = { version = "0.3", features = [
-  "compat",
-  "async-await",
-  "thread-pool",
+    "compat",
+    "async-await",
+    "thread-pool",
 ] }
 log = "0.4"
 tikv-client-common = { version = "0.2.0", path = "../tikv-client-common" }

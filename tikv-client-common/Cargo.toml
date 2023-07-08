@@ -8,16 +8,16 @@ repository = "https://github.com/tikv/client-rust"
 description = "Common components of the TiKV Rust client"
 
 [dependencies]
-thiserror = "1"
 futures = { version = "0.3", features = [
-  "compat",
-  "async-await",
-  "thread-pool",
+    "compat",
+    "async-await",
+    "thread-pool",
 ] }
 lazy_static = "1"
 log = "0.4"
 regex = "1"
 semver = "1"
+thiserror = "1"
 tikv-client-proto = { version = "0.2.0", path = "../tikv-client-proto" }
 tokio = "1"
 tonic = { version = "0.9", features = ["tls"] }

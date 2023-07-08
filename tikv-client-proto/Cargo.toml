@@ -9,14 +9,14 @@ description = "Protobuf specs for the TiKV Rust client"
 build = "build.rs"
 
 [build-dependencies]
-tonic-build = "0.9"
 glob = "0.3.1"
+tonic-build = "0.9"
 
 [dependencies]
 futures = "0.3"
 lazy_static = { version = "1" }
-tonic = "0.9"
 prost = "0.11"
+tonic = "0.9"
 
 [lib]
 doctest = false
