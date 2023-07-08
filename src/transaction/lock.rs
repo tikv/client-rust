@@ -221,7 +221,7 @@ impl LockResolver {
 
         let mut txn_infos = HashMap::new();
         for l in locks {
-            let txn_id = l.get_lock_version();
+            let txn_id = l.lock_version;
             if txn_infos.contains_key(&txn_id) || self.ctx.is_region_cleaned(txn_id, &region).await
             {
                 continue;
@@ -232,12 +232,12 @@ impl LockResolver {
                 .check_txn_status(
                     pd_client.clone(),
                     txn_id,
-                    l.get_primary_lock().to_vec(),
+                    l.primary_lock.clone(),
                     0,
                     u64::MAX,
                     true,
                     false,
-                    l.get_lock_type() == kvrpcpb::Op::PessimisticLock,
+                    l.lock_type == kvrpcpb::Op::PessimisticLock as i32,
                 )
                 .await?;
 
@@ -245,11 +245,7 @@ impl LockResolver {
             // Then we need to check the secondary locks to determine the final status of the transaction.
             if let TransactionStatusKind::Locked(_, lock_info) = &status.kind {
                 let secondary_status = self
-                    .check_all_secondaries(
-                        pd_client.clone(),
-                        lock_info.get_secondaries().to_vec(),
-                        txn_id,
-                    )
+                    .check_all_secondaries(pd_client.clone(), lock_info.secondaries.clone(), txn_id)
                     .await?;
                 slog_debug!(
                     self.logger,
@@ -270,12 +266,12 @@ impl LockResolver {
                         .check_txn_status(
                             pd_client.clone(),
                             txn_id,
-                            l.get_primary_lock().to_vec(),
+                            l.primary_lock,
                             0,
                             u64::MAX,
                             true,
                             true,
-                            l.get_lock_type() == kvrpcpb::Op::PessimisticLock,
+                            l.lock_type == kvrpcpb::Op::PessimisticLock as i32,
                         )
                         .await?;
                 } else {
@@ -314,8 +310,8 @@ impl LockResolver {
         for (txn_id, commit_ts) in txn_infos.into_iter() {
             txn_ids.push(txn_id);
             let mut txn_info = TxnInfo::default();
-            txn_info.set_txn(txn_id);
-            txn_info.set_status(commit_ts);
+            txn_info.txn = txn_id;
+            txn_info.status = commit_ts;
             txn_info_vec.push(txn_info);
         }
         let cleaned_region = self
@@ -435,7 +431,7 @@ mod tests {
             |_: &dyn Any| {
                 fail::fail_point!("region-error", |_| {
                     let resp = kvrpcpb::ResolveLockResponse {
-                        region_error: Some(errorpb::Error::default()).into(),
+                        region_error: Some(errorpb::Error::default()),
                         ..Default::default()
                     };
                     Ok(Box::new(resp) as Box<dyn Any>)

@@ -6,72 +6,58 @@ license = "Apache-2.0"
 authors = ["The TiKV Project Authors"]
 repository = "https://github.com/tikv/client-rust"
 description = "The Rust language implementation of TiKV client."
-edition = "2018"
+edition = "2021"
 
 [features]
-default = [ "prost-codec", "prometheus/process" ]
+default = ["prometheus/process"]
 # Enable integration tests with a running TiKV and PD instance.
 # Use $PD_ADDRS, comma separated, to set the addresses the tests use.
 integration-tests = []
-protobuf-codec = [
-    "grpcio/protobuf-codec",
-    "tikv-client-proto/protobuf-codec",
-    "tikv-client-common/protobuf-codec",
-    "tikv-client-pd/protobuf-codec",
-    "tikv-client-store/protobuf-codec",
-    "mock-tikv/protobuf-codec",
-]
-prost-codec = [
-    "grpcio/prost-codec",
-    "tikv-client-proto/prost-codec",
-    "tikv-client-common/prost-codec",
-    "tikv-client-pd/prost-codec",
-    "tikv-client-store/prost-codec",
-    "mock-tikv/prost-codec",
-]
 
 [lib]
 name = "tikv_client"
 
 [dependencies]
+async-recursion = "0.3"
 async-trait = "0.1"
 derive-new = "0.5"
 either = "1.6"
 fail = "0.4"
-futures = { version = "0.3", features = ["async-await", "thread-pool"] }
-futures-timer = "3.0"
-grpcio = { version = "0.10", features = [ "openssl-vendored" ], default-features = false }
+futures = { version = "0.3" }
 lazy_static = "1"
 log = "0.4"
-prometheus = { version = "0.13", features = [ "push" ], default-features = false }
+prometheus = { version = "0.13", features = ["push"], default-features = false }
 rand = "0.8"
 regex = "1"
 semver = "1.0"
 serde = "1.0"
 serde_derive = "1.0"
-slog = { version = "2.3", features = ["max_level_trace", "release_max_level_debug"] }
+slog = { version = "2.3", features = [
+    "max_level_trace",
+    "release_max_level_debug",
+] }
 slog-term = { version = "2.4" }
 thiserror = "1"
-tokio = { version = "1", features = [ "sync", "rt-multi-thread", "macros" ] }
-async-recursion = "0.3"
-
 tikv-client-common = { version = "0.2.0", path = "tikv-client-common" }
 tikv-client-pd = { version = "0.2.0", path = "tikv-client-pd" }
 tikv-client-proto = { version = "0.2.0", path = "tikv-client-proto" }
 tikv-client-store = { version = "0.2.0", path = "tikv-client-store" }
-
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
+tonic = "0.9"
 
 [dev-dependencies]
 clap = "2"
-fail = { version = "0.4", features = [ "failpoints" ] }
-mock-tikv = {path = "mock-tikv"}
+env_logger = "0.10"
+fail = { version = "0.4", features = ["failpoints"] }
 proptest = "1"
 proptest-derive = "0.3"
+reqwest = { version = "0.11", default-features = false, features = [
+    "native-tls-vendored",
+] }
+serde_json = "1"
 serial_test = "0.5.0"
 simple_logger = "1"
-tokio = { version = "1", features = [ "sync", "rt-multi-thread", "macros" ] }
-reqwest = {version = "0.11", default-features = false, features = ["native-tls-vendored"]}
-serde_json = "1"
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
 
 [workspace]
 members = [
@@ -79,15 +65,9 @@ members = [
     "tikv-client-pd",
     "tikv-client-proto",
     "tikv-client-store",
-    "mock-tikv"
 ]
 
 [[test]]
 name = "failpoint_tests"
 path = "tests/failpoint_tests.rs"
 required-features = ["fail/failpoints"]
-
-[patch.crates-io]
-raft-proto = { git = "https://github.com/tikv/raft-rs", rev="95c532612ee6a83591fce9a8b51d6afe87b58835"}
-protobuf-codegen = { git = "https://github.com/pingcap/rust-protobuf", rev="82b49fea7e696fd647b5aca0a6c6ec944eab3189" }
-protobuf = { git = "https://github.com/pingcap/rust-protobuf", rev="82b49fea7e696fd647b5aca0a6c6ec944eab3189" }

@@ -69,6 +69,8 @@ async fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {
 
 #[tokio::main]
 async fn main() {
+    env_logger::init();
+
     // You can try running this example by passing your pd endpoints
     // (and SSL options if necessary) through command line arguments.
     let args = parse_args("txn");

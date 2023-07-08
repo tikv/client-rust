@@ -7,6 +7,8 @@ use tikv_client::{Config, Key, TransactionClient as Client, TransactionOptions, 
 
 #[tokio::main]
 async fn main() {
+    env_logger::init();
+
     // You can try running this example by passing your pd endpoints
     // (and SSL options if necessary) through command line arguments.
     let args = parse_args("txn");
@@ -32,7 +34,7 @@ async fn main() {
         .begin_optimistic()
         .await
         .expect("Could not begin a transaction");
-    for (key, value) in vec![(key1.clone(), value1), (key2, value2)] {
+    for (key, value) in [(key1.clone(), value1), (key2, value2)] {
         txn0.put(key, value).await.expect("Could not set key value");
     }
     txn0.commit().await.expect("Could not commit");

@@ -103,8 +103,8 @@ impl From<KvPair> for Key {
 }
 
 impl From<kvrpcpb::KvPair> for KvPair {
-    fn from(mut pair: kvrpcpb::KvPair) -> Self {
-        KvPair(Key::from(pair.take_key()), pair.take_value())
+    fn from(pair: kvrpcpb::KvPair) -> Self {
+        KvPair(Key::from(pair.key), pair.value)
     }
 }
 
@@ -112,8 +112,8 @@ impl From<KvPair> for kvrpcpb::KvPair {
     fn from(pair: KvPair) -> Self {
         let mut result = kvrpcpb::KvPair::default();
         let (key, value) = pair.into();
-        result.set_key(key.into());
-        result.set_value(value);
+        result.key = key.into();
+        result.value = value;
         result
     }
 }

@@ -1,12 +1,12 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{any::Any, ops::Range, sync::Arc};
+use std::{any::Any, ops::Range, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use grpcio::CallOption;
-use tikv_client_proto::{kvrpcpb, metapb, tikvpb::TikvClient};
+use tikv_client_proto::{kvrpcpb, metapb, tikvpb::tikv_client::TikvClient};
 use tikv_client_store::Request;
+use tonic::transport::Channel;
 
 use super::RawRpcRequest;
 use crate::{
@@ -24,7 +24,7 @@ use crate::{
 
 pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::RawGetRequest {
     let mut req = kvrpcpb::RawGetRequest::default();
-    req.set_key(key);
+    req.key = key;
     req.maybe_set_cf(cf);
 
     req
@@ -47,11 +47,11 @@ impl Process<kvrpcpb::RawGetResponse> for DefaultProcessor {
     type Out = Option<Value>;
 
     fn process(&self, input: Result<kvrpcpb::RawGetResponse>) -> Result<Self::Out> {
-        let mut input = input?;
+        let input = input?;
         Ok(if input.not_found {
             None
         } else {
-            Some(input.take_value())
+            Some(input.value)
         })
     }
 }
@@ -61,7 +61,7 @@ pub fn new_raw_batch_get_request(
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawBatchGetRequest {
     let mut req = kvrpcpb::RawBatchGetRequest::default();
-    req.set_keys(keys.into());
+    req.keys = keys;
     req.maybe_set_cf(cf);
 
     req
@@ -79,7 +79,7 @@ impl Merge<kvrpcpb::RawBatchGetResponse> for Collect {
     fn merge(&self, input: Vec<Result<kvrpcpb::RawBatchGetResponse>>) -> Result<Self::Out> {
         input
             .into_iter()
-            .flat_map_ok(|mut resp| resp.take_pairs().into_iter().map(Into::into))
+            .flat_map_ok(|resp| resp.pairs.into_iter().map(Into::into))
             .collect()
     }
 }
@@ -91,10 +91,10 @@ pub fn new_raw_put_request(
     atomic: bool,
 ) -> kvrpcpb::RawPutRequest {
     let mut req = kvrpcpb::RawPutRequest::default();
-    req.set_key(key);
-    req.set_value(value);
+    req.key = key;
+    req.value = value;
     req.maybe_set_cf(cf);
-    req.set_for_cas(atomic);
+    req.for_cas = atomic;
 
     req
 }
@@ -117,9 +117,9 @@ pub fn new_raw_batch_put_request(
     atomic: bool,
 ) -> kvrpcpb::RawBatchPutRequest {
     let mut req = kvrpcpb::RawBatchPutRequest::default();
-    req.set_pairs(pairs.into());
+    req.pairs = pairs;
     req.maybe_set_cf(cf);
-    req.set_for_cas(atomic);
+    req.for_cas = atomic;
 
     req
 }
@@ -144,8 +144,8 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region_with_leader.context()?);
-        self.set_pairs(shard.into());
+        self.context = Some(store.region_with_leader.context()?);
+        self.pairs = shard;
         Ok(())
     }
 }
@@ -156,9 +156,9 @@ pub fn new_raw_delete_request(
     atomic: bool,
 ) -> kvrpcpb::RawDeleteRequest {
     let mut req = kvrpcpb::RawDeleteRequest::default();
-    req.set_key(key);
+    req.key = key;
     req.maybe_set_cf(cf);
-    req.set_for_cas(atomic);
+    req.for_cas = atomic;
 
     req
 }
@@ -180,7 +180,7 @@ pub fn new_raw_batch_delete_request(
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawBatchDeleteRequest {
     let mut req = kvrpcpb::RawBatchDeleteRequest::default();
-    req.set_keys(keys.into());
+    req.keys = keys;
     req.maybe_set_cf(cf);
 
     req
@@ -198,8 +198,8 @@ pub fn new_raw_delete_range_request(
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawDeleteRangeRequest {
     let mut req = kvrpcpb::RawDeleteRangeRequest::default();
-    req.set_start_key(start_key);
-    req.set_end_key(end_key);
+    req.start_key = start_key;
+    req.end_key = end_key;
     req.maybe_set_cf(cf);
 
     req
@@ -219,10 +219,10 @@ pub fn new_raw_scan_request(
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawScanRequest {
     let mut req = kvrpcpb::RawScanRequest::default();
-    req.set_start_key(start_key);
-    req.set_end_key(end_key);
-    req.set_limit(limit);
-    req.set_key_only(key_only);
+    req.start_key = start_key;
+    req.end_key = end_key;
+    req.limit = limit;
+    req.key_only = key_only;
     req.maybe_set_cf(cf);
 
     req
@@ -240,7 +240,7 @@ impl Merge<kvrpcpb::RawScanResponse> for Collect {
     fn merge(&self, input: Vec<Result<kvrpcpb::RawScanResponse>>) -> Result<Self::Out> {
         input
             .into_iter()
-            .flat_map_ok(|mut resp| resp.take_kvs().into_iter().map(Into::into))
+            .flat_map_ok(|resp| resp.kvs.into_iter().map(Into::into))
             .collect()
     }
 }
@@ -252,9 +252,9 @@ pub fn new_raw_batch_scan_request(
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawBatchScanRequest {
     let mut req = kvrpcpb::RawBatchScanRequest::default();
-    req.set_ranges(ranges.into());
-    req.set_each_limit(each_limit);
-    req.set_key_only(key_only);
+    req.ranges = ranges;
+    req.each_limit = each_limit;
+    req.key_only = key_only;
     req.maybe_set_cf(cf);
 
     req
@@ -271,12 +271,12 @@ impl Shardable for kvrpcpb::RawBatchScanRequest {
         &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
-        store_stream_for_ranges(self.ranges.clone().into(), pd_client.clone())
+        store_stream_for_ranges(self.ranges.clone(), pd_client.clone())
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region_with_leader.context()?);
-        self.set_ranges(shard.into());
+        self.context = Some(store.region_with_leader.context()?);
+        self.ranges = shard;
         Ok(())
     }
 }
@@ -287,7 +287,7 @@ impl Merge<kvrpcpb::RawBatchScanResponse> for Collect {
     fn merge(&self, input: Vec<Result<kvrpcpb::RawBatchScanResponse>>) -> Result<Self::Out> {
         input
             .into_iter()
-            .flat_map_ok(|mut resp| resp.take_kvs().into_iter().map(Into::into))
+            .flat_map_ok(|resp| resp.kvs.into_iter().map(Into::into))
             .collect()
     }
 }
@@ -299,11 +299,11 @@ pub fn new_cas_request(
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawCasRequest {
     let mut req = kvrpcpb::RawCasRequest::default();
-    req.set_key(key);
-    req.set_value(value);
+    req.key = key;
+    req.value = value;
     match previous_value {
-        Some(v) => req.set_previous_value(v),
-        None => req.set_previous_not_exist(true),
+        Some(v) => req.previous_value = v,
+        None => req.previous_not_exist = true,
     }
     req.maybe_set_cf(cf);
     req
@@ -344,9 +344,9 @@ pub fn new_raw_coprocessor_request(
     data_builder: RawCoprocessorRequestDataBuilder,
 ) -> RawCoprocessorRequest {
     let mut inner = kvrpcpb::RawCoprocessorRequest::default();
-    inner.set_copr_name(copr_name);
-    inner.set_copr_version_req(copr_version_req);
-    inner.set_ranges(ranges.into());
+    inner.copr_name = copr_name;
+    inner.copr_version_req = copr_version_req;
+    inner.ranges = ranges;
     RawCoprocessorRequest {
         inner,
         data_builder,
@@ -361,8 +361,12 @@ pub struct RawCoprocessorRequest {
 
 #[async_trait]
 impl Request for RawCoprocessorRequest {
-    async fn dispatch(&self, client: &TikvClient, options: CallOption) -> Result<Box<dyn Any>> {
-        self.inner.dispatch(client, options).await
+    async fn dispatch(
+        &self,
+        client: &TikvClient<Channel>,
+        timeout: Duration,
+    ) -> Result<Box<dyn Any>> {
+        self.inner.dispatch(client, timeout).await
     }
 
     fn label(&self) -> &'static str {
@@ -389,16 +393,13 @@ impl Shardable for RawCoprocessorRequest {
         &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
-        store_stream_for_ranges(self.inner.ranges.clone().into(), pd_client.clone())
+        store_stream_for_ranges(self.inner.ranges.clone(), pd_client.clone())
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.inner.set_context(store.region_with_leader.context()?);
-        self.inner.set_ranges(shard.clone().into());
-        self.inner.set_data((self.data_builder)(
-            store.region_with_leader.region.clone(),
-            shard,
-        ));
+        self.inner.context = Some(store.region_with_leader.context()?);
+        self.inner.ranges = shard.clone();
+        self.inner.data = (self.data_builder)(store.region_with_leader.region.clone(), shard);
         Ok(())
     }
 }
@@ -419,9 +420,9 @@ impl
         input?
             .into_iter()
             .map(|shard_resp| {
-                shard_resp.map(|ResponseWithShard(mut resp, ranges)| {
+                shard_resp.map(|ResponseWithShard(resp, ranges)| {
                     (
-                        resp.take_data(),
+                        resp.data,
                         ranges
                             .into_iter()
                             .map(|range| range.start_key.into()..range.end_key.into())
@@ -437,7 +438,7 @@ macro_rules! impl_raw_rpc_request {
     ($name: ident) => {
         impl RawRpcRequest for kvrpcpb::$name {
             fn set_cf(&mut self, cf: String) {
-                self.set_cf(cf);
+                self.cf = cf;
             }
         }
     };

@@ -11,16 +11,12 @@ use crate::{
 };
 use async_trait::async_trait;
 use futures::{prelude::*, stream::BoxStream};
-use grpcio::{EnvBuilder, Environment};
 use slog::Logger;
-use std::{collections::HashMap, sync::Arc, thread};
+use std::{collections::HashMap, sync::Arc};
 use tikv_client_pd::Cluster;
 use tikv_client_proto::{kvrpcpb, metapb};
 use tikv_client_store::{KvClient, KvConnect, TikvConnect};
 use tokio::sync::RwLock;
-
-const CQ_COUNT: usize = 1;
-const CLIENT_PREFIX: &str = "tikv-client";
 
 /// The PdClient handles all the encoding stuff.
 ///
@@ -182,8 +178,8 @@ pub trait PdClient: Send + Sync + 'static {
 
     fn decode_region(mut region: RegionWithLeader, enable_codec: bool) -> Result<RegionWithLeader> {
         if enable_codec {
-            codec::decode_bytes_in_place(region.region.mut_start_key(), false)?;
-            codec::decode_bytes_in_place(region.region.mut_end_key(), false)?;
+            codec::decode_bytes_in_place(&mut region.region.start_key, false)?;
+            codec::decode_bytes_in_place(&mut region.region.end_key, false)?;
         }
         Ok(region)
     }
@@ -211,7 +207,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
         let store_id = region.get_store_id()?;
         let store = self.region_cache.get_store_by_id(store_id).await?;
-        let kv_client = self.kv_client(store.get_address()).await?;
+        let kv_client = self.kv_client(&store.address).await?;
         Ok(RegionStore::new(region, Arc::new(kv_client)))
     }
 
@@ -258,24 +254,13 @@ impl PdRpcClient<TikvConnect, Cluster> {
     ) -> Result<PdRpcClient> {
         PdRpcClient::new(
             config.clone(),
-            |env, security_mgr| TikvConnect::new(env, security_mgr, config.timeout),
-            |env, security_mgr| {
-                RetryClient::connect(env, pd_endpoints, security_mgr, config.timeout)
-            },
+            |security_mgr| TikvConnect::new(security_mgr, config.timeout),
+            |security_mgr| RetryClient::connect(pd_endpoints, security_mgr, config.timeout),
             enable_codec,
             logger,
         )
         .await
     }
-}
-
-/// make a thread name with additional tag inheriting from current thread.
-fn thread_name(prefix: &str) -> String {
-    thread::current()
-        .name()
-        .and_then(|name| name.split("::").skip(1).last())
-        .map(|tag| format!("{prefix}::{tag}"))
-        .unwrap_or_else(|| prefix.to_owned())
 }
 
 impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
@@ -288,15 +273,9 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
     ) -> Result<PdRpcClient<KvC, Cl>>
     where
         PdFut: Future<Output = Result<RetryClient<Cl>>>,
-        MakeKvC: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> KvC,
-        MakePd: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> PdFut,
+        MakeKvC: FnOnce(Arc<SecurityManager>) -> KvC,
+        MakePd: FnOnce(Arc<SecurityManager>) -> PdFut,
     {
-        let env = Arc::new(
-            EnvBuilder::new()
-                .cq_count(CQ_COUNT)
-                .name_prefix(thread_name(CLIENT_PREFIX))
-                .build(),
-        );
         let security_mgr = Arc::new(
             if let (Some(ca_path), Some(cert_path), Some(key_path)) =
                 (&config.ca_path, &config.cert_path, &config.key_path)
@@ -307,12 +286,12 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             },
         );
 
-        let pd = Arc::new(pd(env.clone(), security_mgr.clone()).await?);
+        let pd = Arc::new(pd(security_mgr.clone()).await?);
         let kv_client_cache = Default::default();
         Ok(PdRpcClient {
             pd: pd.clone(),
             kv_client_cache,
-            kv_connect: kv_connect(env, security_mgr),
+            kv_connect: kv_connect(security_mgr),
             enable_codec,
             region_cache: RegionCache::new(pd),
             logger,
@@ -324,7 +303,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             return Ok(client.clone());
         };
         info!(self.logger, "connect to tikv endpoint: {:?}", address);
-        match self.kv_connect.connect(address) {
+        match self.kv_connect.connect(address).await {
             Ok(client) => {
                 self.kv_client_cache
                     .write()
@@ -339,8 +318,8 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
 
 fn make_key_range(start_key: Vec<u8>, end_key: Vec<u8>) -> kvrpcpb::KeyRange {
     let mut key_range = kvrpcpb::KeyRange::default();
-    key_range.set_start_key(start_key);
-    key_range.set_end_key(end_key);
+    key_range.start_key = start_key;
+    key_range.end_key = end_key;
     key_range
 }
 

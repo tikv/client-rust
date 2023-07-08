@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use futures::{future::try_join_all, prelude::*};
 use tikv_client_proto::{errorpb, errorpb::EpochNotMatch, kvrpcpb};
 use tikv_client_store::{HasKeyErrors, HasRegionError, HasRegionErrors, KvClient};
-use tokio::sync::Semaphore;
+use tokio::{sync::Semaphore, time::sleep};
 
 use crate::{
     backoff::Backoff,
@@ -144,7 +144,7 @@ where
                         Self::handle_region_error(pd_client.clone(), e, region_store).await?;
                     // don't sleep if we have resolved the region error
                     if !region_error_resolved {
-                        futures_timer::Delay::new(duration).await;
+                        sleep(duration).await;
                     }
                     Self::single_plan_handler(
                         pd_client,
@@ -168,18 +168,14 @@ where
     // 3. Err(Error): can't be resolved, return the error to upper level
     async fn handle_region_error(
         pd_client: Arc<PdC>,
-        mut e: errorpb::Error,
+        e: errorpb::Error,
         region_store: RegionStore,
     ) -> Result<bool> {
         let ver_id = region_store.region_with_leader.ver_id();
-        if e.has_not_leader() {
-            let not_leader = e.get_not_leader();
-            if not_leader.has_leader() {
+        if let Some(not_leader) = e.not_leader {
+            if let Some(leader) = not_leader.leader {
                 match pd_client
-                    .update_leader(
-                        region_store.region_with_leader.ver_id(),
-                        not_leader.get_leader().clone(),
-                    )
+                    .update_leader(region_store.region_with_leader.ver_id(), leader)
                     .await
                 {
                     Ok(_) => Ok(true),
@@ -196,22 +192,22 @@ where
                 pd_client.invalidate_region_cache(ver_id).await;
                 Ok(false)
             }
-        } else if e.has_store_not_match() {
+        } else if e.store_not_match.is_some() {
             pd_client.invalidate_region_cache(ver_id).await;
             Ok(false)
-        } else if e.has_epoch_not_match() {
+        } else if e.epoch_not_match.is_some() {
             Self::on_region_epoch_not_match(
                 pd_client.clone(),
                 region_store,
-                e.take_epoch_not_match(),
+                e.epoch_not_match.unwrap(),
             )
             .await
-        } else if e.has_stale_command() || e.has_region_not_found() {
+        } else if e.stale_command.is_some() || e.region_not_found.is_some() {
             pd_client.invalidate_region_cache(ver_id).await;
             Ok(false)
-        } else if e.has_server_is_busy()
-            || e.has_raft_entry_too_large()
-            || e.has_max_timestamp_not_synced()
+        } else if e.server_is_busy.is_some()
+            || e.raft_entry_too_large.is_some()
+            || e.max_timestamp_not_synced.is_some()
         {
             Err(Error::RegionError(Box::new(e)))
         } else {
@@ -232,25 +228,24 @@ where
         error: EpochNotMatch,
     ) -> Result<bool> {
         let ver_id = region_store.region_with_leader.ver_id();
-        if error.get_current_regions().is_empty() {
+        if error.current_regions.is_empty() {
             pd_client.invalidate_region_cache(ver_id).await;
             return Ok(true);
         }
 
-        for r in error.get_current_regions() {
-            if r.get_id() == region_store.region_with_leader.id() {
-                let returned_conf_ver = r.get_region_epoch().get_conf_ver();
-                let returned_version = r.get_region_epoch().get_version();
-                let current_conf_ver = region_store
+        for r in error.current_regions {
+            if r.id == region_store.region_with_leader.id() {
+                let region_epoch = r.region_epoch.unwrap();
+                let returned_conf_ver = region_epoch.conf_ver;
+                let returned_version = region_epoch.version;
+                let current_region_epoch = region_store
                     .region_with_leader
                     .region
-                    .get_region_epoch()
-                    .get_conf_ver();
-                let current_version = region_store
-                    .region_with_leader
-                    .region
-                    .get_region_epoch()
-                    .get_version();
+                    .region_epoch
+                    .clone()
+                    .unwrap();
+                let current_conf_ver = current_region_epoch.conf_ver;
+                let current_version = current_region_epoch.version;
 
                 // Find whether the current region is ahead of TiKV's. If so, backoff.
                 if returned_conf_ver < current_conf_ver || returned_version < current_version {
@@ -433,7 +428,7 @@ where
                 match clone.backoff.next_delay_duration() {
                     None => return Err(Error::ResolveLockError),
                     Some(delay_duration) => {
-                        futures_timer::Delay::new(delay_duration).await;
+                        sleep(delay_duration).await;
                         result = clone.inner.execute().await?;
                     }
                 }
@@ -476,9 +471,9 @@ impl Merge<CleanupLocksResult> for Collect {
     fn merge(&self, input: Vec<Result<CleanupLocksResult>>) -> Result<Self::Out> {
         input
             .into_iter()
-            .fold(Ok(CleanupLocksResult::default()), |acc, x| {
+            .try_fold(CleanupLocksResult::default(), |acc, x| {
                 Ok(CleanupLocksResult {
-                    resolved_locks: acc?.resolved_locks + x?.resolved_locks,
+                    resolved_locks: acc.resolved_locks + x?.resolved_locks,
                     ..Default::default()
                 })
             })
@@ -538,8 +533,7 @@ where
             } else if let Some(e) = scan_lock_resp.region_error() {
                 info!(
                     self.logger,
-                    "CleanupLocks::execute, inner region error:{}",
-                    e.get_message()
+                    "CleanupLocks::execute, inner region error:{}", e.message
                 );
                 result.region_error = Some(e);
                 return Ok(result);
@@ -565,7 +559,7 @@ where
             if self.options.async_commit_only {
                 locks = locks
                     .into_iter()
-                    .filter(|l| l.get_use_async_commit())
+                    .filter(|l| l.use_async_commit)
                     .collect::<Vec<_>>();
             }
             debug!(
