@@ -125,21 +125,47 @@ extern crate slog;
 extern crate slog_term;
 
 #[doc(inline)]
+pub use config::Config;
+#[doc(inline)]
+pub use tikv_client_common::security::SecurityManager;
+#[doc(inline)]
+pub use tikv_client_common::Error;
+#[doc(inline)]
+pub use tikv_client_common::Result;
+
+#[doc(inline)]
 pub use crate::backoff::Backoff;
 #[doc(inline)]
-pub use crate::kv::{BoundRange, IntoOwnedRange, Key, KvPair, Value};
+pub use crate::kv::BoundRange;
 #[doc(inline)]
-pub use crate::raw::{lowering as raw_lowering, Client as RawClient, ColumnFamily};
+pub use crate::kv::IntoOwnedRange;
+#[doc(inline)]
+pub use crate::kv::Key;
+#[doc(inline)]
+pub use crate::kv::KvPair;
+#[doc(inline)]
+pub use crate::kv::Value;
+#[doc(inline)]
+pub use crate::raw::lowering as raw_lowering;
+#[doc(inline)]
+pub use crate::raw::Client as RawClient;
+#[doc(inline)]
+pub use crate::raw::ColumnFamily;
 #[doc(inline)]
 pub use crate::request::RetryOptions;
 #[doc(inline)]
-pub use crate::timestamp::{Timestamp, TimestampExt};
+pub use crate::timestamp::Timestamp;
 #[doc(inline)]
-pub use crate::transaction::{
-    lowering as transaction_lowering, CheckLevel, Client as TransactionClient, Snapshot,
-    Transaction, TransactionOptions,
-};
+pub use crate::timestamp::TimestampExt;
 #[doc(inline)]
-pub use config::Config;
+pub use crate::transaction::lowering as transaction_lowering;
 #[doc(inline)]
-pub use tikv_client_common::{security::SecurityManager, Error, Result};
+pub use crate::transaction::CheckLevel;
+#[doc(inline)]
+pub use crate::transaction::Client as TransactionClient;
+#[doc(inline)]
+pub use crate::transaction::Snapshot;
+#[doc(inline)]
+pub use crate::transaction::Transaction;
+#[doc(inline)]
+pub use crate::transaction::TransactionOptions;

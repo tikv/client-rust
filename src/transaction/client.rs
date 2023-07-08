@@ -1,20 +1,27 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    backoff::DEFAULT_REGION_BACKOFF,
-    config::Config,
-    pd::{PdClient, PdRpcClient},
-    request::{plan::CleanupLocksResult, Plan},
-    timestamp::TimestampExt,
-    transaction::{
-        lock::ResolveLocksOptions, ResolveLocksContext, Snapshot, Transaction, TransactionOptions,
-    },
-    transaction_lowering::new_scan_lock_request,
-    Backoff, BoundRange, Result,
-};
-use slog::{Drain, Logger};
 use std::sync::Arc;
+
+use slog::Drain;
+use slog::Logger;
 use tikv_client_proto::pdpb::Timestamp;
+
+use crate::backoff::DEFAULT_REGION_BACKOFF;
+use crate::config::Config;
+use crate::pd::PdClient;
+use crate::pd::PdRpcClient;
+use crate::request::plan::CleanupLocksResult;
+use crate::request::Plan;
+use crate::timestamp::TimestampExt;
+use crate::transaction::lock::ResolveLocksOptions;
+use crate::transaction::ResolveLocksContext;
+use crate::transaction::Snapshot;
+use crate::transaction::Transaction;
+use crate::transaction::TransactionOptions;
+use crate::transaction_lowering::new_scan_lock_request;
+use crate::Backoff;
+use crate::BoundRange;
+use crate::Result;
 
 // FIXME: cargo-culted value
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024;

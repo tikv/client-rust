@@ -1,7 +1,10 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use serde_derive::{Deserialize, Serialize};
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
+use std::time::Duration;
+
+use serde_derive::Deserialize;
+use serde_derive::Serialize;
 
 /// The configuration for either a [`RawClient`](crate::RawClient) or a
 /// [`TransactionClient`](crate::TransactionClient).

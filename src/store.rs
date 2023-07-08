@@ -1,15 +1,23 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{pd::PdClient, region::RegionWithLeader, BoundRange, Key, Result};
+use std::cmp::max;
+use std::cmp::min;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use derive_new::new;
-use futures::{prelude::*, stream::BoxStream};
-use std::{
-    cmp::{max, min},
-    sync::Arc,
-};
+use futures::prelude::*;
+use futures::stream::BoxStream;
 use tikv_client_proto::kvrpcpb;
-use tikv_client_store::{KvClient, KvConnect, TikvConnect};
+use tikv_client_store::KvClient;
+use tikv_client_store::KvConnect;
+use tikv_client_store::TikvConnect;
+
+use crate::pd::PdClient;
+use crate::region::RegionWithLeader;
+use crate::BoundRange;
+use crate::Key;
+use crate::Result;
 
 #[derive(new, Clone)]
 pub struct RegionStore {

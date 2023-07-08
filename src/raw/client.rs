@@ -1,20 +1,30 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use core::ops::Range;
-use std::{str::FromStr, sync::Arc, u32};
+use std::str::FromStr;
+use std::sync::Arc;
+use std::u32;
 
-use slog::{Drain, Logger};
+use slog::Drain;
+use slog::Logger;
 use tikv_client_common::Error;
 use tikv_client_proto::metapb;
 
-use crate::{
-    backoff::DEFAULT_REGION_BACKOFF,
-    config::Config,
-    pd::{PdClient, PdRpcClient},
-    raw::lowering::*,
-    request::{Collect, CollectSingle, Plan},
-    Backoff, BoundRange, ColumnFamily, Key, KvPair, Result, Value,
-};
+use crate::backoff::DEFAULT_REGION_BACKOFF;
+use crate::config::Config;
+use crate::pd::PdClient;
+use crate::pd::PdRpcClient;
+use crate::raw::lowering::*;
+use crate::request::Collect;
+use crate::request::CollectSingle;
+use crate::request::Plan;
+use crate::Backoff;
+use crate::BoundRange;
+use crate::ColumnFamily;
+use crate::Key;
+use crate::KvPair;
+use crate::Result;
+use crate::Value;
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
@@ -762,13 +772,15 @@ impl<PdC: PdClient> Client<PdC> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        mock::{MockKvClient, MockPdClient},
-        Result,
-    };
-    use std::{any::Any, sync::Arc};
+    use std::any::Any;
+    use std::sync::Arc;
+
     use tikv_client_proto::kvrpcpb;
+
+    use super::*;
+    use crate::mock::MockKvClient;
+    use crate::mock::MockPdClient;
+    use crate::Result;
 
     #[tokio::test]
     async fn test_raw_coprocessor() -> Result<()> {
@@ -813,26 +825,21 @@ mod tests {
             .into_iter()
             .map(|(data, ranges)| (String::from_utf8(data).unwrap(), ranges))
             .collect();
-        assert_eq!(
-            resps,
-            vec![
-                (
-                    "1:[Key(05)..Key(0A)]".to_string(),
-                    vec![Key::from(vec![5])..Key::from(vec![10])]
-                ),
-                (
-                    "2:[Key(0A)..Key(0F), Key(14)..Key(FAFA)]".to_string(),
-                    vec![
-                        Key::from(vec![10])..Key::from(vec![15]),
-                        Key::from(vec![20])..Key::from(vec![250, 250])
-                    ]
-                ),
-                (
-                    "3:[Key(FAFA)..Key()]".to_string(),
-                    vec![Key::from(vec![250, 250])..Key::from(vec![])]
-                )
-            ]
-        );
+        assert_eq!(resps, vec![
+            ("1:[Key(05)..Key(0A)]".to_string(), vec![
+                Key::from(vec![5])..Key::from(vec![10])
+            ]),
+            (
+                "2:[Key(0A)..Key(0F), Key(14)..Key(FAFA)]".to_string(),
+                vec![
+                    Key::from(vec![10])..Key::from(vec![15]),
+                    Key::from(vec![20])..Key::from(vec![250, 250])
+                ]
+            ),
+            ("3:[Key(FAFA)..Key()]".to_string(), vec![
+                Key::from(vec![250, 250])..Key::from(vec![])
+            ])
+        ]);
         Ok(())
     }
 }

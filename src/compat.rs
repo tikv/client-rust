@@ -3,12 +3,12 @@
 //! This module contains utility types and functions for making the transition
 //! from futures 0.1 to 1.0 easier.
 
-use futures::{
-    prelude::*,
-    ready,
-    task::{Context, Poll},
-};
 use std::pin::Pin;
+
+use futures::prelude::*;
+use futures::ready;
+use futures::task::Context;
+use futures::task::Poll;
 
 /// A future implementing a tail-recursive loop.
 ///

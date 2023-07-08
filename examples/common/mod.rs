@@ -1,7 +1,10 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use clap::{crate_version, App, Arg};
 use std::path::PathBuf;
+
+use clap::crate_version;
+use clap::App;
+use clap::Arg;
 
 pub struct CommandArgs {
     pub pd: Vec<String>,

@@ -1,6 +1,7 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::result;
+
 use thiserror::Error;
 
 /// An error originating from the TiKV client or dependencies.

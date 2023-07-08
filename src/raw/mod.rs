@@ -9,9 +9,11 @@
 //!
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 
+use std::convert::TryFrom;
+use std::fmt;
+
 pub use self::client::Client;
 use crate::Error;
-use std::{convert::TryFrom, fmt};
 
 mod client;
 pub mod lowering;

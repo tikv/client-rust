@@ -1,31 +1,46 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    collect_first,
-    pd::PdClient,
-    request::{
-        Batchable, Collect, CollectSingle, CollectWithShard, DefaultProcessor, HasNextBatch,
-        KvRequest, Merge, NextBatch, Process, ResponseWithShard, Shardable, SingleKey,
-    },
-    store::{store_stream_for_keys, store_stream_for_range, RegionStore},
-    timestamp::TimestampExt,
-    transaction::HasLocks,
-    util::iter::FlatMapOkIterExt,
-    KvPair, Result, Value,
-};
+use std::cmp;
+use std::iter;
+use std::sync::Arc;
+
 use either::Either;
-use futures::{
-    stream::{self, BoxStream},
-    StreamExt,
-};
-use std::{cmp, iter, sync::Arc};
+use futures::stream::BoxStream;
+use futures::stream::{self};
+use futures::StreamExt;
 use tikv_client_common::Error::PessimisticLockError;
-use tikv_client_proto::{
-    kvrpcpb::{self, Action, LockInfo, TxnHeartBeatResponse, TxnInfo},
-    pdpb::Timestamp,
-};
+use tikv_client_proto::kvrpcpb::Action;
+use tikv_client_proto::kvrpcpb::LockInfo;
+use tikv_client_proto::kvrpcpb::TxnHeartBeatResponse;
+use tikv_client_proto::kvrpcpb::TxnInfo;
+use tikv_client_proto::kvrpcpb::{self};
+use tikv_client_proto::pdpb::Timestamp;
 
 use super::transaction::TXN_COMMIT_BATCH_SIZE;
+use crate::collect_first;
+use crate::pd::PdClient;
+use crate::request::Batchable;
+use crate::request::Collect;
+use crate::request::CollectSingle;
+use crate::request::CollectWithShard;
+use crate::request::DefaultProcessor;
+use crate::request::HasNextBatch;
+use crate::request::KvRequest;
+use crate::request::Merge;
+use crate::request::NextBatch;
+use crate::request::Process;
+use crate::request::ResponseWithShard;
+use crate::request::Shardable;
+use crate::request::SingleKey;
+use crate::store::store_stream_for_keys;
+use crate::store::store_stream_for_range;
+use crate::store::RegionStore;
+use crate::timestamp::TimestampExt;
+use crate::transaction::HasLocks;
+use crate::util::iter::FlatMapOkIterExt;
+use crate::KvPair;
+use crate::Result;
+use crate::Value;
 
 // implement HasLocks for a response type that has a `pairs` field,
 // where locks can be extracted from both the `pairs` and `error` fields
@@ -490,11 +505,7 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
                     } else {
                         assert_eq!(kvpairs.len(), not_founds.len());
                         Either::Right(kvpairs.zip(not_founds).filter_map(|(kvpair, not_found)| {
-                            if not_found {
-                                None
-                            } else {
-                                Some(kvpair)
-                            }
+                            if not_found { None } else { Some(kvpair) }
                         }))
                     }
                 })
@@ -851,12 +862,14 @@ impl HasLocks for kvrpcpb::PrewriteResponse {
 #[cfg(test)]
 #[cfg_attr(feature = "protobuf-codec", allow(clippy::useless_conversion))]
 mod tests {
-    use crate::{
-        request::{plan::Merge, CollectWithShard, ResponseWithShard},
-        KvPair,
-    };
-    use tikv_client_common::Error::{PessimisticLockError, ResolveLockError};
+    use tikv_client_common::Error::PessimisticLockError;
+    use tikv_client_common::Error::ResolveLockError;
     use tikv_client_proto::kvrpcpb;
+
+    use crate::request::plan::Merge;
+    use crate::request::CollectWithShard;
+    use crate::request::ResponseWithShard;
+    use crate::KvPair;
 
     #[tokio::test]
     async fn test_merge_pessimistic_lock_response() {
@@ -918,13 +931,10 @@ mod tests {
             ];
             let result = merger.merge(input);
 
-            assert_eq!(
-                result.unwrap(),
-                vec![
-                    KvPair::new(key1.to_vec(), value1.to_vec()),
-                    KvPair::new(key4.to_vec(), value4.to_vec()),
-                ]
-            );
+            assert_eq!(result.unwrap(), vec![
+                KvPair::new(key1.to_vec(), value1.to_vec()),
+                KvPair::new(key4.to_vec(), value4.to_vec()),
+            ]);
         }
         {
             let input = vec![
@@ -941,10 +951,12 @@ mod tests {
             } = result.unwrap_err()
             {
                 assert!(matches!(*inner, ResolveLockError));
-                assert_eq!(
-                    success_keys,
-                    vec![key1.to_vec(), key2.to_vec(), key3.to_vec(), key4.to_vec()]
-                );
+                assert_eq!(success_keys, vec![
+                    key1.to_vec(),
+                    key2.to_vec(),
+                    key3.to_vec(),
+                    key4.to_vec()
+                ]);
             } else {
                 panic!();
             }

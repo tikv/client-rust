@@ -2,8 +2,14 @@
 
 mod common;
 
+use tikv_client::BoundRange;
+use tikv_client::Config;
+use tikv_client::Key;
+use tikv_client::KvPair;
+use tikv_client::TransactionClient as Client;
+use tikv_client::Value;
+
 use crate::common::parse_args;
-use tikv_client::{BoundRange, Config, Key, KvPair, TransactionClient as Client, Value};
 
 async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
     let mut txn = client
@@ -104,10 +110,10 @@ async fn main() {
     let key1_exists = key_exists(&txn, key1.clone()).await;
     let key2: Key = b"key_not_exist".to_vec().into();
     let key2_exists = key_exists(&txn, key2.clone()).await;
-    println!(
-        "check exists {:?}",
-        vec![(key1, key1_exists), (key2, key2_exists)]
-    );
+    println!("check exists {:?}", vec![
+        (key1, key1_exists),
+        (key2, key2_exists)
+    ]);
 
     // scan
     let key1: Key = b"key1".to_vec().into();

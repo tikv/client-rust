@@ -2,8 +2,13 @@
 
 mod common;
 
+use tikv_client::Config;
+use tikv_client::Key;
+use tikv_client::TransactionClient as Client;
+use tikv_client::TransactionOptions;
+use tikv_client::Value;
+
 use crate::common::parse_args;
-use tikv_client::{Config, Key, TransactionClient as Client, TransactionOptions, Value};
 
 #[tokio::main]
 async fn main() {

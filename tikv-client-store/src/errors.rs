@@ -1,8 +1,10 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::Error;
 use std::fmt::Display;
+
 use tikv_client_proto::kvrpcpb;
+
+use crate::Error;
 
 // Those that can have a single region error
 pub trait HasRegionError {
@@ -210,9 +212,11 @@ fn extract_errors(
 
 #[cfg(test)]
 mod test {
-    use super::HasKeyErrors;
-    use tikv_client_common::{internal_err, Error};
+    use tikv_client_common::internal_err;
+    use tikv_client_common::Error;
     use tikv_client_proto::kvrpcpb;
+
+    use super::HasKeyErrors;
     #[test]
     fn result_haslocks() {
         let mut resp: Result<_, Error> = Ok(kvrpcpb::CommitResponse::default());

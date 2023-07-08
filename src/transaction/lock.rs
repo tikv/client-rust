@@ -1,30 +1,35 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
-    pd::PdClient,
-    region::RegionVerId,
-    request::{Collect, CollectSingle, Plan},
-    store::RegionStore,
-    timestamp::TimestampExt,
-    transaction::{
-        requests,
-        requests::{
-            new_check_secondary_locks_request, new_check_txn_status_request, SecondaryLocksStatus,
-            TransactionStatus, TransactionStatusKind,
-        },
-    },
-    Error, Result,
-};
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use fail::fail_point;
 use log::debug;
 use slog::Logger;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
-use tikv_client_proto::{kvrpcpb, kvrpcpb::TxnInfo, pdpb::Timestamp};
+use tikv_client_proto::kvrpcpb;
+use tikv_client_proto::kvrpcpb::TxnInfo;
+use tikv_client_proto::pdpb::Timestamp;
 use tokio::sync::RwLock;
+
+use crate::backoff::Backoff;
+use crate::backoff::DEFAULT_REGION_BACKOFF;
+use crate::backoff::OPTIMISTIC_BACKOFF;
+use crate::pd::PdClient;
+use crate::region::RegionVerId;
+use crate::request::Collect;
+use crate::request::CollectSingle;
+use crate::request::Plan;
+use crate::store::RegionStore;
+use crate::timestamp::TimestampExt;
+use crate::transaction::requests;
+use crate::transaction::requests::new_check_secondary_locks_request;
+use crate::transaction::requests::new_check_txn_status_request;
+use crate::transaction::requests::SecondaryLocksStatus;
+use crate::transaction::requests::TransactionStatus;
+use crate::transaction::requests::TransactionStatusKind;
+use crate::Error;
+use crate::Result;
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 
@@ -251,7 +256,10 @@ impl LockResolver {
                     self.logger,
                     "secondary status, txn_id:{}, commit_ts:{:?}, min_commit_version:{}, fallback_2pc:{}",
                     txn_id,
-                    secondary_status.commit_ts.as_ref().map_or(0, |ts| ts.version()),
+                    secondary_status
+                        .commit_ts
+                        .as_ref()
+                        .map_or(0, |ts| ts.version()),
                     secondary_status.min_commit_ts,
                     secondary_status.fallback_2pc,
                 );
@@ -417,10 +425,13 @@ pub trait HasLocks {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::mock::{MockKvClient, MockPdClient};
     use std::any::Any;
+
     use tikv_client_proto::errorpb;
+
+    use super::*;
+    use crate::mock::MockKvClient;
+    use crate::mock::MockPdClient;
 
     #[tokio::test]
     async fn test_resolve_lock_with_retry() {

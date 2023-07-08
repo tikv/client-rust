@@ -1,24 +1,37 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{marker::PhantomData, sync::Arc};
+use std::marker::PhantomData;
+use std::sync::Arc;
 
 use async_recursion::async_recursion;
 use async_trait::async_trait;
-use futures::{future::try_join_all, prelude::*};
-use tikv_client_proto::{errorpb, errorpb::EpochNotMatch, kvrpcpb};
-use tikv_client_store::{HasKeyErrors, HasRegionError, HasRegionErrors, KvClient};
-use tokio::{sync::Semaphore, time::sleep};
+use futures::future::try_join_all;
+use futures::prelude::*;
+use tikv_client_proto::errorpb;
+use tikv_client_proto::errorpb::EpochNotMatch;
+use tikv_client_proto::kvrpcpb;
+use tikv_client_store::HasKeyErrors;
+use tikv_client_store::HasRegionError;
+use tikv_client_store::HasRegionErrors;
+use tikv_client_store::KvClient;
+use tokio::sync::Semaphore;
+use tokio::time::sleep;
 
-use crate::{
-    backoff::Backoff,
-    pd::PdClient,
-    request::{shard::HasNextBatch, KvRequest, NextBatch, Shardable},
-    stats::tikv_stats,
-    store::RegionStore,
-    transaction::{resolve_locks, HasLocks, ResolveLocksContext, ResolveLocksOptions},
-    util::iter::FlatMapOkIterExt,
-    Error, Result,
-};
+use crate::backoff::Backoff;
+use crate::pd::PdClient;
+use crate::request::shard::HasNextBatch;
+use crate::request::KvRequest;
+use crate::request::NextBatch;
+use crate::request::Shardable;
+use crate::stats::tikv_stats;
+use crate::store::RegionStore;
+use crate::transaction::resolve_locks;
+use crate::transaction::HasLocks;
+use crate::transaction::ResolveLocksContext;
+use crate::transaction::ResolveLocksOptions;
+use crate::util::iter::FlatMapOkIterExt;
+use crate::Error;
+use crate::Result;
 
 /// A plan for how to execute a request. A user builds up a plan with various
 /// options, then exectutes it.
@@ -72,8 +85,7 @@ pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
 }
 
 impl<P: Plan + Shardable, PdC: PdClient> RetryableMultiRegion<P, PdC>
-where
-    P::Result: HasKeyErrors + HasRegionError,
+where P::Result: HasKeyErrors + HasRegionError
 {
     // A plan may involve multiple shards
     #[async_recursion]
@@ -272,8 +284,7 @@ impl<P: Plan, PdC: PdClient> Clone for RetryableMultiRegion<P, PdC> {
 
 #[async_trait]
 impl<P: Plan + Shardable, PdC: PdClient> Plan for RetryableMultiRegion<P, PdC>
-where
-    P::Result: HasKeyErrors + HasRegionError,
+where P::Result: HasKeyErrors + HasRegionError
 {
     type Result = Vec<Result<P::Result>>;
 
@@ -403,8 +414,7 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
 
 #[async_trait]
 impl<P: Plan, PdC: PdClient> Plan for ResolveLock<P, PdC>
-where
-    P::Result: HasLocks,
+where P::Result: HasLocks
 {
     type Result = P::Result;
 
@@ -506,8 +516,7 @@ impl<P: Plan, PdC: PdClient> Clone for CleanupLocks<P, PdC> {
 
 #[async_trait]
 impl<P: Plan + Shardable + NextBatch, PdC: PdClient> Plan for CleanupLocks<P, PdC>
-where
-    P::Result: HasLocks + HasNextBatch + HasKeyErrors + HasRegionError,
+where P::Result: HasLocks + HasNextBatch + HasKeyErrors + HasRegionError
 {
     type Result = CleanupLocksResult;
 
@@ -622,8 +631,7 @@ impl<P: Plan> Clone for ExtractError<P> {
 
 #[async_trait]
 impl<P: Plan> Plan for ExtractError<P>
-where
-    P::Result: HasKeyErrors + HasRegionErrors,
+where P::Result: HasKeyErrors + HasRegionErrors
 {
     type Result = P::Result;
 
@@ -665,8 +673,7 @@ impl<P: Plan + Shardable> Clone for PreserveShard<P> {
 
 #[async_trait]
 impl<P> Plan for PreserveShard<P>
-where
-    P: Plan + Shardable,
+where P: Plan + Shardable
 {
     type Result = ResponseWithShard<P::Result, P::Shard>;
 
@@ -705,10 +712,12 @@ impl<Resp: HasRegionError, Shard> HasRegionError for ResponseWithShard<Resp, Sha
 
 #[cfg(test)]
 mod test {
+    use futures::stream::BoxStream;
+    use futures::stream::{self};
+    use tikv_client_proto::kvrpcpb::BatchGetResponse;
+
     use super::*;
     use crate::mock::MockPdClient;
-    use futures::stream::{self, BoxStream};
-    use tikv_client_proto::kvrpcpb::BatchGetResponse;
 
     #[derive(Clone)]
     struct ErrPlan;

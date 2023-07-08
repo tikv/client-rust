@@ -1,22 +1,36 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF, PESSIMISTIC_BACKOFF},
-    transaction::HasLocks,
-};
 use async_trait::async_trait;
 use derive_new::new;
-use tikv_client_store::{HasKeyErrors, Request};
+use tikv_client_store::HasKeyErrors;
+use tikv_client_store::Request;
 
-pub use self::{
-    plan::{
-        Collect, CollectError, CollectSingle, CollectWithShard, DefaultProcessor, Dispatch,
-        ExtractError, Merge, MergeResponse, Plan, Process, ProcessResponse, ResolveLock,
-        ResponseWithShard, RetryableMultiRegion,
-    },
-    plan_builder::{PlanBuilder, SingleKey},
-    shard::{Batchable, HasNextBatch, NextBatch, Shardable},
-};
+pub use self::plan::Collect;
+pub use self::plan::CollectError;
+pub use self::plan::CollectSingle;
+pub use self::plan::CollectWithShard;
+pub use self::plan::DefaultProcessor;
+pub use self::plan::Dispatch;
+pub use self::plan::ExtractError;
+pub use self::plan::Merge;
+pub use self::plan::MergeResponse;
+pub use self::plan::Plan;
+pub use self::plan::Process;
+pub use self::plan::ProcessResponse;
+pub use self::plan::ResolveLock;
+pub use self::plan::ResponseWithShard;
+pub use self::plan::RetryableMultiRegion;
+pub use self::plan_builder::PlanBuilder;
+pub use self::plan_builder::SingleKey;
+pub use self::shard::Batchable;
+pub use self::shard::HasNextBatch;
+pub use self::shard::NextBatch;
+pub use self::shard::Shardable;
+use crate::backoff::Backoff;
+use crate::backoff::DEFAULT_REGION_BACKOFF;
+use crate::backoff::OPTIMISTIC_BACKOFF;
+use crate::backoff::PESSIMISTIC_BACKOFF;
+use crate::transaction::HasLocks;
 
 pub mod plan;
 mod plan_builder;
@@ -63,22 +77,26 @@ impl RetryOptions {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use crate::{
-        mock::{MockKvClient, MockPdClient},
-        store::store_stream_for_keys,
-        transaction::lowering::new_commit_request,
-        Error, Key, Result,
-    };
-    use std::{
-        any::Any,
-        iter,
-        sync::{atomic::AtomicUsize, Arc},
-        time::Duration,
-    };
-    use tikv_client_proto::{kvrpcpb, pdpb::Timestamp, tikvpb::tikv_client::TikvClient};
+    use std::any::Any;
+    use std::iter;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use tikv_client_proto::kvrpcpb;
+    use tikv_client_proto::pdpb::Timestamp;
+    use tikv_client_proto::tikvpb::tikv_client::TikvClient;
     use tikv_client_store::HasRegionError;
     use tonic::transport::Channel;
+
+    use super::*;
+    use crate::mock::MockKvClient;
+    use crate::mock::MockPdClient;
+    use crate::store::store_stream_for_keys;
+    use crate::transaction::lowering::new_commit_request;
+    use crate::Error;
+    use crate::Key;
+    use crate::Result;
 
     #[tokio::test]
     async fn test_region_retry() {

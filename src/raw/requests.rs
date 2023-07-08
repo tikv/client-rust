@@ -1,26 +1,40 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{any::Any, ops::Range, sync::Arc, time::Duration};
+use std::any::Any;
+use std::ops::Range;
+use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use tikv_client_proto::{kvrpcpb, metapb, tikvpb::tikv_client::TikvClient};
+use tikv_client_proto::kvrpcpb;
+use tikv_client_proto::metapb;
+use tikv_client_proto::tikvpb::tikv_client::TikvClient;
 use tikv_client_store::Request;
 use tonic::transport::Channel;
 
 use super::RawRpcRequest;
-use crate::{
-    collect_first,
-    pd::PdClient,
-    request::{
-        plan::ResponseWithShard, Collect, CollectSingle, DefaultProcessor, KvRequest, Merge,
-        Process, Shardable, SingleKey,
-    },
-    store::{store_stream_for_keys, store_stream_for_ranges, RegionStore},
-    transaction::HasLocks,
-    util::iter::FlatMapOkIterExt,
-    ColumnFamily, Key, KvPair, Result, Value,
-};
+use crate::collect_first;
+use crate::pd::PdClient;
+use crate::request::plan::ResponseWithShard;
+use crate::request::Collect;
+use crate::request::CollectSingle;
+use crate::request::DefaultProcessor;
+use crate::request::KvRequest;
+use crate::request::Merge;
+use crate::request::Process;
+use crate::request::Shardable;
+use crate::request::SingleKey;
+use crate::store::store_stream_for_keys;
+use crate::store::store_stream_for_ranges;
+use crate::store::RegionStore;
+use crate::transaction::HasLocks;
+use crate::util::iter::FlatMapOkIterExt;
+use crate::ColumnFamily;
+use crate::Key;
+use crate::KvPair;
+use crate::Result;
+use crate::Value;
 
 pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::RawGetRequest {
     let mut req = kvrpcpb::RawGetRequest::default();
@@ -469,16 +483,18 @@ impl HasLocks for kvrpcpb::RawCoprocessorResponse {}
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use crate::{
-        backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
-        mock::{MockKvClient, MockPdClient},
-        request::Plan,
-        Key,
-    };
-    use futures::executor;
     use std::any::Any;
+
+    use futures::executor;
     use tikv_client_proto::kvrpcpb;
+
+    use super::*;
+    use crate::backoff::DEFAULT_REGION_BACKOFF;
+    use crate::backoff::OPTIMISTIC_BACKOFF;
+    use crate::mock::MockKvClient;
+    use crate::mock::MockPdClient;
+    use crate::request::Plan;
+    use crate::Key;
 
     #[test]
     #[ignore]
