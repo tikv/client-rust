@@ -432,7 +432,7 @@ pub mod test {
         assert_eq!(ranges1.0.id(), 1);
         assert_eq!(ranges1.1, vec![
             make_key_range(k1.clone(), k2.clone()),
-            make_key_range(k1, k_split.clone()),
+            make_key_range(k1.clone(), k_split.clone()),
         ]);
         assert_eq!(ranges2.0.id(), 2);
         assert_eq!(ranges2.1, vec![make_key_range(k_split.clone(), k3.clone())]);
