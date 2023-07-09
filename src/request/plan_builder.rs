@@ -1,20 +1,35 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::marker::PhantomData;
+use std::sync::Arc;
+
+use tikv_client_store::HasKeyErrors;
+use tikv_client_store::HasRegionError;
+use tikv_client_store::HasRegionErrors;
+
 use super::plan::PreserveShard;
-use crate::{
-    backoff::Backoff,
-    pd::PdClient,
-    request::{
-        plan::CleanupLocks, shard::HasNextBatch, DefaultProcessor, Dispatch, ExtractError,
-        KvRequest, Merge, MergeResponse, NextBatch, Plan, Process, ProcessResponse, ResolveLock,
-        RetryableMultiRegion, Shardable,
-    },
-    store::RegionStore,
-    transaction::{HasLocks, ResolveLocksContext, ResolveLocksOptions},
-    Result,
-};
-use std::{marker::PhantomData, sync::Arc};
-use tikv_client_store::{HasKeyErrors, HasRegionError, HasRegionErrors};
+use crate::backoff::Backoff;
+use crate::pd::PdClient;
+use crate::request::plan::CleanupLocks;
+use crate::request::shard::HasNextBatch;
+use crate::request::DefaultProcessor;
+use crate::request::Dispatch;
+use crate::request::ExtractError;
+use crate::request::KvRequest;
+use crate::request::Merge;
+use crate::request::MergeResponse;
+use crate::request::NextBatch;
+use crate::request::Plan;
+use crate::request::Process;
+use crate::request::ProcessResponse;
+use crate::request::ResolveLock;
+use crate::request::RetryableMultiRegion;
+use crate::request::Shardable;
+use crate::store::RegionStore;
+use crate::transaction::HasLocks;
+use crate::transaction::ResolveLocksContext;
+use crate::transaction::ResolveLocksOptions;
+use crate::Result;
 
 /// Builder type for plans (see that module for more).
 pub struct PlanBuilder<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> {
@@ -55,9 +70,7 @@ impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted> {
 impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     /// If there is a lock error, then resolve the lock and retry the request.
     pub fn resolve_lock(self, backoff: Backoff) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
-    where
-        P::Result: HasLocks,
-    {
+    where P::Result: HasLocks {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: ResolveLock {
@@ -133,8 +146,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
 }
 
 impl<PdC: PdClient, P: Plan + Shardable> PlanBuilder<PdC, P, NoTarget>
-where
-    P::Result: HasKeyErrors + HasRegionError,
+where P::Result: HasKeyErrors + HasRegionError
 {
     /// Split the request into shards sending a request to the region of each shard.
     pub fn retry_multi_region(
@@ -194,8 +206,7 @@ impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
 }
 
 impl<PdC: PdClient, P: Plan + Shardable> PlanBuilder<PdC, P, NoTarget>
-where
-    P::Result: HasKeyErrors,
+where P::Result: HasKeyErrors
 {
     pub fn preserve_shard(self) -> PlanBuilder<PdC, PreserveShard<P>, NoTarget> {
         PlanBuilder {
@@ -210,8 +221,7 @@ where
 }
 
 impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted>
-where
-    P::Result: HasKeyErrors + HasRegionErrors,
+where P::Result: HasKeyErrors + HasRegionErrors
 {
     pub fn extract_error(self) -> PlanBuilder<PdC, ExtractError<P>, Targetted> {
         PlanBuilder {

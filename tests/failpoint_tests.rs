@@ -2,16 +2,25 @@
 
 mod common;
 
+use std::collections::HashSet;
+use std::iter::FromIterator;
+use std::thread;
+use std::time::Duration;
+
 use common::*;
 use fail::FailScenario;
 use rand::thread_rng;
 use serial_test::serial;
 use slog::info;
-use std::{collections::HashSet, iter::FromIterator, thread, time::Duration};
-use tikv_client::{
-    transaction::{Client, HeartbeatOption, ResolveLocksOptions},
-    Backoff, CheckLevel, Result, RetryOptions, TransactionClient, TransactionOptions,
-};
+use tikv_client::transaction::Client;
+use tikv_client::transaction::HeartbeatOption;
+use tikv_client::transaction::ResolveLocksOptions;
+use tikv_client::Backoff;
+use tikv_client::CheckLevel;
+use tikv_client::Result;
+use tikv_client::RetryOptions;
+use tikv_client::TransactionClient;
+use tikv_client::TransactionOptions;
 
 #[tokio::test]
 #[serial]
@@ -229,7 +238,7 @@ async fn txn_cleanup_range_async_commit_locks() -> Result<()> {
     assert_eq!(count_locks(&client).await?, keys.len());
 
     info!(logger, "total keys' count {}", keys.len());
-    let mut sorted_keys: Vec<Vec<u8>> = Vec::from_iter(keys.clone().into_iter());
+    let mut sorted_keys: Vec<Vec<u8>> = Vec::from_iter(keys.clone());
     sorted_keys.sort();
     let start_key = sorted_keys[1].clone();
     let end_key = sorted_keys[sorted_keys.len() - 2].clone();
@@ -348,8 +357,7 @@ async fn count_locks(client: &TransactionClient) -> Result<usize> {
     let ts = client.current_timestamp().await.unwrap();
     let locks = client.scan_locks(&ts, vec![].., 1024).await?;
     // De-duplicated as `scan_locks` will return duplicated locks due to retry on region changes.
-    let locks_set: HashSet<Vec<u8>> =
-        HashSet::from_iter(locks.into_iter().map(|mut l| l.take_key()));
+    let locks_set: HashSet<Vec<u8>> = HashSet::from_iter(locks.into_iter().map(|l| l.key));
     Ok(locks_set.len())
 }
 

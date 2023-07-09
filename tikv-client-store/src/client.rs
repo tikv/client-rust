@@ -1,33 +1,41 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{request::Request, Result, SecurityManager};
+use std::any::Any;
+use std::sync::Arc;
+use std::time::Duration;
+
 use async_trait::async_trait;
 use derive_new::new;
-use grpcio::{CallOption, Environment};
-use std::{any::Any, sync::Arc, time::Duration};
-use tikv_client_proto::tikvpb::TikvClient;
+use tikv_client_proto::tikvpb::tikv_client::TikvClient;
+use tonic::transport::Channel;
+
+use crate::request::Request;
+use crate::Result;
+use crate::SecurityManager;
 
 /// A trait for connecting to TiKV stores.
+#[async_trait]
 pub trait KvConnect: Sized + Send + Sync + 'static {
     type KvClient: KvClient + Clone + Send + Sync + 'static;
 
-    fn connect(&self, address: &str) -> Result<Self::KvClient>;
+    async fn connect(&self, address: &str) -> Result<Self::KvClient>;
 }
 
 #[derive(new, Clone)]
 pub struct TikvConnect {
-    env: Arc<Environment>,
     security_mgr: Arc<SecurityManager>,
     timeout: Duration,
 }
 
+#[async_trait]
 impl KvConnect for TikvConnect {
     type KvClient = KvRpcClient;
 
-    fn connect(&self, address: &str) -> Result<KvRpcClient> {
+    async fn connect(&self, address: &str) -> Result<KvRpcClient> {
         self.security_mgr
-            .connect(self.env.clone(), address, TikvClient::new)
-            .map(|c| KvRpcClient::new(Arc::new(c), self.timeout))
+            .connect(address, TikvClient::new)
+            .await
+            .map(|c| KvRpcClient::new(c, self.timeout))
     }
 }
 
@@ -40,18 +48,13 @@ pub trait KvClient {
 /// types and abstractions of the client program into the grpc data types.
 #[derive(new, Clone)]
 pub struct KvRpcClient {
-    rpc_client: Arc<TikvClient>,
+    rpc_client: TikvClient<Channel>,
     timeout: Duration,
 }
 
 #[async_trait]
 impl KvClient for KvRpcClient {
     async fn dispatch(&self, request: &dyn Request) -> Result<Box<dyn Any>> {
-        request
-            .dispatch(
-                &self.rpc_client,
-                CallOption::default().timeout(self.timeout),
-            )
-            .await
+        request.dispatch(&self.rpc_client, self.timeout).await
     }
 }

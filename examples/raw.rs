@@ -4,14 +4,23 @@
 
 mod common;
 
+use tikv_client::Config;
+use tikv_client::IntoOwnedRange;
+use tikv_client::Key;
+use tikv_client::KvPair;
+use tikv_client::RawClient as Client;
+use tikv_client::Result;
+use tikv_client::Value;
+
 use crate::common::parse_args;
-use tikv_client::{Config, IntoOwnedRange, Key, KvPair, RawClient as Client, Result, Value};
 
 const KEY: &str = "TiKV";
 const VALUE: &str = "Rust";
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::init();
+
     // You can try running this example by passing your pd endpoints
     // (and SSL options if necessary) through command line arguments.
     let args = parse_args("raw");
@@ -27,7 +36,6 @@ async fn main() -> Result<()> {
     // When we first create a client we receive a `Connect` structure which must be resolved before
     // the client is actually connected and usable.
     let client = Client::new_with_config(args.pd, config, None).await?;
-    let client = client.clone();
 
     // Requests are created from the connected client. These calls return structures which
     // implement `Future`. This means the `Future` must be resolved before the action ever takes
@@ -92,10 +100,10 @@ async fn main() -> Result<()> {
         .expect("Could not scan");
 
     let keys: Vec<_> = pairs.into_iter().map(|p| p.key().clone()).collect();
-    assert_eq!(
-        &keys,
-        &[Key::from("k1".to_owned()), Key::from("k2".to_owned()),]
-    );
+    assert_eq!(&keys, &[
+        Key::from("k1".to_owned()),
+        Key::from("k2".to_owned()),
+    ]);
     println!("Scanning from {start:?} to {end:?} gives: {keys:?}");
 
     let k1 = "k1";
@@ -114,18 +122,15 @@ async fn main() -> Result<()> {
         .into_iter()
         .map(|p| String::from_utf8(p.1).unwrap())
         .collect();
-    assert_eq!(
-        &vals,
-        &[
-            "v1".to_owned(),
-            "v2".to_owned(),
-            "v2".to_owned(),
-            "v3".to_owned(),
-            "v1".to_owned(),
-            "v2".to_owned(),
-            "v3".to_owned()
-        ]
-    );
+    assert_eq!(&vals, &[
+        "v1".to_owned(),
+        "v2".to_owned(),
+        "v2".to_owned(),
+        "v3".to_owned(),
+        "v1".to_owned(),
+        "v2".to_owned(),
+        "v3".to_owned()
+    ]);
     println!("Scanning batch scan from {batch_scan_keys:?} gives: {vals:?}");
 
     // Cleanly exit.

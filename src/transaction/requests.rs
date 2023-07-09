@@ -1,31 +1,46 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    collect_first,
-    pd::PdClient,
-    request::{
-        Batchable, Collect, CollectSingle, CollectWithShard, DefaultProcessor, HasNextBatch,
-        KvRequest, Merge, NextBatch, Process, ResponseWithShard, Shardable, SingleKey,
-    },
-    store::{store_stream_for_keys, store_stream_for_range, RegionStore},
-    timestamp::TimestampExt,
-    transaction::HasLocks,
-    util::iter::FlatMapOkIterExt,
-    KvPair, Result, Value,
-};
+use std::cmp;
+use std::iter;
+use std::sync::Arc;
+
 use either::Either;
-use futures::{
-    stream::{self, BoxStream},
-    StreamExt,
-};
-use std::{cmp, iter, sync::Arc};
+use futures::stream::BoxStream;
+use futures::stream::{self};
+use futures::StreamExt;
 use tikv_client_common::Error::PessimisticLockError;
-use tikv_client_proto::{
-    kvrpcpb::{self, LockInfo, TxnHeartBeatResponse, TxnInfo},
-    pdpb::Timestamp,
-};
+use tikv_client_proto::kvrpcpb::Action;
+use tikv_client_proto::kvrpcpb::LockInfo;
+use tikv_client_proto::kvrpcpb::TxnHeartBeatResponse;
+use tikv_client_proto::kvrpcpb::TxnInfo;
+use tikv_client_proto::kvrpcpb::{self};
+use tikv_client_proto::pdpb::Timestamp;
 
 use super::transaction::TXN_COMMIT_BATCH_SIZE;
+use crate::collect_first;
+use crate::pd::PdClient;
+use crate::request::Batchable;
+use crate::request::Collect;
+use crate::request::CollectSingle;
+use crate::request::CollectWithShard;
+use crate::request::DefaultProcessor;
+use crate::request::HasNextBatch;
+use crate::request::KvRequest;
+use crate::request::Merge;
+use crate::request::NextBatch;
+use crate::request::Process;
+use crate::request::ResponseWithShard;
+use crate::request::Shardable;
+use crate::request::SingleKey;
+use crate::store::store_stream_for_keys;
+use crate::store::store_stream_for_range;
+use crate::store::RegionStore;
+use crate::timestamp::TimestampExt;
+use crate::transaction::HasLocks;
+use crate::util::iter::FlatMapOkIterExt;
+use crate::KvPair;
+use crate::Result;
+use crate::Value;
 
 // implement HasLocks for a response type that has a `pairs` field,
 // where locks can be extracted from both the `pairs` and `error` fields
@@ -70,8 +85,8 @@ macro_rules! error_locks {
 
 pub fn new_get_request(key: Vec<u8>, timestamp: u64) -> kvrpcpb::GetRequest {
     let mut req = kvrpcpb::GetRequest::default();
-    req.set_key(key);
-    req.set_version(timestamp);
+    req.key = key;
+    req.version = timestamp;
     req
 }
 
@@ -91,19 +106,19 @@ impl Process<kvrpcpb::GetResponse> for DefaultProcessor {
     type Out = Option<Value>;
 
     fn process(&self, input: Result<kvrpcpb::GetResponse>) -> Result<Self::Out> {
-        let mut input = input?;
+        let input = input?;
         Ok(if input.not_found {
             None
         } else {
-            Some(input.take_value())
+            Some(input.value)
         })
     }
 }
 
 pub fn new_batch_get_request(keys: Vec<Vec<u8>>, timestamp: u64) -> kvrpcpb::BatchGetRequest {
     let mut req = kvrpcpb::BatchGetRequest::default();
-    req.set_keys(keys.into());
-    req.set_version(timestamp);
+    req.keys = keys;
+    req.version = timestamp;
     req
 }
 
@@ -119,7 +134,7 @@ impl Merge<kvrpcpb::BatchGetResponse> for Collect {
     fn merge(&self, input: Vec<Result<kvrpcpb::BatchGetResponse>>) -> Result<Self::Out> {
         input
             .into_iter()
-            .flat_map_ok(|mut resp| resp.take_pairs().into_iter().map(Into::into))
+            .flat_map_ok(|resp| resp.pairs.into_iter().map(Into::into))
             .collect()
     }
 }
@@ -134,16 +149,16 @@ pub fn new_scan_request(
 ) -> kvrpcpb::ScanRequest {
     let mut req = kvrpcpb::ScanRequest::default();
     if !reverse {
-        req.set_start_key(start_key);
-        req.set_end_key(end_key);
+        req.start_key = start_key;
+        req.end_key = end_key;
     } else {
-        req.set_start_key(end_key);
-        req.set_end_key(start_key);
+        req.start_key = end_key;
+        req.end_key = start_key;
     }
-    req.set_limit(limit);
-    req.set_key_only(key_only);
-    req.set_version(timestamp);
-    req.set_reverse(reverse);
+    req.limit = limit;
+    req.key_only = key_only;
+    req.version = timestamp;
+    req.reverse = reverse;
     req
 }
 
@@ -159,7 +174,7 @@ impl Merge<kvrpcpb::ScanResponse> for Collect {
     fn merge(&self, input: Vec<Result<kvrpcpb::ScanResponse>>) -> Result<Self::Out> {
         input
             .into_iter()
-            .flat_map_ok(|mut resp| resp.take_pairs().into_iter().map(Into::into))
+            .flat_map_ok(|resp| resp.pairs.into_iter().map(Into::into))
             .collect()
     }
 }
@@ -169,15 +184,15 @@ pub fn new_resolve_lock_request(
     commit_version: u64,
 ) -> kvrpcpb::ResolveLockRequest {
     let mut req = kvrpcpb::ResolveLockRequest::default();
-    req.set_start_version(start_version);
-    req.set_commit_version(commit_version);
+    req.start_version = start_version;
+    req.commit_version = commit_version;
 
     req
 }
 
 pub fn new_batch_resolve_lock_request(txn_infos: Vec<TxnInfo>) -> kvrpcpb::ResolveLockRequest {
     let mut req = kvrpcpb::ResolveLockRequest::default();
-    req.set_txn_infos(txn_infos.into());
+    req.txn_infos = txn_infos;
     req
 }
 
@@ -191,8 +206,8 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
 
 pub fn new_cleanup_request(key: Vec<u8>, start_version: u64) -> kvrpcpb::CleanupRequest {
     let mut req = kvrpcpb::CleanupRequest::default();
-    req.set_key(key);
-    req.set_start_version(start_version);
+    req.key = key;
+    req.start_version = start_version;
 
     req
 }
@@ -224,12 +239,12 @@ pub fn new_prewrite_request(
     lock_ttl: u64,
 ) -> kvrpcpb::PrewriteRequest {
     let mut req = kvrpcpb::PrewriteRequest::default();
-    req.set_mutations(mutations.into());
-    req.set_primary_lock(primary_lock);
-    req.set_start_version(start_version);
-    req.set_lock_ttl(lock_ttl);
+    req.mutations = mutations;
+    req.primary_lock = primary_lock;
+    req.start_version = start_version;
+    req.lock_ttl = lock_ttl;
     // FIXME: Lite resolve lock is currently disabled
-    req.set_txn_size(std::u64::MAX);
+    req.txn_size = std::u64::MAX;
 
     req
 }
@@ -243,8 +258,8 @@ pub fn new_pessimistic_prewrite_request(
 ) -> kvrpcpb::PrewriteRequest {
     let len = mutations.len();
     let mut req = new_prewrite_request(mutations, primary_lock, start_version, lock_ttl);
-    req.set_for_update_ts(for_update_ts);
-    req.set_is_pessimistic_lock(iter::repeat(true).take(len).collect());
+    req.for_update_ts = for_update_ts;
+    req.is_pessimistic_lock = iter::repeat(true).take(len).collect();
     req
 }
 
@@ -276,19 +291,19 @@ impl Shardable for kvrpcpb::PrewriteRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region_with_leader.context()?);
+        self.context = Some(store.region_with_leader.context()?);
 
         // Only need to set secondary keys if we're sending the primary key.
         if self.use_async_commit && !self.mutations.iter().any(|m| m.key == self.primary_lock) {
-            self.set_secondaries(vec![].into());
+            self.secondaries = vec![];
         }
 
         // Only if there is only one request to send
         if self.try_one_pc && shard.len() != self.secondaries.len() + 1 {
-            self.set_try_one_pc(false);
+            self.try_one_pc = false;
         }
 
-        self.set_mutations(shard.into());
+        self.mutations = shard;
         Ok(())
     }
 }
@@ -297,8 +312,8 @@ impl Batchable for kvrpcpb::PrewriteRequest {
     type Item = kvrpcpb::Mutation;
 
     fn item_size(item: &Self::Item) -> u64 {
-        let mut size = item.get_key().len() as u64;
-        size += item.get_value().len() as u64;
+        let mut size = item.key.len() as u64;
+        size += item.value.len() as u64;
         size
     }
 }
@@ -309,9 +324,9 @@ pub fn new_commit_request(
     commit_version: u64,
 ) -> kvrpcpb::CommitRequest {
     let mut req = kvrpcpb::CommitRequest::default();
-    req.set_keys(keys.into());
-    req.set_start_version(start_version);
-    req.set_commit_version(commit_version);
+    req.keys = keys;
+    req.start_version = start_version;
+    req.commit_version = commit_version;
 
     req
 }
@@ -343,8 +358,8 @@ impl Shardable for kvrpcpb::CommitRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region_with_leader.context()?);
-        self.set_keys(shard.into_iter().map(Into::into).collect());
+        self.context = Some(store.region_with_leader.context()?);
+        self.keys = shard.into_iter().map(Into::into).collect();
         Ok(())
     }
 }
@@ -362,8 +377,8 @@ pub fn new_batch_rollback_request(
     start_version: u64,
 ) -> kvrpcpb::BatchRollbackRequest {
     let mut req = kvrpcpb::BatchRollbackRequest::default();
-    req.set_keys(keys.into());
-    req.set_start_version(start_version);
+    req.keys = keys;
+    req.start_version = start_version;
 
     req
 }
@@ -380,9 +395,9 @@ pub fn new_pessimistic_rollback_request(
     for_update_ts: u64,
 ) -> kvrpcpb::PessimisticRollbackRequest {
     let mut req = kvrpcpb::PessimisticRollbackRequest::default();
-    req.set_keys(keys.into());
-    req.set_start_version(start_version);
-    req.set_for_update_ts(for_update_ts);
+    req.keys = keys;
+    req.start_version = start_version;
+    req.for_update_ts = for_update_ts;
 
     req
 }
@@ -402,18 +417,17 @@ pub fn new_pessimistic_lock_request(
     need_value: bool,
 ) -> kvrpcpb::PessimisticLockRequest {
     let mut req = kvrpcpb::PessimisticLockRequest::default();
-    req.set_mutations(mutations.into());
-    req.set_primary_lock(primary_lock);
-    req.set_start_version(start_version);
-    req.set_lock_ttl(lock_ttl);
-    req.set_for_update_ts(for_update_ts);
+    req.mutations = mutations;
+    req.primary_lock = primary_lock;
+    req.start_version = start_version;
+    req.lock_ttl = lock_ttl;
+    req.for_update_ts = for_update_ts;
     // FIXME: make them configurable
-    req.set_is_first_lock(false);
-    req.set_wait_timeout(0);
-    req.set_force(false);
-    req.set_return_values(need_value);
+    req.is_first_lock = false;
+    req.wait_timeout = 0;
+    req.return_values = need_value;
     // FIXME: support large transaction
-    req.set_min_commit_ts(0);
+    req.min_commit_ts = 0;
 
     req
 }
@@ -435,8 +449,8 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region_with_leader.context()?);
-        self.set_mutations(shard.into());
+        self.context = Some(store.region_with_leader.context()?);
+        self.mutations = shard;
         Ok(())
     }
 }
@@ -473,10 +487,10 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
             Ok(input
                 .into_iter()
                 .map(Result::unwrap)
-                .flat_map(|ResponseWithShard(mut resp, mutations)| {
-                    let values: Vec<Vec<u8>> = resp.take_values().into();
+                .flat_map(|ResponseWithShard(resp, mutations)| {
+                    let values: Vec<Vec<u8>> = resp.values;
                     let values_len = values.len();
-                    let not_founds = resp.take_not_founds();
+                    let not_founds = resp.not_founds;
                     let kvpairs = mutations
                         .into_iter()
                         .map(|m| m.key)
@@ -491,11 +505,7 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
                     } else {
                         assert_eq!(kvpairs.len(), not_founds.len());
                         Either::Right(kvpairs.zip(not_founds).filter_map(|(kvpair, not_found)| {
-                            if not_found {
-                                None
-                            } else {
-                                Some(kvpair)
-                            }
+                            if not_found { None } else { Some(kvpair) }
                         }))
                     }
                 })
@@ -511,10 +521,10 @@ pub fn new_scan_lock_request(
     limit: u32,
 ) -> kvrpcpb::ScanLockRequest {
     let mut req = kvrpcpb::ScanLockRequest::default();
-    req.set_start_key(start_key);
-    req.set_end_key(end_key);
-    req.set_max_version(safepoint);
-    req.set_limit(limit);
+    req.start_key = start_key;
+    req.end_key = end_key;
+    req.max_version = safepoint;
+    req.limit = limit;
     req
 }
 
@@ -536,17 +546,17 @@ impl Shardable for kvrpcpb::ScanLockRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region_with_leader.context()?);
-        self.set_start_key(shard.0);
+        self.context = Some(store.region_with_leader.context()?);
+        self.start_key = shard.0;
         Ok(())
     }
 }
 
 impl HasNextBatch for kvrpcpb::ScanLockResponse {
     fn has_next_batch(&self) -> Option<(Vec<u8>, Vec<u8>)> {
-        self.get_locks().last().map(|lock| {
+        self.locks.last().map(|lock| {
             // TODO: if last key is larger or equal than ScanLockRequest.end_key, return None.
-            let mut start_key: Vec<u8> = lock.get_key().to_vec();
+            let mut start_key: Vec<u8> = lock.key.clone();
             start_key.push(0);
             (start_key, vec![])
         })
@@ -555,7 +565,7 @@ impl HasNextBatch for kvrpcpb::ScanLockResponse {
 
 impl NextBatch for kvrpcpb::ScanLockRequest {
     fn next_batch(&mut self, range: (Vec<u8>, Vec<u8>)) {
-        self.set_start_key(range.0);
+        self.start_key = range.0;
     }
 }
 
@@ -576,9 +586,9 @@ pub fn new_heart_beat_request(
     ttl: u64,
 ) -> kvrpcpb::TxnHeartBeatRequest {
     let mut req = kvrpcpb::TxnHeartBeatRequest::default();
-    req.set_start_version(start_ts);
-    req.set_primary_lock(primary_lock);
-    req.set_advise_lock_ttl(ttl);
+    req.start_version = start_ts;
+    req.primary_lock = primary_lock;
+    req.advise_lock_ttl = ttl;
     req
 }
 
@@ -597,7 +607,7 @@ impl Shardable for kvrpcpb::TxnHeartBeatRequest {
     }
 
     fn apply_shard(&mut self, mut shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region_with_leader.context()?);
+        self.context = Some(store.region_with_leader.context()?);
         assert!(shard.len() == 1);
         self.primary_lock = shard.pop().unwrap();
         Ok(())
@@ -630,13 +640,13 @@ pub fn new_check_txn_status_request(
     resolving_pessimistic_lock: bool,
 ) -> kvrpcpb::CheckTxnStatusRequest {
     let mut req = kvrpcpb::CheckTxnStatusRequest::default();
-    req.set_primary_key(primary_key);
-    req.set_lock_ts(lock_ts);
-    req.set_caller_start_ts(caller_start_ts);
-    req.set_current_ts(current_ts);
-    req.set_rollback_if_not_exist(rollback_if_not_exist);
-    req.set_force_sync_commit(force_sync_commit);
-    req.set_resolving_pessimistic_lock(resolving_pessimistic_lock);
+    req.primary_key = primary_key;
+    req.lock_ts = lock_ts;
+    req.caller_start_ts = caller_start_ts;
+    req.current_ts = current_ts;
+    req.rollback_if_not_exist = rollback_if_not_exist;
+    req.force_sync_commit = force_sync_commit;
+    req.resolving_pessimistic_lock = resolving_pessimistic_lock;
     req
 }
 
@@ -655,9 +665,9 @@ impl Shardable for kvrpcpb::CheckTxnStatusRequest {
     }
 
     fn apply_shard(&mut self, mut shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region_with_leader.context()?);
+        self.context = Some(store.region_with_leader.context()?);
         assert!(shard.len() == 1);
-        self.set_primary_key(shard.pop().unwrap());
+        self.primary_key = shard.pop().unwrap();
         Ok(())
     }
 }
@@ -688,7 +698,7 @@ pub struct TransactionStatus {
 impl From<kvrpcpb::CheckTxnStatusResponse> for TransactionStatus {
     fn from(mut resp: kvrpcpb::CheckTxnStatusResponse) -> TransactionStatus {
         TransactionStatus {
-            action: resp.get_action(),
+            action: Action::from_i32(resp.action).unwrap(),
             kind: (resp.commit_version, resp.lock_ttl, resp.lock_info.take()).into(),
             is_expired: false,
         }
@@ -752,8 +762,8 @@ pub fn new_check_secondary_locks_request(
     start_version: u64,
 ) -> kvrpcpb::CheckSecondaryLocksRequest {
     let mut req = kvrpcpb::CheckSecondaryLocksRequest::default();
-    req.set_keys(keys.into());
-    req.set_start_version(start_version);
+    req.keys = keys;
+    req.start_version = start_version;
     req
 }
 
@@ -818,7 +828,7 @@ impl HasLocks for kvrpcpb::CleanupResponse {}
 
 impl HasLocks for kvrpcpb::ScanLockResponse {
     fn take_locks(&mut self) -> Vec<LockInfo> {
-        self.take_locks().into()
+        std::mem::take(&mut self.locks)
     }
 }
 
@@ -852,12 +862,14 @@ impl HasLocks for kvrpcpb::PrewriteResponse {
 #[cfg(test)]
 #[cfg_attr(feature = "protobuf-codec", allow(clippy::useless_conversion))]
 mod tests {
-    use crate::{
-        request::{plan::Merge, CollectWithShard, ResponseWithShard},
-        KvPair,
-    };
-    use tikv_client_common::Error::{PessimisticLockError, ResolveLockError};
+    use tikv_client_common::Error::PessimisticLockError;
+    use tikv_client_common::Error::ResolveLockError;
     use tikv_client_proto::kvrpcpb;
+
+    use crate::request::plan::Merge;
+    use crate::request::CollectWithShard;
+    use crate::request::ResponseWithShard;
+    use crate::KvPair;
 
     #[tokio::test]
     async fn test_merge_pessimistic_lock_response() {
@@ -867,7 +879,7 @@ mod tests {
 
         let resp1 = ResponseWithShard(
             kvrpcpb::PessimisticLockResponse {
-                values: vec![value1.to_vec()].into(),
+                values: vec![value1.to_vec()],
                 ..Default::default()
             },
             vec![kvrpcpb::Mutation {
@@ -879,7 +891,7 @@ mod tests {
 
         let resp_empty_value = ResponseWithShard(
             kvrpcpb::PessimisticLockResponse {
-                values: vec![value_empty.to_vec()].into(),
+                values: vec![value_empty.to_vec()],
                 ..Default::default()
             },
             vec![kvrpcpb::Mutation {
@@ -891,7 +903,7 @@ mod tests {
 
         let resp_not_found = ResponseWithShard(
             kvrpcpb::PessimisticLockResponse {
-                values: vec![value_empty.to_vec(), value4.to_vec()].into(),
+                values: vec![value_empty.to_vec(), value4.to_vec()],
                 not_founds: vec![true, false],
                 ..Default::default()
             },
@@ -919,13 +931,10 @@ mod tests {
             ];
             let result = merger.merge(input);
 
-            assert_eq!(
-                result.unwrap(),
-                vec![
-                    KvPair::new(key1.to_vec(), value1.to_vec()),
-                    KvPair::new(key4.to_vec(), value4.to_vec()),
-                ]
-            );
+            assert_eq!(result.unwrap(), vec![
+                KvPair::new(key1.to_vec(), value1.to_vec()),
+                KvPair::new(key4.to_vec(), value4.to_vec()),
+            ]);
         }
         {
             let input = vec![
@@ -942,10 +951,12 @@ mod tests {
             } = result.unwrap_err()
             {
                 assert!(matches!(*inner, ResolveLockError));
-                assert_eq!(
-                    success_keys,
-                    vec![key1.to_vec(), key2.to_vec(), key3.to_vec(), key4.to_vec()]
-                );
+                assert_eq!(success_keys, vec![
+                    key1.to_vec(),
+                    key2.to_vec(),
+                    key3.to_vec(),
+                    key4.to_vec()
+                ]);
             } else {
                 panic!();
             }

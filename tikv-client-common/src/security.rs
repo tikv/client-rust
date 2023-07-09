@@ -1,15 +1,19 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::Result;
-use grpcio::{Channel, ChannelBuilder, ChannelCredentialsBuilder, Environment};
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
+use std::path::PathBuf;
+use std::time::Duration;
+
+// use grpcio::{Channel, ChannelBuilder, ChannelCredentialsBuilder, Environment};
 use regex::Regex;
-use std::{
-    fs::File,
-    io::Read,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use tonic::transport::Certificate;
+use tonic::transport::Channel;
+use tonic::transport::ClientTlsConfig;
+use tonic::transport::Identity;
+
+use crate::Result;
 
 lazy_static::lazy_static! {
     static ref SCHEME_REG: Regex = Regex::new(r"^\s*(https?://)").unwrap();
@@ -63,44 +67,48 @@ impl SecurityManager {
     }
 
     /// Connect to gRPC server using TLS connection. If TLS is not configured, use normal connection.
-    pub fn connect<Factory, Client>(
+    pub async fn connect<Factory, Client>(
         &self,
-        env: Arc<Environment>,
+        // env: Arc<Environment>,
         addr: &str,
         factory: Factory,
     ) -> Result<Client>
     where
         Factory: FnOnce(Channel) -> Client,
     {
+        let addr = "http://".to_string() + &SCHEME_REG.replace(addr, "");
+
         info!("connect to rpc server at endpoint: {:?}", addr);
 
-        let addr = SCHEME_REG.replace(addr, "");
+        let mut builder = Channel::from_shared(addr)?
+            .tcp_keepalive(Some(Duration::from_secs(10)))
+            .keep_alive_timeout(Duration::from_secs(3));
 
-        let cb = ChannelBuilder::new(env)
-            .keepalive_time(Duration::from_secs(10))
-            .keepalive_timeout(Duration::from_secs(3))
-            .use_local_subchannel_pool(true);
-
-        let channel = if self.ca.is_empty() {
-            cb.connect(&addr)
-        } else {
-            let cred = ChannelCredentialsBuilder::new()
-                .root_cert(self.ca.clone())
-                .cert(self.cert.clone(), load_pem_file("private key", &self.key)?)
-                .build();
-            cb.secure_connect(&addr, cred)
+        if !self.ca.is_empty() {
+            let tls = ClientTlsConfig::new()
+                .ca_certificate(Certificate::from_pem(&self.ca))
+                .identity(Identity::from_pem(
+                    &self.cert,
+                    load_pem_file("private key", &self.key)?,
+                ));
+            builder = builder.tls_config(tls)?;
         };
 
-        Ok(factory(channel))
+        let ch = builder.connect().await?;
+
+        Ok(factory(ch))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::fs::File;
+    use std::io::Write;
+    use std::path::PathBuf;
 
-    use std::{fs::File, io::Write, path::PathBuf};
     use tempfile;
+
+    use super::*;
 
     #[test]
     fn test_security() {

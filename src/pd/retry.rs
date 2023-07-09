@@ -2,25 +2,27 @@
 
 //! A utility module for managing and retrying PD requests.
 
-use crate::{
-    region::{RegionId, RegionWithLeader, StoreId},
-    stats::pd_stats,
-    Error, Result, SecurityManager,
-};
+use std::fmt;
+use std::sync::Arc;
+use std::time::Duration;
+use std::time::Instant;
+
 use async_trait::async_trait;
-use futures_timer::Delay;
-use grpcio::Environment;
-use std::{
-    fmt,
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use tikv_client_pd::{Cluster, Connection};
-use tikv_client_proto::{
-    metapb,
-    pdpb::{self, Timestamp},
-};
+use tikv_client_pd::Cluster;
+use tikv_client_pd::Connection;
+use tikv_client_proto::metapb;
+use tikv_client_proto::pdpb::Timestamp;
+use tikv_client_proto::pdpb::{self};
 use tokio::sync::RwLock;
+use tokio::time::sleep;
+
+use crate::region::RegionId;
+use crate::region::RegionWithLeader;
+use crate::region::StoreId;
+use crate::stats::pd_stats;
+use crate::Error;
+use crate::Result;
+use crate::SecurityManager;
 
 // FIXME: these numbers and how they are used are all just cargo-culted in, there
 // may be more optimal values.
@@ -55,12 +57,11 @@ pub struct RetryClient<Cl = Cluster> {
 #[cfg(test)]
 impl<Cl> RetryClient<Cl> {
     pub fn new_with_cluster(
-        env: Arc<Environment>,
         security_mgr: Arc<SecurityManager>,
         timeout: Duration,
         cluster: Cl,
     ) -> RetryClient<Cl> {
-        let connection = Connection::new(env, security_mgr);
+        let connection = Connection::new(security_mgr);
         RetryClient {
             cluster: RwLock::new((cluster, Instant::now())),
             connection,
@@ -77,7 +78,7 @@ macro_rules! retry {
             // use the block here to drop the guard of the read lock,
             // otherwise `reconnect` will try to acquire the write lock and results in a deadlock
             let res = {
-                let $cluster = &$self.cluster.read().await.0;
+                let $cluster = &mut $self.cluster.write().await.0;
                 let res = $call.await;
                 res
             };
@@ -93,7 +94,7 @@ macro_rules! retry {
                 if reconnect_count == 0 {
                     return Err(e);
                 }
-                Delay::new(Duration::from_secs(RECONNECT_INTERVAL_SEC)).await;
+                sleep(Duration::from_secs(RECONNECT_INTERVAL_SEC)).await;
             }
         }
 
@@ -104,12 +105,11 @@ macro_rules! retry {
 
 impl RetryClient<Cluster> {
     pub async fn connect(
-        env: Arc<Environment>,
         endpoints: &[String],
         security_mgr: Arc<SecurityManager>,
         timeout: Duration,
     ) -> Result<RetryClient> {
-        let connection = Connection::new(env, security_mgr);
+        let connection = Connection::new(security_mgr);
         let cluster = RwLock::new((
             connection.connect_cluster(endpoints, timeout).await?,
             Instant::now(),
@@ -156,7 +156,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
             cluster
                 .get_store(id, self.timeout)
                 .await
-                .map(|mut resp| resp.take_store())
+                .map(|resp| resp.store.unwrap())
         })
     }
 
@@ -166,7 +166,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
             cluster
                 .get_all_stores(self.timeout)
                 .await
-                .map(|mut resp| resp.take_stores().into_iter().map(Into::into).collect())
+                .map(|resp| resp.stores.into_iter().map(Into::into).collect())
         })
     }
 
@@ -179,7 +179,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
             cluster
                 .update_safepoint(safepoint, self.timeout)
                 .await
-                .map(|resp| resp.get_new_safe_point() == safepoint)
+                .map(|resp| resp.new_safe_point == safepoint)
         })
     }
 }
@@ -228,16 +228,18 @@ impl Reconnect for RetryClient<Cluster> {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use futures::{executor, future::ready};
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Mutex,
-    };
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::sync::Mutex;
+
+    use futures::executor;
+    use futures::future::ready;
     use tikv_client_common::internal_err;
 
-    #[test]
-    fn test_reconnect() {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_reconnect() {
         struct MockClient {
             reconnect_count: AtomicUsize,
             cluster: RwLock<((), Instant)>,

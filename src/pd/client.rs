@@ -1,26 +1,35 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    compat::stream_fn,
-    kv::codec,
-    pd::{retry::RetryClientTrait, RetryClient},
-    region::{RegionId, RegionVerId, RegionWithLeader},
-    region_cache::RegionCache,
-    store::RegionStore,
-    BoundRange, Config, Key, Result, SecurityManager, Timestamp,
-};
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use async_trait::async_trait;
-use futures::{prelude::*, stream::BoxStream};
-use grpcio::{EnvBuilder, Environment};
+use futures::prelude::*;
+use futures::stream::BoxStream;
 use slog::Logger;
-use std::{collections::HashMap, sync::Arc, thread};
 use tikv_client_pd::Cluster;
-use tikv_client_proto::{kvrpcpb, metapb};
-use tikv_client_store::{KvClient, KvConnect, TikvConnect};
+use tikv_client_proto::kvrpcpb;
+use tikv_client_proto::metapb;
+use tikv_client_store::KvClient;
+use tikv_client_store::KvConnect;
+use tikv_client_store::TikvConnect;
 use tokio::sync::RwLock;
 
-const CQ_COUNT: usize = 1;
-const CLIENT_PREFIX: &str = "tikv-client";
+use crate::compat::stream_fn;
+use crate::kv::codec;
+use crate::pd::retry::RetryClientTrait;
+use crate::pd::RetryClient;
+use crate::region::RegionId;
+use crate::region::RegionVerId;
+use crate::region::RegionWithLeader;
+use crate::region_cache::RegionCache;
+use crate::store::RegionStore;
+use crate::BoundRange;
+use crate::Config;
+use crate::Key;
+use crate::Result;
+use crate::SecurityManager;
+use crate::Timestamp;
 
 /// The PdClient handles all the encoding stuff.
 ///
@@ -182,8 +191,8 @@ pub trait PdClient: Send + Sync + 'static {
 
     fn decode_region(mut region: RegionWithLeader, enable_codec: bool) -> Result<RegionWithLeader> {
         if enable_codec {
-            codec::decode_bytes_in_place(region.region.mut_start_key(), false)?;
-            codec::decode_bytes_in_place(region.region.mut_end_key(), false)?;
+            codec::decode_bytes_in_place(&mut region.region.start_key, false)?;
+            codec::decode_bytes_in_place(&mut region.region.end_key, false)?;
         }
         Ok(region)
     }
@@ -211,7 +220,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
         let store_id = region.get_store_id()?;
         let store = self.region_cache.get_store_by_id(store_id).await?;
-        let kv_client = self.kv_client(store.get_address()).await?;
+        let kv_client = self.kv_client(&store.address).await?;
         Ok(RegionStore::new(region, Arc::new(kv_client)))
     }
 
@@ -258,24 +267,13 @@ impl PdRpcClient<TikvConnect, Cluster> {
     ) -> Result<PdRpcClient> {
         PdRpcClient::new(
             config.clone(),
-            |env, security_mgr| TikvConnect::new(env, security_mgr, config.timeout),
-            |env, security_mgr| {
-                RetryClient::connect(env, pd_endpoints, security_mgr, config.timeout)
-            },
+            |security_mgr| TikvConnect::new(security_mgr, config.timeout),
+            |security_mgr| RetryClient::connect(pd_endpoints, security_mgr, config.timeout),
             enable_codec,
             logger,
         )
         .await
     }
-}
-
-/// make a thread name with additional tag inheriting from current thread.
-fn thread_name(prefix: &str) -> String {
-    thread::current()
-        .name()
-        .and_then(|name| name.split("::").skip(1).last())
-        .map(|tag| format!("{prefix}::{tag}"))
-        .unwrap_or_else(|| prefix.to_owned())
 }
 
 impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
@@ -288,15 +286,9 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
     ) -> Result<PdRpcClient<KvC, Cl>>
     where
         PdFut: Future<Output = Result<RetryClient<Cl>>>,
-        MakeKvC: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> KvC,
-        MakePd: FnOnce(Arc<Environment>, Arc<SecurityManager>) -> PdFut,
+        MakeKvC: FnOnce(Arc<SecurityManager>) -> KvC,
+        MakePd: FnOnce(Arc<SecurityManager>) -> PdFut,
     {
-        let env = Arc::new(
-            EnvBuilder::new()
-                .cq_count(CQ_COUNT)
-                .name_prefix(thread_name(CLIENT_PREFIX))
-                .build(),
-        );
         let security_mgr = Arc::new(
             if let (Some(ca_path), Some(cert_path), Some(key_path)) =
                 (&config.ca_path, &config.cert_path, &config.key_path)
@@ -307,12 +299,12 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             },
         );
 
-        let pd = Arc::new(pd(env.clone(), security_mgr.clone()).await?);
+        let pd = Arc::new(pd(security_mgr.clone()).await?);
         let kv_client_cache = Default::default();
         Ok(PdRpcClient {
             pd: pd.clone(),
             kv_client_cache,
-            kv_connect: kv_connect(env, security_mgr),
+            kv_connect: kv_connect(security_mgr),
             enable_codec,
             region_cache: RegionCache::new(pd),
             logger,
@@ -324,7 +316,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             return Ok(client.clone());
         };
         info!(self.logger, "connect to tikv endpoint: {:?}", address);
-        match self.kv_connect.connect(address) {
+        match self.kv_connect.connect(address).await {
             Ok(client) => {
                 self.kv_client_cache
                     .write()
@@ -339,17 +331,18 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
 
 fn make_key_range(start_key: Vec<u8>, end_key: Vec<u8>) -> kvrpcpb::KeyRange {
     let mut key_range = kvrpcpb::KeyRange::default();
-    key_range.set_start_key(start_key);
-    key_range.set_end_key(end_key);
+    key_range.start_key = start_key;
+    key_range.end_key = end_key;
     key_range
 }
 
 #[cfg(test)]
 pub mod test {
+    use futures::executor;
+    use futures::executor::block_on;
+
     use super::*;
     use crate::mock::*;
-
-    use futures::{executor, executor::block_on};
 
     #[tokio::test]
     async fn test_kv_client_caching() {
@@ -384,19 +377,16 @@ pub mod test {
         let mut stream = executor::block_on_stream(stream);
 
         let result: Vec<Key> = stream.next().unwrap().unwrap().1;
-        assert_eq!(
-            result,
-            vec![
-                vec![1].into(),
-                vec![2].into(),
-                vec![3].into(),
-                vec![5, 2].into()
-            ]
-        );
-        assert_eq!(
-            stream.next().unwrap().unwrap().1,
-            vec![vec![12].into(), vec![11, 4].into()]
-        );
+        assert_eq!(result, vec![
+            vec![1].into(),
+            vec![2].into(),
+            vec![3].into(),
+            vec![5, 2].into()
+        ]);
+        assert_eq!(stream.next().unwrap().unwrap().1, vec![
+            vec![12].into(),
+            vec![11, 4].into()
+        ]);
         assert!(stream.next().is_none());
     }
 
@@ -425,8 +415,8 @@ pub mod test {
         let k2 = vec![5, 2];
         let k3 = vec![11, 4];
         let k4 = vec![16, 4];
-        let k5 = vec![250,251];
-        let k6 = vec![255,251];
+        let k5 = vec![250, 251];
+        let k6 = vec![255, 251];
         let k_split = vec![10];
         let range1 = make_key_range(k1.clone(), k2.clone());
         let range2 = make_key_range(k1.clone(), k3.clone());
@@ -440,13 +430,10 @@ pub mod test {
         let ranges4 = stream.next().unwrap().unwrap();
 
         assert_eq!(ranges1.0.id(), 1);
-        assert_eq!(
-            ranges1.1,
-            vec![
-                make_key_range(k1.clone(), k2.clone()),
-                make_key_range(k1.clone(), k_split.clone()),
-            ]
-        );
+        assert_eq!(ranges1.1, vec![
+            make_key_range(k1.clone(), k2.clone()),
+            make_key_range(k1, k_split.clone()),
+        ]);
         assert_eq!(ranges2.0.id(), 2);
         assert_eq!(ranges2.1, vec![make_key_range(k_split.clone(), k3.clone())]);
         assert_eq!(ranges3.0.id(), 1);

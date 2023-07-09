@@ -1,14 +1,18 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::plan::PreserveShard;
-use crate::{
-    pd::PdClient,
-    request::{plan::CleanupLocks, Dispatch, KvRequest, Plan, ResolveLock},
-    store::RegionStore,
-    Result,
-};
-use futures::stream::BoxStream;
 use std::sync::Arc;
+
+use futures::stream::BoxStream;
+
+use super::plan::PreserveShard;
+use crate::pd::PdClient;
+use crate::request::plan::CleanupLocks;
+use crate::request::Dispatch;
+use crate::request::KvRequest;
+use crate::request::Plan;
+use crate::request::ResolveLock;
+use crate::store::RegionStore;
+use crate::Result;
 
 macro_rules! impl_inner_shardable {
     () => {
@@ -158,9 +162,9 @@ macro_rules! shardable_key {
                 mut shard: Self::Shard,
                 store: &$crate::store::RegionStore,
             ) -> $crate::Result<()> {
-                self.set_context(store.region_with_leader.context()?);
+                self.context = Some(store.region_with_leader.context()?);
                 assert!(shard.len() == 1);
-                self.set_key(shard.pop().unwrap());
+                self.key = shard.pop().unwrap();
                 Ok(())
             }
         }
@@ -190,8 +194,8 @@ macro_rules! shardable_keys {
                 shard: Self::Shard,
                 store: &$crate::store::RegionStore,
             ) -> $crate::Result<()> {
-                self.set_context(store.region_with_leader.context()?);
-                self.set_keys(shard.into_iter().map(Into::into).collect());
+                self.context = Some(store.region_with_leader.context()?);
+                self.keys = shard.into_iter().map(Into::into).collect();
                 Ok(())
             }
         }
@@ -218,10 +222,10 @@ macro_rules! shardable_range {
                 shard: Self::Shard,
                 store: &$crate::store::RegionStore,
             ) -> $crate::Result<()> {
-                self.set_context(store.region_with_leader.context()?);
+                self.context = Some(store.region_with_leader.context()?);
 
-                self.set_start_key(shard.0.into());
-                self.set_end_key(shard.1.into());
+                self.start_key = shard.0.into();
+                self.end_key = shard.1.into();
                 Ok(())
             }
         }
@@ -230,7 +234,8 @@ macro_rules! shardable_range {
 
 #[cfg(test)]
 mod test {
-    use rand::{thread_rng, Rng};
+    use rand::thread_rng;
+    use rand::Rng;
 
     use super::Batchable;
 

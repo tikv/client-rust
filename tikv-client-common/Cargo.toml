@@ -1,31 +1,30 @@
 [package]
 name = "tikv-client-common"
-version = "0.1.0"
-edition = "2018"
+version = "0.2.0"
+edition = "2021"
 license = "Apache-2.0"
 authors = ["The TiKV Project Authors"]
 repository = "https://github.com/tikv/client-rust"
 description = "Common components of the TiKV Rust client"
 
-[features]
-protobuf-codec = ["grpcio/protobuf-codec"]
-prost-codec = ["grpcio/prost-codec"]
-
 [dependencies]
-thiserror = "1"
-futures = { version = "0.3", features = ["compat", "async-await", "thread-pool"] }
-grpcio = { version = "0.10", default-features = false }
+futures = { version = "0.3", features = [
+    "compat",
+    "async-await",
+    "thread-pool",
+] }
 lazy_static = "1"
 log = "0.4"
 regex = "1"
 semver = "1"
-tikv-client-proto = { version = "0.1.0", path = "../tikv-client-proto" }
+thiserror = "1"
+tikv-client-proto = { version = "0.2.0", path = "../tikv-client-proto" }
 tokio = "1"
+tonic = { version = "0.9", features = ["tls"] }
 
 [dev-dependencies]
 clap = "2"
-fail = { version = "0.4", features = [ "failpoints" ] }
+fail = { version = "0.4", features = ["failpoints"] }
 proptest = "1"
 proptest-derive = "0.3"
 tempfile = "3"
-tokio = "1"

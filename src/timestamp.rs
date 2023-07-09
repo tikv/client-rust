@@ -5,6 +5,7 @@
 //! The higher bits of the version are the physical part of the timestamp.
 
 use std::convert::TryInto;
+
 pub use tikv_client_proto::pdpb::Timestamp;
 
 const PHYSICAL_SHIFT_BITS: i64 = 18;

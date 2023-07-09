@@ -1,11 +1,17 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{BoundRange, Key, KvPair, Result, Value};
-use std::{
-    collections::{btree_map::Entry, BTreeMap, HashMap},
-    future::Future,
-};
+use std::collections::btree_map::Entry;
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::future::Future;
+
 use tikv_client_proto::kvrpcpb;
+
+use crate::BoundRange;
+use crate::Key;
+use crate::KvPair;
+use crate::Result;
+use crate::Value;
 
 /// A caching layer which buffers reads and writes in a transaction.
 pub struct Buffer {
@@ -101,7 +107,7 @@ impl Buffer {
             self.update_cache(key, value);
         }
 
-        let results = cached_results.chain(fetched_results.into_iter());
+        let results = cached_results.chain(fetched_results);
         Ok(results)
     }
 
@@ -343,18 +349,18 @@ impl BufferEntry {
         match self {
             BufferEntry::Cached(_) => return None,
             BufferEntry::Put(v) => {
-                pb.set_op(kvrpcpb::Op::Put);
-                pb.set_value(v.clone());
+                pb.op = kvrpcpb::Op::Put.into();
+                pb.value = v.clone();
             }
-            BufferEntry::Del => pb.set_op(kvrpcpb::Op::Del),
-            BufferEntry::Locked(_) => pb.set_op(kvrpcpb::Op::Lock),
+            BufferEntry::Del => pb.op = kvrpcpb::Op::Del.into(),
+            BufferEntry::Locked(_) => pb.op = kvrpcpb::Op::Lock.into(),
             BufferEntry::Insert(v) => {
-                pb.set_op(kvrpcpb::Op::Insert);
-                pb.set_value(v.clone());
+                pb.op = kvrpcpb::Op::Insert.into();
+                pb.value = v.clone();
             }
-            BufferEntry::CheckNotExist => pb.set_op(kvrpcpb::Op::CheckNotExists),
+            BufferEntry::CheckNotExist => pb.op = kvrpcpb::Op::CheckNotExists.into(),
         };
-        pb.set_key(key.clone().into());
+        pb.key = key.clone().into();
         Some(pb)
     }
 
@@ -391,9 +397,11 @@ impl MutationValue {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use futures::{executor::block_on, future::ready};
+    use futures::executor::block_on;
+    use futures::future::ready;
     use tikv_client_common::internal_err;
+
+    use super::*;
 
     #[test]
     fn set_and_get_from_buffer() {
@@ -483,18 +491,15 @@ mod tests {
                 ready(Ok(vec![]))
             }),
         );
-        assert_eq!(
-            r1.unwrap().collect::<Vec<_>>(),
-            vec![
-                KvPair(k1.clone(), v1.clone()),
-                KvPair(k2.clone(), v2.clone())
-            ]
-        );
+        assert_eq!(r1.unwrap().collect::<Vec<_>>(), vec![
+            KvPair(k1.clone(), v1.clone()),
+            KvPair(k2.clone(), v2.clone())
+        ]);
         assert_eq!(r2.unwrap().unwrap(), v2);
-        assert_eq!(
-            r3.unwrap().collect::<Vec<_>>(),
-            vec![KvPair(k1, v1), KvPair(k2, v2)]
-        );
+        assert_eq!(r3.unwrap().collect::<Vec<_>>(), vec![
+            KvPair(k1, v1),
+            KvPair(k2, v2)
+        ]);
     }
 
     // Check that multiple writes to the same key combine in the correct way.
@@ -510,7 +515,7 @@ mod tests {
 
         macro_rules! assert_entry_none {
             ($key: ident) => {
-                assert!(matches!(buffer.entry_map.get(&$key), None,))
+                assert!(buffer.entry_map.get(&$key).is_none())
             };
         }
 

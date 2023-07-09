@@ -1,11 +1,26 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::iter::Iterator;
+
+use tikv_client_proto::kvrpcpb;
+use tikv_client_proto::pdpb::Timestamp;
+
 /// This module provides constructor functions for requests which take arguments as high-level
 /// types (i.e., the types from the client crate) and converts these to the types used in the
 /// generated protobuf code, then calls the low-level ctor functions in the requests module.
-use crate::{timestamp::TimestampExt, transaction::requests, BoundRange, Key};
-use std::iter::Iterator;
-use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use crate::timestamp::TimestampExt;
+/// This module provides constructor functions for requests which take arguments as high-level
+/// types (i.e., the types from the client crate) and converts these to the types used in the
+/// generated protobuf code, then calls the low-level ctor functions in the requests module.
+use crate::transaction::requests;
+/// This module provides constructor functions for requests which take arguments as high-level
+/// types (i.e., the types from the client crate) and converts these to the types used in the
+/// generated protobuf code, then calls the low-level ctor functions in the requests module.
+use crate::BoundRange;
+/// This module provides constructor functions for requests which take arguments as high-level
+/// types (i.e., the types from the client crate) and converts these to the types used in the
+/// generated protobuf code, then calls the low-level ctor functions in the requests module.
+use crate::Key;
 
 pub fn new_get_request(key: Key, timestamp: Timestamp) -> kvrpcpb::GetRequest {
     requests::new_get_request(key.into(), timestamp.version())
@@ -146,9 +161,9 @@ pub fn new_pessimistic_lock_request(
         locks
             .map(|pl| {
                 let mut mutation = kvrpcpb::Mutation::default();
-                mutation.set_op(kvrpcpb::Op::PessimisticLock);
-                mutation.set_assertion(pl.assertion());
-                mutation.set_key(pl.key().into());
+                mutation.op = kvrpcpb::Op::PessimisticLock.into();
+                mutation.assertion = pl.assertion().into();
+                mutation.key = pl.key().into();
                 mutation
             })
             .collect(),

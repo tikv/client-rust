@@ -1,30 +1,35 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
-    pd::PdClient,
-    region::RegionVerId,
-    request::{Collect, CollectSingle, Plan},
-    store::RegionStore,
-    timestamp::TimestampExt,
-    transaction::{
-        requests,
-        requests::{
-            new_check_secondary_locks_request, new_check_txn_status_request, SecondaryLocksStatus,
-            TransactionStatus, TransactionStatusKind,
-        },
-    },
-    Error, Result,
-};
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use fail::fail_point;
 use log::debug;
 use slog::Logger;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
-use tikv_client_proto::{kvrpcpb, kvrpcpb::TxnInfo, pdpb::Timestamp};
+use tikv_client_proto::kvrpcpb;
+use tikv_client_proto::kvrpcpb::TxnInfo;
+use tikv_client_proto::pdpb::Timestamp;
 use tokio::sync::RwLock;
+
+use crate::backoff::Backoff;
+use crate::backoff::DEFAULT_REGION_BACKOFF;
+use crate::backoff::OPTIMISTIC_BACKOFF;
+use crate::pd::PdClient;
+use crate::region::RegionVerId;
+use crate::request::Collect;
+use crate::request::CollectSingle;
+use crate::request::Plan;
+use crate::store::RegionStore;
+use crate::timestamp::TimestampExt;
+use crate::transaction::requests;
+use crate::transaction::requests::new_check_secondary_locks_request;
+use crate::transaction::requests::new_check_txn_status_request;
+use crate::transaction::requests::SecondaryLocksStatus;
+use crate::transaction::requests::TransactionStatus;
+use crate::transaction::requests::TransactionStatusKind;
+use crate::Error;
+use crate::Result;
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 
@@ -221,7 +226,7 @@ impl LockResolver {
 
         let mut txn_infos = HashMap::new();
         for l in locks {
-            let txn_id = l.get_lock_version();
+            let txn_id = l.lock_version;
             if txn_infos.contains_key(&txn_id) || self.ctx.is_region_cleaned(txn_id, &region).await
             {
                 continue;
@@ -232,12 +237,12 @@ impl LockResolver {
                 .check_txn_status(
                     pd_client.clone(),
                     txn_id,
-                    l.get_primary_lock().to_vec(),
+                    l.primary_lock.clone(),
                     0,
                     u64::MAX,
                     true,
                     false,
-                    l.get_lock_type() == kvrpcpb::Op::PessimisticLock,
+                    l.lock_type == kvrpcpb::Op::PessimisticLock as i32,
                 )
                 .await?;
 
@@ -245,17 +250,16 @@ impl LockResolver {
             // Then we need to check the secondary locks to determine the final status of the transaction.
             if let TransactionStatusKind::Locked(_, lock_info) = &status.kind {
                 let secondary_status = self
-                    .check_all_secondaries(
-                        pd_client.clone(),
-                        lock_info.get_secondaries().to_vec(),
-                        txn_id,
-                    )
+                    .check_all_secondaries(pd_client.clone(), lock_info.secondaries.clone(), txn_id)
                     .await?;
                 slog_debug!(
                     self.logger,
                     "secondary status, txn_id:{}, commit_ts:{:?}, min_commit_version:{}, fallback_2pc:{}",
                     txn_id,
-                    secondary_status.commit_ts.as_ref().map_or(0, |ts| ts.version()),
+                    secondary_status
+                        .commit_ts
+                        .as_ref()
+                        .map_or(0, |ts| ts.version()),
                     secondary_status.min_commit_ts,
                     secondary_status.fallback_2pc,
                 );
@@ -270,12 +274,12 @@ impl LockResolver {
                         .check_txn_status(
                             pd_client.clone(),
                             txn_id,
-                            l.get_primary_lock().to_vec(),
+                            l.primary_lock,
                             0,
                             u64::MAX,
                             true,
                             true,
-                            l.get_lock_type() == kvrpcpb::Op::PessimisticLock,
+                            l.lock_type == kvrpcpb::Op::PessimisticLock as i32,
                         )
                         .await?;
                 } else {
@@ -314,8 +318,8 @@ impl LockResolver {
         for (txn_id, commit_ts) in txn_infos.into_iter() {
             txn_ids.push(txn_id);
             let mut txn_info = TxnInfo::default();
-            txn_info.set_txn(txn_id);
-            txn_info.set_status(commit_ts);
+            txn_info.txn = txn_id;
+            txn_info.status = commit_ts;
             txn_info_vec.push(txn_info);
         }
         let cleaned_region = self
@@ -421,10 +425,13 @@ pub trait HasLocks {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::mock::{MockKvClient, MockPdClient};
     use std::any::Any;
+
     use tikv_client_proto::errorpb;
+
+    use super::*;
+    use crate::mock::MockKvClient;
+    use crate::mock::MockPdClient;
 
     #[tokio::test]
     async fn test_resolve_lock_with_retry() {
@@ -435,7 +442,7 @@ mod tests {
             |_: &dyn Any| {
                 fail::fail_point!("region-error", |_| {
                     let resp = kvrpcpb::ResolveLockResponse {
-                        region_error: Some(errorpb::Error::default()).into(),
+                        region_error: Some(errorpb::Error::default()),
                         ..Default::default()
                     };
                     Ok(Box::new(resp) as Box<dyn Any>)

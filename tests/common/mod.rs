@@ -2,12 +2,22 @@
 
 mod ctl;
 
-use futures_timer::Delay;
-use log::{info, warn};
+use std::collections::HashSet;
+use std::convert::TryInto;
+use std::env;
+use std::time::Duration;
+
+use log::info;
+use log::warn;
 use rand::Rng;
 use slog::Drain;
-use std::{collections::HashSet, convert::TryInto, env, time::Duration};
-use tikv_client::{ColumnFamily, Key, RawClient, Result, Transaction, TransactionClient};
+use tikv_client::ColumnFamily;
+use tikv_client::Key;
+use tikv_client::RawClient;
+use tikv_client::Result;
+use tikv_client::Transaction;
+use tikv_client::TransactionClient;
+use tokio::time::sleep;
 
 const ENV_PD_ADDRS: &str = "PD_ADDRS";
 const ENV_ENABLE_MULIT_REGION: &str = "MULTI_REGION";
@@ -88,7 +98,7 @@ async fn ensure_region_split(
             warn!("Stop splitting regions: time limit exceeded");
             break;
         }
-        Delay::new(Duration::from_millis(200)).await;
+        sleep(Duration::from_millis(200)).await;
     }
 
     Ok(())
