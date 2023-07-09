@@ -168,7 +168,7 @@ pub trait PdClient: Send + Sync + 'static {
                     while let Some(range) = ranges.pop() {
                         let start_key: Key = range.start_key.clone().into();
                         let end_key: Key = range.end_key.clone().into();
-                        if start_key < region_start {
+                        if start_key < region_start || start_key > region_end {
                             ranges.push(range);
                             break;
                         }
@@ -410,13 +410,15 @@ pub mod test {
         let k2 = vec![5, 2];
         let k3 = vec![11, 4];
         let k4 = vec![16, 4];
+        let k5 = vec![250, 251];
+        let k6 = vec![255, 251];
         let k_split = vec![10];
         let range1 = make_key_range(k1.clone(), k2.clone());
         let range2 = make_key_range(k1.clone(), k3.clone());
         let range3 = make_key_range(k2.clone(), k4.clone());
         let ranges = vec![range1, range2, range3];
 
-        let mut stream = executor::block_on_stream(client.group_ranges_by_region(ranges));
+        let mut stream = executor::block_on_stream(client.clone().group_ranges_by_region(ranges));
         let ranges1 = stream.next().unwrap().unwrap();
         let ranges2 = stream.next().unwrap().unwrap();
         let ranges3 = stream.next().unwrap().unwrap();
@@ -425,14 +427,29 @@ pub mod test {
         assert_eq!(ranges1.0.id(), 1);
         assert_eq!(ranges1.1, vec![
             make_key_range(k1.clone(), k2.clone()),
-            make_key_range(k1, k_split.clone()),
+            make_key_range(k1.clone(), k_split.clone()),
         ]);
         assert_eq!(ranges2.0.id(), 2);
-        assert_eq!(ranges2.1, vec![make_key_range(k_split.clone(), k3)]);
+        assert_eq!(ranges2.1, vec![make_key_range(k_split.clone(), k3.clone())]);
         assert_eq!(ranges3.0.id(), 1);
-        assert_eq!(ranges3.1, vec![make_key_range(k2, k_split.clone())]);
+        assert_eq!(ranges3.1, vec![make_key_range(k2.clone(), k_split.clone())]);
         assert_eq!(ranges4.0.id(), 2);
-        assert_eq!(ranges4.1, vec![make_key_range(k_split, k4)]);
+        assert_eq!(ranges4.1, vec![make_key_range(k_split, k4.clone())]);
         assert!(stream.next().is_none());
+
+        let range1 = make_key_range(k1.clone(), k2.clone());
+        let range2 = make_key_range(k3.clone(), k4.clone());
+        let range3 = make_key_range(k5.clone(), k6.clone());
+        let ranges = vec![range1, range2, range3];
+        stream = executor::block_on_stream(client.group_ranges_by_region(ranges));
+        let ranges1 = stream.next().unwrap().unwrap();
+        let ranges2 = stream.next().unwrap().unwrap();
+        let ranges3 = stream.next().unwrap().unwrap();
+        assert_eq!(ranges1.0.id(), 1);
+        assert_eq!(ranges1.1, vec![make_key_range(k1, k2)]);
+        assert_eq!(ranges2.0.id(), 2);
+        assert_eq!(ranges2.1, vec![make_key_range(k3, k4)]);
+        assert_eq!(ranges3.0.id(), 3);
+        assert_eq!(ranges3.1, vec![make_key_range(k5, k6)]);
     }
 }
