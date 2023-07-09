@@ -6,16 +6,19 @@ use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use tikv_client_common::internal_err;
-use tikv_client_proto::pdpb::Timestamp;
-use tikv_client_proto::pdpb::{self};
+use log::error;
+use log::info;
+use log::warn;
 use tonic::transport::Channel;
 use tonic::IntoRequest;
 use tonic::Request;
 
-use crate::timestamp::TimestampOracle;
+use super::timestamp::TimestampOracle;
+use crate::internal_err;
+use crate::proto::pdpb;
 use crate::Result;
 use crate::SecurityManager;
+use crate::Timestamp;
 
 /// A PD cluster.
 pub struct Cluster {
@@ -28,7 +31,7 @@ pub struct Cluster {
 macro_rules! pd_request {
     ($cluster_id:expr, $type:ty) => {{
         let mut request = <$type>::default();
-        let mut header = ::tikv_client_proto::pdpb::RequestHeader::default();
+        let mut header = pdpb::RequestHeader::default();
         header.cluster_id = $cluster_id;
         request.header = Some(header);
         request

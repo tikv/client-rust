@@ -2,10 +2,10 @@
 //! The module provides some utility functions to control and get information
 //! from PD, using its HTTP API.
 
-use tikv_client_common::Error;
-use tikv_client_common::Result;
+use tikv_client::Error;
 
 use super::pd_addrs;
+use crate::common::Result;
 
 pub async fn get_region_count() -> Result<u64> {
     let res = reqwest::get(format!("http://{}/pd/api/v1/regions", pd_addrs()[0]))

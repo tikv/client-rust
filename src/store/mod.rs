@@ -1,5 +1,9 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+mod client;
+mod errors;
+mod request;
+
 use std::cmp::max;
 use std::cmp::min;
 use std::sync::Arc;
@@ -8,12 +12,16 @@ use async_trait::async_trait;
 use derive_new::new;
 use futures::prelude::*;
 use futures::stream::BoxStream;
-use tikv_client_proto::kvrpcpb;
-use tikv_client_store::KvClient;
-use tikv_client_store::KvConnect;
-use tikv_client_store::TikvConnect;
 
+pub use self::client::KvClient;
+pub use self::client::KvConnect;
+pub use self::client::TikvConnect;
+pub use self::errors::HasKeyErrors;
+pub use self::errors::HasRegionError;
+pub use self::errors::HasRegionErrors;
+pub use self::request::Request;
 use crate::pd::PdClient;
+use crate::proto::kvrpcpb;
 use crate::region::RegionWithLeader;
 use crate::BoundRange;
 use crate::Key;

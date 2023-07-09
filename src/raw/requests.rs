@@ -7,15 +7,14 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use tikv_client_proto::kvrpcpb;
-use tikv_client_proto::metapb;
-use tikv_client_proto::tikvpb::tikv_client::TikvClient;
-use tikv_client_store::Request;
 use tonic::transport::Channel;
 
 use super::RawRpcRequest;
 use crate::collect_first;
 use crate::pd::PdClient;
+use crate::proto::kvrpcpb;
+use crate::proto::metapb;
+use crate::proto::tikvpb::tikv_client::TikvClient;
 use crate::request::plan::ResponseWithShard;
 use crate::request::Collect;
 use crate::request::CollectSingle;
@@ -25,9 +24,13 @@ use crate::request::Merge;
 use crate::request::Process;
 use crate::request::Shardable;
 use crate::request::SingleKey;
+use crate::shardable_key;
+use crate::shardable_keys;
+use crate::shardable_range;
 use crate::store::store_stream_for_keys;
 use crate::store::store_stream_for_ranges;
 use crate::store::RegionStore;
+use crate::store::Request;
 use crate::transaction::HasLocks;
 use crate::util::iter::FlatMapOkIterExt;
 use crate::ColumnFamily;
@@ -486,13 +489,13 @@ mod test {
     use std::any::Any;
 
     use futures::executor;
-    use tikv_client_proto::kvrpcpb;
 
     use super::*;
     use crate::backoff::DEFAULT_REGION_BACKOFF;
     use crate::backoff::OPTIMISTIC_BACKOFF;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
+    use crate::proto::kvrpcpb;
     use crate::request::Plan;
     use crate::Key;
 

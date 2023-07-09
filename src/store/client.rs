@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use derive_new::new;
-use tikv_client_proto::tikvpb::tikv_client::TikvClient;
 use tonic::transport::Channel;
 
-use crate::request::Request;
+use super::Request;
+use crate::proto::tikvpb::tikv_client::TikvClient;
 use crate::Result;
 use crate::SecurityManager;
 

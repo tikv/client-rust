@@ -3,10 +3,6 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use tikv_client_store::HasKeyErrors;
-use tikv_client_store::HasRegionError;
-use tikv_client_store::HasRegionErrors;
-
 use super::plan::PreserveShard;
 use crate::backoff::Backoff;
 use crate::pd::PdClient;
@@ -25,6 +21,9 @@ use crate::request::ProcessResponse;
 use crate::request::ResolveLock;
 use crate::request::RetryableMultiRegion;
 use crate::request::Shardable;
+use crate::store::HasKeyErrors;
+use crate::store::HasRegionError;
+use crate::store::HasRegionErrors;
 use crate::store::RegionStore;
 use crate::transaction::HasLocks;
 use crate::transaction::ResolveLocksContext;
@@ -84,7 +83,6 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
 
     pub fn cleanup_locks(
         self,
-        logger: slog::Logger, // TODO: add logger to PlanBuilder.
         ctx: ResolveLocksContext,
         options: ResolveLocksOptions,
         backoff: Backoff,
@@ -96,7 +94,6 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: CleanupLocks {
-                logger,
                 inner: self.plan,
                 ctx,
                 options,

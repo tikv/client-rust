@@ -5,11 +5,11 @@ use std::str;
 
 #[cfg(test)]
 use proptest_derive::Arbitrary;
-use tikv_client_proto::kvrpcpb;
 
 use super::HexRepr;
 use super::Key;
 use super::Value;
+use crate::proto::kvrpcpb;
 
 /// A key/value pair.
 ///

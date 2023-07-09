@@ -20,10 +20,9 @@ pub use transaction::TransactionOptions;
 
 mod buffer;
 mod client;
-pub mod lowering;
-#[macro_use]
-mod requests;
 mod lock;
+pub mod lowering;
+mod requests;
 pub use lock::LockResolver;
 pub use lock::ResolveLocksContext;
 pub use lock::ResolveLocksOptions;

@@ -2,9 +2,8 @@
 
 use std::iter::Iterator;
 
-use tikv_client_proto::kvrpcpb;
-use tikv_client_proto::pdpb::Timestamp;
-
+use crate::proto::kvrpcpb;
+use crate::proto::pdpb::Timestamp;
 /// This module provides constructor functions for requests which take arguments as high-level
 /// types (i.e., the types from the client crate) and converts these to the types used in the
 /// generated protobuf code, then calls the low-level ctor functions in the requests module.

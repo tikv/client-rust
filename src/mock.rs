@@ -10,20 +10,18 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use derive_new::new;
-use slog::Drain;
-use slog::Logger;
-use tikv_client_proto::metapb::RegionEpoch;
-use tikv_client_proto::metapb::{self};
-use tikv_client_store::KvClient;
-use tikv_client_store::KvConnect;
-use tikv_client_store::Request;
 
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::pd::RetryClient;
+use crate::proto::metapb::RegionEpoch;
+use crate::proto::metapb::{self};
 use crate::region::RegionId;
 use crate::region::RegionWithLeader;
+use crate::store::KvClient;
+use crate::store::KvConnect;
 use crate::store::RegionStore;
+use crate::store::Request;
 use crate::Config;
 use crate::Error;
 use crate::Key;
@@ -34,14 +32,6 @@ use crate::Timestamp;
 /// client can be tested without doing any RPC calls.
 pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
     let config = Config::default();
-    let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-    let logger = Logger::root(
-        slog_term::FullFormat::new(plain)
-            .build()
-            .filter_level(slog::Level::Info)
-            .fuse(),
-        o!(),
-    );
     PdRpcClient::new(
         config.clone(),
         |_| MockKvConnect,
@@ -53,7 +43,6 @@ pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
             ))
         },
         false,
-        logger,
     )
     .await
     .unwrap()

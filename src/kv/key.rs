@@ -12,11 +12,11 @@ use proptest::arbitrary::any_with;
 use proptest::collection::size_range;
 #[cfg(test)]
 use proptest_derive::Arbitrary;
-use tikv_client_proto::kvrpcpb;
 
 use super::HexRepr;
 use crate::kv::codec::BytesEncoder;
 use crate::kv::codec::{self};
+use crate::proto::kvrpcpb;
 
 const _PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
 

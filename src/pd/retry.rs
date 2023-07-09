@@ -8,14 +8,14 @@ use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use tikv_client_pd::Cluster;
-use tikv_client_pd::Connection;
-use tikv_client_proto::metapb;
-use tikv_client_proto::pdpb::Timestamp;
-use tikv_client_proto::pdpb::{self};
 use tokio::sync::RwLock;
 use tokio::time::sleep;
 
+use crate::pd::Cluster;
+use crate::pd::Connection;
+use crate::proto::metapb;
+use crate::proto::pdpb::Timestamp;
+use crate::proto::pdpb::{self};
 use crate::region::RegionId;
 use crate::region::RegionWithLeader;
 use crate::region::StoreId;
@@ -234,9 +234,9 @@ mod test {
 
     use futures::executor;
     use futures::future::ready;
-    use tikv_client_common::internal_err;
 
     use super::*;
+    use crate::internal_err;
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_reconnect() {

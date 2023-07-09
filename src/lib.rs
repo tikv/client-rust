@@ -67,7 +67,7 @@
 //! # use futures::prelude::*;
 //! # fn main() -> Result<()> {
 //! # futures::executor::block_on(async {
-//! let client = RawClient::new(vec!["127.0.0.1:2379"], None).await?;
+//! let client = RawClient::new(vec!["127.0.0.1:2379"]).await?;
 //! client.put("key".to_owned(), "value".to_owned()).await?;
 //! let value = client.get("key".to_owned()).await?;
 //! # Ok(())
@@ -81,7 +81,7 @@
 //! # use futures::prelude::*;
 //! # fn main() -> Result<()> {
 //! # futures::executor::block_on(async {
-//! let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"], None).await?;
+//! let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"]).await?;
 //! let mut txn = txn_client.begin_optimistic().await?;
 //! txn.put("key".to_owned(), "value".to_owned()).await?;
 //! let value = txn.get("key".to_owned()).await?;
@@ -95,17 +95,17 @@
 #![allow(clippy::field_reassign_with_default)]
 #![allow(clippy::arc_with_non_send_sync)]
 
-#[macro_use]
 pub mod request;
-#[macro_use]
 #[doc(hidden)]
 pub mod transaction;
 
 mod backoff;
+mod common;
 mod compat;
 mod config;
 mod kv;
 mod pd;
+mod proto;
 #[doc(hidden)]
 pub mod raw;
 mod region;
@@ -120,18 +120,14 @@ mod mock;
 #[cfg(test)]
 mod proptests;
 
-#[macro_use]
-extern crate slog;
-extern crate slog_term;
-
+#[doc(inline)]
+pub use common::security::SecurityManager;
+#[doc(inline)]
+pub use common::Error;
+#[doc(inline)]
+pub use common::Result;
 #[doc(inline)]
 pub use config::Config;
-#[doc(inline)]
-pub use tikv_client_common::security::SecurityManager;
-#[doc(inline)]
-pub use tikv_client_common::Error;
-#[doc(inline)]
-pub use tikv_client_common::Result;
 
 #[doc(inline)]
 pub use crate::backoff::Backoff;

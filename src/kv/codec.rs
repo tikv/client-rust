@@ -1,8 +1,7 @@
 use std::io::Write;
 use std::ptr;
 
-use tikv_client_common::internal_err;
-
+use crate::internal_err;
 use crate::Result;
 
 const ENC_GROUP_SIZE: usize = 8;

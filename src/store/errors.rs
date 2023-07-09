@@ -2,18 +2,17 @@
 
 use std::fmt::Display;
 
-use tikv_client_proto::kvrpcpb;
-
+use crate::proto::kvrpcpb;
 use crate::Error;
 
 // Those that can have a single region error
 pub trait HasRegionError {
-    fn region_error(&mut self) -> Option<tikv_client_proto::errorpb::Error>;
+    fn region_error(&mut self) -> Option<crate::proto::errorpb::Error>;
 }
 
 // Those that can have multiple region errors
 pub trait HasRegionErrors {
-    fn region_errors(&mut self) -> Option<Vec<tikv_client_proto::errorpb::Error>>;
+    fn region_errors(&mut self) -> Option<Vec<crate::proto::errorpb::Error>>;
 }
 
 pub trait HasKeyErrors {
@@ -21,7 +20,7 @@ pub trait HasKeyErrors {
 }
 
 impl<T: HasRegionError> HasRegionErrors for T {
-    fn region_errors(&mut self) -> Option<Vec<tikv_client_proto::errorpb::Error>> {
+    fn region_errors(&mut self) -> Option<Vec<crate::proto::errorpb::Error>> {
         self.region_error().map(|e| vec![e])
     }
 }
@@ -29,7 +28,7 @@ impl<T: HasRegionError> HasRegionErrors for T {
 macro_rules! has_region_error {
     ($type:ty) => {
         impl HasRegionError for $type {
-            fn region_error(&mut self) -> Option<tikv_client_proto::errorpb::Error> {
+            fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
                 self.region_error.take().map(|e| e.into())
             }
         }
@@ -183,13 +182,13 @@ impl<T: HasKeyErrors> HasKeyErrors for Vec<T> {
 }
 
 impl<T: HasRegionError, E> HasRegionError for Result<T, E> {
-    fn region_error(&mut self) -> Option<tikv_client_proto::errorpb::Error> {
+    fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
         self.as_mut().ok().and_then(|t| t.region_error())
     }
 }
 
 impl<T: HasRegionError> HasRegionErrors for Vec<T> {
-    fn region_errors(&mut self) -> Option<Vec<tikv_client_proto::errorpb::Error>> {
+    fn region_errors(&mut self) -> Option<Vec<crate::proto::errorpb::Error>> {
         let errors: Vec<_> = self.iter_mut().filter_map(|x| x.region_error()).collect();
         if errors.is_empty() {
             None
@@ -212,18 +211,17 @@ fn extract_errors(
 
 #[cfg(test)]
 mod test {
-    use tikv_client_common::internal_err;
-    use tikv_client_common::Error;
-    use tikv_client_proto::kvrpcpb;
-
     use super::HasKeyErrors;
+    use crate::common::Error;
+    use crate::internal_err;
+    use crate::proto::kvrpcpb;
     #[test]
     fn result_haslocks() {
         let mut resp: Result<_, Error> = Ok(kvrpcpb::CommitResponse::default());
         assert!(resp.key_errors().is_none());
 
         let mut resp: Result<_, Error> = Ok(kvrpcpb::CommitResponse {
-            error: Some(kvrpcpb::KeyError::default()).into(),
+            error: Some(kvrpcpb::KeyError::default()),
             ..Default::default()
         });
         assert!(resp.key_errors().is_some());
