@@ -1,15 +1,19 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::Result;
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
+use std::path::PathBuf;
+use std::time::Duration;
+
 // use grpcio::{Channel, ChannelBuilder, ChannelCredentialsBuilder, Environment};
 use regex::Regex;
-use std::{
-    fs::File,
-    io::Read,
-    path::{Path, PathBuf},
-    time::Duration,
-};
-use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
+use tonic::transport::Certificate;
+use tonic::transport::Channel;
+use tonic::transport::ClientTlsConfig;
+use tonic::transport::Identity;
+
+use crate::Result;
 
 lazy_static::lazy_static! {
     static ref SCHEME_REG: Regex = Regex::new(r"^\s*(https?://)").unwrap();
@@ -98,10 +102,13 @@ impl SecurityManager {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::fs::File;
+    use std::io::Write;
+    use std::path::PathBuf;
 
-    use std::{fs::File, io::Write, path::PathBuf};
     use tempfile;
+
+    use super::*;
 
     #[test]
     fn test_security() {

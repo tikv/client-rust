@@ -1,5 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
-use std::{fmt, u8};
+use std::fmt;
+use std::u8;
 
 mod bound_range;
 pub mod codec;
@@ -7,7 +8,8 @@ mod key;
 mod kvpair;
 mod value;
 
-pub use bound_range::{BoundRange, IntoOwnedRange};
+pub use bound_range::BoundRange;
+pub use bound_range::IntoOwnedRange;
 pub use key::Key;
 pub use kvpair::KvPair;
 pub use value::Value;

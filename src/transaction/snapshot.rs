@@ -1,8 +1,14 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{BoundRange, Key, KvPair, Result, Transaction, Value};
 use derive_new::new;
 use slog::Logger;
+
+use crate::BoundRange;
+use crate::Key;
+use crate::KvPair;
+use crate::Result;
+use crate::Transaction;
+use crate::Value;
 
 /// A read-only transaction which reads at the given timestamp.
 ///

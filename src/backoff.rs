@@ -2,8 +2,10 @@
 
 // https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
 
-use rand::{thread_rng, Rng};
 use std::time::Duration;
+
+use rand::thread_rng;
+use rand::Rng;
 
 pub const DEFAULT_REGION_BACKOFF: Backoff = Backoff::no_jitter_backoff(2, 500, 10);
 pub const OPTIMISTIC_BACKOFF: Backoff = Backoff::no_jitter_backoff(2, 500, 10);
@@ -198,8 +200,9 @@ enum BackoffKind {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use std::convert::TryInto;
+
+    use super::*;
 
     #[test]
     fn test_no_jitter_backoff() {

@@ -6,4 +6,6 @@ pub mod security;
 extern crate log;
 
 #[doc(inline)]
-pub use crate::errors::{Error, Result};
+pub use crate::errors::Error;
+#[doc(inline)]
+pub use crate::errors::Result;

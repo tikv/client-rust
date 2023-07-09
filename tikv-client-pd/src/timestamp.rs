@@ -11,19 +11,26 @@
 //! single `TsoRequest` to the PD server. The other future receives `TsoResponse`s from the PD
 //! server and allocates timestamps for the requests.
 
-use crate::Result;
-use futures::{
-    pin_mut,
-    prelude::*,
-    task::{AtomicWaker, Context, Poll},
-};
+use std::collections::VecDeque;
+use std::pin::Pin;
+use std::sync::Arc;
+
+use futures::pin_mut;
+use futures::prelude::*;
+use futures::task::AtomicWaker;
+use futures::task::Context;
+use futures::task::Poll;
 use log::debug;
 use pin_project::pin_project;
-use std::{collections::VecDeque, pin::Pin, sync::Arc};
 use tikv_client_common::internal_err;
-use tikv_client_proto::pdpb::{pd_client::PdClient, *};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tikv_client_proto::pdpb::pd_client::PdClient;
+use tikv_client_proto::pdpb::*;
+use tokio::sync::mpsc;
+use tokio::sync::oneshot;
+use tokio::sync::Mutex;
 use tonic::transport::Channel;
+
+use crate::Result;
 
 /// It is an empirical value.
 const MAX_BATCH_SIZE: usize = 64;

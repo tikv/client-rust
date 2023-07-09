@@ -2,16 +2,25 @@
 
 mod common;
 
+use std::collections::HashSet;
+use std::iter::FromIterator;
+use std::thread;
+use std::time::Duration;
+
 use common::*;
 use fail::FailScenario;
 use rand::thread_rng;
 use serial_test::serial;
 use slog::info;
-use std::{collections::HashSet, iter::FromIterator, thread, time::Duration};
-use tikv_client::{
-    transaction::{Client, HeartbeatOption, ResolveLocksOptions},
-    Backoff, CheckLevel, Result, RetryOptions, TransactionClient, TransactionOptions,
-};
+use tikv_client::transaction::Client;
+use tikv_client::transaction::HeartbeatOption;
+use tikv_client::transaction::ResolveLocksOptions;
+use tikv_client::Backoff;
+use tikv_client::CheckLevel;
+use tikv_client::Result;
+use tikv_client::RetryOptions;
+use tikv_client::TransactionClient;
+use tikv_client::TransactionOptions;
 
 #[tokio::test]
 #[serial]

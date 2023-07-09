@@ -1,14 +1,18 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::plan::PreserveShard;
-use crate::{
-    pd::PdClient,
-    request::{plan::CleanupLocks, Dispatch, KvRequest, Plan, ResolveLock},
-    store::RegionStore,
-    Result,
-};
-use futures::stream::BoxStream;
 use std::sync::Arc;
+
+use futures::stream::BoxStream;
+
+use super::plan::PreserveShard;
+use crate::pd::PdClient;
+use crate::request::plan::CleanupLocks;
+use crate::request::Dispatch;
+use crate::request::KvRequest;
+use crate::request::Plan;
+use crate::request::ResolveLock;
+use crate::store::RegionStore;
+use crate::Result;
 
 macro_rules! impl_inner_shardable {
     () => {
@@ -230,7 +234,8 @@ macro_rules! shardable_range {
 
 #[cfg(test)]
 mod test {
-    use rand::{thread_rng, Rng};
+    use rand::thread_rng;
+    use rand::Rng;
 
     use super::Batchable;
 

@@ -1,10 +1,16 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{Error, Result};
+use std::any::Any;
+use std::time::Duration;
+
 use async_trait::async_trait;
-use std::{any::Any, time::Duration};
-use tikv_client_proto::{kvrpcpb, tikvpb::tikv_client::TikvClient};
-use tonic::{transport::Channel, IntoRequest};
+use tikv_client_proto::kvrpcpb;
+use tikv_client_proto::tikvpb::tikv_client::TikvClient;
+use tonic::transport::Channel;
+use tonic::IntoRequest;
+
+use crate::Error;
+use crate::Result;
 
 #[async_trait]
 pub trait Request: Any + Sync + Send + 'static {

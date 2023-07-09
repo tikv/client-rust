@@ -12,15 +12,25 @@
 //! requirements on the region boundaries.
 
 mod common;
+use std::collections::HashMap;
+use std::iter;
+
 use common::*;
 use futures::prelude::*;
-use rand::{seq::IteratorRandom, thread_rng, Rng};
+use rand::seq::IteratorRandom;
+use rand::thread_rng;
+use rand::Rng;
 use serial_test::serial;
-use std::{collections::HashMap, iter};
-use tikv_client::{
-    transaction::HeartbeatOption, BoundRange, Error, Key, KvPair, RawClient, Result,
-    TransactionClient, TransactionOptions, Value,
-};
+use tikv_client::transaction::HeartbeatOption;
+use tikv_client::BoundRange;
+use tikv_client::Error;
+use tikv_client::Key;
+use tikv_client::KvPair;
+use tikv_client::RawClient;
+use tikv_client::Result;
+use tikv_client::TransactionClient;
+use tikv_client::TransactionOptions;
+use tikv_client::Value;
 
 // Parameters used in test
 const NUM_PEOPLE: u32 = 100;
@@ -737,10 +747,11 @@ async fn txn_lock_keys_error_handle() -> Result<()> {
     let mut t3 = client.begin_pessimistic().await?;
 
     t1.lock_keys(vec![k[0].clone(), k[1].clone()]).await?;
-    assert!(t2
-        .lock_keys(vec![k[0].clone(), k[2].clone()])
-        .await
-        .is_err());
+    assert!(
+        t2.lock_keys(vec![k[0].clone(), k[2].clone()])
+            .await
+            .is_err()
+    );
     t3.lock_keys(vec![k[2].clone(), k[3].clone()]).await?;
 
     t1.rollback().await?;

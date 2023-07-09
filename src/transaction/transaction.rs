@@ -1,22 +1,38 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    backoff::{Backoff, DEFAULT_REGION_BACKOFF},
-    pd::{PdClient, PdRpcClient},
-    request::{
-        Collect, CollectError, CollectSingle, CollectWithShard, Plan, PlanBuilder, RetryOptions,
-    },
-    timestamp::TimestampExt,
-    transaction::{buffer::Buffer, lowering::*},
-    BoundRange, Error, Key, KvPair, Result, Value,
-};
+use std::iter;
+use std::sync::Arc;
+use std::time::Instant;
+
 use derive_new::new;
 use fail::fail_point;
 use futures::prelude::*;
 use slog::Logger;
-use std::{iter, sync::Arc, time::Instant};
-use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
-use tokio::{sync::RwLock, time::Duration};
+use tikv_client_proto::kvrpcpb;
+use tikv_client_proto::pdpb::Timestamp;
+use tokio::sync::RwLock;
+use tokio::time::Duration;
+
+use crate::backoff::Backoff;
+use crate::backoff::DEFAULT_REGION_BACKOFF;
+use crate::pd::PdClient;
+use crate::pd::PdRpcClient;
+use crate::request::Collect;
+use crate::request::CollectError;
+use crate::request::CollectSingle;
+use crate::request::CollectWithShard;
+use crate::request::Plan;
+use crate::request::PlanBuilder;
+use crate::request::RetryOptions;
+use crate::timestamp::TimestampExt;
+use crate::transaction::buffer::Buffer;
+use crate::transaction::lowering::*;
+use crate::BoundRange;
+use crate::Error;
+use crate::Key;
+use crate::KvPair;
+use crate::Result;
+use crate::Value;
 
 /// An undo-able set of actions on the dataset.
 ///
@@ -1386,23 +1402,24 @@ enum TransactionStatus {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        mock::{MockKvClient, MockPdClient},
-        transaction::HeartbeatOption,
-        Transaction, TransactionOptions,
-    };
+    use std::any::Any;
+    use std::io;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use std::time::Duration;
+
     use fail::FailScenario;
-    use slog::{Drain, Logger};
-    use std::{
-        any::Any,
-        io,
-        sync::{
-            atomic::{AtomicUsize, Ordering},
-            Arc,
-        },
-        time::Duration,
-    };
-    use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+    use slog::Drain;
+    use slog::Logger;
+    use tikv_client_proto::kvrpcpb;
+    use tikv_client_proto::pdpb::Timestamp;
+
+    use crate::mock::MockKvClient;
+    use crate::mock::MockPdClient;
+    use crate::transaction::HeartbeatOption;
+    use crate::Transaction;
+    use crate::TransactionOptions;
 
     #[tokio::test]
     async fn test_optimistic_heartbeat() -> Result<(), io::Error> {

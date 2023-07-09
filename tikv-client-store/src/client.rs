@@ -1,11 +1,17 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{request::Request, Result, SecurityManager};
+use std::any::Any;
+use std::sync::Arc;
+use std::time::Duration;
+
 use async_trait::async_trait;
 use derive_new::new;
-use std::{any::Any, sync::Arc, time::Duration};
 use tikv_client_proto::tikvpb::tikv_client::TikvClient;
 use tonic::transport::Channel;
+
+use crate::request::Request;
+use crate::Result;
+use crate::SecurityManager;
 
 /// A trait for connecting to TiKV stores.
 #[async_trait]

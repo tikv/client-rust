@@ -1,15 +1,21 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{timestamp::TimestampOracle, Result, SecurityManager};
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
+use std::time::Instant;
+
 use async_trait::async_trait;
-use std::{
-    collections::HashSet,
-    sync::Arc,
-    time::{Duration, Instant},
-};
 use tikv_client_common::internal_err;
-use tikv_client_proto::pdpb::{self, Timestamp};
-use tonic::{transport::Channel, IntoRequest, Request};
+use tikv_client_proto::pdpb::Timestamp;
+use tikv_client_proto::pdpb::{self};
+use tonic::transport::Channel;
+use tonic::IntoRequest;
+use tonic::Request;
+
+use crate::timestamp::TimestampOracle;
+use crate::Result;
+use crate::SecurityManager;
 
 /// A PD cluster.
 pub struct Cluster {

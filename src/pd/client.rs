@@ -1,22 +1,35 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    compat::stream_fn,
-    kv::codec,
-    pd::{retry::RetryClientTrait, RetryClient},
-    region::{RegionId, RegionVerId, RegionWithLeader},
-    region_cache::RegionCache,
-    store::RegionStore,
-    BoundRange, Config, Key, Result, SecurityManager, Timestamp,
-};
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use async_trait::async_trait;
-use futures::{prelude::*, stream::BoxStream};
+use futures::prelude::*;
+use futures::stream::BoxStream;
 use slog::Logger;
-use std::{collections::HashMap, sync::Arc};
 use tikv_client_pd::Cluster;
-use tikv_client_proto::{kvrpcpb, metapb};
-use tikv_client_store::{KvClient, KvConnect, TikvConnect};
+use tikv_client_proto::kvrpcpb;
+use tikv_client_proto::metapb;
+use tikv_client_store::KvClient;
+use tikv_client_store::KvConnect;
+use tikv_client_store::TikvConnect;
 use tokio::sync::RwLock;
+
+use crate::compat::stream_fn;
+use crate::kv::codec;
+use crate::pd::retry::RetryClientTrait;
+use crate::pd::RetryClient;
+use crate::region::RegionId;
+use crate::region::RegionVerId;
+use crate::region::RegionWithLeader;
+use crate::region_cache::RegionCache;
+use crate::store::RegionStore;
+use crate::BoundRange;
+use crate::Config;
+use crate::Key;
+use crate::Result;
+use crate::SecurityManager;
+use crate::Timestamp;
 
 /// The PdClient handles all the encoding stuff.
 ///
@@ -325,10 +338,11 @@ fn make_key_range(start_key: Vec<u8>, end_key: Vec<u8>) -> kvrpcpb::KeyRange {
 
 #[cfg(test)]
 pub mod test {
+    use futures::executor;
+    use futures::executor::block_on;
+
     use super::*;
     use crate::mock::*;
-
-    use futures::{executor, executor::block_on};
 
     #[tokio::test]
     async fn test_kv_client_caching() {
@@ -363,19 +377,16 @@ pub mod test {
         let mut stream = executor::block_on_stream(stream);
 
         let result: Vec<Key> = stream.next().unwrap().unwrap().1;
-        assert_eq!(
-            result,
-            vec![
-                vec![1].into(),
-                vec![2].into(),
-                vec![3].into(),
-                vec![5, 2].into()
-            ]
-        );
-        assert_eq!(
-            stream.next().unwrap().unwrap().1,
-            vec![vec![12].into(), vec![11, 4].into()]
-        );
+        assert_eq!(result, vec![
+            vec![1].into(),
+            vec![2].into(),
+            vec![3].into(),
+            vec![5, 2].into()
+        ]);
+        assert_eq!(stream.next().unwrap().unwrap().1, vec![
+            vec![12].into(),
+            vec![11, 4].into()
+        ]);
         assert!(stream.next().is_none());
     }
 
@@ -417,13 +428,10 @@ pub mod test {
         let ranges4 = stream.next().unwrap().unwrap();
 
         assert_eq!(ranges1.0.id(), 1);
-        assert_eq!(
-            ranges1.1,
-            vec![
-                make_key_range(k1.clone(), k2.clone()),
-                make_key_range(k1, k_split.clone()),
-            ]
-        );
+        assert_eq!(ranges1.1, vec![
+            make_key_range(k1.clone(), k2.clone()),
+            make_key_range(k1, k_split.clone()),
+        ]);
         assert_eq!(ranges2.0.id(), 2);
         assert_eq!(ranges2.1, vec![make_key_range(k_split.clone(), k3)]);
         assert_eq!(ranges3.0.id(), 1);

@@ -5,18 +5,30 @@
 //! The goal is to be able to test functionality independently of the rest of
 //! the system, in particular without requiring a TiKV or PD server, or RPC layer.
 
-use crate::{
-    pd::{PdClient, PdRpcClient, RetryClient},
-    region::{RegionId, RegionWithLeader},
-    store::RegionStore,
-    Config, Error, Key, Result, Timestamp,
-};
+use std::any::Any;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use derive_new::new;
-use slog::{Drain, Logger};
-use std::{any::Any, sync::Arc};
-use tikv_client_proto::metapb::{self, RegionEpoch};
-use tikv_client_store::{KvClient, KvConnect, Request};
+use slog::Drain;
+use slog::Logger;
+use tikv_client_proto::metapb::RegionEpoch;
+use tikv_client_proto::metapb::{self};
+use tikv_client_store::KvClient;
+use tikv_client_store::KvConnect;
+use tikv_client_store::Request;
+
+use crate::pd::PdClient;
+use crate::pd::PdRpcClient;
+use crate::pd::RetryClient;
+use crate::region::RegionId;
+use crate::region::RegionWithLeader;
+use crate::store::RegionStore;
+use crate::Config;
+use crate::Error;
+use crate::Key;
+use crate::Result;
+use crate::Timestamp;
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
@@ -56,9 +68,7 @@ pub struct MockKvClient {
 
 impl MockKvClient {
     pub fn with_dispatch_hook<F>(dispatch: F) -> MockKvClient
-    where
-        F: Fn(&dyn Any) -> Result<Box<dyn Any>> + Send + Sync + 'static,
-    {
+    where F: Fn(&dyn Any) -> Result<Box<dyn Any>> + Send + Sync + 'static {
         MockKvClient {
             addr: String::new(),
             dispatch: Some(Arc::new(dispatch)),

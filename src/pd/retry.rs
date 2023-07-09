@@ -2,23 +2,27 @@
 
 //! A utility module for managing and retrying PD requests.
 
-use crate::{
-    region::{RegionId, RegionWithLeader, StoreId},
-    stats::pd_stats,
-    Error, Result, SecurityManager,
-};
+use std::fmt;
+use std::sync::Arc;
+use std::time::Duration;
+use std::time::Instant;
+
 use async_trait::async_trait;
-use std::{
-    fmt,
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use tikv_client_pd::{Cluster, Connection};
-use tikv_client_proto::{
-    metapb,
-    pdpb::{self, Timestamp},
-};
-use tokio::{sync::RwLock, time::sleep};
+use tikv_client_pd::Cluster;
+use tikv_client_pd::Connection;
+use tikv_client_proto::metapb;
+use tikv_client_proto::pdpb::Timestamp;
+use tikv_client_proto::pdpb::{self};
+use tokio::sync::RwLock;
+use tokio::time::sleep;
+
+use crate::region::RegionId;
+use crate::region::RegionWithLeader;
+use crate::region::StoreId;
+use crate::stats::pd_stats;
+use crate::Error;
+use crate::Result;
+use crate::SecurityManager;
 
 // FIXME: these numbers and how they are used are all just cargo-culted in, there
 // may be more optimal values.
@@ -224,13 +228,15 @@ impl Reconnect for RetryClient<Cluster> {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use futures::{executor, future::ready};
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Mutex,
-    };
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::sync::Mutex;
+
+    use futures::executor;
+    use futures::future::ready;
     use tikv_client_common::internal_err;
+
+    use super::*;
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_reconnect() {

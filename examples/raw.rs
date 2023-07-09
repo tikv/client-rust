@@ -4,8 +4,15 @@
 
 mod common;
 
+use tikv_client::Config;
+use tikv_client::IntoOwnedRange;
+use tikv_client::Key;
+use tikv_client::KvPair;
+use tikv_client::RawClient as Client;
+use tikv_client::Result;
+use tikv_client::Value;
+
 use crate::common::parse_args;
-use tikv_client::{Config, IntoOwnedRange, Key, KvPair, RawClient as Client, Result, Value};
 
 const KEY: &str = "TiKV";
 const VALUE: &str = "Rust";
@@ -93,10 +100,10 @@ async fn main() -> Result<()> {
         .expect("Could not scan");
 
     let keys: Vec<_> = pairs.into_iter().map(|p| p.key().clone()).collect();
-    assert_eq!(
-        &keys,
-        &[Key::from("k1".to_owned()), Key::from("k2".to_owned()),]
-    );
+    assert_eq!(&keys, &[
+        Key::from("k1".to_owned()),
+        Key::from("k2".to_owned()),
+    ]);
     println!("Scanning from {start:?} to {end:?} gives: {keys:?}");
 
     let k1 = "k1";
@@ -115,18 +122,15 @@ async fn main() -> Result<()> {
         .into_iter()
         .map(|p| String::from_utf8(p.1).unwrap())
         .collect();
-    assert_eq!(
-        &vals,
-        &[
-            "v1".to_owned(),
-            "v2".to_owned(),
-            "v2".to_owned(),
-            "v3".to_owned(),
-            "v1".to_owned(),
-            "v2".to_owned(),
-            "v3".to_owned()
-        ]
-    );
+    assert_eq!(&vals, &[
+        "v1".to_owned(),
+        "v2".to_owned(),
+        "v2".to_owned(),
+        "v3".to_owned(),
+        "v1".to_owned(),
+        "v2".to_owned(),
+        "v3".to_owned()
+    ]);
     println!("Scanning batch scan from {batch_scan_keys:?} gives: {vals:?}");
 
     // Cleanly exit.

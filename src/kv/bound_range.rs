@@ -1,12 +1,16 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{
-    borrow::Borrow,
-    cmp::{Eq, PartialEq},
-    ops::{
-        Bound, Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
-    },
-};
+use std::borrow::Borrow;
+use std::cmp::Eq;
+use std::cmp::PartialEq;
+use std::ops::Bound;
+use std::ops::Range;
+use std::ops::RangeBounds;
+use std::ops::RangeFrom;
+use std::ops::RangeFull;
+use std::ops::RangeInclusive;
+use std::ops::RangeTo;
+use std::ops::RangeToInclusive;
 
 #[cfg(test)]
 use proptest_derive::Arbitrary;

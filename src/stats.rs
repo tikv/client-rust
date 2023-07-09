@@ -1,11 +1,16 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::time::Duration;
+use std::time::Instant;
+
+use prometheus::register_histogram;
+use prometheus::register_histogram_vec;
+use prometheus::register_int_counter_vec;
+use prometheus::Histogram;
+use prometheus::HistogramVec;
+use prometheus::IntCounterVec;
+
 use crate::Result;
-use prometheus::{
-    register_histogram, register_histogram_vec, register_int_counter_vec, Histogram, HistogramVec,
-    IntCounterVec,
-};
-use std::time::{Duration, Instant};
 
 pub struct RequestStats {
     start: Instant,
