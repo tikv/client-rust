@@ -8,17 +8,17 @@ use either::Either;
 use futures::stream::BoxStream;
 use futures::stream::{self};
 use futures::StreamExt;
-use tikv_client_common::Error::PessimisticLockError;
-use tikv_client_proto::kvrpcpb::Action;
-use tikv_client_proto::kvrpcpb::LockInfo;
-use tikv_client_proto::kvrpcpb::TxnHeartBeatResponse;
-use tikv_client_proto::kvrpcpb::TxnInfo;
-use tikv_client_proto::kvrpcpb::{self};
-use tikv_client_proto::pdpb::Timestamp;
 
 use super::transaction::TXN_COMMIT_BATCH_SIZE;
 use crate::collect_first;
+use crate::common::Error::PessimisticLockError;
 use crate::pd::PdClient;
+use crate::proto::kvrpcpb::Action;
+use crate::proto::kvrpcpb::LockInfo;
+use crate::proto::kvrpcpb::TxnHeartBeatResponse;
+use crate::proto::kvrpcpb::TxnInfo;
+use crate::proto::kvrpcpb::{self};
+use crate::proto::pdpb::Timestamp;
 use crate::request::Batchable;
 use crate::request::Collect;
 use crate::request::CollectSingle;
@@ -32,6 +32,9 @@ use crate::request::Process;
 use crate::request::ResponseWithShard;
 use crate::request::Shardable;
 use crate::request::SingleKey;
+use crate::shardable_key;
+use crate::shardable_keys;
+use crate::shardable_range;
 use crate::store::store_stream_for_keys;
 use crate::store::store_stream_for_range;
 use crate::store::RegionStore;
@@ -862,10 +865,9 @@ impl HasLocks for kvrpcpb::PrewriteResponse {
 #[cfg(test)]
 #[cfg_attr(feature = "protobuf-codec", allow(clippy::useless_conversion))]
 mod tests {
-    use tikv_client_common::Error::PessimisticLockError;
-    use tikv_client_common::Error::ResolveLockError;
-    use tikv_client_proto::kvrpcpb;
-
+    use crate::common::Error::PessimisticLockError;
+    use crate::common::Error::ResolveLockError;
+    use crate::proto::kvrpcpb;
     use crate::request::plan::Merge;
     use crate::request::CollectWithShard;
     use crate::request::ResponseWithShard;

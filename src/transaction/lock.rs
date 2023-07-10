@@ -6,16 +6,16 @@ use std::sync::Arc;
 
 use fail::fail_point;
 use log::debug;
-use slog::Logger;
-use tikv_client_proto::kvrpcpb;
-use tikv_client_proto::kvrpcpb::TxnInfo;
-use tikv_client_proto::pdpb::Timestamp;
+use log::error;
 use tokio::sync::RwLock;
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::backoff::OPTIMISTIC_BACKOFF;
 use crate::pd::PdClient;
+use crate::proto::kvrpcpb;
+use crate::proto::kvrpcpb::TxnInfo;
+use crate::proto::pdpb::Timestamp;
 use crate::region::RegionVerId;
 use crate::request::Collect;
 use crate::request::CollectSingle;
@@ -198,13 +198,12 @@ impl ResolveLocksContext {
 }
 
 pub struct LockResolver {
-    logger: Logger,
     ctx: ResolveLocksContext,
 }
 
 impl LockResolver {
-    pub fn new(logger: Logger, ctx: ResolveLocksContext) -> Self {
-        Self { logger, ctx }
+    pub fn new(ctx: ResolveLocksContext) -> Self {
+        Self { ctx }
     }
 
     /// _Cleanup_ the given locks. Returns whether all the given locks are resolved.
@@ -252,8 +251,7 @@ impl LockResolver {
                 let secondary_status = self
                     .check_all_secondaries(pd_client.clone(), lock_info.secondaries.clone(), txn_id)
                     .await?;
-                slog_debug!(
-                    self.logger,
+                debug!(
                     "secondary status, txn_id:{}, commit_ts:{:?}, min_commit_version:{}, fallback_2pc:{}",
                     txn_id,
                     secondary_status
@@ -265,11 +263,7 @@ impl LockResolver {
                 );
 
                 if secondary_status.fallback_2pc {
-                    slog_debug!(
-                        self.logger,
-                        "fallback to 2pc, txn_id:{}, check_txn_status again",
-                        txn_id
-                    );
+                    debug!("fallback to 2pc, txn_id:{}, check_txn_status again", txn_id);
                     status = self
                         .check_txn_status(
                             pd_client.clone(),
@@ -296,7 +290,6 @@ impl LockResolver {
             match &status.kind {
                 TransactionStatusKind::Locked(..) => {
                     error!(
-                        self.logger,
                         "cleanup_locks fail to clean locks, this result is not expected. txn_id:{}",
                         txn_id
                     );
@@ -307,8 +300,7 @@ impl LockResolver {
             };
         }
 
-        slog_debug!(
-            self.logger,
+        debug!(
             "batch resolve locks, region:{:?}, txn:{:?}",
             store.region_with_leader.ver_id(),
             txn_infos
@@ -427,11 +419,10 @@ pub trait HasLocks {
 mod tests {
     use std::any::Any;
 
-    use tikv_client_proto::errorpb;
-
     use super::*;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
+    use crate::proto::errorpb;
 
     #[tokio::test]
     async fn test_resolve_lock_with_retry() {

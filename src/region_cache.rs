@@ -5,15 +5,15 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use tikv_client_common::Error;
-use tikv_client_pd::Cluster;
-use tikv_client_proto::metapb::Store;
-use tikv_client_proto::metapb::{self};
 use tokio::sync::Notify;
 use tokio::sync::RwLock;
 
+use crate::common::Error;
+use crate::pd::Cluster;
 use crate::pd::RetryClient;
 use crate::pd::RetryClientTrait;
+use crate::proto::metapb::Store;
+use crate::proto::metapb::{self};
 use crate::region::RegionId;
 use crate::region::RegionVerId;
 use crate::region::RegionWithLeader;
@@ -244,13 +244,13 @@ mod test {
     use std::sync::Arc;
 
     use async_trait::async_trait;
-    use tikv_client_common::Error;
-    use tikv_client_proto::metapb::RegionEpoch;
-    use tikv_client_proto::metapb::{self};
     use tokio::sync::Mutex;
 
     use super::RegionCache;
+    use crate::common::Error;
     use crate::pd::RetryClientTrait;
+    use crate::proto::metapb::RegionEpoch;
+    use crate::proto::metapb::{self};
     use crate::region::RegionId;
     use crate::region::RegionWithLeader;
     use crate::Key;
@@ -297,15 +297,15 @@ mod test {
         async fn get_store(
             self: Arc<Self>,
             _id: crate::region::StoreId,
-        ) -> Result<tikv_client_proto::metapb::Store> {
+        ) -> Result<crate::proto::metapb::Store> {
             todo!()
         }
 
-        async fn get_all_stores(self: Arc<Self>) -> Result<Vec<tikv_client_proto::metapb::Store>> {
+        async fn get_all_stores(self: Arc<Self>) -> Result<Vec<crate::proto::metapb::Store>> {
             todo!()
         }
 
-        async fn get_timestamp(self: Arc<Self>) -> Result<tikv_client_proto::pdpb::Timestamp> {
+        async fn get_timestamp(self: Arc<Self>) -> Result<crate::proto::pdpb::Timestamp> {
             todo!()
         }
 

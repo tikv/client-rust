@@ -1,9 +1,9 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
 use derive_new::new;
-use tikv_client_proto::kvrpcpb;
-use tikv_client_proto::metapb;
 
+use crate::proto::kvrpcpb;
+use crate::proto::metapb;
 use crate::Error;
 use crate::Key;
 use crate::Result;

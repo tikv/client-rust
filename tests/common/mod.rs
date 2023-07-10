@@ -10,7 +10,6 @@ use std::time::Duration;
 use log::info;
 use log::warn;
 use rand::Rng;
-use slog::Drain;
 use tikv_client::ColumnFamily;
 use tikv_client::Key;
 use tikv_client::RawClient;
@@ -33,7 +32,7 @@ pub async fn clear_tikv() {
     // DEFAULT_REGION_BACKOFF is not long enough for CI environment. So set a longer backoff.
     let backoff = tikv_client::Backoff::no_jitter_backoff(100, 30000, 20);
     for cf in cfs {
-        let raw_client = RawClient::new(pd_addrs(), None).await.unwrap().with_cf(cf);
+        let raw_client = RawClient::new(pd_addrs()).await.unwrap().with_cf(cf);
         raw_client
             .delete_range_opt(vec![].., backoff.clone())
             .await
@@ -78,7 +77,7 @@ async fn ensure_region_split(
     // 1. write plenty transactional keys
     // 2. wait until regions split
 
-    let client = TransactionClient::new(pd_addrs(), None).await?;
+    let client = TransactionClient::new(pd_addrs()).await?;
     let mut txn = client.begin_optimistic().await?;
     for key in keys.into_iter() {
         txn.put(key.into(), vec![0, 0, 0, 0]).await?;
@@ -116,17 +115,6 @@ pub fn pd_addrs() -> Vec<String> {
         .split(',')
         .map(From::from)
         .collect()
-}
-
-pub fn new_logger(level: slog::Level) -> slog::Logger {
-    let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-    slog::Logger::root(
-        slog_term::FullFormat::new(plain)
-            .build()
-            .filter_level(level)
-            .fuse(),
-        slog::o!(),
-    )
 }
 
 // helper function

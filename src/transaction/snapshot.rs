@@ -1,7 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use derive_new::new;
-use slog::Logger;
+use log::debug;
 
 use crate::BoundRange;
 use crate::Key;
@@ -20,19 +20,18 @@ use crate::Value;
 #[derive(new)]
 pub struct Snapshot {
     transaction: Transaction,
-    logger: Logger,
 }
 
 impl Snapshot {
     /// Get the value associated with the given key.
     pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
-        debug!(self.logger, "invoking get request on snapshot");
+        debug!("invoking get request on snapshot");
         self.transaction.get(key).await
     }
 
     /// Check whether the key exists.
     pub async fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
-        debug!(self.logger, "invoking key_exists request on snapshot");
+        debug!("invoking key_exists request on snapshot");
         self.transaction.key_exists(key).await
     }
 
@@ -41,7 +40,7 @@ impl Snapshot {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        debug!(self.logger, "invoking batch_get request on snapshot");
+        debug!("invoking batch_get request on snapshot");
         self.transaction.batch_get(keys).await
     }
 
@@ -51,7 +50,7 @@ impl Snapshot {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        debug!(self.logger, "invoking scan request on snapshot");
+        debug!("invoking scan request on snapshot");
         self.transaction.scan(range, limit).await
     }
 
@@ -61,7 +60,7 @@ impl Snapshot {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
-        debug!(self.logger, "invoking scan_keys request on snapshot");
+        debug!("invoking scan_keys request on snapshot");
         self.transaction.scan_keys(range, limit).await
     }
 
@@ -71,7 +70,7 @@ impl Snapshot {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        debug!(self.logger, "invoking scan_reverse request on snapshot");
+        debug!("invoking scan_reverse request on snapshot");
         self.transaction.scan_reverse(range, limit).await
     }
 
@@ -81,10 +80,7 @@ impl Snapshot {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
-        debug!(
-            self.logger,
-            "invoking scan_keys_reverse request on snapshot"
-        );
+        debug!("invoking scan_keys_reverse request on snapshot");
         self.transaction.scan_keys_reverse(range, limit).await
     }
 }

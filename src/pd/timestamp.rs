@@ -21,15 +21,16 @@ use futures::task::AtomicWaker;
 use futures::task::Context;
 use futures::task::Poll;
 use log::debug;
+use log::info;
 use pin_project::pin_project;
-use tikv_client_common::internal_err;
-use tikv_client_proto::pdpb::pd_client::PdClient;
-use tikv_client_proto::pdpb::*;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tonic::transport::Channel;
 
+use crate::internal_err;
+use crate::proto::pdpb::pd_client::PdClient;
+use crate::proto::pdpb::*;
 use crate::Result;
 
 /// It is an empirical value.

@@ -7,23 +7,25 @@ use async_recursion::async_recursion;
 use async_trait::async_trait;
 use futures::future::try_join_all;
 use futures::prelude::*;
-use tikv_client_proto::errorpb;
-use tikv_client_proto::errorpb::EpochNotMatch;
-use tikv_client_proto::kvrpcpb;
-use tikv_client_store::HasKeyErrors;
-use tikv_client_store::HasRegionError;
-use tikv_client_store::HasRegionErrors;
-use tikv_client_store::KvClient;
+use log::debug;
+use log::info;
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
 
 use crate::backoff::Backoff;
 use crate::pd::PdClient;
+use crate::proto::errorpb;
+use crate::proto::errorpb::EpochNotMatch;
+use crate::proto::kvrpcpb;
 use crate::request::shard::HasNextBatch;
 use crate::request::KvRequest;
 use crate::request::NextBatch;
 use crate::request::Shardable;
 use crate::stats::tikv_stats;
+use crate::store::HasKeyErrors;
+use crate::store::HasRegionError;
+use crate::store::HasRegionErrors;
+use crate::store::KvClient;
 use crate::store::RegionStore;
 use crate::transaction::resolve_locks;
 use crate::transaction::HasLocks;
@@ -491,7 +493,6 @@ impl Merge<CleanupLocksResult> for Collect {
 }
 
 pub struct CleanupLocks<P: Plan, PdC: PdClient> {
-    pub logger: slog::Logger,
     pub inner: P,
     pub ctx: ResolveLocksContext,
     pub options: ResolveLocksOptions,
@@ -503,7 +504,6 @@ pub struct CleanupLocks<P: Plan, PdC: PdClient> {
 impl<P: Plan, PdC: PdClient> Clone for CleanupLocks<P, PdC> {
     fn clone(&self) -> Self {
         CleanupLocks {
-            logger: self.logger.clone(),
             inner: self.inner.clone(),
             ctx: self.ctx.clone(),
             options: self.options,
@@ -523,8 +523,7 @@ where P::Result: HasLocks + HasNextBatch + HasKeyErrors + HasRegionError
     async fn execute(&self) -> Result<Self::Result> {
         let mut result = CleanupLocksResult::default();
         let mut inner = self.inner.clone();
-        let mut lock_resolver =
-            crate::transaction::LockResolver::new(self.logger.clone(), self.ctx.clone());
+        let mut lock_resolver = crate::transaction::LockResolver::new(self.ctx.clone());
         let region = &self.store.as_ref().unwrap().region_with_leader;
         let mut has_more_batch = true;
 
@@ -533,17 +532,11 @@ where P::Result: HasLocks + HasNextBatch + HasKeyErrors + HasRegionError
 
             // Propagate errors to `retry_multi_region` for retry.
             if let Some(e) = scan_lock_resp.key_errors() {
-                info!(
-                    self.logger,
-                    "CleanupLocks::execute, inner key errors:{:?}", e
-                );
+                info!("CleanupLocks::execute, inner key errors:{:?}", e);
                 result.key_error = Some(e);
                 return Ok(result);
             } else if let Some(e) = scan_lock_resp.region_error() {
-                info!(
-                    self.logger,
-                    "CleanupLocks::execute, inner region error:{}", e.message
-                );
+                info!("CleanupLocks::execute, inner region error:{}", e.message);
                 result.region_error = Some(e);
                 return Ok(result);
             }
@@ -551,7 +544,7 @@ where P::Result: HasLocks + HasNextBatch + HasKeyErrors + HasRegionError
             // Iterate to next batch of inner.
             match scan_lock_resp.has_next_batch() {
                 Some(range) if region.contains(range.0.as_ref()) => {
-                    debug!(self.logger, "CleanupLocks::execute, next range:{:?}", range);
+                    debug!("CleanupLocks::execute, next range:{:?}", range);
                     inner.next_batch(range);
                 }
                 _ => has_more_batch = false,
@@ -571,11 +564,7 @@ where P::Result: HasLocks + HasNextBatch + HasKeyErrors + HasRegionError
                     .filter(|l| l.use_async_commit)
                     .collect::<Vec<_>>();
             }
-            debug!(
-                self.logger,
-                "CleanupLocks::execute, meet locks:{}",
-                locks.len()
-            );
+            debug!("CleanupLocks::execute, meet locks:{}", locks.len());
 
             let lock_size = locks.len();
             match lock_resolver
@@ -714,10 +703,10 @@ impl<Resp: HasRegionError, Shard> HasRegionError for ResponseWithShard<Resp, Sha
 mod test {
     use futures::stream::BoxStream;
     use futures::stream::{self};
-    use tikv_client_proto::kvrpcpb::BatchGetResponse;
 
     use super::*;
     use crate::mock::MockPdClient;
+    use crate::proto::kvrpcpb::BatchGetResponse;
 
     #[derive(Clone)]
     struct ErrPlan;

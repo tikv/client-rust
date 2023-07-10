@@ -14,9 +14,9 @@ use std::ops::RangeToInclusive;
 
 #[cfg(test)]
 use proptest_derive::Arbitrary;
-use tikv_client_proto::kvrpcpb;
 
 use super::Key;
+use crate::proto::kvrpcpb;
 
 /// A struct for expressing ranges. This type is semi-opaque and is not really meant for users to
 /// deal with directly. Most functions which operate on ranges will accept any types which

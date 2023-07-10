@@ -5,8 +5,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::future::Future;
 
-use tikv_client_proto::kvrpcpb;
-
+use crate::proto::kvrpcpb;
 use crate::BoundRange;
 use crate::Key;
 use crate::KvPair;
@@ -399,9 +398,9 @@ impl MutationValue {
 mod tests {
     use futures::executor::block_on;
     use futures::future::ready;
-    use tikv_client_common::internal_err;
 
     use super::*;
+    use crate::internal_err;
 
     #[test]
     fn set_and_get_from_buffer() {

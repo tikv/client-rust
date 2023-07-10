@@ -4,11 +4,11 @@ use std::any::Any;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use tikv_client_proto::kvrpcpb;
-use tikv_client_proto::tikvpb::tikv_client::TikvClient;
 use tonic::transport::Channel;
 use tonic::IntoRequest;
 
+use crate::proto::kvrpcpb;
+use crate::proto::tikvpb::tikv_client::TikvClient;
 use crate::Error;
 use crate::Result;
 

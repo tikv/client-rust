@@ -8,9 +8,8 @@ use std::iter::Iterator;
 use std::ops::Range;
 use std::sync::Arc;
 
-use tikv_client_proto::kvrpcpb;
-use tikv_client_proto::metapb;
-
+use crate::proto::kvrpcpb;
+use crate::proto::metapb;
 use crate::raw::requests;
 use crate::BoundRange;
 use crate::ColumnFamily;

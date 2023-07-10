@@ -2,8 +2,6 @@
 
 use async_trait::async_trait;
 use derive_new::new;
-use tikv_client_store::HasKeyErrors;
-use tikv_client_store::Request;
 
 pub use self::plan::Collect;
 pub use self::plan::CollectError;
@@ -30,11 +28,12 @@ use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::backoff::OPTIMISTIC_BACKOFF;
 use crate::backoff::PESSIMISTIC_BACKOFF;
+use crate::store::HasKeyErrors;
+use crate::store::Request;
 use crate::transaction::HasLocks;
 
 pub mod plan;
 mod plan_builder;
-#[macro_use]
 mod shard;
 
 /// Abstracts any request sent to a TiKV server.
@@ -83,16 +82,16 @@ mod test {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use tikv_client_proto::kvrpcpb;
-    use tikv_client_proto::pdpb::Timestamp;
-    use tikv_client_proto::tikvpb::tikv_client::TikvClient;
-    use tikv_client_store::HasRegionError;
     use tonic::transport::Channel;
 
     use super::*;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
+    use crate::proto::kvrpcpb;
+    use crate::proto::pdpb::Timestamp;
+    use crate::proto::tikvpb::tikv_client::TikvClient;
     use crate::store::store_stream_for_keys;
+    use crate::store::HasRegionError;
     use crate::transaction::lowering::new_commit_request;
     use crate::Error;
     use crate::Key;
@@ -110,8 +109,8 @@ mod test {
         }
 
         impl HasRegionError for MockRpcResponse {
-            fn region_error(&mut self) -> Option<tikv_client_proto::errorpb::Error> {
-                Some(tikv_client_proto::errorpb::Error::default())
+            fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
+                Some(crate::proto::errorpb::Error::default())
             }
         }
 
