@@ -7,14 +7,14 @@ MULTI_REGION ?= 1
 
 ALL_FEATURES := integration-tests
 
-INTEGRATION_TEST_ARGS := --no-default-features --features "integration-tests"
+INTEGRATION_TEST_ARGS := --features "integration-tests"
 
 default: check
 
 check:
-	cargo check --all --all-targets --no-default-features --features "${ALL_FEATURES}"
+	cargo check --all --all-targets --features "${ALL_FEATURES}"
 	cargo fmt -- --check
-	cargo clippy --all-targets --no-default-features --features "${ALL_FEATURES}" -- -D clippy::all
+	cargo clippy --all-targets --features "${ALL_FEATURES}" -- -D clippy::all
 
 unit-test:
 	cargo test --all --no-default-features

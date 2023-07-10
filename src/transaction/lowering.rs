@@ -50,17 +50,6 @@ pub fn new_scan_request(
     )
 }
 
-pub fn new_resolve_lock_request(
-    start_version: Timestamp,
-    commit_version: Timestamp,
-) -> kvrpcpb::ResolveLockRequest {
-    requests::new_resolve_lock_request(start_version.version(), commit_version.version())
-}
-
-pub fn new_cleanup_request(key: Key, start_version: Timestamp) -> kvrpcpb::CleanupRequest {
-    requests::new_cleanup_request(key.into(), start_version.version())
-}
-
 pub fn new_prewrite_request(
     mutations: Vec<kvrpcpb::Mutation>,
     primary_lock: Key,

@@ -120,6 +120,7 @@ impl From<crate::proto::kvrpcpb::KeyError> for Error {
 /// A result holding an [`Error`](enum@Error).
 pub type Result<T> = result::Result<T, Error>;
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! internal_err {
     ($e:expr) => ({

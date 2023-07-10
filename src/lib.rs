@@ -95,19 +95,19 @@
 #![allow(clippy::field_reassign_with_default)]
 #![allow(clippy::arc_with_non_send_sync)]
 
-pub mod request;
+pub mod backoff;
+pub mod raw;
 #[doc(hidden)]
+#[doc(hidden)]
+pub mod request;
 pub mod transaction;
 
-mod backoff;
 mod common;
 mod compat;
 mod config;
 mod kv;
 mod pd;
 mod proto;
-#[doc(hidden)]
-pub mod raw;
 mod region;
 mod region_cache;
 mod stats;

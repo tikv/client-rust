@@ -138,6 +138,7 @@ impl<P: Plan + Shardable, PdC: PdClient> Shardable for CleanupLocks<P, PdC> {
     }
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! shardable_key {
     ($type_: ty) => {
@@ -171,6 +172,7 @@ macro_rules! shardable_key {
     };
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! shardable_keys {
     ($type_: ty) => {
@@ -202,6 +204,7 @@ macro_rules! shardable_keys {
     };
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! shardable_range {
     ($type_: ty) => {
