@@ -4,14 +4,23 @@
 
 mod common;
 
+use tikv_client::Config;
+use tikv_client::IntoOwnedRange;
+use tikv_client::Key;
+use tikv_client::KvPair;
+use tikv_client::RawClient as Client;
+use tikv_client::Result;
+use tikv_client::Value;
+
 use crate::common::parse_args;
-use tikv_client::{Config, IntoOwnedRange, Key, KvPair, RawClient as Client, Result, Value};
 
 const KEY: &str = "TiKV";
 const VALUE: &str = "Rust";
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::init();
+
     // You can try running this example by passing your pd endpoints
     // (and SSL options if necessary) through command line arguments.
     let args = parse_args("raw");
@@ -26,7 +35,7 @@ async fn main() -> Result<()> {
 
     // When we first create a client we receive a `Connect` structure which must be resolved before
     // the client is actually connected and usable.
-    let client = Client::new_with_config(args.pd, config, None).await?;
+    let client = Client::new_with_config(args.pd, config).await?;
 
     // Requests are created from the connected client. These calls return structures which
     // implement `Future`. This means the `Future` must be resolved before the action ever takes
@@ -34,7 +43,7 @@ async fn main() -> Result<()> {
     //
     // Here we set the key `TiKV` to have the value `Rust` associated with it.
     client.put(KEY.to_owned(), VALUE.to_owned()).await.unwrap(); // Returns a `tikv_client::Error` on failure.
-    println!("Put key {:?}, value {:?}.", KEY, VALUE);
+    println!("Put key {KEY:?}, value {VALUE:?}.");
 
     // Unlike a standard Rust HashMap all calls take owned values. This is because under the hood
     // protobufs must take ownership of the data. If we only took a borrow we'd need to internally
@@ -47,7 +56,7 @@ async fn main() -> Result<()> {
     // types are supported as well, but it all ends up as `Vec<u8>` in the end.
     let value: Option<Value> = client.get(KEY.to_owned()).await?;
     assert_eq!(value, Some(Value::from(VALUE.to_owned())));
-    println!("Get key `{}` returned value {:?}.", KEY, value);
+    println!("Get key `{KEY}` returned value {value:?}.");
 
     // You can also set the `ColumnFamily` used by the request.
     // This is *advanced usage* and should have some special considerations.
@@ -55,7 +64,7 @@ async fn main() -> Result<()> {
         .delete(KEY.to_owned())
         .await
         .expect("Could not delete value");
-    println!("Key: `{}` deleted", KEY);
+    println!("Key: `{KEY}` deleted");
 
     // Here we check if the key has been deleted from the key-value store.
     let value: Option<Value> = client
@@ -79,7 +88,7 @@ async fn main() -> Result<()> {
         .batch_get(keys.clone())
         .await
         .expect("Could not get values");
-    println!("Found values: {:?} for keys: {:?}", values, keys);
+    println!("Found values: {values:?} for keys: {keys:?}");
 
     // Scanning a range of keys is also possible giving it two bounds
     // it will returns all entries between these two.
@@ -91,11 +100,11 @@ async fn main() -> Result<()> {
         .expect("Could not scan");
 
     let keys: Vec<_> = pairs.into_iter().map(|p| p.key().clone()).collect();
-    assert_eq!(
-        &keys,
-        &[Key::from("k1".to_owned()), Key::from("k2".to_owned()),]
-    );
-    println!("Scaning from {:?} to {:?} gives: {:?}", start, end, keys);
+    assert_eq!(&keys, &[
+        Key::from("k1".to_owned()),
+        Key::from("k2".to_owned()),
+    ]);
+    println!("Scanning from {start:?} to {end:?} gives: {keys:?}");
 
     let k1 = "k1";
     let k2 = "k2";
@@ -113,22 +122,16 @@ async fn main() -> Result<()> {
         .into_iter()
         .map(|p| String::from_utf8(p.1).unwrap())
         .collect();
-    assert_eq!(
-        &vals,
-        &[
-            "v1".to_owned(),
-            "v2".to_owned(),
-            "v2".to_owned(),
-            "v3".to_owned(),
-            "v1".to_owned(),
-            "v2".to_owned(),
-            "v3".to_owned()
-        ]
-    );
-    println!(
-        "Scaning batch scan from {:?} gives: {:?}",
-        batch_scan_keys, vals
-    );
+    assert_eq!(&vals, &[
+        "v1".to_owned(),
+        "v2".to_owned(),
+        "v2".to_owned(),
+        "v3".to_owned(),
+        "v1".to_owned(),
+        "v2".to_owned(),
+        "v3".to_owned()
+    ]);
+    println!("Scanning batch scan from {batch_scan_keys:?} gives: {vals:?}");
 
     // Cleanly exit.
     Ok(())

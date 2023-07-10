@@ -2,11 +2,18 @@
 
 mod common;
 
+use tikv_client::Config;
+use tikv_client::Key;
+use tikv_client::TransactionClient as Client;
+use tikv_client::TransactionOptions;
+use tikv_client::Value;
+
 use crate::common::parse_args;
-use tikv_client::{Config, Key, TransactionClient as Client, TransactionOptions, Value};
 
 #[tokio::main]
 async fn main() {
+    env_logger::init();
+
     // You can try running this example by passing your pd endpoints
     // (and SSL options if necessary) through command line arguments.
     let args = parse_args("txn");
@@ -20,7 +27,7 @@ async fn main() {
     };
 
     // init
-    let client = Client::new_with_config(args.pd, config, None)
+    let client = Client::new_with_config(args.pd, config)
         .await
         .expect("Could not connect to tikv");
 
@@ -32,7 +39,7 @@ async fn main() {
         .begin_optimistic()
         .await
         .expect("Could not begin a transaction");
-    for (key, value) in vec![(key1.clone(), value1), (key2, value2)] {
+    for (key, value) in [(key1.clone(), value1), (key2, value2)] {
         txn0.put(key, value).await.expect("Could not set key value");
     }
     txn0.commit().await.expect("Could not commit");

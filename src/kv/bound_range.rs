@@ -1,18 +1,22 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{
-    borrow::Borrow,
-    cmp::{Eq, PartialEq},
-    ops::{
-        Bound, Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
-    },
-};
+use std::borrow::Borrow;
+use std::cmp::Eq;
+use std::cmp::PartialEq;
+use std::ops::Bound;
+use std::ops::Range;
+use std::ops::RangeBounds;
+use std::ops::RangeFrom;
+use std::ops::RangeFull;
+use std::ops::RangeInclusive;
+use std::ops::RangeTo;
+use std::ops::RangeToInclusive;
 
 #[cfg(test)]
 use proptest_derive::Arbitrary;
-use tikv_client_proto::kvrpcpb;
 
 use super::Key;
+use crate::proto::kvrpcpb;
 
 /// A struct for expressing ranges. This type is semi-opaque and is not really meant for users to
 /// deal with directly. Most functions which operate on ranges will accept any types which
@@ -151,6 +155,8 @@ impl BoundRange {
 }
 
 impl RangeBounds<Key> for BoundRange {
+    // clippy will act differently on nightly and stable, so we allow `needless_match` here.
+    #[allow(clippy::needless_match)]
     fn start_bound(&self) -> Bound<&Key> {
         match &self.from {
             Bound::Included(f) => Bound::Included(f),
@@ -261,8 +267,8 @@ impl From<BoundRange> for kvrpcpb::KeyRange {
     fn from(bound_range: BoundRange) -> Self {
         let (start, end) = bound_range.into_keys();
         let mut range = kvrpcpb::KeyRange::default();
-        range.set_start_key(start.into());
-        range.set_end_key(end.unwrap_or_default().into());
+        range.start_key = start.into();
+        range.end_key = end.unwrap_or_default().into();
         range
     }
 }

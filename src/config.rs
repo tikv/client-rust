@@ -1,14 +1,17 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use serde_derive::{Deserialize, Serialize};
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
+use std::time::Duration;
+
+use serde_derive::Deserialize;
+use serde_derive::Serialize;
 
 /// The configuration for either a [`RawClient`](crate::RawClient) or a
 /// [`TransactionClient`](crate::TransactionClient).
 ///
 /// See also [`TransactionOptions`](crate::TransactionOptions) which provides more ways to configure
 /// requests.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
@@ -48,6 +51,7 @@ impl Config {
     /// # use tikv_client::Config;
     /// let config = Config::default().with_security("root.ca", "internal.cert", "internal.key");
     /// ```
+    #[must_use]
     pub fn with_security(
         mut self,
         ca_path: impl Into<PathBuf>,
@@ -74,6 +78,7 @@ impl Config {
     /// # use std::time::Duration;
     /// let config = Config::default().with_timeout(Duration::from_secs(10));
     /// ```
+    #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self

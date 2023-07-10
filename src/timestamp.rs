@@ -5,7 +5,8 @@
 //! The higher bits of the version are the physical part of the timestamp.
 
 use std::convert::TryInto;
-pub use tikv_client_proto::pdpb::Timestamp;
+
+pub use crate::proto::pdpb::Timestamp;
 
 const PHYSICAL_SHIFT_BITS: i64 = 18;
 const LOGICAL_MASK: i64 = (1 << PHYSICAL_SHIFT_BITS) - 1;
@@ -35,8 +36,8 @@ impl TimestampExt for Timestamp {
         Self {
             physical: version >> PHYSICAL_SHIFT_BITS,
             logical: version & LOGICAL_MASK,
-            // Now we only support global transactions
-            suffix_bits: 0,
+            // Now we only support global transactions: suffix_bits: 0,
+            ..Default::default()
         }
     }
 

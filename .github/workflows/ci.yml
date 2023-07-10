@@ -17,41 +17,17 @@ jobs:
           profile: minimal
           toolchain: nightly
           override: true
-      - uses: actions-rs/cargo@v1
+      - run: rustup component add rustfmt clippy
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
         with:
-          command: check
-          args: --all-targets --all-features
+          version: '3.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v1.4.0
+      - name: make check
+        run: make check
 
-  fmt:
-    name: rustfmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          override: true
-      - run: rustup component add rustfmt
-      - uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
-  clippy:
-    name: clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          components: clippy
-          override: true
-      - uses: actions-rs/clippy-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-targets --all-features -- -D clippy::all
-          name: Clippy Output
   unit-test:
     name: unit test
     env:
@@ -64,20 +40,16 @@ jobs:
           profile: minimal
           toolchain: nightly
           override: true
-      - run: cargo generate-lockfile
-      - name: Cache dependencies
-        uses: actions/cache@v2
-        env:
-          cache-name: cache-dependencies
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
         with:
-          path: |
-            ~/.cargo/.crates.toml
-            ~/.cargo/.crates2.json
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+          version: '3.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v1.4.0
       - name: unit test
         run: make unit-test
+
   integration-test:
     name: integration test
     env:
@@ -90,21 +62,24 @@ jobs:
           profile: minimal
           toolchain: nightly
           override: true
-      - run: cargo generate-lockfile
-      - name: Cache dependencies
-        uses: actions/cache@v2
-        env:
-          cache-name: cache-dependencies
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
         with:
-          path: |
-            ~/.cargo/.crates.toml
-            ~/.cargo/.crates2.json
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+          version: '3.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v1.4.0
       - name: install tiup
         run: curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
       - name: start tiup playground
-        run: /home/runner/.tiup/bin/tiup playground nightly --mode tikv-slim --kv 3 --monitor false --kv.config /home/runner/work/client-rust/client-rust/config/tikv.toml --pd.config /home/runner/work/client-rust/client-rust/config/pd.toml &
+        run: |
+          # use latest stable version
+          ~/.tiup/bin/tiup install tikv pd
+          ~/.tiup/bin/tiup playground --mode tikv-slim --kv 3 --without-monitor --kv.config config/tikv.toml --pd.config config/pd.toml &
+          while :; do
+            echo "waiting cluster to be ready"
+            [[ "$(curl -I http://127.0.0.1:2379/pd/api/v1/regions 2>/dev/null | head -n 1 | cut -d$' ' -f2)" -ne "405" ]] || break
+            sleep 1
+          done
       - name: integration test
-        run: make integration-test
+        run: MULTI_REGION=1 make integration-test

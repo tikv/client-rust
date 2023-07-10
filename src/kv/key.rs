@@ -1,14 +1,22 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::HexRepr;
-use crate::kv::codec::{self, BytesEncoder};
+use std::fmt;
+use std::ops::Bound;
+use std::u8;
+
 #[allow(unused_imports)]
 #[cfg(test)]
-use proptest::{arbitrary::any_with, collection::size_range};
+use proptest::arbitrary::any_with;
+#[allow(unused_imports)]
+#[cfg(test)]
+use proptest::collection::size_range;
 #[cfg(test)]
 use proptest_derive::Arbitrary;
-use std::{fmt, ops::Bound, u8};
-use tikv_client_proto::kvrpcpb;
+
+use super::HexRepr;
+use crate::kv::codec::BytesEncoder;
+use crate::kv::codec::{self};
+use crate::proto::kvrpcpb;
 
 const _PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
 
@@ -120,6 +128,7 @@ impl Key {
 
     /// Return the MVCC-encoded representation of the key.
     #[inline]
+    #[must_use]
     pub fn to_encoded(&self) -> Key {
         let len = codec::max_encoded_bytes_size(self.0.len());
         let mut encoded = Vec::with_capacity(len);

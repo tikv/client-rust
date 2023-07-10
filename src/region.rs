@@ -1,8 +1,12 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{Error, Key, Result};
 use derive_new::new;
-use tikv_client_proto::{kvrpcpb, metapb};
+
+use crate::proto::kvrpcpb;
+use crate::proto::metapb;
+use crate::Error;
+use crate::Key;
+use crate::Result;
 
 /// The ID of a region
 pub type RegionId = u64;
@@ -34,32 +38,32 @@ impl Eq for RegionWithLeader {}
 impl RegionWithLeader {
     pub fn contains(&self, key: &Key) -> bool {
         let key: &[u8] = key.into();
-        let start_key = self.region.get_start_key();
-        let end_key = self.region.get_end_key();
-        key >= start_key && (key < end_key || end_key.is_empty())
+        let start_key = &self.region.start_key;
+        let end_key = &self.region.end_key;
+        key >= start_key.as_slice() && (key < end_key.as_slice() || end_key.is_empty())
     }
 
     pub fn context(&self) -> Result<kvrpcpb::Context> {
         self.leader
             .as_ref()
-            .ok_or_else(|| Error::LeaderNotFound {
-                region_id: self.region.get_id(),
+            .ok_or(Error::LeaderNotFound {
+                region_id: self.region.id,
             })
             .map(|l| {
                 let mut ctx = kvrpcpb::Context::default();
-                ctx.set_region_id(self.region.get_id());
-                ctx.set_region_epoch(Clone::clone(self.region.get_region_epoch()));
-                ctx.set_peer(Clone::clone(l));
+                ctx.region_id = self.region.id;
+                ctx.region_epoch = self.region.region_epoch.clone();
+                ctx.peer = Some(l.clone());
                 ctx
             })
     }
 
     pub fn start_key(&self) -> Key {
-        self.region.get_start_key().to_vec().into()
+        self.region.start_key.to_vec().into()
     }
 
     pub fn end_key(&self) -> Key {
-        self.region.get_end_key().to_vec().into()
+        self.region.end_key.to_vec().into()
     }
 
     pub fn range(&self) -> (Key, Key) {
@@ -68,16 +72,16 @@ impl RegionWithLeader {
 
     pub fn ver_id(&self) -> RegionVerId {
         let region = &self.region;
-        let epoch = region.get_region_epoch();
+        let epoch = region.region_epoch.as_ref().unwrap();
         RegionVerId {
-            id: region.get_id(),
-            conf_ver: epoch.get_conf_ver(),
-            ver: epoch.get_version(),
+            id: region.id,
+            conf_ver: epoch.conf_ver,
+            ver: epoch.version,
         }
     }
 
     pub fn id(&self) -> RegionId {
-        self.region.get_id()
+        self.region.id
     }
 
     pub fn get_store_id(&self) -> Result<StoreId> {
@@ -87,6 +91,6 @@ impl RegionWithLeader {
             .ok_or_else(|| Error::LeaderNotFound {
                 region_id: self.id(),
             })
-            .map(|s| s.get_store_id())
+            .map(|s| s.store_id)
     }
 }

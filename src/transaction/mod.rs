@@ -9,18 +9,23 @@
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 
 pub use client::Client;
-pub(crate) use lock::{resolve_locks, HasLocks};
+pub(crate) use lock::resolve_locks;
+pub(crate) use lock::HasLocks;
 pub use snapshot::Snapshot;
+pub use transaction::CheckLevel;
 #[doc(hidden)]
 pub use transaction::HeartbeatOption;
-pub use transaction::{CheckLevel, Transaction, TransactionOptions};
+pub use transaction::Transaction;
+pub use transaction::TransactionOptions;
 
 mod buffer;
 mod client;
-pub mod lowering;
-#[macro_use]
-mod requests;
 mod lock;
+pub mod lowering;
+mod requests;
+pub use lock::LockResolver;
+pub use lock::ResolveLocksContext;
+pub use lock::ResolveLocksOptions;
 mod snapshot;
 #[allow(clippy::module_inception)]
 mod transaction;

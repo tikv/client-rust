@@ -1,18 +1,27 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use super::{requests::new_scan_lock_request, resolve_locks};
-use crate::{
-    backoff::{DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF},
-    config::Config,
-    pd::{PdClient, PdRpcClient},
-    request::Plan,
-    timestamp::TimestampExt,
-    transaction::{Snapshot, Transaction, TransactionOptions},
-    Result,
-};
-use slog::{Drain, Logger};
-use std::{mem, sync::Arc};
-use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use std::sync::Arc;
+
+use log::debug;
+use log::info;
+
+use crate::backoff::DEFAULT_REGION_BACKOFF;
+use crate::config::Config;
+use crate::pd::PdClient;
+use crate::pd::PdRpcClient;
+use crate::proto::pdpb::Timestamp;
+use crate::request::plan::CleanupLocksResult;
+use crate::request::Plan;
+use crate::timestamp::TimestampExt;
+use crate::transaction::lock::ResolveLocksOptions;
+use crate::transaction::ResolveLocksContext;
+use crate::transaction::Snapshot;
+use crate::transaction::Transaction;
+use crate::transaction::TransactionOptions;
+use crate::transaction_lowering::new_scan_lock_request;
+use crate::Backoff;
+use crate::BoundRange;
+use crate::Result;
 
 // FIXME: cargo-culted value
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
@@ -35,7 +44,14 @@ const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
 /// awaited to execute.
 pub struct Client {
     pd: Arc<PdRpcClient>,
-    logger: Logger,
+}
+
+impl Clone for Client {
+    fn clone(&self) -> Self {
+        Self {
+            pd: self.pd.clone(),
+        }
+    }
 }
 
 impl Client {
@@ -51,15 +67,12 @@ impl Client {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// # });
     /// ```
-    pub async fn new<S: Into<String>>(
-        pd_endpoints: Vec<S>,
-        logger: Option<Logger>,
-    ) -> Result<Client> {
-        // debug!(self.logger, "creating transactional client");
-        Self::new_with_config(pd_endpoints, Config::default(), logger).await
+    pub async fn new<S: Into<String>>(pd_endpoints: Vec<S>) -> Result<Client> {
+        // debug!("creating transactional client");
+        Self::new_with_config(pd_endpoints, Config::default()).await
     }
 
     /// Create a transactional [`Client`] with a custom configuration, and connect to the TiKV cluster.
@@ -78,29 +91,19 @@ impl Client {
     /// let client = TransactionClient::new_with_config(
     ///     vec!["192.168.0.100"],
     ///     Config::default().with_timeout(Duration::from_secs(60)),
-    ///     None,
-    /// ).await.unwrap();
+    /// )
+    /// .await
+    /// .unwrap();
     /// # });
     /// ```
     pub async fn new_with_config<S: Into<String>>(
         pd_endpoints: Vec<S>,
         config: Config,
-        optional_logger: Option<Logger>,
     ) -> Result<Client> {
-        let logger = optional_logger.unwrap_or_else(|| {
-            let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-            Logger::root(
-                slog_term::FullFormat::new(plain)
-                    .build()
-                    .filter_level(slog::Level::Info)
-                    .fuse(),
-                o!(),
-            )
-        });
-        debug!(logger, "creating new transactional client");
+        debug!("creating new transactional client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config, true, logger.clone()).await?);
-        Ok(Client { pd, logger })
+        let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config, true).await?);
+        Ok(Client { pd })
     }
 
     /// Creates a new optimistic [`Transaction`].
@@ -117,14 +120,14 @@ impl Client {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let mut transaction = client.begin_optimistic().await.unwrap();
     /// // ... Issue some commands.
     /// transaction.commit().await.unwrap();
     /// # });
     /// ```
     pub async fn begin_optimistic(&self) -> Result<Transaction> {
-        debug!(self.logger, "creating new optimistic transaction");
+        debug!("creating new optimistic transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, TransactionOptions::new_optimistic()))
     }
@@ -140,14 +143,14 @@ impl Client {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let mut transaction = client.begin_pessimistic().await.unwrap();
     /// // ... Issue some commands.
     /// transaction.commit().await.unwrap();
     /// # });
     /// ```
     pub async fn begin_pessimistic(&self) -> Result<Transaction> {
-        debug!(self.logger, "creating new pessimistic transaction");
+        debug!("creating new pessimistic transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, TransactionOptions::new_pessimistic()))
     }
@@ -160,7 +163,7 @@ impl Client {
     /// # use tikv_client::{Config, TransactionClient, TransactionOptions};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let mut transaction = client
     ///     .begin_with_options(TransactionOptions::default().use_async_commit())
     ///     .await
@@ -170,16 +173,15 @@ impl Client {
     /// # });
     /// ```
     pub async fn begin_with_options(&self, options: TransactionOptions) -> Result<Transaction> {
-        debug!(self.logger, "creating new customized transaction");
+        debug!("creating new customized transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, options))
     }
 
     /// Create a new [`Snapshot`](Snapshot) at the given [`Timestamp`](Timestamp).
     pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> Snapshot {
-        debug!(self.logger, "creating new snapshot");
-        let logger = self.logger.new(o!("child" => 1));
-        Snapshot::new(self.new_transaction(timestamp, options.read_only()), logger)
+        debug!("creating new snapshot");
+        Snapshot::new(self.new_transaction(timestamp, options.read_only()))
     }
 
     /// Retrieve the current [`Timestamp`].
@@ -190,7 +192,7 @@ impl Client {
     /// # use tikv_client::{Config, TransactionClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
-    /// let client = TransactionClient::new(vec!["192.168.0.100"], None).await.unwrap();
+    /// let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let timestamp = client.current_timestamp().await.unwrap();
     /// # });
     /// ```
@@ -213,35 +215,13 @@ impl Client {
     /// This is a simplified version of [GC in TiDB](https://docs.pingcap.com/tidb/stable/garbage-collection-overview).
     /// We skip the second step "delete ranges" which is an optimization for TiDB.
     pub async fn gc(&self, safepoint: Timestamp) -> Result<bool> {
-        debug!(self.logger, "invoking transactional gc request");
-        // scan all locks with ts <= safepoint
-        let mut locks: Vec<kvrpcpb::LockInfo> = vec![];
-        let mut start_key = vec![];
-        loop {
-            let req = new_scan_lock_request(
-                mem::take(&mut start_key),
-                safepoint.version(),
-                SCAN_LOCK_BATCH_SIZE,
-            );
+        debug!("invoking transactional gc request");
 
-            let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
-                .resolve_lock(OPTIMISTIC_BACKOFF)
-                .retry_multi_region(DEFAULT_REGION_BACKOFF)
-                .merge(crate::request::Collect)
-                .plan();
-            let res: Vec<kvrpcpb::LockInfo> = plan.execute().await?;
-
-            if res.is_empty() {
-                break;
-            }
-            start_key = res.last().unwrap().key.clone();
-            start_key.push(0);
-            locks.extend(res);
-        }
-
-        // resolve locks
-        // FIXME: (1) this is inefficient (2) when region error occurred
-        resolve_locks(locks, self.pd.clone()).await?;
+        let options = ResolveLocksOptions {
+            batch_size: SCAN_LOCK_BATCH_SIZE,
+            ..Default::default()
+        };
+        self.cleanup_locks(.., &safepoint, options).await?;
 
         // update safepoint to PD
         let res: bool = self
@@ -250,13 +230,49 @@ impl Client {
             .update_safepoint(safepoint.version())
             .await?;
         if !res {
-            info!(self.logger, "new safepoint != user-specified safepoint");
+            info!("new safepoint != user-specified safepoint");
         }
         Ok(res)
     }
 
+    pub async fn cleanup_locks(
+        &self,
+        range: impl Into<BoundRange>,
+        safepoint: &Timestamp,
+        options: ResolveLocksOptions,
+    ) -> Result<CleanupLocksResult> {
+        debug!("invoking cleanup async commit locks");
+        // scan all locks with ts <= safepoint
+        let ctx = ResolveLocksContext::default();
+        let backoff = Backoff::equal_jitter_backoff(100, 10000, 50);
+        let req = new_scan_lock_request(range.into(), safepoint, options.batch_size);
+        let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
+            .cleanup_locks(ctx.clone(), options, backoff)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .extract_error()
+            .merge(crate::request::Collect)
+            .plan();
+        plan.execute().await
+    }
+
+    // For test.
+    // Note: `batch_size` must be >= expected number of locks.
+    #[cfg(feature = "integration-tests")]
+    pub async fn scan_locks(
+        &self,
+        safepoint: &Timestamp,
+        range: impl Into<BoundRange>,
+        batch_size: u32,
+    ) -> Result<Vec<crate::proto::kvrpcpb::LockInfo>> {
+        let req = new_scan_lock_request(range.into(), safepoint, batch_size);
+        let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(crate::request::Collect)
+            .plan();
+        plan.execute().await
+    }
+
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
-        let logger = self.logger.new(o!("child" => 1));
-        Transaction::new(timestamp, self.pd.clone(), options, logger)
+        Transaction::new(timestamp, self.pd.clone(), options)
     }
 }

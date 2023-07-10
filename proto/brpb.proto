@@ -1,0 +1,323 @@
+syntax = "proto3";
+package backup;
+
+import "kvrpcpb.proto";
+import "errorpb.proto";
+import "encryptionpb.proto";
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option (gogoproto.sizer_all) = true;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+option java_package = "org.tikv.kvproto";
+
+// The message save the metadata of a backup.
+message BackupMeta {
+    // ID and version of backuped cluster.
+    uint64 cluster_id = 1;
+    string cluster_version = 2;
+    // Save the version of BR running backup jobs.
+    string br_version = 11;
+    // The backupmeta scheme version.
+    int32 version = 12;
+
+    // path field is no longer used.
+    reserved 3; reserved "path";
+    // A set of files that compose a backup.
+    // Note: `files` is deprecated, as it bloats backupmeta. It is kept for
+    //       compatibility, so new BR can restore older backups.
+    repeated File files = 4;
+    // An index to files contains data files.
+    MetaFile file_index = 13;
+
+    // A pair of timestamp specifies a time range of a backup.
+    // For full backup, the start_version equals to the end_version,
+    // it means point in time.
+    // For incremental backup, the time range is specified as
+    // (start_version, end_version].
+    uint64 start_version = 5;
+    uint64 end_version = 6;
+
+    // Table metadata describes database and table info.
+    // Note: `schemas` is deprecated, as it bloats backupmeta. It is kept for
+    //       compatibility, so new BR can restore older backups.
+    repeated Schema schemas = 7;
+    // An index to files contains Schemas.
+    MetaFile schema_index = 14;
+
+    // If in raw kv mode, `start_versions`, `end_versions` and `schemas` will be
+    // ignored, and the backup data's range is represented by raw_ranges.
+    bool is_raw_kv = 8;
+    // Note: `raw_ranges` is deprecated, as it bloats backupmeta. It is kept for
+    //       compatibility, so new BR can restore older backups.
+    repeated RawRange raw_ranges = 9;
+    // An index to files contains RawRanges.
+    MetaFile raw_range_index = 15;
+
+    // In incremental backup, DDLs which are completed in
+    // (lastBackupTS, backupTS] will be stored here.
+    // Note: `raw_ranges` is deprecated, as it bloats backupmeta. It is kept for
+    //       compatibility, so new BR can restore older backups.
+    bytes ddls = 10;
+    // An index to files contains DDLs.
+    MetaFile ddl_indexes = 16;
+    // the backup result into `backupmeta` file
+    string backup_result = 17;
+
+    // API version implies the encode of the key and value.
+    kvrpcpb.APIVersion api_version = 18;
+}
+
+message File {
+    string name = 1;
+    bytes sha256 = 2;
+
+    bytes start_key = 3;
+    bytes end_key = 4;
+    uint64 start_version = 5;
+    uint64 end_version = 6;
+
+    uint64 crc64xor = 7;
+    uint64 total_kvs = 8;
+    uint64 total_bytes = 9;
+
+    string cf = 10;
+
+    uint64 size = 11;
+    // cipher_iv is used for AES cipher
+    bytes  cipher_iv = 12;
+}
+
+// MetaFile describes a multi-level index of data used in backup.
+message MetaFile {
+    // A set of files that contains a MetaFile.
+    // It is used as a multi-level index.
+    repeated File meta_files = 1;
+    // A set of files that contains user data.
+    repeated File data_files = 2;
+    // A set of files that contains Schemas.
+    repeated Schema schemas = 3;
+    // A set of files that contains RawRanges.
+    repeated RawRange raw_ranges = 4;
+    // A set of files that contains DDLs.
+    repeated bytes ddls = 5;
+}
+
+message Schema {
+    bytes db = 1;
+    bytes table = 2;
+
+    uint64 crc64xor = 3;
+    uint64 total_kvs = 4;
+    uint64 total_bytes = 5;
+
+    uint32 tiflash_replicas = 6;
+
+    // stats represents the dump stats for a analyzed table, which generate by DumpStatsToJSON
+    // https://github.com/pingcap/tidb/blob/e136429d8dc5d70f43cd3f94179b0b9f47595097/statistics/handle/dump.go#L116
+    bytes stats = 7;
+}
+
+message RawRange {
+    bytes start_key = 1;
+    bytes end_key = 2;
+    string cf = 3;
+}
+
+message ClusterIDError {
+    uint64 current = 1;
+    uint64 request = 2;
+}
+
+message Error {
+    string msg = 1;
+    oneof detail {
+        ClusterIDError cluster_id_error = 3;
+        kvrpcpb.KeyError kv_error = 4;
+        errorpb.Error region_error = 5;
+    }
+}
+
+// sst files compression algorithm
+enum CompressionType {
+    UNKNOWN = 0;
+    LZ4 = 1;
+    SNAPPY = 2;
+    ZSTD = 3;
+}
+
+message CipherInfo {
+    encryptionpb.EncryptionMethod cipher_type = 1;
+    bytes cipher_key = 2;
+}
+
+message BackupRequest {
+    uint64 cluster_id = 1;
+
+    bytes start_key = 2;
+    bytes end_key = 3;
+    uint64 start_version = 4;
+    uint64 end_version = 5;
+
+    // path field is deprecated, use storage_backend instead
+    reserved 6; reserved "path";
+
+    // The I/O rate limit for backup request.
+    uint64 rate_limit = 7;
+    // The concurrency for executing the backup request in every tikv node.
+    uint32 concurrency = 8;
+
+    StorageBackend storage_backend = 9;
+
+    // If raw kv mode is enabled, `start_version` and `end_version` will be ignored, and `cf`
+    // specifies which cf to backup.
+    bool is_raw_kv = 10;
+    string cf = 11;
+    // algorithm used for compress sst files
+    CompressionType compression_type = 12;
+    // sst compression level, some algorithms support negative compression levels
+    int32 compression_level = 13;
+    // The cipher_info is Used to encrypt sst
+    CipherInfo cipher_info = 14;
+}
+
+message StorageBackend {
+    oneof backend {
+        Noop noop = 1;
+        Local local = 2;
+        S3 s3 = 3;
+        GCS gcs = 4;
+        CloudDynamic cloud_dynamic = 5;
+        HDFS hdfs = 6;
+        AzureBlobStorage azure_blob_storage = 7;
+    }
+}
+
+// Noop storage backend saves files into void.
+message Noop {}
+
+// Local storage backend saves files into local disk
+message Local {
+    string path = 1;
+}
+
+// S3 storage backend saves files into S3 compatible storages
+// For non-aws providers, endpoint must be provided
+message S3 {
+    string endpoint = 1;
+    string region = 2;
+    string bucket = 3;
+    string prefix = 4;
+    string storage_class = 5;
+    // server side encryption
+    string sse = 6;
+    string acl = 7;
+    string access_key = 8;
+    string secret_access_key = 9;
+    bool   force_path_style = 10;
+    string sse_kms_key_id = 11;
+}
+
+// GCS storage backend saves files into google cloud storage.
+message GCS {
+    string endpoint = 1;
+    string bucket = 2;
+    string prefix = 3;
+    string storage_class = 4;
+    // If not empty, applies a predefined set of access controls.
+    // See https://cloud.google.com/storage/docs/access-control/lists#predefined-acl
+    // for valid values.
+    string predefined_acl = 5;
+    // Service Account Credentials JSON blob
+    // You can get one from https://console.cloud.google.com/apis/credentials, and
+    // copy the content, set it as string here.
+    string credentials_blob = 6;
+}
+
+// AzureBlobStorage storage backend saves files into azure blob storage.
+message AzureBlobStorage {
+    string endpoint = 1;
+    // Alias: container
+    string bucket = 2;
+    // Notice: prefix starts without `/`, otherwise the first directory's name is empty.
+    string prefix = 3;
+    // Alias: access_tier.
+    // See https://docs.microsoft.com/en-us/azure/storage/blobs/access-tiers-overview
+    string storage_class = 4;
+
+    // if empty, try to read account_name from the node's environment variable $AZURE_STORAGE_ACCOUNT.
+    string account_name = 5;
+    // Use shared key to access the azure blob
+    // If the node's environment variables($AZURE_CLIENT_ID, $AZURE_TENANT_ID, $AZURE_CLIENT_SECRET) exist,
+    // prefer to use token to access the azure blob.
+    //
+    //   See https://docs.microsoft.com/en-us/azure/storage/common/identity-library-acquire-token?toc=/azure/storage/blobs/toc.json
+    // 
+    // Otherwise, if empty, try to read shared key from the node's environment variable $AZURE_STORAGE_KEY.
+    string shared_key = 6;
+}
+
+message Bucket {
+    string endpoint = 1;
+    string region = 3;
+    string bucket = 4;
+    string prefix = 5;
+    string storage_class = 6;
+}
+
+// CloudDynamic allows testing new cloud providers and new fields without changing protobuf definitions
+message CloudDynamic {
+    Bucket bucket = 1;
+    string provider_name = 2; // s3, gcs and azureBlobStorage are supported
+    map<string, string> attrs = 3;
+}
+
+// HDFS storage backend saves file into HDFS compatible storages
+message HDFS {
+    //  a URL: hdfs:///some/path or hdfs://host:port/some/path
+    string remote = 1;
+}
+
+
+message BackupResponse {
+    Error error = 1;
+    bytes start_key = 2;
+    bytes end_key = 3;
+    repeated File files = 4;
+}
+
+service Backup {
+    rpc backup(BackupRequest) returns (stream BackupResponse) {}
+}
+
+// ExternalStorage is a service for using a cloud backend from StorageBackend to store files.
+// This can be used to backup and restore SST files.
+service ExternalStorage {
+    // Restore to a file
+    rpc restore(ExternalStorageRestoreRequest) returns (ExternalStorageRestoreResponse) {}
+    // Save a file to storage
+    rpc save(ExternalStorageSaveRequest) returns (ExternalStorageSaveResponse) {}
+}
+
+message ExternalStorageRestoreRequest {
+    StorageBackend storage_backend = 1;
+    string object_name = 2;
+    string restore_name = 3;
+    uint64 content_length = 4;
+}
+
+message ExternalStorageRestoreResponse {
+}
+
+message ExternalStorageSaveRequest {
+    StorageBackend storage_backend = 1;
+    string object_name = 2;
+    uint64 content_length = 3;
+}
+
+message ExternalStorageSaveResponse {
+}
+

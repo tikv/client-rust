@@ -1,18 +1,25 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    pd::{RetryClient, RetryClientTrait},
-    region::{RegionId, RegionVerId, RegionWithLeader, StoreId},
-    Key, Result,
-};
-use std::{
-    collections::{BTreeMap, HashMap, HashSet},
-    sync::Arc,
-};
-use tikv_client_common::Error;
-use tikv_client_pd::Cluster;
-use tikv_client_proto::metapb::{self, Store};
-use tokio::sync::{Notify, RwLock};
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use tokio::sync::Notify;
+use tokio::sync::RwLock;
+
+use crate::common::Error;
+use crate::pd::Cluster;
+use crate::pd::RetryClient;
+use crate::pd::RetryClientTrait;
+use crate::proto::metapb::Store;
+use crate::proto::metapb::{self};
+use crate::region::RegionId;
+use crate::region::RegionVerId;
+use crate::region::RegionWithLeader;
+use crate::region::StoreId;
+use crate::Key;
+use crate::Result;
 
 const MAX_RETRY_WAITING_CONCURRENT_REQUEST: usize = 4;
 
@@ -100,18 +107,18 @@ impl<C: RetryClientTrait> RegionCache<C> {
 
             // check concurrent requests
             let notify = region_cache_guard.on_my_way_id.get(&id).cloned();
+            let notified = notify.as_ref().map(|notify| notify.notified());
             drop(region_cache_guard);
 
-            if let Some(n) = notify {
-                n.notified().await;
+            if let Some(n) = notified {
+                n.await;
                 continue;
             } else {
                 return self.read_through_region_by_id(id).await;
             }
         }
         Err(Error::StringError(format!(
-            "Concurrent PD requests failed for {} times",
-            MAX_RETRY_WAITING_CONCURRENT_REQUEST
+            "Concurrent PD requests failed for {MAX_RETRY_WAITING_CONCURRENT_REQUEST} times"
         )))
     }
 
@@ -206,11 +213,11 @@ impl<C: RetryClientTrait> RegionCache<C> {
         leader: metapb::Peer,
     ) -> Result<()> {
         let mut cache = self.region_cache.write().await;
-        let region_entry = cache
-            .ver_id_to_region
-            .get_mut(&ver_id)
-            .ok_or(Error::EntryNotFoundInRegionCache)?;
-        region_entry.leader = Some(leader);
+        let region_entry = cache.ver_id_to_region.get_mut(&ver_id);
+        if let Some(region) = region_entry {
+            region.leader = Some(leader);
+        }
+
         Ok(())
     }
 
@@ -229,23 +236,25 @@ impl<C: RetryClientTrait> RegionCache<C> {
 
 #[cfg(test)]
 mod test {
-    use super::RegionCache;
-    use crate::{
-        pd::RetryClientTrait,
-        region::{RegionId, RegionWithLeader},
-        Key, Result,
-    };
+    use std::collections::BTreeMap;
+    use std::collections::HashMap;
+    use std::collections::HashSet;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::Ordering::SeqCst;
+    use std::sync::Arc;
+
     use async_trait::async_trait;
-    use std::{
-        collections::{BTreeMap, HashMap, HashSet},
-        sync::{
-            atomic::{AtomicU64, Ordering::SeqCst},
-            Arc,
-        },
-    };
-    use tikv_client_common::Error;
-    use tikv_client_proto::metapb;
     use tokio::sync::Mutex;
+
+    use super::RegionCache;
+    use crate::common::Error;
+    use crate::pd::RetryClientTrait;
+    use crate::proto::metapb::RegionEpoch;
+    use crate::proto::metapb::{self};
+    use crate::region::RegionId;
+    use crate::region::RegionWithLeader;
+    use crate::Key;
+    use crate::Result;
 
     #[derive(Default)]
     struct MockRetryClient {
@@ -288,15 +297,15 @@ mod test {
         async fn get_store(
             self: Arc<Self>,
             _id: crate::region::StoreId,
-        ) -> Result<tikv_client_proto::metapb::Store> {
+        ) -> Result<crate::proto::metapb::Store> {
             todo!()
         }
 
-        async fn get_all_stores(self: Arc<Self>) -> Result<Vec<tikv_client_proto::metapb::Store>> {
+        async fn get_all_stores(self: Arc<Self>) -> Result<Vec<crate::proto::metapb::Store>> {
             todo!()
         }
 
-        async fn get_timestamp(self: Arc<Self>) -> Result<tikv_client_proto::pdpb::Timestamp> {
+        async fn get_timestamp(self: Arc<Self>) -> Result<crate::proto::pdpb::Timestamp> {
             todo!()
         }
 
@@ -309,36 +318,46 @@ mod test {
     async fn cache_is_used() -> Result<()> {
         let retry_client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(retry_client.clone());
-        retry_client.regions.lock().await.insert(
-            1,
-            RegionWithLeader {
+        retry_client
+            .regions
+            .lock()
+            .await
+            .insert(1, RegionWithLeader {
                 region: metapb::Region {
                     id: 1,
                     start_key: vec![],
                     end_key: vec![100],
+                    region_epoch: Some(RegionEpoch {
+                        conf_ver: 0,
+                        version: 0,
+                    }),
                     ..Default::default()
                 },
                 leader: Some(metapb::Peer {
                     store_id: 1,
                     ..Default::default()
                 }),
-            },
-        );
-        retry_client.regions.lock().await.insert(
-            2,
-            RegionWithLeader {
+            });
+        retry_client
+            .regions
+            .lock()
+            .await
+            .insert(2, RegionWithLeader {
                 region: metapb::Region {
                     id: 2,
                     start_key: vec![101],
                     end_key: vec![],
+                    region_epoch: Some(RegionEpoch {
+                        conf_ver: 0,
+                        version: 0,
+                    }),
                     ..Default::default()
                 },
                 leader: Some(metapb::Peer {
                     store_id: 2,
                     ..Default::default()
                 }),
-            },
-        );
+            });
 
         assert_eq!(retry_client.get_region_count.load(SeqCst), 0);
 
@@ -359,13 +378,10 @@ mod test {
 
         // update leader should work
         cache
-            .update_leader(
-                cache.get_region_by_id(2).await?.ver_id(),
-                metapb::Peer {
-                    store_id: 102,
-                    ..Default::default()
-                },
-            )
+            .update_leader(cache.get_region_by_id(2).await?.ver_id(), metapb::Peer {
+                store_id: 102,
+                ..Default::default()
+            })
             .await?;
         assert_eq!(
             cache.get_region_by_id(2).await?.leader.unwrap().store_id,
@@ -484,9 +500,13 @@ mod test {
 
     fn region(id: RegionId, start_key: Vec<u8>, end_key: Vec<u8>) -> RegionWithLeader {
         let mut region = RegionWithLeader::default();
-        region.region.set_id(id);
-        region.region.set_start_key(start_key);
-        region.region.set_end_key(end_key);
+        region.region.id = id;
+        region.region.start_key = start_key;
+        region.region.end_key = end_key;
+        region.region.region_epoch = Some(RegionEpoch {
+            conf_ver: 0,
+            version: 0,
+        });
         // We don't care about other fields here
 
         region

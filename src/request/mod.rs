@@ -1,26 +1,39 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{
-    backoff::{Backoff, DEFAULT_REGION_BACKOFF, OPTIMISTIC_BACKOFF, PESSIMISTIC_BACKOFF},
-    transaction::HasLocks,
-};
 use async_trait::async_trait;
 use derive_new::new;
-use tikv_client_store::{HasKeyErrors, Request};
 
-pub use self::{
-    plan::{
-        Collect, CollectError, CollectSingle, CollectWithShard, DefaultProcessor, Dispatch,
-        ExtractError, Merge, MergeResponse, Plan, Process, ProcessResponse, ResolveLock,
-        ResponseWithShard, RetryableMultiRegion,
-    },
-    plan_builder::{PlanBuilder, SingleKey},
-    shard::Shardable,
-};
+pub use self::plan::Collect;
+pub use self::plan::CollectError;
+pub use self::plan::CollectSingle;
+pub use self::plan::CollectWithShard;
+pub use self::plan::DefaultProcessor;
+pub use self::plan::Dispatch;
+pub use self::plan::ExtractError;
+pub use self::plan::Merge;
+pub use self::plan::MergeResponse;
+pub use self::plan::Plan;
+pub use self::plan::Process;
+pub use self::plan::ProcessResponse;
+pub use self::plan::ResolveLock;
+pub use self::plan::ResponseWithShard;
+pub use self::plan::RetryableMultiRegion;
+pub use self::plan_builder::PlanBuilder;
+pub use self::plan_builder::SingleKey;
+pub use self::shard::Batchable;
+pub use self::shard::HasNextBatch;
+pub use self::shard::NextBatch;
+pub use self::shard::Shardable;
+use crate::backoff::Backoff;
+use crate::backoff::DEFAULT_REGION_BACKOFF;
+use crate::backoff::OPTIMISTIC_BACKOFF;
+use crate::backoff::PESSIMISTIC_BACKOFF;
+use crate::store::HasKeyErrors;
+use crate::store::Request;
+use crate::transaction::HasLocks;
 
 pub mod plan;
 mod plan_builder;
-#[macro_use]
 mod shard;
 
 /// Abstracts any request sent to a TiKV server.
@@ -63,21 +76,26 @@ impl RetryOptions {
 
 #[cfg(test)]
 mod test {
+    use std::any::Any;
+    use std::iter;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use tonic::transport::Channel;
+
     use super::*;
-    use crate::{
-        mock::{MockKvClient, MockPdClient},
-        store::store_stream_for_keys,
-        transaction::lowering::new_commit_request,
-        Error, Key, Result,
-    };
-    use grpcio::CallOption;
-    use std::{
-        any::Any,
-        iter,
-        sync::{atomic::AtomicUsize, Arc},
-    };
-    use tikv_client_proto::{kvrpcpb, pdpb::Timestamp, tikvpb::TikvClient};
-    use tikv_client_store::HasRegionError;
+    use crate::mock::MockKvClient;
+    use crate::mock::MockPdClient;
+    use crate::proto::kvrpcpb;
+    use crate::proto::pdpb::Timestamp;
+    use crate::proto::tikvpb::tikv_client::TikvClient;
+    use crate::store::store_stream_for_keys;
+    use crate::store::HasRegionError;
+    use crate::transaction::lowering::new_commit_request;
+    use crate::Error;
+    use crate::Key;
+    use crate::Result;
 
     #[tokio::test]
     async fn test_region_retry() {
@@ -91,8 +109,8 @@ mod test {
         }
 
         impl HasRegionError for MockRpcResponse {
-            fn region_error(&mut self) -> Option<tikv_client_proto::errorpb::Error> {
-                Some(tikv_client_proto::errorpb::Error::default())
+            fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
+                Some(crate::proto::errorpb::Error::default())
             }
         }
 
@@ -105,7 +123,7 @@ mod test {
 
         #[async_trait]
         impl Request for MockKvRequest {
-            async fn dispatch(&self, _: &TikvClient, _: CallOption) -> Result<Box<dyn Any>> {
+            async fn dispatch(&self, _: &TikvClient<Channel>, _: Duration) -> Result<Box<dyn Any>> {
                 Ok(Box::new(MockRpcResponse {}))
             }
 
@@ -181,19 +199,8 @@ mod test {
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |_: &dyn Any| {
                 Ok(Box::new(kvrpcpb::CommitResponse {
-                    region_error: None,
-                    error: Some(kvrpcpb::KeyError {
-                        locked: None,
-                        retryable: String::new(),
-                        abort: String::new(),
-                        conflict: None,
-                        already_exist: None,
-                        deadlock: None,
-                        commit_ts_expired: None,
-                        txn_not_found: None,
-                        commit_ts_too_large: None,
-                    }),
-                    commit_version: 0,
+                    error: Some(kvrpcpb::KeyError::default()),
+                    ..Default::default()
                 }) as Box<dyn Any>)
             },
         )));

@@ -1,11 +1,25 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::iter::Iterator;
+
+use crate::proto::kvrpcpb;
+use crate::proto::pdpb::Timestamp;
 /// This module provides constructor functions for requests which take arguments as high-level
 /// types (i.e., the types from the client crate) and converts these to the types used in the
 /// generated protobuf code, then calls the low-level ctor functions in the requests module.
-use crate::{timestamp::TimestampExt, transaction::requests, BoundRange, Key};
-use std::iter::Iterator;
-use tikv_client_proto::{kvrpcpb, pdpb::Timestamp};
+use crate::timestamp::TimestampExt;
+/// This module provides constructor functions for requests which take arguments as high-level
+/// types (i.e., the types from the client crate) and converts these to the types used in the
+/// generated protobuf code, then calls the low-level ctor functions in the requests module.
+use crate::transaction::requests;
+/// This module provides constructor functions for requests which take arguments as high-level
+/// types (i.e., the types from the client crate) and converts these to the types used in the
+/// generated protobuf code, then calls the low-level ctor functions in the requests module.
+use crate::BoundRange;
+/// This module provides constructor functions for requests which take arguments as high-level
+/// types (i.e., the types from the client crate) and converts these to the types used in the
+/// generated protobuf code, then calls the low-level ctor functions in the requests module.
+use crate::Key;
 
 pub fn new_get_request(key: Key, timestamp: Timestamp) -> kvrpcpb::GetRequest {
     requests::new_get_request(key.into(), timestamp.version())
@@ -23,6 +37,7 @@ pub fn new_scan_request(
     timestamp: Timestamp,
     limit: u32,
     key_only: bool,
+    reverse: bool,
 ) -> kvrpcpb::ScanRequest {
     let (start_key, end_key) = range.into_keys();
     requests::new_scan_request(
@@ -31,6 +46,7 @@ pub fn new_scan_request(
         timestamp.version(),
         limit,
         key_only,
+        reverse,
     )
 }
 
@@ -144,9 +160,9 @@ pub fn new_pessimistic_lock_request(
         locks
             .map(|pl| {
                 let mut mutation = kvrpcpb::Mutation::default();
-                mutation.set_op(kvrpcpb::Op::PessimisticLock);
-                mutation.set_assertion(pl.assertion());
-                mutation.set_key(pl.key().into());
+                mutation.op = kvrpcpb::Op::PessimisticLock.into();
+                mutation.assertion = pl.assertion().into();
+                mutation.key = pl.key().into();
                 mutation
             })
             .collect(),
@@ -159,11 +175,17 @@ pub fn new_pessimistic_lock_request(
 }
 
 pub fn new_scan_lock_request(
-    start_key: Key,
-    safepoint: Timestamp,
+    range: BoundRange,
+    safepoint: &Timestamp,
     limit: u32,
 ) -> kvrpcpb::ScanLockRequest {
-    requests::new_scan_lock_request(start_key.into(), safepoint.version(), limit)
+    let (start_key, end_key) = range.into_keys();
+    requests::new_scan_lock_request(
+        start_key.into(),
+        end_key.unwrap_or_default().into(),
+        safepoint.version(),
+        limit,
+    )
 }
 
 pub fn new_heart_beat_request(

@@ -5,44 +5,44 @@
 //! The goal is to be able to test functionality independently of the rest of
 //! the system, in particular without requiring a TiKV or PD server, or RPC layer.
 
-use crate::{
-    pd::{PdClient, PdRpcClient, RetryClient},
-    region::{RegionId, RegionWithLeader},
-    store::RegionStore,
-    Config, Error, Key, Result, Timestamp,
-};
+use std::any::Any;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use derive_new::new;
-use slog::{Drain, Logger};
-use std::{any::Any, sync::Arc};
-use tikv_client_proto::metapb;
-use tikv_client_store::{KvClient, KvConnect, Request};
+
+use crate::pd::PdClient;
+use crate::pd::PdRpcClient;
+use crate::pd::RetryClient;
+use crate::proto::metapb::RegionEpoch;
+use crate::proto::metapb::{self};
+use crate::region::RegionId;
+use crate::region::RegionWithLeader;
+use crate::store::KvClient;
+use crate::store::KvConnect;
+use crate::store::RegionStore;
+use crate::store::Request;
+use crate::Config;
+use crate::Error;
+use crate::Key;
+use crate::Result;
+use crate::Timestamp;
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
 pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
     let config = Config::default();
-    let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-    let logger = Logger::root(
-        slog_term::FullFormat::new(plain)
-            .build()
-            .filter_level(slog::Level::Info)
-            .fuse(),
-        o!(),
-    );
     PdRpcClient::new(
         config.clone(),
-        |_, _| MockKvConnect,
-        |e, sm| {
+        |_| MockKvConnect,
+        |sm| {
             futures::future::ok(RetryClient::new_with_cluster(
-                e,
                 sm,
                 config.timeout,
                 MockCluster,
             ))
         },
         false,
-        logger,
     )
     .await
     .unwrap()
@@ -57,9 +57,7 @@ pub struct MockKvClient {
 
 impl MockKvClient {
     pub fn with_dispatch_hook<F>(dispatch: F) -> MockKvClient
-    where
-        F: Fn(&dyn Any) -> Result<Box<dyn Any>> + Send + Sync + 'static,
-    {
+    where F: Fn(&dyn Any) -> Result<Box<dyn Any>> + Send + Sync + 'static {
         MockKvClient {
             addr: String::new(),
             dispatch: Some(Arc::new(dispatch)),
@@ -86,10 +84,11 @@ impl KvClient for MockKvClient {
     }
 }
 
+#[async_trait]
 impl KvConnect for MockKvConnect {
     type KvClient = MockKvClient;
 
-    fn connect(&self, address: &str) -> Result<Self::KvClient> {
+    async fn connect(&self, address: &str) -> Result<Self::KvClient> {
         Ok(MockKvClient {
             addr: address.to_owned(),
             dispatch: None,
@@ -107,8 +106,12 @@ impl MockPdClient {
     pub fn region1() -> RegionWithLeader {
         let mut region = RegionWithLeader::default();
         region.region.id = 1;
-        region.region.set_start_key(vec![]);
-        region.region.set_end_key(vec![10]);
+        region.region.start_key = vec![];
+        region.region.end_key = vec![10];
+        region.region.region_epoch = Some(RegionEpoch {
+            conf_ver: 0,
+            version: 0,
+        });
 
         let leader = metapb::Peer {
             store_id: 41,
@@ -122,8 +125,12 @@ impl MockPdClient {
     pub fn region2() -> RegionWithLeader {
         let mut region = RegionWithLeader::default();
         region.region.id = 2;
-        region.region.set_start_key(vec![10]);
-        region.region.set_end_key(vec![250, 250]);
+        region.region.start_key = vec![10];
+        region.region.end_key = vec![250, 250];
+        region.region.region_epoch = Some(RegionEpoch {
+            conf_ver: 0,
+            version: 0,
+        });
 
         let leader = metapb::Peer {
             store_id: 42,
@@ -137,8 +144,12 @@ impl MockPdClient {
     pub fn region3() -> RegionWithLeader {
         let mut region = RegionWithLeader::default();
         region.region.id = 3;
-        region.region.set_start_key(vec![250, 250]);
-        region.region.set_end_key(vec![]);
+        region.region.start_key = vec![250, 250];
+        region.region.end_key = vec![];
+        region.region.region_epoch = Some(RegionEpoch {
+            conf_ver: 0,
+            version: 0,
+        });
 
         let leader = metapb::Peer {
             store_id: 43,

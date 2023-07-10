@@ -2,8 +2,14 @@
 
 mod common;
 
+use tikv_client::BoundRange;
+use tikv_client::Config;
+use tikv_client::Key;
+use tikv_client::KvPair;
+use tikv_client::TransactionClient as Client;
+use tikv_client::Value;
+
 use crate::common::parse_args;
-use tikv_client::{BoundRange, Config, Key, KvPair, TransactionClient as Client, Value};
 
 async fn puts(client: &Client, pairs: impl IntoIterator<Item = impl Into<KvPair>>) {
     let mut txn = client
@@ -52,7 +58,7 @@ async fn scan(client: &Client, range: impl Into<BoundRange>, limit: u32) {
     txn.scan(range, limit)
         .await
         .expect("Could not scan key-value pairs in range")
-        .for_each(|pair| println!("{:?}", pair));
+        .for_each(|pair| println!("{pair:?}"));
     txn.commit().await.expect("Could not commit transaction");
 }
 
@@ -69,6 +75,8 @@ async fn dels(client: &Client, keys: impl IntoIterator<Item = Key>) {
 
 #[tokio::main]
 async fn main() {
+    env_logger::init();
+
     // You can try running this example by passing your pd endpoints
     // (and SSL options if necessary) through command line arguments.
     let args = parse_args("txn");
@@ -81,7 +89,7 @@ async fn main() {
         Config::default()
     };
 
-    let txn = Client::new_with_config(args.pd, config, None)
+    let txn = Client::new_with_config(args.pd, config)
         .await
         .expect("Could not connect to tikv");
 
@@ -102,10 +110,10 @@ async fn main() {
     let key1_exists = key_exists(&txn, key1.clone()).await;
     let key2: Key = b"key_not_exist".to_vec().into();
     let key2_exists = key_exists(&txn, key2.clone()).await;
-    println!(
-        "check exists {:?}",
-        vec![(key1, key1_exists), (key2, key2_exists)]
-    );
+    println!("check exists {:?}", vec![
+        (key1, key1_exists),
+        (key2, key2_exists)
+    ]);
 
     // scan
     let key1: Key = b"key1".to_vec().into();

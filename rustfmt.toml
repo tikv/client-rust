@@ -1,3 +1,10 @@
-imports_granularity="Crate"
+edition = "2021"
+version = "Two"
+reorder_imports = true
+imports_granularity = "Item"
+group_imports = "StdExternalCrate"
+where_single_line = true
+trailing_comma = "Vertical"
+overflow_delimited_expr = true
 format_code_in_doc_comments = true
-edition = "2018"
+normalize_comments = true

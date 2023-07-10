@@ -1,11 +1,16 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::{BoundRange, Key, KvPair, Result, Value};
-use std::{
-    collections::{btree_map::Entry, BTreeMap, HashMap},
-    future::Future,
-};
-use tikv_client_proto::kvrpcpb;
+use std::collections::btree_map::Entry;
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::future::Future;
+
+use crate::proto::kvrpcpb;
+use crate::BoundRange;
+use crate::Key;
+use crate::KvPair;
+use crate::Result;
+use crate::Value;
 
 /// A caching layer which buffers reads and writes in a transaction.
 pub struct Buffer {
@@ -101,7 +106,7 @@ impl Buffer {
             self.update_cache(key, value);
         }
 
-        let results = cached_results.chain(fetched_results.into_iter());
+        let results = cached_results.chain(fetched_results);
         Ok(results)
     }
 
@@ -110,6 +115,8 @@ impl Buffer {
         &mut self,
         range: BoundRange,
         limit: u32,
+        update_cache: bool,
+        reverse: bool,
         f: F,
     ) -> Result<impl Iterator<Item = KvPair>>
     where
@@ -147,15 +154,23 @@ impl Buffer {
         }
 
         // update local buffer
-        for (k, v) in &results {
-            self.update_cache(k.clone(), Some(v.clone()));
+        if update_cache {
+            for (k, v) in &results {
+                self.update_cache(k.clone(), Some(v.clone()));
+            }
         }
 
         let mut res = results
             .into_iter()
             .map(|(k, v)| KvPair::new(k, v))
             .collect::<Vec<_>>();
-        res.sort_by_cached_key(|x| x.key().clone());
+
+        // TODO: use `BTreeMap` instead of `HashMap` to avoid sorting.
+        if reverse {
+            res.sort_unstable_by(|a, b| b.key().cmp(a.key()));
+        } else {
+            res.sort_unstable_by(|a, b| a.key().cmp(b.key()));
+        }
 
         Ok(res.into_iter().take(limit as usize))
     }
@@ -171,6 +186,19 @@ impl Buffer {
         // But values which we have only read, but not written, do.
         if let BufferEntry::Cached(v) = value {
             *value = BufferEntry::Locked(Some(v.take()))
+        }
+    }
+
+    /// Unlock the given key if locked.
+    pub fn unlock(&mut self, key: &Key) {
+        if let Some(value) = self.entry_map.get_mut(key) {
+            if let BufferEntry::Locked(v) = value {
+                if let Some(v) = v {
+                    *value = BufferEntry::Cached(v.take());
+                } else {
+                    self.entry_map.remove(key);
+                }
+            }
         }
     }
 
@@ -320,18 +348,18 @@ impl BufferEntry {
         match self {
             BufferEntry::Cached(_) => return None,
             BufferEntry::Put(v) => {
-                pb.set_op(kvrpcpb::Op::Put);
-                pb.set_value(v.clone());
+                pb.op = kvrpcpb::Op::Put.into();
+                pb.value = v.clone();
             }
-            BufferEntry::Del => pb.set_op(kvrpcpb::Op::Del),
-            BufferEntry::Locked(_) => pb.set_op(kvrpcpb::Op::Lock),
+            BufferEntry::Del => pb.op = kvrpcpb::Op::Del.into(),
+            BufferEntry::Locked(_) => pb.op = kvrpcpb::Op::Lock.into(),
             BufferEntry::Insert(v) => {
-                pb.set_op(kvrpcpb::Op::Insert);
-                pb.set_value(v.clone());
+                pb.op = kvrpcpb::Op::Insert.into();
+                pb.value = v.clone();
             }
-            BufferEntry::CheckNotExist => pb.set_op(kvrpcpb::Op::CheckNotExists),
+            BufferEntry::CheckNotExist => pb.op = kvrpcpb::Op::CheckNotExists.into(),
         };
-        pb.set_key(key.clone().into());
+        pb.key = key.clone().into();
         Some(pb)
     }
 
@@ -368,9 +396,11 @@ impl MutationValue {
 
 #[cfg(test)]
 mod tests {
+    use futures::executor::block_on;
+    use futures::future::ready;
+
     use super::*;
-    use futures::{executor::block_on, future::ready};
-    use tikv_client_common::internal_err;
+    use crate::internal_err;
 
     #[test]
     fn set_and_get_from_buffer() {
@@ -460,18 +490,15 @@ mod tests {
                 ready(Ok(vec![]))
             }),
         );
-        assert_eq!(
-            r1.unwrap().collect::<Vec<_>>(),
-            vec![
-                KvPair(k1.clone(), v1.clone()),
-                KvPair(k2.clone(), v2.clone())
-            ]
-        );
+        assert_eq!(r1.unwrap().collect::<Vec<_>>(), vec![
+            KvPair(k1.clone(), v1.clone()),
+            KvPair(k2.clone(), v2.clone())
+        ]);
         assert_eq!(r2.unwrap().unwrap(), v2);
-        assert_eq!(
-            r3.unwrap().collect::<Vec<_>>(),
-            vec![KvPair(k1, v1), KvPair(k2, v2)]
-        );
+        assert_eq!(r3.unwrap().collect::<Vec<_>>(), vec![
+            KvPair(k1, v1),
+            KvPair(k2, v2)
+        ]);
     }
 
     // Check that multiple writes to the same key combine in the correct way.
@@ -482,6 +509,12 @@ mod tests {
         macro_rules! assert_entry {
             ($key: ident, $p: pat) => {
                 assert!(matches!(buffer.entry_map.get(&$key), Some(&$p),))
+            };
+        }
+
+        macro_rules! assert_entry_none {
+            ($key: ident) => {
+                assert!(buffer.entry_map.get(&$key).is_none())
             };
         }
 
@@ -510,5 +543,27 @@ mod tests {
         buffer.delete(key.clone());
         buffer.insert(key.clone(), b"value1".to_vec());
         assert_entry!(key, BufferEntry::Put(_));
+
+        // Lock + Unlock = None
+        let key: Key = b"key4".to_vec().into();
+        buffer.lock(key.clone());
+        buffer.unlock(&key);
+        assert_entry_none!(key);
+
+        // Cached + Lock + Unlock = Cached
+        let key: Key = b"key5".to_vec().into();
+        let val: Value = b"value5".to_vec();
+        let val_ = val.clone();
+        let r = block_on(buffer.get_or_else(key.clone(), move |_| ready(Ok(Some(val_)))));
+        assert_eq!(r.unwrap().unwrap(), val);
+        buffer.lock(key.clone());
+        buffer.unlock(&key);
+        assert_entry!(key, BufferEntry::Cached(Some(_)));
+        assert_eq!(
+            block_on(buffer.get_or_else(key, move |_| ready(Err(internal_err!("")))))
+                .unwrap()
+                .unwrap(),
+            val
+        );
     }
 }

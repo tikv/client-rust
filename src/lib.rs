@@ -67,7 +67,7 @@
 //! # use futures::prelude::*;
 //! # fn main() -> Result<()> {
 //! # futures::executor::block_on(async {
-//! let client = RawClient::new(vec!["127.0.0.1:2379"], None).await?;
+//! let client = RawClient::new(vec!["127.0.0.1:2379"]).await?;
 //! client.put("key".to_owned(), "value".to_owned()).await?;
 //! let value = client.get("key".to_owned()).await?;
 //! # Ok(())
@@ -81,7 +81,7 @@
 //! # use futures::prelude::*;
 //! # fn main() -> Result<()> {
 //! # futures::executor::block_on(async {
-//! let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"], None).await?;
+//! let txn_client = TransactionClient::new(vec!["127.0.0.1:2379"]).await?;
 //! let mut txn = txn_client.begin_optimistic().await?;
 //! txn.put("key".to_owned(), "value".to_owned()).await?;
 //! let value = txn.get("key".to_owned()).await?;
@@ -90,17 +90,22 @@
 //! # })}
 //! ```
 
-#[macro_use]
+// To support both prost & rust-protobuf.
+#![cfg_attr(feature = "prost-codec", allow(clippy::useless_conversion))]
+#![allow(clippy::field_reassign_with_default)]
+#![allow(clippy::arc_with_non_send_sync)]
+
 pub mod request;
-#[macro_use]
 #[doc(hidden)]
 pub mod transaction;
 
 mod backoff;
+mod common;
 mod compat;
 mod config;
 mod kv;
 mod pd;
+mod proto;
 #[doc(hidden)]
 pub mod raw;
 mod region;
@@ -115,26 +120,48 @@ mod mock;
 #[cfg(test)]
 mod proptests;
 
-#[macro_use]
-extern crate slog;
-extern crate slog_term;
+#[doc(inline)]
+pub use common::security::SecurityManager;
+#[doc(inline)]
+pub use common::Error;
+#[doc(inline)]
+pub use common::Result;
+#[doc(inline)]
+pub use config::Config;
 
 #[doc(inline)]
 pub use crate::backoff::Backoff;
 #[doc(inline)]
-pub use crate::kv::{BoundRange, IntoOwnedRange, Key, KvPair, Value};
+pub use crate::kv::BoundRange;
 #[doc(inline)]
-pub use crate::raw::{lowering as raw_lowering, Client as RawClient, ColumnFamily};
+pub use crate::kv::IntoOwnedRange;
+#[doc(inline)]
+pub use crate::kv::Key;
+#[doc(inline)]
+pub use crate::kv::KvPair;
+#[doc(inline)]
+pub use crate::kv::Value;
+#[doc(inline)]
+pub use crate::raw::lowering as raw_lowering;
+#[doc(inline)]
+pub use crate::raw::Client as RawClient;
+#[doc(inline)]
+pub use crate::raw::ColumnFamily;
 #[doc(inline)]
 pub use crate::request::RetryOptions;
 #[doc(inline)]
-pub use crate::timestamp::{Timestamp, TimestampExt};
+pub use crate::timestamp::Timestamp;
 #[doc(inline)]
-pub use crate::transaction::{
-    lowering as transaction_lowering, CheckLevel, Client as TransactionClient, Snapshot,
-    Transaction, TransactionOptions,
-};
+pub use crate::timestamp::TimestampExt;
 #[doc(inline)]
-pub use config::Config;
+pub use crate::transaction::lowering as transaction_lowering;
 #[doc(inline)]
-pub use tikv_client_common::{security::SecurityManager, Error, Result};
+pub use crate::transaction::CheckLevel;
+#[doc(inline)]
+pub use crate::transaction::Client as TransactionClient;
+#[doc(inline)]
+pub use crate::transaction::Snapshot;
+#[doc(inline)]
+pub use crate::transaction::Transaction;
+#[doc(inline)]
+pub use crate::transaction::TransactionOptions;

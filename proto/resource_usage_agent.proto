@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package resource_usage_agent;
+
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+option java_package = "org.tikv.kvproto";
+
+// ResourceUsageAgent is the service for storing resource usage records.
+service ResourceUsageAgent {
+    // DEPRECATED: We now use `Report` to report not only CPU time.
+    //
+    // Report the CPU time records. By default, the records with the same
+    // resource group tag will be batched by minute.
+    rpc ReportCPUTime(stream CPUTimeRecord) returns (EmptyResponse) {}
+
+    // Report the resource usage records. By default, the records with the same
+    // resource group tag will be batched by minute.
+    rpc Report(stream ResourceUsageRecord) returns (EmptyResponse) {}
+}
+
+message CPUTimeRecord {
+    bytes resource_group_tag = 1;
+
+    // The following 2 repeated zipped together represents a List<(UnixTimestamp, CPUTime)>
+
+    // UNIX timestamp in second.
+    repeated uint64 record_list_timestamp_sec = 2;
+    // The value can be greater than 1000ms if the requests are running parallelly.
+    repeated uint32 record_list_cpu_time_ms = 3;
+
+}
+
+message ResourceUsageRecord {
+    bytes resource_group_tag = 1;
+
+    // The following repeated zipped together represents a List<(UnixTimestamp, Record)>
+
+    // UNIX timestamp in second.
+    repeated uint64 record_list_timestamp_sec = 2;
+
+    // The value can be greater than 1000ms if the requests are running parallelly.
+    repeated uint32 record_list_cpu_time_ms = 3;
+
+    // The number of reads of keys associated with resource_group_tag.
+    repeated uint32 record_list_read_keys = 4;
+
+    // The number of writes of keys associated with resource_group_tag.
+    repeated uint32 record_list_write_keys = 5;
+}
+
+message EmptyResponse {}
+
+// TiKV implements ResourceMeteringPubSub service for clients to subscribe to resource metering records.
+service ResourceMeteringPubSub {
+    // Clients subscribe to resource metering records through this RPC, and TiKV periodically (e.g. per minute)
+    // publishes resource metering records to clients via gRPC stream.
+    rpc Subscribe(ResourceMeteringRequest) returns (stream ResourceUsageRecord) {}
+}
+
+message ResourceMeteringRequest {}
