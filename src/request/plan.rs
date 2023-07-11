@@ -340,6 +340,7 @@ pub struct Collect;
 #[derive(Clone, Copy)]
 pub struct CollectSingle;
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! collect_first {
     ($type_: ty) => {

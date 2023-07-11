@@ -180,18 +180,6 @@ where P::Result: HasKeyErrors + HasRegionError
     }
 }
 
-impl<PdC: PdClient, R: KvRequest + SingleKey> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
-    /// Target the request at a single region. *Note*: single region plan will
-    /// cannot automatically retry on region errors. It's only used for requests
-    /// that target at a specific region but not keys (e.g. ResolveLockRequest).
-    pub async fn single_region(self) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
-        let key = self.plan.request.key();
-        // TODO: retry when region error occurred
-        let store = self.pd_client.clone().store_for_key(key.into()).await?;
-        set_single_region_store(self.plan, store, self.pd_client)
-    }
-}
-
 impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
     /// Target the request at a single region; caller supplies the store to target.
     pub async fn single_region_with_store(

@@ -34,7 +34,8 @@ pub async fn clear_tikv() {
     for cf in cfs {
         let raw_client = RawClient::new(pd_addrs()).await.unwrap().with_cf(cf);
         raw_client
-            .delete_range_opt(vec![].., backoff.clone())
+            .with_backoff(backoff.clone())
+            .delete_range(vec![]..)
             .await
             .unwrap();
     }
@@ -152,6 +153,7 @@ pub fn gen_u32_keys(num: u32, rng: &mut impl Rng) -> HashSet<Vec<u8>> {
 /// Please note that, different from go, this defer is bound to scope.
 /// When exiting the scope, its deferred calls are executed in last-in-first-out
 /// order.
+#[doc(hidden)]
 #[macro_export]
 macro_rules! defer {
     ($t:expr) => {
