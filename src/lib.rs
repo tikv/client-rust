@@ -96,10 +96,10 @@
 #![allow(clippy::arc_with_non_send_sync)]
 
 pub mod backoff;
+#[doc(hidden)]
 pub mod raw;
-#[doc(hidden)]
-#[doc(hidden)]
 pub mod request;
+#[doc(hidden)]
 pub mod transaction;
 
 mod common;
