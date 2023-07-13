@@ -1,7 +1,7 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
 fn main() {
-    #[cfg(feature = "vendored")]
+    #[cfg(not(feature = "vendored"))]
     {
         use tonic_disable_doctest::BuilderEx;
 
