@@ -747,11 +747,10 @@ async fn txn_lock_keys_error_handle() -> Result<()> {
     let mut t3 = client.begin_pessimistic().await?;
 
     t1.lock_keys(vec![k[0].clone(), k[1].clone()]).await?;
-    assert!(
-        t2.lock_keys(vec![k[0].clone(), k[2].clone()])
-            .await
-            .is_err()
-    );
+    assert!(t2
+        .lock_keys(vec![k[0].clone(), k[2].clone()])
+        .await
+        .is_err());
     t3.lock_keys(vec![k[2].clone(), k[3].clone()]).await?;
 
     t1.rollback().await?;

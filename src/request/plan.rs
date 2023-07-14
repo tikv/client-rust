@@ -87,7 +87,8 @@ pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
 }
 
 impl<P: Plan + Shardable, PdC: PdClient> RetryableMultiRegion<P, PdC>
-where P::Result: HasKeyErrors + HasRegionError
+where
+    P::Result: HasKeyErrors + HasRegionError,
 {
     // A plan may involve multiple shards
     #[async_recursion]
@@ -286,7 +287,8 @@ impl<P: Plan, PdC: PdClient> Clone for RetryableMultiRegion<P, PdC> {
 
 #[async_trait]
 impl<P: Plan + Shardable, PdC: PdClient> Plan for RetryableMultiRegion<P, PdC>
-where P::Result: HasKeyErrors + HasRegionError
+where
+    P::Result: HasKeyErrors + HasRegionError,
 {
     type Result = Vec<Result<P::Result>>;
 
@@ -417,7 +419,8 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
 
 #[async_trait]
 impl<P: Plan, PdC: PdClient> Plan for ResolveLock<P, PdC>
-where P::Result: HasLocks
+where
+    P::Result: HasLocks,
 {
     type Result = P::Result;
 
@@ -517,7 +520,8 @@ impl<P: Plan, PdC: PdClient> Clone for CleanupLocks<P, PdC> {
 
 #[async_trait]
 impl<P: Plan + Shardable + NextBatch, PdC: PdClient> Plan for CleanupLocks<P, PdC>
-where P::Result: HasLocks + HasNextBatch + HasKeyErrors + HasRegionError
+where
+    P::Result: HasLocks + HasNextBatch + HasKeyErrors + HasRegionError,
 {
     type Result = CleanupLocksResult;
 
@@ -621,7 +625,8 @@ impl<P: Plan> Clone for ExtractError<P> {
 
 #[async_trait]
 impl<P: Plan> Plan for ExtractError<P>
-where P::Result: HasKeyErrors + HasRegionErrors
+where
+    P::Result: HasKeyErrors + HasRegionErrors,
 {
     type Result = P::Result;
 
@@ -663,7 +668,8 @@ impl<P: Plan + Shardable> Clone for PreserveShard<P> {
 
 #[async_trait]
 impl<P> Plan for PreserveShard<P>
-where P: Plan + Shardable
+where
+    P: Plan + Shardable,
 {
     type Result = ResponseWithShard<P::Result, P::Shard>;
 

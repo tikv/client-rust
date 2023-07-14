@@ -32,13 +32,13 @@ pub struct FlatMapOk<U, F, Ti, E> {
 
 // FIXME: implement other iterator methods like size_hint, etc.
 impl<
-    T: IntoIterator<IntoIter = Ti>,
-    U: Iterator<Item = std::result::Result<I, E>>,
-    F: FnMut(I) -> T,
-    Ti: Iterator<Item = T::Item>,
-    I,
-    E,
-> Iterator for FlatMapOk<U, F, Ti, E>
+        T: IntoIterator<IntoIter = Ti>,
+        U: Iterator<Item = std::result::Result<I, E>>,
+        F: FnMut(I) -> T,
+        Ti: Iterator<Item = T::Item>,
+        I,
+        E,
+    > Iterator for FlatMapOk<U, F, Ti, E>
 {
     type Item = std::result::Result<T::Item, E>;
 
@@ -92,14 +92,9 @@ mod test {
             .into_iter()
             .flat_map_ok(|i| vec![i, i, i].into_iter())
             .collect();
-        assert_eq!(result, vec![
-            Ok(0),
-            Ok(0),
-            Ok(0),
-            Err(()),
-            Ok(2),
-            Ok(2),
-            Ok(2)
-        ]);
+        assert_eq!(
+            result,
+            vec![Ok(0), Ok(0), Ok(0), Err(()), Ok(2), Ok(2), Ok(2)]
+        );
     }
 }
