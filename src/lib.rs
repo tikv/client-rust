@@ -93,7 +93,6 @@
 // To support both prost & rust-protobuf.
 #![cfg_attr(feature = "prost-codec", allow(clippy::useless_conversion))]
 #![allow(clippy::field_reassign_with_default)]
-#![allow(clippy::arc_with_non_send_sync)]
 
 pub mod backoff;
 #[doc(hidden)]

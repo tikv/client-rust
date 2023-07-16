@@ -490,15 +490,18 @@ mod tests {
                 ready(Ok(vec![]))
             }),
         );
-        assert_eq!(r1.unwrap().collect::<Vec<_>>(), vec![
-            KvPair(k1.clone(), v1.clone()),
-            KvPair(k2.clone(), v2.clone())
-        ]);
+        assert_eq!(
+            r1.unwrap().collect::<Vec<_>>(),
+            vec![
+                KvPair(k1.clone(), v1.clone()),
+                KvPair(k2.clone(), v2.clone())
+            ]
+        );
         assert_eq!(r2.unwrap().unwrap(), v2);
-        assert_eq!(r3.unwrap().collect::<Vec<_>>(), vec![
-            KvPair(k1, v1),
-            KvPair(k2, v2)
-        ]);
+        assert_eq!(
+            r3.unwrap().collect::<Vec<_>>(),
+            vec![KvPair(k1, v1), KvPair(k2, v2)]
+        );
     }
 
     // Check that multiple writes to the same key combine in the correct way.

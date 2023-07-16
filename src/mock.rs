@@ -57,7 +57,9 @@ pub struct MockKvClient {
 
 impl MockKvClient {
     pub fn with_dispatch_hook<F>(dispatch: F) -> MockKvClient
-    where F: Fn(&dyn Any) -> Result<Box<dyn Any>> + Send + Sync + 'static {
+    where
+        F: Fn(&dyn Any) -> Result<Box<dyn Any>> + Send + Sync + 'static,
+    {
         MockKvClient {
             addr: String::new(),
             dispatch: Some(Arc::new(dispatch)),
