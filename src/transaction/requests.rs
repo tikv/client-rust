@@ -508,7 +508,11 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
                     } else {
                         assert_eq!(kvpairs.len(), not_founds.len());
                         Either::Right(kvpairs.zip(not_founds).filter_map(|(kvpair, not_found)| {
-                            if not_found { None } else { Some(kvpair) }
+                            if not_found {
+                                None
+                            } else {
+                                Some(kvpair)
+                            }
                         }))
                     }
                 })
@@ -933,10 +937,13 @@ mod tests {
             ];
             let result = merger.merge(input);
 
-            assert_eq!(result.unwrap(), vec![
-                KvPair::new(key1.to_vec(), value1.to_vec()),
-                KvPair::new(key4.to_vec(), value4.to_vec()),
-            ]);
+            assert_eq!(
+                result.unwrap(),
+                vec![
+                    KvPair::new(key1.to_vec(), value1.to_vec()),
+                    KvPair::new(key4.to_vec(), value4.to_vec()),
+                ]
+            );
         }
         {
             let input = vec![
@@ -953,12 +960,10 @@ mod tests {
             } = result.unwrap_err()
             {
                 assert!(matches!(*inner, ResolveLockError));
-                assert_eq!(success_keys, vec![
-                    key1.to_vec(),
-                    key2.to_vec(),
-                    key3.to_vec(),
-                    key4.to_vec()
-                ]);
+                assert_eq!(
+                    success_keys,
+                    vec![key1.to_vec(), key2.to_vec(), key3.to_vec(), key4.to_vec()]
+                );
             } else {
                 panic!();
             }

@@ -318,11 +318,9 @@ mod test {
     async fn cache_is_used() -> Result<()> {
         let retry_client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(retry_client.clone());
-        retry_client
-            .regions
-            .lock()
-            .await
-            .insert(1, RegionWithLeader {
+        retry_client.regions.lock().await.insert(
+            1,
+            RegionWithLeader {
                 region: metapb::Region {
                     id: 1,
                     start_key: vec![],
@@ -337,12 +335,11 @@ mod test {
                     store_id: 1,
                     ..Default::default()
                 }),
-            });
-        retry_client
-            .regions
-            .lock()
-            .await
-            .insert(2, RegionWithLeader {
+            },
+        );
+        retry_client.regions.lock().await.insert(
+            2,
+            RegionWithLeader {
                 region: metapb::Region {
                     id: 2,
                     start_key: vec![101],
@@ -357,7 +354,8 @@ mod test {
                     store_id: 2,
                     ..Default::default()
                 }),
-            });
+            },
+        );
 
         assert_eq!(retry_client.get_region_count.load(SeqCst), 0);
 
@@ -378,10 +376,13 @@ mod test {
 
         // update leader should work
         cache
-            .update_leader(cache.get_region_by_id(2).await?.ver_id(), metapb::Peer {
-                store_id: 102,
-                ..Default::default()
-            })
+            .update_leader(
+                cache.get_region_by_id(2).await?.ver_id(),
+                metapb::Peer {
+                    store_id: 102,
+                    ..Default::default()
+                },
+            )
             .await?;
         assert_eq!(
             cache.get_region_by_id(2).await?.leader.unwrap().store_id,

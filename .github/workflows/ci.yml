@@ -12,12 +12,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          override: true
-      - run: rustup component add rustfmt clippy
       - name: Install Protoc
         uses: arduino/setup-protoc@v1
         with:
@@ -35,11 +29,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          override: true
       - name: Install Protoc
         uses: arduino/setup-protoc@v1
         with:
@@ -57,11 +46,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          override: true
       - name: Install Protoc
         uses: arduino/setup-protoc@v1
         with:

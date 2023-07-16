@@ -372,16 +372,19 @@ pub mod test {
         let mut stream = executor::block_on_stream(stream);
 
         let result: Vec<Key> = stream.next().unwrap().unwrap().1;
-        assert_eq!(result, vec![
-            vec![1].into(),
-            vec![2].into(),
-            vec![3].into(),
-            vec![5, 2].into()
-        ]);
-        assert_eq!(stream.next().unwrap().unwrap().1, vec![
-            vec![12].into(),
-            vec![11, 4].into()
-        ]);
+        assert_eq!(
+            result,
+            vec![
+                vec![1].into(),
+                vec![2].into(),
+                vec![3].into(),
+                vec![5, 2].into()
+            ]
+        );
+        assert_eq!(
+            stream.next().unwrap().unwrap().1,
+            vec![vec![12].into(), vec![11, 4].into()]
+        );
         assert!(stream.next().is_none());
     }
 
@@ -425,10 +428,13 @@ pub mod test {
         let ranges4 = stream.next().unwrap().unwrap();
 
         assert_eq!(ranges1.0.id(), 1);
-        assert_eq!(ranges1.1, vec![
-            make_key_range(k1.clone(), k2.clone()),
-            make_key_range(k1.clone(), k_split.clone()),
-        ]);
+        assert_eq!(
+            ranges1.1,
+            vec![
+                make_key_range(k1.clone(), k2.clone()),
+                make_key_range(k1.clone(), k_split.clone()),
+            ]
+        );
         assert_eq!(ranges2.0.id(), 2);
         assert_eq!(ranges2.1, vec![make_key_range(k_split.clone(), k3.clone())]);
         assert_eq!(ranges3.0.id(), 1);

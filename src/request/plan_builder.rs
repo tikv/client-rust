@@ -69,7 +69,9 @@ impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted> {
 impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     /// If there is a lock error, then resolve the lock and retry the request.
     pub fn resolve_lock(self, backoff: Backoff) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
-    where P::Result: HasLocks {
+    where
+        P::Result: HasLocks,
+    {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: ResolveLock {
@@ -143,7 +145,8 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
 }
 
 impl<PdC: PdClient, P: Plan + Shardable> PlanBuilder<PdC, P, NoTarget>
-where P::Result: HasKeyErrors + HasRegionError
+where
+    P::Result: HasKeyErrors + HasRegionError,
 {
     /// Split the request into shards sending a request to the region of each shard.
     pub fn retry_multi_region(
@@ -191,7 +194,8 @@ impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
 }
 
 impl<PdC: PdClient, P: Plan + Shardable> PlanBuilder<PdC, P, NoTarget>
-where P::Result: HasKeyErrors
+where
+    P::Result: HasKeyErrors,
 {
     pub fn preserve_shard(self) -> PlanBuilder<PdC, PreserveShard<P>, NoTarget> {
         PlanBuilder {
@@ -206,7 +210,8 @@ where P::Result: HasKeyErrors
 }
 
 impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted>
-where P::Result: HasKeyErrors + HasRegionErrors
+where
+    P::Result: HasKeyErrors + HasRegionErrors,
 {
     pub fn extract_error(self) -> PlanBuilder<PdC, ExtractError<P>, Targetted> {
         PlanBuilder {

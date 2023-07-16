@@ -693,21 +693,26 @@ mod tests {
             .into_iter()
             .map(|(data, ranges)| (String::from_utf8(data).unwrap(), ranges))
             .collect();
-        assert_eq!(resps, vec![
-            ("1:[Key(05)..Key(0A)]".to_string(), vec![
-                Key::from(vec![5])..Key::from(vec![10])
-            ]),
-            (
-                "2:[Key(0A)..Key(0F), Key(14)..Key(FAFA)]".to_string(),
-                vec![
-                    Key::from(vec![10])..Key::from(vec![15]),
-                    Key::from(vec![20])..Key::from(vec![250, 250])
-                ]
-            ),
-            ("3:[Key(FAFA)..Key()]".to_string(), vec![
-                Key::from(vec![250, 250])..Key::from(vec![])
-            ])
-        ]);
+        assert_eq!(
+            resps,
+            vec![
+                (
+                    "1:[Key(05)..Key(0A)]".to_string(),
+                    vec![Key::from(vec![5])..Key::from(vec![10])]
+                ),
+                (
+                    "2:[Key(0A)..Key(0F), Key(14)..Key(FAFA)]".to_string(),
+                    vec![
+                        Key::from(vec![10])..Key::from(vec![15]),
+                        Key::from(vec![20])..Key::from(vec![250, 250])
+                    ]
+                ),
+                (
+                    "3:[Key(FAFA)..Key()]".to_string(),
+                    vec![Key::from(vec![250, 250])..Key::from(vec![])]
+                )
+            ]
+        );
         Ok(())
     }
 }
