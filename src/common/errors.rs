@@ -4,6 +4,8 @@ use std::result;
 
 use thiserror::Error;
 
+use crate::BoundRange;
+
 /// An error originating from the TiKV client or dependencies.
 #[derive(Debug, Error)]
 #[allow(clippy::large_enum_variant)]
@@ -80,6 +82,8 @@ pub enum Error {
     /// No region is found for the given key.
     #[error("Region is not found for key: {:?}", key)]
     RegionForKeyNotFound { key: Vec<u8> },
+    #[error("Region is not found for range: {:?}", range)]
+    RegionForRangeNotFound { range: BoundRange },
     /// No region is found for the given id. note: distinguish it with the RegionNotFound error in errorpb.
     #[error("Region {} is not found in the response", region_id)]
     RegionNotFoundInResponse { region_id: u64 },

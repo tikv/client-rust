@@ -5,6 +5,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::u32;
 
+use futures::StreamExt;
 use log::debug;
 
 use crate::backoff::DEFAULT_REGION_BACKOFF;
@@ -582,7 +583,7 @@ impl<PdC: PdClient> Client<PdC> {
     async fn scan_inner(
         &self,
         range: impl Into<BoundRange>,
-        limit: u32,
+        mut limit: u32,
         key_only: bool,
     ) -> Result<Vec<KvPair>> {
         if limit > MAX_RAW_KV_SCAN_LIMIT {
@@ -591,17 +592,50 @@ impl<PdC: PdClient> Client<PdC> {
                 max_limit: MAX_RAW_KV_SCAN_LIMIT,
             });
         }
-
-        let request = new_raw_scan_request(range.into(), limit, key_only, self.cf.clone());
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
-            .retry_multi_region(self.backoff.clone())
-            .merge(Collect)
-            .plan();
-        let res = plan.execute().await;
-        res.map(|mut s| {
-            s.truncate(limit as usize);
-            s
-        })
+        let mut result = Vec::new();
+        let mut range = range.into();
+        let mut scan_regions = self.rpc.clone().stores_for_range(range.clone()).boxed();
+        let mut region_store =
+            scan_regions
+                .next()
+                .await
+                .ok_or(Error::RegionForRangeNotFound {
+                    range: (range.clone()),
+                })??;
+        while limit > 0 {
+            let request = new_raw_scan_request(range.clone(), limit, key_only, self.cf.clone());
+            let resp = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+                .single_region_with_store(region_store.clone())
+                .await?
+                .plan()
+                .execute()
+                .await?;
+            let mut region_scan_res = resp
+                .kvs
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<KvPair>>();
+            let res_len = region_scan_res.len();
+            result.append(&mut region_scan_res);
+            // if the number of results is less than limit, it means this scan range contains more than one region, so we need to scan next region
+            if res_len < limit as usize {
+                region_store = match scan_regions.next().await {
+                    Some(Ok(rs)) => {
+                        range = BoundRange::new(
+                            std::ops::Bound::Included(region_store.region_with_leader.range().1),
+                            range.to,
+                        );
+                        rs
+                    }
+                    Some(Err(e)) => return Err(e),
+                    None => {
+                        return Ok(result);
+                    }
+                };
+            }
+            limit -= res_len as u32;
+        }
+        Ok(result)
     }
 
     async fn batch_scan_inner(

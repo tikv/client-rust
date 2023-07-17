@@ -67,15 +67,15 @@ use crate::proto::kvrpcpb;
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(test, derive(Arbitrary))]
 pub struct BoundRange {
-    from: Bound<Key>,
-    to: Bound<Key>,
+    pub from: Bound<Key>,
+    pub to: Bound<Key>,
 }
 
 impl BoundRange {
     /// Create a new BoundRange.
     ///
     /// The caller must ensure that `from` is not `Unbounded`.
-    fn new(from: Bound<Key>, to: Bound<Key>) -> BoundRange {
+    pub fn new(from: Bound<Key>, to: Bound<Key>) -> BoundRange {
         BoundRange { from, to }
     }
 
