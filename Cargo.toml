@@ -10,13 +10,18 @@ edition = "2021"
 
 [features]
 default = ["prometheus/process"]
-vendored = []
 # Enable integration tests with a running TiKV and PD instance.
 # Use $PD_ADDRS, comma separated, to set the addresses the tests use.
 integration-tests = []
 
 [lib]
 name = "tikv_client"
+
+[workspace]
+members = [
+    ".",
+    "proto-build",
+]
 
 [dependencies]
 async-recursion = "0.3"
@@ -53,12 +58,6 @@ serial_test = "0.5.0"
 simple_logger = "1"
 tempfile = "3.6"
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
-
-[build-dependencies]
-glob = "0.3"
-tonic-build = "0.9"
-# Suppress doctest bug (https://stackoverflow.com/questions/66074003/how-to-turn-off-cargo-doc-test-and-compile-for-a-specific-module-in-rust)
-tonic-disable-doctest = "0.1.0"
 
 [[test]]
 name = "failpoint_tests"
