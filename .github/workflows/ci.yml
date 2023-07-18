@@ -21,6 +21,9 @@ jobs:
         uses: Swatinem/rust-cache@v1.4.0
       - name: make check
         run: make check
+      - name: Catch unexpected changes in the generated code
+        run: |
+          git diff --exit-code
 
   unit-test:
     name: unit test
