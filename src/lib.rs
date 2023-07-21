@@ -90,8 +90,6 @@
 //! # })}
 //! ```
 
-// To support both prost & rust-protobuf.
-#![cfg_attr(feature = "prost-codec", allow(clippy::useless_conversion))]
 #![allow(clippy::field_reassign_with_default)]
 
 pub mod backoff;
