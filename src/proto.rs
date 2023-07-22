@@ -6,5 +6,5 @@
 pub use protos::*;
 
 mod protos {
-    include!(concat!(env!("OUT_DIR"), "/mod.rs"));
+    include!("generated/mod.rs");
 }
