@@ -11,15 +11,18 @@ INTEGRATION_TEST_ARGS := --features "integration-tests"
 
 default: check
 
-check:
+generate:
+	cargo run -p tikv-client-proto-build
+
+check: generate
 	cargo check --all --all-targets --features "${ALL_FEATURES}"
 	cargo fmt -- --check
 	cargo clippy --all-targets --features "${ALL_FEATURES}" -- -D clippy::all
 
-unit-test:
+unit-test: generate
 	cargo test --all --no-default-features
 
-integration-test:
+integration-test: generate
 	cargo test txn_ --all ${INTEGRATION_TEST_ARGS} -- --nocapture
 	cargo test raw_ --all ${INTEGRATION_TEST_ARGS} -- --nocapture
 	cargo test misc_ --all ${INTEGRATION_TEST_ARGS} -- --nocapture
@@ -32,7 +35,7 @@ doc:
 tiup:
 	tiup playground nightly --mode tikv-slim --kv 3 --without-monitor --kv.config $(shell pwd)/config/tikv.toml --pd.config $(shell pwd)/config/pd.toml &
 
-all: check doc test
+all: generate check doc test
 
 clean:
 	cargo clean
