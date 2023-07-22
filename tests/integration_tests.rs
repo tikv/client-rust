@@ -590,10 +590,98 @@ async fn raw_write_million() -> Result<()> {
         assert_eq!(res.len(), 2usize.pow(NUM_BITS_KEY_PER_TXN));
     }
 
-    // test scan
-    let limit = 10;
-    let res = client.scan(vec![].., limit).await?;
-    assert_eq!(res.len(), limit as usize);
+    // test scan, key range from [0,0,0,0] to [255.0.0.0]
+    let mut limit = 2000;
+    let mut r = client.scan(.., limit).await?;
+    assert_eq!(r.len(), 256);
+    for (i, val) in r.iter().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8);
+    }
+    r = client.scan(vec![100, 0, 0, 0].., limit).await?;
+    assert_eq!(r.len(), 156);
+    for (i, val) in r.iter().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + 100);
+    }
+    r = client
+        .scan(vec![5, 0, 0, 0]..vec![200, 0, 0, 0], limit)
+        .await?;
+    assert_eq!(r.len(), 195);
+    for (i, val) in r.iter().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + 5);
+    }
+    r = client
+        .scan(vec![5, 0, 0, 0]..=vec![200, 0, 0, 0], limit)
+        .await?;
+    assert_eq!(r.len(), 196);
+    for (i, val) in r.iter().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + 5);
+    }
+    r = client
+        .scan(vec![5, 0, 0, 0]..=vec![255, 10, 0, 0], limit)
+        .await?;
+    assert_eq!(r.len(), 251);
+    for (i, val) in r.iter().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + 5);
+    }
+    r = client
+        .scan(vec![255, 1, 0, 0]..=vec![255, 10, 0, 0], limit)
+        .await?;
+    assert_eq!(r.len(), 0);
+    r = client.scan(..vec![0, 0, 0, 0], limit).await?;
+    assert_eq!(r.len(), 0);
+
+    limit = 3;
+    let mut r = client.scan(.., limit).await?;
+    assert_eq!(r.len(), limit as usize);
+    for (i, val) in r.iter().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8);
+    }
+    r = client.scan(vec![100, 0, 0, 0].., limit).await?;
+    assert_eq!(r.len(), limit as usize);
+    for (i, val) in r.iter().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + 100);
+    }
+    r = client
+        .scan(vec![5, 0, 0, 0]..vec![200, 0, 0, 0], limit)
+        .await?;
+    assert_eq!(r.len(), limit as usize);
+    for (i, val) in r.iter().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + 5);
+    }
+    r = client
+        .scan(vec![5, 0, 0, 0]..=vec![200, 0, 0, 0], limit)
+        .await?;
+    assert_eq!(r.len(), limit as usize);
+    for (i, val) in r.iter().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + 5);
+    }
+    r = client
+        .scan(vec![5, 0, 0, 0]..=vec![255, 10, 0, 0], limit)
+        .await?;
+    assert_eq!(r.len(), limit as usize);
+    for (i, val) in r.iter().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + 5);
+    }
+    r = client
+        .scan(vec![255, 1, 0, 0]..=vec![255, 10, 0, 0], limit)
+        .await?;
+    assert_eq!(r.len(), 0);
+    r = client.scan(..vec![0, 0, 0, 0], limit).await?;
+    assert_eq!(r.len(), 0);
+
+    limit = 0;
+    r = client.scan(.., limit).await?;
+    assert_eq!(r.len(), limit as usize);
 
     // test batch_scan
     for batch_num in 1..4 {
