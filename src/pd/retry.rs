@@ -20,6 +20,7 @@ use crate::region::RegionId;
 use crate::region::RegionWithLeader;
 use crate::region::StoreId;
 use crate::stats::pd_stats;
+use crate::Config;
 use crate::Error;
 use crate::Result;
 use crate::SecurityManager;
@@ -51,21 +52,21 @@ pub struct RetryClient<Cl = Cluster> {
     // Tuple is the cluster and the time of the cluster's last reconnect.
     cluster: RwLock<(Cl, Instant)>,
     connection: Connection,
-    timeout: Duration,
+    config: Config,
 }
 
 #[cfg(test)]
 impl<Cl> RetryClient<Cl> {
     pub fn new_with_cluster(
         security_mgr: Arc<SecurityManager>,
-        timeout: Duration,
+        config: Config,
         cluster: Cl,
     ) -> RetryClient<Cl> {
         let connection = Connection::new(security_mgr);
         RetryClient {
             cluster: RwLock::new((cluster, Instant::now())),
             connection,
-            timeout,
+            config,
         }
     }
 }
@@ -107,17 +108,17 @@ impl RetryClient<Cluster> {
     pub async fn connect(
         endpoints: &[String],
         security_mgr: Arc<SecurityManager>,
-        timeout: Duration,
+        config: &Config,
     ) -> Result<RetryClient> {
         let connection = Connection::new(security_mgr);
         let cluster = RwLock::new((
-            connection.connect_cluster(endpoints, timeout).await?,
+            connection.connect_cluster(endpoints, config).await?,
             Instant::now(),
         ));
         Ok(RetryClient {
             cluster,
             connection,
-            timeout,
+            config: config.clone(),
         })
     }
 }
@@ -131,7 +132,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
             let key = key.clone();
             async {
                 cluster
-                    .get_region(key.clone(), self.timeout)
+                    .get_region(key.clone(), self.config.timeout)
                     .await
                     .and_then(|resp| {
                         region_from_response(resp, || Error::RegionForKeyNotFound { key })
@@ -143,7 +144,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader> {
         retry!(self, "get_region_by_id", |cluster| async {
             cluster
-                .get_region_by_id(region_id, self.timeout)
+                .get_region_by_id(region_id, self.config.timeout)
                 .await
                 .and_then(|resp| {
                     region_from_response(resp, || Error::RegionNotFoundInResponse { region_id })
@@ -154,7 +155,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store> {
         retry!(self, "get_store", |cluster| async {
             cluster
-                .get_store(id, self.timeout)
+                .get_store(id, self.config.timeout)
                 .await
                 .map(|resp| resp.store.unwrap())
         })
@@ -164,7 +165,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
         retry!(self, "get_all_stores", |cluster| async {
             cluster
-                .get_all_stores(self.timeout)
+                .get_all_stores(self.config.timeout)
                 .await
                 .map(|resp| resp.stores.into_iter().map(Into::into).collect())
         })
@@ -177,7 +178,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
         retry!(self, "update_gc_safepoint", |cluster| async {
             cluster
-                .update_safepoint(safepoint, self.timeout)
+                .update_safepoint(safepoint, self.config.timeout)
                 .await
                 .map(|resp| resp.new_safe_point == safepoint)
         })
@@ -187,7 +188,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
 impl fmt::Debug for RetryClient {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("pd::RetryClient")
-            .field("timeout", &self.timeout)
+            .field("timeout", &self.config.timeout)
             .finish()
     }
 }
@@ -219,7 +220,7 @@ impl Reconnect for RetryClient<Cluster> {
         // a concurrent reconnect is just succeed when this thread trying to get write lock
         let should_connect = reconnect_begin > *last_connected + Duration::from_secs(interval_sec);
         if should_connect {
-            self.connection.reconnect(cluster, self.timeout).await?;
+            self.connection.reconnect(cluster, &self.config).await?;
             *last_connected = Instant::now();
         }
         Ok(())

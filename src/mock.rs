@@ -33,12 +33,12 @@ use crate::Timestamp;
 pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
     let config = Config::default();
     PdRpcClient::new(
-        config.clone(),
+        &config,
         |_| MockKvConnect,
         |sm| {
             futures::future::ok(RetryClient::new_with_cluster(
                 sm,
-                config.timeout,
+                config.clone(),
                 MockCluster,
             ))
         },

@@ -260,13 +260,13 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 impl PdRpcClient<TikvConnect, Cluster> {
     pub async fn connect(
         pd_endpoints: &[String],
-        config: Config,
+        config: &Config,
         enable_codec: bool,
     ) -> Result<PdRpcClient> {
         PdRpcClient::new(
-            config.clone(),
-            |security_mgr| TikvConnect::new(security_mgr, config.timeout),
-            |security_mgr| RetryClient::connect(pd_endpoints, security_mgr, config.timeout),
+            config,
+            |security_mgr| TikvConnect::new(security_mgr, config.clone()),
+            |security_mgr| RetryClient::connect(pd_endpoints, security_mgr, config),
             enable_codec,
         )
         .await
@@ -275,7 +275,7 @@ impl PdRpcClient<TikvConnect, Cluster> {
 
 impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
     pub async fn new<PdFut, MakeKvC, MakePd>(
-        config: Config,
+        config: &Config,
         kv_connect: MakeKvC,
         pd: MakePd,
         enable_codec: bool,

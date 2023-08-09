@@ -102,7 +102,7 @@ impl Client {
     ) -> Result<Client> {
         debug!("creating new transactional client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config, true).await?);
+        let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, true).await?);
         Ok(Client { pd })
     }
 

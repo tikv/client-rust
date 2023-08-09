@@ -16,6 +16,7 @@ use tonic::Request;
 use super::timestamp::TimestampOracle;
 use crate::internal_err;
 use crate::proto::pdpb;
+use crate::Config;
 use crate::Result;
 use crate::SecurityManager;
 use crate::Timestamp;
@@ -103,13 +104,9 @@ impl Connection {
         Connection { security_mgr }
     }
 
-    pub async fn connect_cluster(
-        &self,
-        endpoints: &[String],
-        timeout: Duration,
-    ) -> Result<Cluster> {
-        let members = self.validate_endpoints(endpoints, timeout).await?;
-        let (client, members) = self.try_connect_leader(&members, timeout).await?;
+    pub async fn connect_cluster(&self, endpoints: &[String], config: &Config) -> Result<Cluster> {
+        let members = self.validate_endpoints(endpoints, config).await?;
+        let (client, members) = self.try_connect_leader(&members, config).await?;
         let id = members.header.as_ref().unwrap().cluster_id;
         let tso = TimestampOracle::new(id, &client)?;
         let cluster = Cluster {
@@ -122,10 +119,10 @@ impl Connection {
     }
 
     // Re-establish connection with PD leader in asynchronous fashion.
-    pub async fn reconnect(&self, cluster: &mut Cluster, timeout: Duration) -> Result<()> {
+    pub async fn reconnect(&self, cluster: &mut Cluster, config: &Config) -> Result<()> {
         warn!("updating pd client");
         let start = Instant::now();
-        let (client, members) = self.try_connect_leader(&cluster.members, timeout).await?;
+        let (client, members) = self.try_connect_leader(&cluster.members, config).await?;
         let tso = TimestampOracle::new(cluster.id, &client)?;
         *cluster = Cluster {
             id: cluster.id,
@@ -141,7 +138,7 @@ impl Connection {
     async fn validate_endpoints(
         &self,
         endpoints: &[String],
-        timeout: Duration,
+        config: &Config,
     ) -> Result<pdpb::GetMembersResponse> {
         let mut endpoints_set = HashSet::with_capacity(endpoints.len());
 
@@ -152,7 +149,7 @@ impl Connection {
                 return Err(internal_err!("duplicated PD endpoint {}", ep));
             }
 
-            let (_, resp) = match self.connect(ep, timeout).await {
+            let (_, resp) = match self.connect(ep, config).await {
                 Ok(resp) => resp,
                 // Ignore failed PD node.
                 Err(e) => {
@@ -193,11 +190,11 @@ impl Connection {
     async fn connect(
         &self,
         addr: &str,
-        _timeout: Duration,
+        config: &Config,
     ) -> Result<(pdpb::pd_client::PdClient<Channel>, pdpb::GetMembersResponse)> {
         let mut client = self
             .security_mgr
-            .connect(addr, pdpb::pd_client::PdClient::<Channel>::new)
+            .connect(addr, pdpb::pd_client::PdClient::<Channel>::new, config)
             .await?;
         let resp: pdpb::GetMembersResponse = client
             .get_members(pdpb::GetMembersRequest::default())
@@ -210,9 +207,9 @@ impl Connection {
         &self,
         addr: &str,
         cluster_id: u64,
-        timeout: Duration,
+        config: &Config,
     ) -> Result<(pdpb::pd_client::PdClient<Channel>, pdpb::GetMembersResponse)> {
-        let (client, r) = self.connect(addr, timeout).await?;
+        let (client, r) = self.connect(addr, config).await?;
         Connection::validate_cluster_id(addr, &r, cluster_id)?;
         Ok((client, r))
     }
@@ -238,7 +235,7 @@ impl Connection {
     async fn try_connect_leader(
         &self,
         previous: &pdpb::GetMembersResponse,
-        timeout: Duration,
+        config: &Config,
     ) -> Result<(pdpb::pd_client::PdClient<Channel>, pdpb::GetMembersResponse)> {
         let previous_leader = previous.leader.as_ref().unwrap();
         let members = &previous.members;
@@ -252,7 +249,7 @@ impl Connection {
             .chain(Some(previous_leader))
         {
             for ep in &m.client_urls {
-                match self.try_connect(ep.as_str(), cluster_id, timeout).await {
+                match self.try_connect(ep.as_str(), cluster_id, config).await {
                     Ok((_, r)) => {
                         resp = Some(r);
                         break 'outer;
@@ -269,7 +266,7 @@ impl Connection {
         if let Some(resp) = resp {
             let leader = resp.leader.as_ref().unwrap();
             for ep in &leader.client_urls {
-                let r = self.try_connect(ep.as_str(), cluster_id, timeout).await;
+                let r = self.try_connect(ep.as_str(), cluster_id, config).await;
                 if r.is_ok() {
                     return r;
                 }
