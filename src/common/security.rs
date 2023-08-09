@@ -4,7 +4,6 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use log::info;
 use regex::Regex;
@@ -15,6 +14,7 @@ use tonic::transport::Identity;
 
 use crate::internal_err;
 use crate::Result;
+use crate::{util, Config};
 
 lazy_static::lazy_static! {
     static ref SCHEME_REG: Regex = Regex::new(r"^\s*(https?://)").unwrap();
@@ -73,17 +73,30 @@ impl SecurityManager {
         // env: Arc<Environment>,
         addr: &str,
         factory: Factory,
+        config: &Config,
     ) -> Result<Client>
     where
         Factory: FnOnce(Channel) -> Client,
     {
         let addr = "http://".to_string() + &SCHEME_REG.replace(addr, "");
 
+        let addr = match config.dns_server_addr {
+            Some(ref dns_server_addr) => {
+                util::dns::custom_dns(
+                    addr.as_str(),
+                    dns_server_addr.as_str(),
+                    &config.dns_search_domain,
+                )
+                .await?
+            }
+            None => addr,
+        };
+
         info!("connect to rpc server at endpoint: {:?}", addr);
 
         let mut builder = Channel::from_shared(addr)?
-            .tcp_keepalive(Some(Duration::from_secs(10)))
-            .keep_alive_timeout(Duration::from_secs(3));
+            .tcp_keepalive(config.tcp_keepalive)
+            .keep_alive_timeout(config.keep_alive_timeout);
 
         if !self.ca.is_empty() {
             let tls = ClientTlsConfig::new()

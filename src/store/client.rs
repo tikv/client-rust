@@ -10,6 +10,7 @@ use tonic::transport::Channel;
 
 use super::Request;
 use crate::proto::tikvpb::tikv_client::TikvClient;
+use crate::Config;
 use crate::Result;
 use crate::SecurityManager;
 
@@ -24,7 +25,7 @@ pub trait KvConnect: Sized + Send + Sync + 'static {
 #[derive(new, Clone)]
 pub struct TikvConnect {
     security_mgr: Arc<SecurityManager>,
-    timeout: Duration,
+    config: Config,
 }
 
 #[async_trait]
@@ -33,9 +34,9 @@ impl KvConnect for TikvConnect {
 
     async fn connect(&self, address: &str) -> Result<KvRpcClient> {
         self.security_mgr
-            .connect(address, TikvClient::new)
+            .connect(address, TikvClient::new, &self.config)
             .await
-            .map(|c| KvRpcClient::new(c, self.timeout))
+            .map(|c| KvRpcClient::new(c, self.config.timeout))
     }
 }
 

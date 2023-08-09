@@ -100,7 +100,7 @@ impl Client<PdRpcClient> {
         config: Config,
     ) -> Result<Self> {
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let rpc = Arc::new(PdRpcClient::connect(&pd_endpoints, config, false).await?);
+        let rpc = Arc::new(PdRpcClient::connect(&pd_endpoints, &config, false).await?);
         Ok(Client {
             rpc,
             cf: None,

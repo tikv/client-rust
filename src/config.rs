@@ -19,9 +19,15 @@ pub struct Config {
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
     pub timeout: Duration,
+    pub tcp_keepalive: Option<Duration>,
+    pub keep_alive_timeout: Duration,
+    pub dns_server_addr: Option<String>,
+    pub dns_search_domain: Vec<String>,
 }
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+const DEFAULT_TCP_KEEPALIVE: Duration = Duration::from_secs(10);
+const DEFAULT_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(3);
 
 impl Default for Config {
     fn default() -> Self {
@@ -30,6 +36,10 @@ impl Default for Config {
             cert_path: None,
             key_path: None,
             timeout: DEFAULT_REQUEST_TIMEOUT,
+            tcp_keepalive: Some(DEFAULT_TCP_KEEPALIVE),
+            keep_alive_timeout: DEFAULT_KEEP_ALIVE_TIMEOUT,
+            dns_server_addr: None,
+            dns_search_domain: vec![],
         }
     }
 }
