@@ -9,9 +9,9 @@ use trust_dns_resolver::{
 };
 
 pub async fn custom_dns(
-    target: String,
-    dns_addr: String,
-    search_domain: Vec<String>,
+    target: &str,
+    dns_addr: &str,
+    search_domain: &Vec<String>,
 ) -> Result<String> {
     let server: SocketAddr = dns_addr.parse().map_err(|e| Error::InternalError {
         message: format!("dns server error: {}", e),
@@ -37,7 +37,7 @@ pub async fn custom_dns(
             message: format!("dns resolver error: {}", e),
         }
     })?;
-    let mut url = Url::parse(&target).map_err(|e| Error::InternalError {
+    let mut url = Url::parse(target).map_err(|e| Error::InternalError {
         message: format!("url parse error: {}", e),
     })?;
     let hostname = url.host_str().ok_or(Error::InternalError {

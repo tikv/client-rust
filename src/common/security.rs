@@ -83,9 +83,9 @@ impl SecurityManager {
         let addr = match config.dns_server_addr {
             Some(ref dns_server_addr) => {
                 util::dns::custom_dns(
-                    addr,
-                    dns_server_addr.clone(),
-                    config.dns_search_domain.clone(),
+                    addr.as_str(),
+                    dns_server_addr.as_str(),
+                    &config.dns_search_domain,
                 )
                 .await?
             }
