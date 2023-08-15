@@ -15,6 +15,7 @@ use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::metapb;
 use crate::raw::lowering::*;
+use crate::request::codec::{ApiV1Codec, Codec};
 use crate::request::Collect;
 use crate::request::CollectSingle;
 use crate::request::Plan;
@@ -35,7 +36,11 @@ const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 ///
 /// The returned results of raw request methods are [`Future`](std::future::Future)s that must be
 /// awaited to execute.
-pub struct Client<PdC: PdClient = PdRpcClient> {
+pub struct Client<Cod = ApiV1Codec, PdC = PdRpcClient<Cod>>
+where
+    Cod: Codec,
+    PdC: PdClient<Codec = Cod>,
+{
     rpc: Arc<PdC>,
     cf: Option<ColumnFamily>,
     backoff: Backoff,
@@ -54,7 +59,7 @@ impl Clone for Client {
     }
 }
 
-impl Client<PdRpcClient> {
+impl Client<ApiV1Codec, PdRpcClient> {
     /// Create a raw [`Client`] and connect to the TiKV cluster.
     ///
     /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for
@@ -100,7 +105,9 @@ impl Client<PdRpcClient> {
         config: Config,
     ) -> Result<Self> {
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let rpc = Arc::new(PdRpcClient::connect(&pd_endpoints, config, false).await?);
+        let rpc = Arc::new(
+            PdRpcClient::connect(&pd_endpoints, config, false, Some(ApiV1Codec::default())).await?,
+        );
         Ok(Client {
             rpc,
             cf: None,
@@ -142,7 +149,9 @@ impl Client<PdRpcClient> {
             atomic: self.atomic,
         }
     }
+}
 
+impl<Cod: Codec> Client<Cod, PdRpcClient<Cod>> {
     /// Set the [`Backoff`] strategy for retrying requests.
     /// The default strategy is [`DEFAULT_REGION_BACKOFF`](crate::backoff::DEFAULT_REGION_BACKOFF).
     /// See [`Backoff`] for more information.
@@ -189,7 +198,7 @@ impl Client<PdRpcClient> {
     }
 }
 
-impl<PdC: PdClient> Client<PdC> {
+impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Client<Cod, PdC> {
     /// Create a new 'get' request.
     ///
     /// Once resolved this request will result in the fetching of the value associated with the

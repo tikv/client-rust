@@ -22,6 +22,7 @@ pub trait Request: Any + Sync + Send + 'static {
     fn label(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
     fn set_context(&mut self, context: kvrpcpb::Context);
+    fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion);
 }
 
 macro_rules! impl_request {
@@ -53,6 +54,11 @@ macro_rules! impl_request {
 
             fn set_context(&mut self, context: kvrpcpb::Context) {
                 self.context = Some(context);
+            }
+
+            fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {
+                let context = self.context.get_or_insert(kvrpcpb::Context::default());
+                context.api_version = api_version.into();
             }
         }
     };

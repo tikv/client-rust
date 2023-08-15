@@ -18,6 +18,7 @@ use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::kvrpcpb;
 use crate::proto::pdpb::Timestamp;
+use crate::request::codec::Codec;
 use crate::request::Collect;
 use crate::request::CollectError;
 use crate::request::CollectSingle;
@@ -83,7 +84,7 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     start_instant: Instant,
 }
 
-impl<PdC: PdClient> Transaction<PdC> {
+impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<PdC> {
     pub(crate) fn new(
         timestamp: Timestamp,
         rpc: Arc<PdC>,

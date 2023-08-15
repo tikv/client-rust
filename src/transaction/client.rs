@@ -10,6 +10,7 @@ use crate::config::Config;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::pdpb::Timestamp;
+use crate::request::codec::{ApiV1Codec, ApiV2Codec, Codec};
 use crate::request::plan::CleanupLocksResult;
 use crate::request::Plan;
 use crate::timestamp::TimestampExt;
@@ -42,11 +43,11 @@ const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
 ///
 /// The returned results of transactional requests are [`Future`](std::future::Future)s that must be
 /// awaited to execute.
-pub struct Client {
-    pd: Arc<PdRpcClient>,
+pub struct Client<Cod: Codec = ApiV1Codec> {
+    pd: Arc<PdRpcClient<Cod>>,
 }
 
-impl Clone for Client {
+impl<Cod: Codec> Clone for Client<Cod> {
     fn clone(&self) -> Self {
         Self {
             pd: self.pd.clone(),
@@ -54,7 +55,7 @@ impl Clone for Client {
     }
 }
 
-impl Client {
+impl Client<ApiV1Codec> {
     /// Create a transactional [`Client`] and connect to the TiKV cluster.
     ///
     /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for
@@ -71,7 +72,6 @@ impl Client {
     /// # });
     /// ```
     pub async fn new<S: Into<String>>(pd_endpoints: Vec<S>) -> Result<Client> {
-        // debug!("creating transactional client");
         Self::new_with_config(pd_endpoints, Config::default()).await
     }
 
@@ -100,9 +100,35 @@ impl Client {
         pd_endpoints: Vec<S>,
         config: Config,
     ) -> Result<Client> {
+        Self::new_with_codec(pd_endpoints, config, ApiV1Codec::default()).await
+    }
+}
+
+impl Client<ApiV2Codec> {
+    pub async fn new_with_config_v2<S: Into<String>>(
+        _keyspace_name: &str,
+        pd_endpoints: Vec<S>,
+        config: Config,
+    ) -> Result<Client<ApiV2Codec>> {
+        debug!("creating new transactional client APIv2");
+        let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
+        let mut pd = PdRpcClient::connect(&pd_endpoints, config, true, None).await?;
+        let keyspace_id = 0; // TODO: get keyspace_id by pd.get_keyspace(keyspace_name)
+        pd.set_codec(ApiV2Codec::new(keyspace_id));
+        Ok(Client { pd: Arc::new(pd) })
+    }
+}
+
+impl<Cod: Codec> Client<Cod> {
+    pub async fn new_with_codec<S: Into<String>>(
+        pd_endpoints: Vec<S>,
+        config: Config,
+        codec: Cod,
+    ) -> Result<Client<Cod>> {
         debug!("creating new transactional client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config, true).await?);
+        let pd =
+            Arc::new(PdRpcClient::<Cod>::connect(&pd_endpoints, config, true, Some(codec)).await?);
         Ok(Client { pd })
     }
 
@@ -126,7 +152,7 @@ impl Client {
     /// transaction.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn begin_optimistic(&self) -> Result<Transaction> {
+    pub async fn begin_optimistic(&self) -> Result<Transaction<PdRpcClient<Cod>>> {
         debug!("creating new optimistic transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, TransactionOptions::new_optimistic()))
@@ -149,7 +175,7 @@ impl Client {
     /// transaction.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn begin_pessimistic(&self) -> Result<Transaction> {
+    pub async fn begin_pessimistic(&self) -> Result<Transaction<PdRpcClient<Cod>>> {
         debug!("creating new pessimistic transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, TransactionOptions::new_pessimistic()))
@@ -172,14 +198,21 @@ impl Client {
     /// transaction.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn begin_with_options(&self, options: TransactionOptions) -> Result<Transaction> {
+    pub async fn begin_with_options(
+        &self,
+        options: TransactionOptions,
+    ) -> Result<Transaction<PdRpcClient<Cod>>> {
         debug!("creating new customized transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, options))
     }
 
     /// Create a new [`Snapshot`](Snapshot) at the given [`Timestamp`](Timestamp).
-    pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> Snapshot {
+    pub fn snapshot(
+        &self,
+        timestamp: Timestamp,
+        options: TransactionOptions,
+    ) -> Snapshot<PdRpcClient<Cod>> {
         debug!("creating new snapshot");
         Snapshot::new(self.new_transaction(timestamp, options.read_only()))
     }
@@ -272,7 +305,11 @@ impl Client {
         plan.execute().await
     }
 
-    fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
+    fn new_transaction(
+        &self,
+        timestamp: Timestamp,
+        options: TransactionOptions,
+    ) -> Transaction<PdRpcClient<Cod>> {
         Transaction::new(timestamp, self.pd.clone(), options)
     }
 }

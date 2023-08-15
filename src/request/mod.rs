@@ -32,6 +32,7 @@ use crate::store::HasKeyErrors;
 use crate::store::Request;
 use crate::transaction::HasLocks;
 
+pub mod codec;
 pub mod plan;
 mod plan_builder;
 mod shard;
@@ -88,6 +89,7 @@ mod test {
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb;
+    use crate::proto::kvrpcpb::ApiVersion;
     use crate::proto::pdpb::Timestamp;
     use crate::proto::tikvpb::tikv_client::TikvClient;
     use crate::store::store_stream_for_keys;
@@ -136,6 +138,10 @@ mod test {
             }
 
             fn set_context(&mut self, _: kvrpcpb::Context) {
+                unreachable!();
+            }
+
+            fn set_api_version(&mut self, _api_version: ApiVersion) {
                 unreachable!();
             }
         }

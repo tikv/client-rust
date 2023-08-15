@@ -6,6 +6,7 @@ use std::sync::Arc;
 use super::plan::PreserveShard;
 use crate::backoff::Backoff;
 use crate::pd::PdClient;
+use crate::request::codec::Codec;
 use crate::request::plan::CleanupLocks;
 use crate::request::shard::HasNextBatch;
 use crate::request::DefaultProcessor;
@@ -45,13 +46,17 @@ impl PlanBuilderPhase for NoTarget {}
 pub struct Targetted;
 impl PlanBuilderPhase for Targetted {}
 
-impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
+impl<Cod: Codec, PdC: PdClient<Codec = Cod>, Req: KvRequest>
+    PlanBuilder<PdC, Dispatch<Cod, Req>, NoTarget>
+{
     pub fn new(pd_client: Arc<PdC>, request: Req) -> Self {
+        let codec = pd_client.get_codec().clone();
         PlanBuilder {
             pd_client,
             plan: Dispatch {
                 request,
                 kv_client: None,
+                codec,
             },
             phantom: PhantomData,
         }
@@ -183,12 +188,14 @@ where
     }
 }
 
-impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
+impl<Cod: Codec, PdC: PdClient<Codec = Cod>, R: KvRequest>
+    PlanBuilder<PdC, Dispatch<Cod, R>, NoTarget>
+{
     /// Target the request at a single region; caller supplies the store to target.
     pub async fn single_region_with_store(
         self,
         store: RegionStore,
-    ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
+    ) -> Result<PlanBuilder<PdC, Dispatch<Cod, R>, Targetted>> {
         set_single_region_store(self.plan, store, self.pd_client)
     }
 }
@@ -222,11 +229,11 @@ where
     }
 }
 
-fn set_single_region_store<PdC: PdClient, R: KvRequest>(
-    mut plan: Dispatch<R>,
+fn set_single_region_store<Cod: Codec, PdC: PdClient<Codec = Cod>, R: KvRequest>(
+    mut plan: Dispatch<Cod, R>,
     store: RegionStore,
     pd_client: Arc<PdC>,
-) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
+) -> Result<PlanBuilder<PdC, Dispatch<Cod, R>, Targetted>> {
     plan.request
         .set_context(store.region_with_leader.context()?);
     plan.kv_client = Some(store.client);

@@ -13,6 +13,7 @@ use super::RawRpcRequest;
 use crate::collect_first;
 use crate::pd::PdClient;
 use crate::proto::kvrpcpb;
+use crate::proto::kvrpcpb::ApiVersion;
 use crate::proto::metapb;
 use crate::proto::tikvpb::tikv_client::TikvClient;
 use crate::request::plan::ResponseWithShard;
@@ -396,6 +397,10 @@ impl Request for RawCoprocessorRequest {
 
     fn set_context(&mut self, context: kvrpcpb::Context) {
         self.inner.set_context(context);
+    }
+
+    fn set_api_version(&mut self, api_version: ApiVersion) {
+        self.inner.set_api_version(api_version);
     }
 }
 
