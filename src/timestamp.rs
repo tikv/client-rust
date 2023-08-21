@@ -26,12 +26,24 @@ pub trait TimestampExt: Sized {
 
 impl TimestampExt for Timestamp {
     fn version(&self) -> u64 {
+        if self.physical == i64::MAX && self.logical == i64::MAX {
+            return u64::MAX;
+        }
+
         ((self.physical << PHYSICAL_SHIFT_BITS) + self.logical)
             .try_into()
             .expect("Overflow converting timestamp to version")
     }
 
     fn from_version(version: u64) -> Self {
+        if version == u64::MAX {
+            return Self {
+                physical: i64::MAX,
+                logical: i64::MAX,
+                suffix_bits: 0,
+            };
+        }
+
         let version = version as i64;
         Self {
             physical: version >> PHYSICAL_SHIFT_BITS,
@@ -42,7 +54,7 @@ impl TimestampExt for Timestamp {
     }
 
     fn try_from_version(version: u64) -> Option<Self> {
-        if version == 0 {
+        if version == 0 || (version >= i64::MAX as u64 && version != u64::MAX) {
             None
         } else {
             Some(Self::from_version(version))
