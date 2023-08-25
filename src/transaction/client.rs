@@ -10,7 +10,7 @@ use crate::config::Config;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::pdpb::Timestamp;
-use crate::request::codec::{ApiV1Codec, ApiV2Codec, Codec, EncodedRequest};
+use crate::request::codec::{ApiV1TxnCodec, ApiV2TxnCodec, Codec, EncodedRequest};
 use crate::request::plan::CleanupLocksResult;
 use crate::request::Plan;
 use crate::timestamp::TimestampExt;
@@ -43,7 +43,7 @@ const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
 ///
 /// The returned results of transactional requests are [`Future`](std::future::Future)s that must be
 /// awaited to execute.
-pub struct Client<Cod: Codec = ApiV1Codec> {
+pub struct Client<Cod: Codec = ApiV1TxnCodec> {
     pd: Arc<PdRpcClient<Cod>>,
 }
 
@@ -55,7 +55,7 @@ impl<Cod: Codec> Clone for Client<Cod> {
     }
 }
 
-impl Client<ApiV1Codec> {
+impl Client<ApiV1TxnCodec> {
     /// Create a transactional [`Client`] and connect to the TiKV cluster.
     ///
     /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for
@@ -100,21 +100,21 @@ impl Client<ApiV1Codec> {
         pd_endpoints: Vec<S>,
         config: Config,
     ) -> Result<Client> {
-        Self::new_with_codec(pd_endpoints, config, ApiV1Codec::default()).await
+        Self::new_with_codec(pd_endpoints, config, ApiV1TxnCodec::default()).await
     }
 }
 
-impl Client<ApiV2Codec> {
+impl Client<ApiV2TxnCodec> {
     pub async fn new_with_config_v2<S: Into<String>>(
         _keyspace_name: &str,
         pd_endpoints: Vec<S>,
         config: Config,
-    ) -> Result<Client<ApiV2Codec>> {
+    ) -> Result<Client<ApiV2TxnCodec>> {
         debug!("creating new transactional client APIv2");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let mut pd = PdRpcClient::connect(&pd_endpoints, config, true, None).await?;
         let keyspace_id = 0; // TODO: get keyspace_id by pd.get_keyspace(keyspace_name)
-        pd.set_codec(ApiV2Codec::new(keyspace_id));
+        pd.set_codec(ApiV2TxnCodec::new(keyspace_id));
         Ok(Client { pd: Arc::new(pd) })
     }
 }

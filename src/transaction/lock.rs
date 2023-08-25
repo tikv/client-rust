@@ -121,7 +121,6 @@ async fn resolve_lock_with_retry(
         let ver_id = store.region_with_leader.ver_id();
         let request = requests::new_resolve_lock_request(start_version, commit_version);
         let encoded_req = EncodedRequest::new(request, pd_client.get_codec());
-        // The only place where single-region is used
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
             .single_region_with_store(store)
             .await?

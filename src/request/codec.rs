@@ -9,16 +9,21 @@ pub trait Codec: Clone + Sync + Send + 'static {
 }
 
 #[derive(Clone, Default)]
-pub struct ApiV1Codec {}
+pub struct ApiV1TxnCodec {}
 
-impl Codec for ApiV1Codec {}
+impl Codec for ApiV1TxnCodec {}
+
+#[derive(Clone, Default)]
+pub struct ApiV1RawCodec {}
+
+impl Codec for ApiV1RawCodec {}
 
 #[derive(Clone)]
-pub struct ApiV2Codec {
+pub struct ApiV2TxnCodec {
     _keyspace_id: u32,
 }
 
-impl ApiV2Codec {
+impl ApiV2TxnCodec {
     pub fn new(keyspace_id: u32) -> Self {
         Self {
             _keyspace_id: keyspace_id,
@@ -26,12 +31,14 @@ impl ApiV2Codec {
     }
 }
 
-impl Codec for ApiV2Codec {
+impl Codec for ApiV2TxnCodec {
     fn encode_request<R: KvRequest>(&self, req: &mut R) {
         req.set_api_version(kvrpcpb::ApiVersion::V2);
         // TODO: req.encode_request(self);
     }
 }
+
+// TODO: pub struct ApiV2RawCodec
 
 // EncodeRequest is just a type wrapper to avoid passing not encoded request to `PlanBuilder` by mistake.
 #[derive(Clone)]

@@ -15,7 +15,7 @@ use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::metapb;
 use crate::raw::lowering::*;
-use crate::request::codec::{ApiV1Codec, Codec, EncodedRequest};
+use crate::request::codec::{ApiV1RawCodec, Codec, EncodedRequest};
 use crate::request::Collect;
 use crate::request::CollectSingle;
 use crate::request::Plan;
@@ -36,7 +36,7 @@ const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 ///
 /// The returned results of raw request methods are [`Future`](std::future::Future)s that must be
 /// awaited to execute.
-pub struct Client<Cod = ApiV1Codec, PdC = PdRpcClient<Cod>>
+pub struct Client<Cod = ApiV1RawCodec, PdC = PdRpcClient<Cod>>
 where
     Cod: Codec,
     PdC: PdClient<Codec = Cod>,
@@ -59,7 +59,7 @@ impl Clone for Client {
     }
 }
 
-impl Client<ApiV1Codec, PdRpcClient> {
+impl Client<ApiV1RawCodec, PdRpcClient<ApiV1RawCodec>> {
     /// Create a raw [`Client`] and connect to the TiKV cluster.
     ///
     /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for
@@ -106,7 +106,8 @@ impl Client<ApiV1Codec, PdRpcClient> {
     ) -> Result<Self> {
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let rpc = Arc::new(
-            PdRpcClient::connect(&pd_endpoints, config, false, Some(ApiV1Codec::default())).await?,
+            PdRpcClient::connect(&pd_endpoints, config, false, Some(ApiV1RawCodec::default()))
+                .await?,
         );
         Ok(Client {
             rpc,

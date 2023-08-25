@@ -18,7 +18,7 @@ use crate::proto::metapb::RegionEpoch;
 use crate::proto::metapb::{self};
 use crate::region::RegionId;
 use crate::region::RegionWithLeader;
-use crate::request::codec::ApiV1Codec;
+use crate::request::codec::ApiV1TxnCodec;
 use crate::store::KvClient;
 use crate::store::KvConnect;
 use crate::store::RegionStore;
@@ -31,7 +31,7 @@ use crate::Timestamp;
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
-pub async fn pd_rpc_client() -> PdRpcClient<ApiV1Codec, MockKvConnect, MockCluster> {
+pub async fn pd_rpc_client() -> PdRpcClient<ApiV1TxnCodec, MockKvConnect, MockCluster> {
     let config = Config::default();
     PdRpcClient::new(
         config.clone(),
@@ -44,7 +44,7 @@ pub async fn pd_rpc_client() -> PdRpcClient<ApiV1Codec, MockKvConnect, MockClust
             ))
         },
         false,
-        Some(ApiV1Codec::default()),
+        Some(ApiV1TxnCodec::default()),
     )
     .await
     .unwrap()
@@ -75,14 +75,14 @@ pub struct MockCluster;
 
 pub struct MockPdClient {
     client: MockKvClient,
-    codec: ApiV1Codec,
+    codec: ApiV1TxnCodec,
 }
 
 impl MockPdClient {
     pub fn new(client: MockKvClient) -> MockPdClient {
         MockPdClient {
             client,
-            codec: ApiV1Codec::default(),
+            codec: ApiV1TxnCodec::default(),
         }
     }
 }
@@ -113,7 +113,7 @@ impl MockPdClient {
     pub fn default() -> MockPdClient {
         MockPdClient {
             client: MockKvClient::default(),
-            codec: ApiV1Codec::default(),
+            codec: ApiV1TxnCodec::default(),
         }
     }
 
@@ -177,7 +177,7 @@ impl MockPdClient {
 
 #[async_trait]
 impl PdClient for MockPdClient {
-    type Codec = ApiV1Codec;
+    type Codec = ApiV1TxnCodec;
     type KvClient = MockKvClient;
 
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
