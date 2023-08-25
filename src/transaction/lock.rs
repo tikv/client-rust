@@ -17,6 +17,7 @@ use crate::proto::kvrpcpb;
 use crate::proto::kvrpcpb::TxnInfo;
 use crate::proto::pdpb::Timestamp;
 use crate::region::RegionVerId;
+use crate::request::codec::EncodedRequest;
 use crate::request::Collect;
 use crate::request::CollectSingle;
 use crate::request::Plan;
@@ -77,7 +78,8 @@ pub async fn resolve_locks(
             Some(&commit_version) => commit_version,
             None => {
                 let request = requests::new_cleanup_request(lock.primary_lock, lock.lock_version);
-                let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
+                let encoded_req = EncodedRequest::new(request, pd_client.get_codec());
+                let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
                     .resolve_lock(OPTIMISTIC_BACKOFF)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
                     .merge(CollectSingle)
@@ -118,8 +120,9 @@ async fn resolve_lock_with_retry(
         let store = pd_client.clone().store_for_key(key.into()).await?;
         let ver_id = store.region_with_leader.ver_id();
         let request = requests::new_resolve_lock_request(start_version, commit_version);
+        let encoded_req = EncodedRequest::new(request, pd_client.get_codec());
         // The only place where single-region is used
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
             .single_region_with_store(store)
             .await?
             .resolve_lock(Backoff::no_backoff())
@@ -359,7 +362,8 @@ impl LockResolver {
             force_sync_commit,
             resolving_pessimistic_lock,
         );
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), req)
+        let encoded_req = EncodedRequest::new(req, pd_client.get_codec());
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(CollectSingle)
             .extract_error()
@@ -383,7 +387,8 @@ impl LockResolver {
         txn_id: u64,
     ) -> Result<SecondaryLocksStatus> {
         let req = new_check_secondary_locks_request(keys, txn_id);
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), req)
+        let encoded_req = EncodedRequest::new(req, pd_client.get_codec());
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .merge(Collect)
@@ -399,7 +404,8 @@ impl LockResolver {
     ) -> Result<RegionVerId> {
         let ver_id = store.region_with_leader.ver_id();
         let request = requests::new_batch_resolve_lock_request(txn_infos.clone());
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
+        let encoded_req = EncodedRequest::new(request, pd_client.get_codec());
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
             .single_region_with_store(store.clone())
             .await?
             .extract_error()

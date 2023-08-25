@@ -2,12 +2,10 @@
 
 use crate::proto::kvrpcpb;
 use crate::request::KvRequest;
-use std::borrow::Cow;
 
 pub trait Codec: Clone + Sync + Send + 'static {
-    fn encode_request<'a, R: KvRequest>(&self, req: &'a R) -> Cow<'a, R> {
-        Cow::Borrowed(req)
-    }
+    fn encode_request<R: KvRequest>(&self, _req: &mut R) {}
+    // TODO: fn decode_response()
 }
 
 #[derive(Clone, Default)]
@@ -29,9 +27,21 @@ impl ApiV2Codec {
 }
 
 impl Codec for ApiV2Codec {
-    fn encode_request<'a, R: KvRequest>(&self, req: &'a R) -> Cow<'a, R> {
-        let mut req = req.clone();
+    fn encode_request<R: KvRequest>(&self, req: &mut R) {
         req.set_api_version(kvrpcpb::ApiVersion::V2);
-        Cow::Owned(req)
+        // TODO: req.encode_request(self);
+    }
+}
+
+// EncodeRequest is just a type wrapper to avoid passing not encoded request to `PlanBuilder` by mistake.
+#[derive(Clone)]
+pub struct EncodedRequest<Req: KvRequest> {
+    pub inner: Req,
+}
+
+impl<Req: KvRequest> EncodedRequest<Req> {
+    pub fn new<C: Codec>(mut req: Req, codec: &C) -> Self {
+        codec.encode_request(&mut req);
+        Self { inner: req }
     }
 }

@@ -501,6 +501,7 @@ mod test {
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb;
+    use crate::request::codec::EncodedRequest;
     use crate::request::Plan;
     use crate::Key;
 
@@ -535,7 +536,8 @@ mod test {
             key_only: true,
             ..Default::default()
         };
-        let plan = crate::request::PlanBuilder::new(client, scan)
+        let encoded_scan = EncodedRequest::new(scan, client.get_codec());
+        let plan = crate::request::PlanBuilder::new(client, encoded_scan)
             .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)

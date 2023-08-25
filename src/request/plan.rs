@@ -17,7 +17,6 @@ use crate::pd::PdClient;
 use crate::proto::errorpb;
 use crate::proto::errorpb::EpochNotMatch;
 use crate::proto::kvrpcpb;
-use crate::request::codec::Codec;
 use crate::request::shard::HasNextBatch;
 use crate::request::KvRequest;
 use crate::request::NextBatch;
@@ -49,27 +48,22 @@ pub trait Plan: Sized + Clone + Sync + Send + 'static {
 
 /// The simplest plan which just dispatches a request to a specific kv server.
 #[derive(Clone)]
-pub struct Dispatch<Cod: Codec, Req: KvRequest> {
+pub struct Dispatch<Req: KvRequest> {
     pub request: Req,
     pub kv_client: Option<Arc<dyn KvClient + Send + Sync>>,
-    pub codec: Cod,
 }
 
 #[async_trait]
-impl<Cod: Codec, Req: KvRequest> Plan for Dispatch<Cod, Req> {
+impl<Req: KvRequest> Plan for Dispatch<Req> {
     type Result = Req::Response;
 
     async fn execute(&self) -> Result<Self::Result> {
-        // `encode_request` will clone the request, which would have high overhead.
-        // TODO: consider in-place encoding.
-        let req = self.codec.encode_request(&self.request);
-
         let stats = tikv_stats(self.request.label());
         let result = self
             .kv_client
             .as_ref()
             .expect("Unreachable: kv_client has not been initialised in Dispatch")
-            .dispatch(req.as_ref())
+            .dispatch(&self.request)
             .await;
         let result = stats.done(result);
         result.map(|r| {

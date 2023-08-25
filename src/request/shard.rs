@@ -6,7 +6,6 @@ use futures::stream::BoxStream;
 
 use super::plan::PreserveShard;
 use crate::pd::PdClient;
-use crate::request::codec::Codec;
 use crate::request::plan::CleanupLocks;
 use crate::request::Dispatch;
 use crate::request::KvRequest;
@@ -81,7 +80,7 @@ pub trait NextBatch {
     fn next_batch(&mut self, _range: (Vec<u8>, Vec<u8>));
 }
 
-impl<Cod: Codec, Req: KvRequest + Shardable> Shardable for Dispatch<Cod, Req> {
+impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
     type Shard = Req::Shard;
 
     fn shards(
@@ -97,7 +96,7 @@ impl<Cod: Codec, Req: KvRequest + Shardable> Shardable for Dispatch<Cod, Req> {
     }
 }
 
-impl<Cod: Codec, Req: KvRequest + NextBatch> NextBatch for Dispatch<Cod, Req> {
+impl<Req: KvRequest + NextBatch> NextBatch for Dispatch<Req> {
     fn next_batch(&mut self, range: (Vec<u8>, Vec<u8>)) {
         self.request.next_batch(range);
     }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use super::plan::PreserveShard;
 use crate::backoff::Backoff;
 use crate::pd::PdClient;
-use crate::request::codec::Codec;
+use crate::request::codec::EncodedRequest;
 use crate::request::plan::CleanupLocks;
 use crate::request::shard::HasNextBatch;
 use crate::request::DefaultProcessor;
@@ -46,17 +46,13 @@ impl PlanBuilderPhase for NoTarget {}
 pub struct Targetted;
 impl PlanBuilderPhase for Targetted {}
 
-impl<Cod: Codec, PdC: PdClient<Codec = Cod>, Req: KvRequest>
-    PlanBuilder<PdC, Dispatch<Cod, Req>, NoTarget>
-{
-    pub fn new(pd_client: Arc<PdC>, request: Req) -> Self {
-        let codec = pd_client.get_codec().clone();
+impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
+    pub fn new(pd_client: Arc<PdC>, encoded_request: EncodedRequest<Req>) -> Self {
         PlanBuilder {
             pd_client,
             plan: Dispatch {
-                request,
+                request: encoded_request.inner,
                 kv_client: None,
-                codec,
             },
             phantom: PhantomData,
         }
@@ -188,14 +184,12 @@ where
     }
 }
 
-impl<Cod: Codec, PdC: PdClient<Codec = Cod>, R: KvRequest>
-    PlanBuilder<PdC, Dispatch<Cod, R>, NoTarget>
-{
+impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
     /// Target the request at a single region; caller supplies the store to target.
     pub async fn single_region_with_store(
         self,
         store: RegionStore,
-    ) -> Result<PlanBuilder<PdC, Dispatch<Cod, R>, Targetted>> {
+    ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
         set_single_region_store(self.plan, store, self.pd_client)
     }
 }
@@ -229,11 +223,11 @@ where
     }
 }
 
-fn set_single_region_store<Cod: Codec, PdC: PdClient<Codec = Cod>, R: KvRequest>(
-    mut plan: Dispatch<Cod, R>,
+fn set_single_region_store<PdC: PdClient, R: KvRequest>(
+    mut plan: Dispatch<R>,
     store: RegionStore,
     pd_client: Arc<PdC>,
-) -> Result<PlanBuilder<PdC, Dispatch<Cod, R>, Targetted>> {
+) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
     plan.request
         .set_context(store.region_with_leader.context()?);
     plan.kv_client = Some(store.client);

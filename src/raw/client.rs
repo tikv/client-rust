@@ -15,7 +15,7 @@ use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::metapb;
 use crate::raw::lowering::*;
-use crate::request::codec::{ApiV1Codec, Codec};
+use crate::request::codec::{ApiV1Codec, Codec, EncodedRequest};
 use crate::request::Collect;
 use crate::request::CollectSingle;
 use crate::request::Plan;
@@ -220,7 +220,8 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Client<Cod, PdC> {
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
         debug!("invoking raw get request");
         let request = new_raw_get_request(key.into(), self.cf.clone());
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), encoded_req)
             .retry_multi_region(self.backoff.clone())
             .merge(CollectSingle)
             .post_process_default()
@@ -252,7 +253,8 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Client<Cod, PdC> {
     ) -> Result<Vec<KvPair>> {
         debug!("invoking raw batch_get request");
         let request = new_raw_batch_get_request(keys.into_iter().map(Into::into), self.cf.clone());
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), encoded_req)
             .retry_multi_region(self.backoff.clone())
             .merge(Collect)
             .plan();
@@ -280,7 +282,8 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Client<Cod, PdC> {
     pub async fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
         debug!("invoking raw put request");
         let request = new_raw_put_request(key.into(), value.into(), self.cf.clone(), self.atomic);
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), encoded_req)
             .retry_multi_region(self.backoff.clone())
             .merge(CollectSingle)
             .extract_error()
@@ -316,7 +319,8 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Client<Cod, PdC> {
             self.cf.clone(),
             self.atomic,
         );
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), encoded_req)
             .retry_multi_region(self.backoff.clone())
             .extract_error()
             .plan();
@@ -344,7 +348,8 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Client<Cod, PdC> {
     pub async fn delete(&self, key: impl Into<Key>) -> Result<()> {
         debug!("invoking raw delete request");
         let request = new_raw_delete_request(key.into(), self.cf.clone(), self.atomic);
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), encoded_req)
             .retry_multi_region(self.backoff.clone())
             .merge(CollectSingle)
             .extract_error()
@@ -375,7 +380,8 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Client<Cod, PdC> {
         self.assert_non_atomic()?;
         let request =
             new_raw_batch_delete_request(keys.into_iter().map(Into::into), self.cf.clone());
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), encoded_req)
             .retry_multi_region(self.backoff.clone())
             .extract_error()
             .plan();
@@ -402,7 +408,8 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Client<Cod, PdC> {
         debug!("invoking raw delete_range request");
         self.assert_non_atomic()?;
         let request = new_raw_delete_range_request(range.into(), self.cf.clone());
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), encoded_req)
             .retry_multi_region(self.backoff.clone())
             .extract_error()
             .plan();
@@ -558,7 +565,8 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Client<Cod, PdC> {
             previous_value.into(),
             self.cf.clone(),
         );
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), req)
+        let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), encoded_req)
             .retry_multi_region(self.backoff.clone())
             .merge(CollectSingle)
             .post_process_default()
@@ -581,7 +589,8 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Client<Cod, PdC> {
             ranges.into_iter().map(Into::into),
             request_builder,
         );
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), req)
+        let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), encoded_req)
             .preserve_shard()
             .retry_multi_region(self.backoff.clone())
             .post_process_default()
@@ -615,7 +624,8 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Client<Cod, PdC> {
         while cur_limit > 0 {
             let request =
                 new_raw_scan_request(cur_range.clone(), cur_limit, key_only, self.cf.clone());
-            let resp = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+            let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
+            let resp = crate::request::PlanBuilder::new(self.rpc.clone(), encoded_req)
                 .single_region_with_store(region_store.clone())
                 .await?
                 .plan()
@@ -670,7 +680,8 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Client<Cod, PdC> {
             key_only,
             self.cf.clone(),
         );
-        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), request)
+        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), encoded_req)
             .retry_multi_region(self.backoff.clone())
             .merge(Collect)
             .plan();

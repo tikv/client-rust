@@ -10,7 +10,7 @@ use crate::config::Config;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::pdpb::Timestamp;
-use crate::request::codec::{ApiV1Codec, ApiV2Codec, Codec};
+use crate::request::codec::{ApiV1Codec, ApiV2Codec, Codec, EncodedRequest};
 use crate::request::plan::CleanupLocksResult;
 use crate::request::Plan;
 use crate::timestamp::TimestampExt;
@@ -279,7 +279,8 @@ impl<Cod: Codec> Client<Cod> {
         let ctx = ResolveLocksContext::default();
         let backoff = Backoff::equal_jitter_backoff(100, 10000, 50);
         let req = new_scan_lock_request(range.into(), safepoint, options.batch_size);
-        let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
+        let encoded_req = EncodedRequest::new(req, self.pd.get_codec());
+        let plan = crate::request::PlanBuilder::new(self.pd.clone(), encoded_req)
             .cleanup_locks(ctx.clone(), options, backoff)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
@@ -298,7 +299,8 @@ impl<Cod: Codec> Client<Cod> {
         batch_size: u32,
     ) -> Result<Vec<crate::proto::kvrpcpb::LockInfo>> {
         let req = new_scan_lock_request(range.into(), safepoint, batch_size);
-        let plan = crate::request::PlanBuilder::new(self.pd.clone(), req)
+        let encoded_req = EncodedRequest::new(req, self.pd.get_codec());
+        let plan = crate::request::PlanBuilder::new(self.pd.clone(), encoded_req)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(crate::request::Collect)
             .plan();
