@@ -146,9 +146,7 @@ mod test {
                 unreachable!();
             }
 
-            fn set_api_version(&mut self, _api_version: ApiVersion) {
-                unreachable!();
-            }
+            fn set_api_version(&mut self, _api_version: ApiVersion) {}
         }
 
         #[async_trait]
