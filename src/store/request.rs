@@ -21,6 +21,8 @@ pub trait Request: Any + Sync + Send + 'static {
     ) -> Result<Box<dyn Any>>;
     fn label(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
+    /// Set the context for the request.
+    /// Should always use `set_context` other than modify the `self.context` directly.
     fn set_context(&mut self, context: kvrpcpb::Context);
     fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion);
 }
@@ -53,7 +55,13 @@ macro_rules! impl_request {
             }
 
             fn set_context(&mut self, context: kvrpcpb::Context) {
+                let api_version = self
+                    .context
+                    .as_ref()
+                    .map(|c| c.api_version)
+                    .unwrap_or_default();
                 self.context = Some(context);
+                self.set_api_version(kvrpcpb::ApiVersion::from_i32(api_version).unwrap());
             }
 
             fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {

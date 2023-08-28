@@ -163,7 +163,7 @@ macro_rules! shardable_key {
                 mut shard: Self::Shard,
                 store: &$crate::store::RegionStore,
             ) -> $crate::Result<()> {
-                self.context = Some(store.region_with_leader.context()?);
+                self.set_context(store.region_with_leader.context()?);
                 assert!(shard.len() == 1);
                 self.key = shard.pop().unwrap();
                 Ok(())
@@ -196,7 +196,7 @@ macro_rules! shardable_keys {
                 shard: Self::Shard,
                 store: &$crate::store::RegionStore,
             ) -> $crate::Result<()> {
-                self.context = Some(store.region_with_leader.context()?);
+                self.set_context(store.region_with_leader.context()?);
                 self.keys = shard.into_iter().map(Into::into).collect();
                 Ok(())
             }
@@ -225,7 +225,7 @@ macro_rules! shardable_range {
                 shard: Self::Shard,
                 store: &$crate::store::RegionStore,
             ) -> $crate::Result<()> {
-                self.context = Some(store.region_with_leader.context()?);
+                self.set_context(store.region_with_leader.context()?);
 
                 self.start_key = shard.0.into();
                 self.end_key = shard.1.into();
