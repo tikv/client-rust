@@ -44,18 +44,16 @@ const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 pub async fn resolve_locks(
     locks: Vec<kvrpcpb::LockInfo>,
     pd_client: Arc<impl PdClient>,
-) -> Result<bool> {
+) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
     debug!("resolving locks");
     let ts = pd_client.clone().get_timestamp().await?;
-    let mut has_live_locks = false;
-    let expired_locks = locks.into_iter().filter(|lock| {
-        let expired = ts.physical - Timestamp::from_version(lock.lock_version).physical
-            >= lock.lock_ttl as i64;
-        if !expired {
-            has_live_locks = true;
-        }
-        expired
-    });
+    let (expired_locks, live_locks) =
+        locks
+            .into_iter()
+            .partition::<Vec<kvrpcpb::LockInfo>, _>(|lock| {
+                ts.physical - Timestamp::from_version(lock.lock_version).physical
+                    >= lock.lock_ttl as i64
+            });
 
     // records the commit version of each primary lock (representing the status of the transaction)
     let mut commit_versions: HashMap<u64, u64> = HashMap::new();
@@ -103,7 +101,7 @@ pub async fn resolve_locks(
             .or_insert_with(HashSet::new)
             .insert(cleaned_region);
     }
-    Ok(!has_live_locks)
+    Ok(live_locks)
 }
 
 async fn resolve_lock_with_retry(
@@ -290,12 +288,12 @@ impl LockResolver {
             }
 
             match &status.kind {
-                TransactionStatusKind::Locked(..) => {
+                TransactionStatusKind::Locked(_, lock_info) => {
                     error!(
                         "cleanup_locks fail to clean locks, this result is not expected. txn_id:{}",
                         txn_id
                     );
-                    return Err(Error::ResolveLockError);
+                    return Err(Error::ResolveLockError(vec![lock_info.clone()]));
                 }
                 TransactionStatusKind::Committed(ts) => txn_infos.insert(txn_id, ts.version()),
                 TransactionStatusKind::RolledBack => txn_infos.insert(txn_id, 0),

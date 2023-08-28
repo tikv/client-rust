@@ -950,7 +950,7 @@ mod tests {
             let input = vec![
                 Ok(resp1),
                 Ok(resp_empty_value),
-                Err(ResolveLockError),
+                Err(ResolveLockError(vec![])),
                 Ok(resp_not_found),
             ];
             let result = merger.merge(input);
@@ -960,7 +960,7 @@ mod tests {
                 success_keys,
             } = result.unwrap_err()
             {
-                assert!(matches!(*inner, ResolveLockError));
+                assert!(matches!(*inner, ResolveLockError(_)));
                 assert_eq!(
                     success_keys,
                     vec![key1.to_vec(), key2.to_vec(), key3.to_vec(), key4.to_vec()]
