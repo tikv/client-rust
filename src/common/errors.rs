@@ -18,7 +18,7 @@ pub enum Error {
     #[error("Duplicate key insertion")]
     DuplicateKeyInsertion,
     /// Failed to resolve a lock
-    #[error("Failed to resolve lock")]
+    #[error("Failed to resolve lock, live locks: {0:?}")]
     ResolveLockError(Vec<kvrpcpb::LockInfo>),
     /// Will raise this error when using a pessimistic txn only operation on an optimistic txn
     #[error("Invalid operation for this type of transaction")]
