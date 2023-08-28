@@ -94,6 +94,8 @@
 
 pub mod backoff;
 #[doc(hidden)]
+pub mod proto; // export `proto` to enable user customized codec
+#[doc(hidden)]
 pub mod raw;
 pub mod request;
 #[doc(hidden)]
@@ -104,7 +106,6 @@ mod compat;
 mod config;
 mod kv;
 mod pd;
-mod proto;
 mod region;
 mod region_cache;
 mod stats;
