@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::iter;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -14,6 +15,7 @@ use tokio::time::Duration;
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
+use crate::codec::ApiV1TxnCodec;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::kvrpcpb;
@@ -74,7 +76,7 @@ use crate::Value;
 /// txn.commit().await.unwrap();
 /// # });
 /// ```
-pub struct Transaction<PdC: PdClient = PdRpcClient> {
+pub struct Transaction<Cod: Codec = ApiV1TxnCodec, PdC: PdClient = PdRpcClient<Cod>> {
     status: Arc<RwLock<TransactionStatus>>,
     timestamp: Timestamp,
     buffer: Buffer,
@@ -82,14 +84,15 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     options: TransactionOptions,
     is_heartbeat_started: bool,
     start_instant: Instant,
+    phantom: PhantomData<Cod>,
 }
 
-impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<PdC> {
+impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     pub(crate) fn new(
         timestamp: Timestamp,
         rpc: Arc<PdC>,
         options: TransactionOptions,
-    ) -> Transaction<PdC> {
+    ) -> Transaction<Cod, PdC> {
         let status = if options.read_only {
             TransactionStatus::ReadOnly
         } else {
@@ -103,6 +106,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<PdC> {
             options,
             is_heartbeat_started: false,
             start_instant: std::time::Instant::now(),
+            phantom: PhantomData,
         }
     }
 
@@ -134,8 +138,9 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<PdC> {
 
         self.buffer
             .get_or_else(key, |key| async move {
-                let request = EncodedRequest::new(new_get_request(key, timestamp), rpc.get_codec());
-                let plan = PlanBuilder::new(rpc, request)
+                let request = new_get_request(key, timestamp);
+                let encoded_req = EncodedRequest::new(request, rpc.get_codec());
+                let plan = PlanBuilder::new(rpc, encoded_req)
                     .resolve_lock(retry_options.lock_backoff)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
                     .merge(CollectSingle)
@@ -924,7 +929,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<PdC> {
     }
 }
 
-impl<PdC: PdClient> Drop for Transaction<PdC> {
+impl<Cod: Codec, PdC: PdClient> Drop for Transaction<Cod, PdC> {
     fn drop(&mut self) {
         debug!("dropping transaction");
         if std::thread::panicking() {

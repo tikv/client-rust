@@ -152,7 +152,7 @@ impl<Cod: Codec> Client<Cod> {
     /// transaction.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn begin_optimistic(&self) -> Result<Transaction<PdRpcClient<Cod>>> {
+    pub async fn begin_optimistic(&self) -> Result<Transaction<Cod, PdRpcClient<Cod>>> {
         debug!("creating new optimistic transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, TransactionOptions::new_optimistic()))
@@ -175,7 +175,7 @@ impl<Cod: Codec> Client<Cod> {
     /// transaction.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn begin_pessimistic(&self) -> Result<Transaction<PdRpcClient<Cod>>> {
+    pub async fn begin_pessimistic(&self) -> Result<Transaction<Cod, PdRpcClient<Cod>>> {
         debug!("creating new pessimistic transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, TransactionOptions::new_pessimistic()))
@@ -201,7 +201,7 @@ impl<Cod: Codec> Client<Cod> {
     pub async fn begin_with_options(
         &self,
         options: TransactionOptions,
-    ) -> Result<Transaction<PdRpcClient<Cod>>> {
+    ) -> Result<Transaction<Cod, PdRpcClient<Cod>>> {
         debug!("creating new customized transaction");
         let timestamp = self.current_timestamp().await?;
         Ok(self.new_transaction(timestamp, options))
@@ -212,7 +212,7 @@ impl<Cod: Codec> Client<Cod> {
         &self,
         timestamp: Timestamp,
         options: TransactionOptions,
-    ) -> Snapshot<PdRpcClient<Cod>> {
+    ) -> Snapshot<Cod, PdRpcClient<Cod>> {
         debug!("creating new snapshot");
         Snapshot::new(self.new_transaction(timestamp, options.read_only()))
     }
@@ -311,7 +311,7 @@ impl<Cod: Codec> Client<Cod> {
         &self,
         timestamp: Timestamp,
         options: TransactionOptions,
-    ) -> Transaction<PdRpcClient<Cod>> {
+    ) -> Transaction<Cod, PdRpcClient<Cod>> {
         Transaction::new(timestamp, self.pd.clone(), options)
     }
 }
