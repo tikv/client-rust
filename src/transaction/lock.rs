@@ -34,7 +34,7 @@ use crate::Result;
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 
-/// _Resolves_ the given locks. Returns whether all the given locks are resolved.
+/// _Resolves_ the given locks. Returns locks still live. When there is no live locks, all the given locks are resolved.
 ///
 /// If a key has a lock, the latest status of the key is unknown. We need to "resolve" the lock,
 /// which means the key is finally either committed or rolled back, before we read the value of
