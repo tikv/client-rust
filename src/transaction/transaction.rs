@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::iter;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -14,10 +15,12 @@ use tokio::time::Duration;
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
+use crate::codec::ApiV1TxnCodec;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::kvrpcpb;
 use crate::proto::pdpb::Timestamp;
+use crate::request::codec::{Codec, EncodedRequest};
 use crate::request::Collect;
 use crate::request::CollectError;
 use crate::request::CollectSingle;
@@ -73,7 +76,7 @@ use crate::Value;
 /// txn.commit().await.unwrap();
 /// # });
 /// ```
-pub struct Transaction<PdC: PdClient = PdRpcClient> {
+pub struct Transaction<Cod: Codec = ApiV1TxnCodec, PdC: PdClient = PdRpcClient<Cod>> {
     status: Arc<RwLock<TransactionStatus>>,
     timestamp: Timestamp,
     buffer: Buffer,
@@ -81,14 +84,15 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     options: TransactionOptions,
     is_heartbeat_started: bool,
     start_instant: Instant,
+    phantom: PhantomData<Cod>,
 }
 
-impl<PdC: PdClient> Transaction<PdC> {
+impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     pub(crate) fn new(
         timestamp: Timestamp,
         rpc: Arc<PdC>,
         options: TransactionOptions,
-    ) -> Transaction<PdC> {
+    ) -> Transaction<Cod, PdC> {
         let status = if options.read_only {
             TransactionStatus::ReadOnly
         } else {
@@ -102,6 +106,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             options,
             is_heartbeat_started: false,
             start_instant: std::time::Instant::now(),
+            phantom: PhantomData,
         }
     }
 
@@ -134,7 +139,8 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.buffer
             .get_or_else(key, |key| async move {
                 let request = new_get_request(key, timestamp);
-                let plan = PlanBuilder::new(rpc, request)
+                let encoded_req = EncodedRequest::new(request, rpc.get_codec());
+                let plan = PlanBuilder::new(rpc, encoded_req)
                     .resolve_lock(retry_options.lock_backoff)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
                     .merge(CollectSingle)
@@ -264,7 +270,8 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.buffer
             .batch_get_or_else(keys.into_iter().map(|k| k.into()), move |keys| async move {
                 let request = new_batch_get_request(keys, timestamp);
-                let plan = PlanBuilder::new(rpc, request)
+                let encoded_req = EncodedRequest::new(request, rpc.get_codec());
+                let plan = PlanBuilder::new(rpc, encoded_req)
                     .resolve_lock(retry_options.lock_backoff)
                     .retry_multi_region(retry_options.region_backoff)
                     .merge(Collect)
@@ -691,7 +698,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             primary_key,
             self.start_instant.elapsed().as_millis() as u64 + MAX_TTL,
         );
-        let plan = PlanBuilder::new(self.rpc.clone(), request)
+        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
+        let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .merge(CollectSingle)
@@ -721,7 +729,8 @@ impl<PdC: PdClient> Transaction<PdC> {
                 move |new_range, new_limit| async move {
                     let request =
                         new_scan_request(new_range, timestamp, new_limit, key_only, reverse);
-                    let plan = PlanBuilder::new(rpc, request)
+                    let encoded_req = EncodedRequest::new(request, rpc.get_codec());
+                    let plan = PlanBuilder::new(rpc, encoded_req)
                         .resolve_lock(retry_options.lock_backoff)
                         .retry_multi_region(retry_options.region_backoff)
                         .merge(Collect)
@@ -776,7 +785,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             for_update_ts.clone(),
             need_value,
         );
-        let plan = PlanBuilder::new(self.rpc.clone(), request)
+        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
+        let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .preserve_shard()
             .retry_multi_region_preserve_results(self.options.retry_options.region_backoff.clone())
@@ -830,7 +840,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             start_version,
             for_update_ts,
         );
-        let plan = PlanBuilder::new(self.rpc.clone(), req)
+        let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
+        let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .extract_error()
@@ -900,7 +911,8 @@ impl<PdC: PdClient> Transaction<PdC> {
                     primary_key.clone(),
                     start_instant.elapsed().as_millis() as u64 + MAX_TTL,
                 );
-                let plan = PlanBuilder::new(rpc.clone(), request)
+                let encoded_req = EncodedRequest::new(request, rpc.get_codec());
+                let plan = PlanBuilder::new(rpc.clone(), encoded_req)
                     .retry_multi_region(region_backoff.clone())
                     .merge(CollectSingle)
                     .plan();
@@ -917,7 +929,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 }
 
-impl<PdC: PdClient> Drop for Transaction<PdC> {
+impl<Cod: Codec, PdC: PdClient> Drop for Transaction<Cod, PdC> {
     fn drop(&mut self) {
         debug!("dropping transaction");
         if std::thread::panicking() {
@@ -1209,7 +1221,8 @@ impl<PdC: PdClient> Committer<PdC> {
             .collect();
         // FIXME set max_commit_ts and min_commit_ts
 
-        let plan = PlanBuilder::new(self.rpc.clone(), request)
+        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
+        let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .merge(CollectError)
@@ -1249,7 +1262,8 @@ impl<PdC: PdClient> Committer<PdC> {
             self.start_version.clone(),
             commit_version.clone(),
         );
-        let plan = PlanBuilder::new(self.rpc.clone(), req)
+        let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
+        let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .extract_error()
@@ -1313,7 +1327,8 @@ impl<PdC: PdClient> Committer<PdC> {
                 .filter(|key| &primary_key != key);
             new_commit_request(keys, self.start_version, commit_version)
         };
-        let plan = PlanBuilder::new(self.rpc, req)
+        let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
+        let plan = PlanBuilder::new(self.rpc, encoded_req)
             .resolve_lock(self.options.retry_options.lock_backoff)
             .retry_multi_region(self.options.retry_options.region_backoff)
             .extract_error()
@@ -1334,7 +1349,8 @@ impl<PdC: PdClient> Committer<PdC> {
         match self.options.kind {
             TransactionKind::Optimistic => {
                 let req = new_batch_rollback_request(keys, self.start_version);
-                let plan = PlanBuilder::new(self.rpc, req)
+                let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
+                let plan = PlanBuilder::new(self.rpc, encoded_req)
                     .resolve_lock(self.options.retry_options.lock_backoff)
                     .retry_multi_region(self.options.retry_options.region_backoff)
                     .extract_error()
@@ -1343,7 +1359,8 @@ impl<PdC: PdClient> Committer<PdC> {
             }
             TransactionKind::Pessimistic(for_update_ts) => {
                 let req = new_pessimistic_rollback_request(keys, self.start_version, for_update_ts);
-                let plan = PlanBuilder::new(self.rpc, req)
+                let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
+                let plan = PlanBuilder::new(self.rpc, encoded_req)
                     .resolve_lock(self.options.retry_options.lock_backoff)
                     .retry_multi_region(self.options.retry_options.region_backoff)
                     .extract_error()

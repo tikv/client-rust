@@ -6,6 +6,7 @@ use std::sync::Arc;
 use super::plan::PreserveShard;
 use crate::backoff::Backoff;
 use crate::pd::PdClient;
+use crate::request::codec::EncodedRequest;
 use crate::request::plan::CleanupLocks;
 use crate::request::shard::HasNextBatch;
 use crate::request::DefaultProcessor;
@@ -46,11 +47,11 @@ pub struct Targetted;
 impl PlanBuilderPhase for Targetted {}
 
 impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
-    pub fn new(pd_client: Arc<PdC>, request: Req) -> Self {
+    pub fn new(pd_client: Arc<PdC>, encoded_request: EncodedRequest<Req>) -> Self {
         PlanBuilder {
             pd_client,
             plan: Dispatch {
-                request,
+                request: encoded_request.inner,
                 kv_client: None,
             },
             phantom: PhantomData,
