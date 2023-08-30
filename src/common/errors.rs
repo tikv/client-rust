@@ -4,6 +4,7 @@ use std::result;
 
 use thiserror::Error;
 
+use crate::proto::kvrpcpb;
 use crate::BoundRange;
 
 /// An error originating from the TiKV client or dependencies.
@@ -18,7 +19,7 @@ pub enum Error {
     DuplicateKeyInsertion,
     /// Failed to resolve a lock
     #[error("Failed to resolve lock")]
-    ResolveLockError,
+    ResolveLockError(Vec<kvrpcpb::LockInfo>),
     /// Will raise this error when using a pessimistic txn only operation on an optimistic txn
     #[error("Invalid operation for this type of transaction")]
     InvalidTransactionType,

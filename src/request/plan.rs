@@ -434,15 +434,16 @@ where
             }
 
             if self.backoff.is_none() {
-                return Err(Error::ResolveLockError);
+                return Err(Error::ResolveLockError(locks));
             }
 
             let pd_client = self.pd_client.clone();
-            if resolve_locks(locks, pd_client.clone()).await? {
+            let live_locks = resolve_locks(locks, pd_client.clone()).await?;
+            if live_locks.is_empty() {
                 result = self.inner.execute().await?;
             } else {
                 match clone.backoff.next_delay_duration() {
-                    None => return Err(Error::ResolveLockError),
+                    None => return Err(Error::ResolveLockError(live_locks)),
                     Some(delay_duration) => {
                         sleep(delay_duration).await;
                         result = clone.inner.execute().await?;
