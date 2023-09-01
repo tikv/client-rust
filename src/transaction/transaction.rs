@@ -522,6 +522,56 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         Ok(())
     }
 
+    /// Batch mutate the database.
+    ///
+    /// Only `Put` and `Delete` are supported.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Config, TransactionClient, proto::kvrpcpb};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
+    /// let mutations = vec![
+    ///     kvrpcpb::Mutation {
+    ///         op: kvrpcpb::Op::Del.into(),
+    ///         key: b"k0".to_vec(),
+    ///         ..Default::default()
+    ///     },
+    ///     kvrpcpb::Mutation {
+    ///         op: kvrpcpb::Op::Put.into(),
+    ///         key: b"k1".to_vec(),
+    ///         value: b"v1".to_vec(),
+    ///         ..Default::default()
+    ///     },
+    /// ];
+    /// txn.batch_mutate(mutations).await.unwrap();
+    /// txn.commit().await.unwrap();
+    /// # });
+    /// ```
+    pub async fn batch_mutate(
+        &mut self,
+        mutations: impl IntoIterator<Item = kvrpcpb::Mutation>,
+    ) -> Result<()> {
+        debug!("invoking transactional batch mutate request");
+        self.check_allow_operation().await?;
+        if self.is_pessimistic() {
+            let mutations: Vec<kvrpcpb::Mutation> = mutations.into_iter().collect();
+            self.pessimistic_lock(mutations.iter().map(|m| Key::from(m.key.clone())), false)
+                .await?;
+            for m in mutations {
+                self.buffer.mutate(m);
+            }
+        } else {
+            for m in mutations.into_iter() {
+                self.buffer.mutate(m);
+            }
+        }
+        Ok(())
+    }
+
     /// Lock the given keys without mutating their values.
     ///
     /// In optimistic mode, write conflicts are not checked until commit.
