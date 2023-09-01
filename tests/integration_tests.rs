@@ -32,7 +32,7 @@ use tikv_client::Result;
 use tikv_client::TransactionClient;
 use tikv_client::TransactionOptions;
 use tikv_client::Value;
-use tikv_client::{Backoff, BoundRange, CheckLevel, RetryOptions, Transaction};
+use tikv_client::{Backoff, BoundRange, RetryOptions, Transaction};
 
 // Parameters used in test
 const NUM_PEOPLE: u32 = 100;
@@ -1135,12 +1135,10 @@ async fn txn_batch_mutate_pessimistic() -> Result<()> {
 
 async fn begin_mutate(client: &TransactionClient, is_pessimistic: bool) -> Result<Transaction> {
     if is_pessimistic {
-        let options = TransactionOptions::new_pessimistic()
-            // .drop_check(CheckLevel::Warn)
-            .retry_options(RetryOptions {
-                region_backoff: DEFAULT_REGION_BACKOFF,
-                lock_backoff: Backoff::no_jitter_backoff(500, 500, 2),
-            });
+        let options = TransactionOptions::new_pessimistic().retry_options(RetryOptions {
+            region_backoff: DEFAULT_REGION_BACKOFF,
+            lock_backoff: Backoff::no_jitter_backoff(500, 500, 2),
+        });
         client.begin_with_options(options).await
     } else {
         client.begin_optimistic().await
@@ -1148,6 +1146,9 @@ async fn begin_mutate(client: &TransactionClient, is_pessimistic: bool) -> Resul
 }
 
 async fn do_mutate(is_pessimistic: bool) -> Result<()> {
+    let client = TransactionClient::new(pd_addrs()).await.unwrap();
+    let mut txn = begin_mutate(&client, is_pessimistic).await.unwrap();
+
     let mutations = vec![
         kvrpcpb::Mutation {
             op: kvrpcpb::Op::Del.into(),
@@ -1167,8 +1168,6 @@ async fn do_mutate(is_pessimistic: bool) -> Result<()> {
             ..Default::default()
         },
     ];
-    let client = TransactionClient::new(pd_addrs()).await.unwrap();
-    let mut txn = begin_mutate(&client, is_pessimistic).await.unwrap();
 
     match txn.batch_mutate(mutations).await {
         Ok(()) => {
