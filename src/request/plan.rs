@@ -147,8 +147,26 @@ where
     ) -> Result<<Self as Plan>::Result> {
         // limit concurrent requests
         let permit = permits.acquire().await.unwrap();
-        let mut resp = plan.execute().await?;
+        let res = plan.execute().await;
         drop(permit);
+
+        let is_grpc_error = |e: &Error| matches!(e, Error::GrpcAPI(_) | Error::Grpc(_));
+        let mut resp = match res {
+            Ok(resp) => resp,
+            Err(e) if is_grpc_error(&e) => {
+                return Self::handle_grpc_error(
+                    pd_client,
+                    plan,
+                    region_store,
+                    backoff,
+                    permits,
+                    preserve_region_results,
+                    e,
+                )
+                .await;
+            }
+            Err(e) => return Err(e),
+        };
 
         if let Some(e) = resp.key_errors() {
             Ok(vec![Err(Error::MultipleKeyErrors(e))])
@@ -271,6 +289,34 @@ where
         // TODO: finer grained processing
         pd_client.invalidate_region_cache(ver_id).await;
         Ok(false)
+    }
+
+    async fn handle_grpc_error(
+        pd_client: Arc<PdC>,
+        plan: P,
+        region_store: RegionStore,
+        mut backoff: Backoff,
+        permits: Arc<Semaphore>,
+        preserve_region_results: bool,
+        e: Error,
+    ) -> Result<<Self as Plan>::Result> {
+        debug!("handle grpc error: {:?}", e);
+        let ver_id = region_store.region_with_leader.ver_id();
+        pd_client.invalidate_region_cache(ver_id).await;
+        match backoff.next_delay_duration() {
+            Some(duration) => {
+                sleep(duration).await;
+                Self::single_plan_handler(
+                    pd_client,
+                    plan,
+                    backoff,
+                    permits,
+                    preserve_region_results,
+                )
+                .await
+            }
+            None => Err(e),
+        }
     }
 }
 
