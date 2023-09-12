@@ -21,10 +21,10 @@ use crate::region::RegionVerId;
 use crate::region::RegionWithLeader;
 use crate::region_cache::RegionCache;
 use crate::request::codec::{ApiV1TxnCodec, Codec};
-use crate::store::KvClient;
 use crate::store::KvConnect;
 use crate::store::RegionStore;
 use crate::store::TikvConnect;
+use crate::store::{KvClient, Store};
 use crate::BoundRange;
 use crate::Config;
 use crate::Key;
@@ -77,6 +77,8 @@ pub trait PdClient: Send + Sync + 'static {
         let region = self.region_for_id(id).await?;
         self.map_region_to_store(region).await
     }
+
+    async fn all_stores(self: Arc<Self>) -> Result<Vec<Store>>;
 
     fn group_keys_by_region<K, K2>(
         self: Arc<Self>,
@@ -255,6 +257,16 @@ impl<Cod: Codec, KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClien
         Self::decode_region(region, self.enable_mvcc_codec)
     }
 
+    async fn all_stores(self: Arc<Self>) -> Result<Vec<Store>> {
+        let pb_stores = self.pd.clone().get_all_stores().await?;
+        let mut stores = Vec::with_capacity(pb_stores.len());
+        for store in pb_stores.into_iter().filter(is_valid_tikv_store) {
+            let client = self.kv_client(&store.address).await?;
+            stores.push(Store::new(Arc::new(client)));
+        }
+        Ok(stores)
+    }
+
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
         self.pd.clone().get_timestamp().await
     }
@@ -358,6 +370,21 @@ fn make_key_range(start_key: Vec<u8>, end_key: Vec<u8>) -> kvrpcpb::KeyRange {
     key_range.start_key = start_key;
     key_range.end_key = end_key;
     key_range
+}
+
+const ENGINE_LABEL_KEY: &str = "engine";
+const ENGINE_LABEL_TIFLASH: &str = "tiflash";
+const ENGINE_LABEL_TIFLASH_COMPUTE: &str = "tiflash_compute";
+
+fn is_valid_tikv_store(store: &metapb::Store) -> bool {
+    if store.state == metapb::StoreState::Tombstone.into() {
+        return false;
+    }
+    let is_tiflash = store.labels.iter().any(|label| {
+        label.key == ENGINE_LABEL_KEY
+            && (label.value == ENGINE_LABEL_TIFLASH || label.value == ENGINE_LABEL_TIFLASH_COMPUTE)
+    });
+    !is_tiflash
 }
 
 #[cfg(test)]

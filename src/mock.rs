@@ -19,10 +19,10 @@ use crate::proto::metapb::{self};
 use crate::region::RegionId;
 use crate::region::RegionWithLeader;
 use crate::request::codec::ApiV1TxnCodec;
-use crate::store::KvClient;
 use crate::store::KvConnect;
 use crate::store::RegionStore;
 use crate::store::Request;
+use crate::store::{KvClient, Store};
 use crate::Config;
 use crate::Error;
 use crate::Key;
@@ -204,6 +204,10 @@ impl PdClient for MockPdClient {
             3 => Ok(Self::region3()),
             _ => Err(Error::RegionNotFoundInResponse { region_id: id }),
         }
+    }
+
+    async fn all_stores(self: Arc<Self>) -> Result<Vec<Store>> {
+        Ok(vec![Store::new(Arc::new(self.client.clone()))])
     }
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {

@@ -33,6 +33,11 @@ pub struct RegionStore {
     pub client: Arc<dyn KvClient + Send + Sync>,
 }
 
+#[derive(new, Clone)]
+pub struct Store {
+    pub client: Arc<dyn KvClient + Send + Sync>,
+}
+
 #[async_trait]
 pub trait KvConnectStore: KvConnect {
     async fn connect_to_store(

@@ -18,15 +18,15 @@ use crate::proto::errorpb;
 use crate::proto::errorpb::EpochNotMatch;
 use crate::proto::kvrpcpb;
 use crate::request::shard::HasNextBatch;
-use crate::request::KvRequest;
 use crate::request::NextBatch;
 use crate::request::Shardable;
+use crate::request::{KvRequest, StoreRequest};
 use crate::stats::tikv_stats;
-use crate::store::HasKeyErrors;
 use crate::store::HasRegionError;
 use crate::store::HasRegionErrors;
 use crate::store::KvClient;
 use crate::store::RegionStore;
+use crate::store::{HasKeyErrors, Store};
 use crate::transaction::resolve_locks;
 use crate::transaction::HasLocks;
 use crate::transaction::ResolveLocksContext;
@@ -73,7 +73,19 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
     }
 }
 
+impl<Req: KvRequest + StoreRequest> StoreRequest for Dispatch<Req> {
+    fn apply_store(&mut self, store: &Store) {
+        self.kv_client = Some(store.client.clone());
+        self.request.apply_store(store);
+    }
+}
+
 const MULTI_REGION_CONCURRENCY: usize = 16;
+const MULTI_STORES_CONCURRENCY: usize = 16;
+
+fn is_grpc_error(e: &Error) -> bool {
+    matches!(e, Error::GrpcAPI(_) | Error::Grpc(_))
+}
 
 pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
     pub(super) inner: P,
@@ -150,7 +162,6 @@ where
         let res = plan.execute().await;
         drop(permit);
 
-        let is_grpc_error = |e: &Error| matches!(e, Error::GrpcAPI(_) | Error::Grpc(_));
         let mut resp = match res {
             Ok(resp) => resp,
             Err(e) if is_grpc_error(&e) => {
@@ -351,6 +362,87 @@ where
             self.preserve_region_results,
         )
         .await
+    }
+}
+
+pub struct RetryableAllStores<P: Plan, PdC: PdClient> {
+    pub(super) inner: P,
+    pub pd_client: Arc<PdC>,
+    pub backoff: Backoff,
+}
+
+impl<P: Plan, PdC: PdClient> Clone for RetryableAllStores<P, PdC> {
+    fn clone(&self) -> Self {
+        RetryableAllStores {
+            inner: self.inner.clone(),
+            pd_client: self.pd_client.clone(),
+            backoff: self.backoff.clone(),
+        }
+    }
+}
+
+#[async_trait]
+impl<P: Plan + StoreRequest, PdC: PdClient> Plan for RetryableAllStores<P, PdC>
+where
+    P::Result: HasKeyErrors + HasRegionError,
+{
+    type Result = Vec<P::Result>;
+
+    async fn execute(&self) -> Result<Self::Result> {
+        let concurrency_permits = Arc::new(Semaphore::new(MULTI_STORES_CONCURRENCY));
+        let stores = self.pd_client.clone().all_stores().await?;
+        let mut handles = Vec::new();
+        for store in stores {
+            // let pd_client = self.pd_client.clone();
+            let mut clone = self.inner.clone();
+            clone.apply_store(&store);
+            let handle = tokio::spawn(Self::single_store_handler(
+                clone,
+                self.backoff.clone(),
+                concurrency_permits.clone(),
+            ));
+            handles.push(handle);
+        }
+        let results = try_join_all(handles).await?;
+        results.into_iter().collect::<Result<Vec<_>>>()
+    }
+}
+
+impl<P: Plan, PdC: PdClient> RetryableAllStores<P, PdC>
+where
+    P::Result: HasKeyErrors + HasRegionError,
+{
+    async fn single_store_handler(
+        plan: P,
+        mut backoff: Backoff,
+        permits: Arc<Semaphore>,
+    ) -> Result<P::Result> {
+        loop {
+            let permit = permits.acquire().await.unwrap();
+            let res = plan.execute().await;
+            drop(permit);
+
+            match res {
+                Ok(mut resp) => {
+                    if let Some(e) = resp.key_errors() {
+                        return Err(Error::MultipleKeyErrors(e));
+                    } else if let Some(e) = resp.region_error() {
+                        // store request should not return region error
+                        panic!("unexpected region error: {:?}", e);
+                    } else {
+                        return Ok(resp);
+                    }
+                }
+                Err(e) if is_grpc_error(&e) => match backoff.next_delay_duration() {
+                    Some(duration) => {
+                        sleep(duration).await;
+                        continue;
+                    }
+                    None => return Err(e),
+                },
+                Err(e) => return Err(e),
+            }
+        }
     }
 }
 

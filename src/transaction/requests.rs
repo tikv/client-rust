@@ -19,7 +19,6 @@ use crate::proto::kvrpcpb::TxnHeartBeatResponse;
 use crate::proto::kvrpcpb::TxnInfo;
 use crate::proto::kvrpcpb::{self};
 use crate::proto::pdpb::Timestamp;
-use crate::request::Batchable;
 use crate::request::Collect;
 use crate::request::CollectSingle;
 use crate::request::CollectWithShard;
@@ -32,13 +31,14 @@ use crate::request::Process;
 use crate::request::ResponseWithShard;
 use crate::request::Shardable;
 use crate::request::SingleKey;
+use crate::request::{Batchable, StoreRequest};
 use crate::shardable_key;
 use crate::shardable_keys;
 use crate::shardable_range;
-use crate::store::store_stream_for_keys;
 use crate::store::store_stream_for_range;
 use crate::store::RegionStore;
 use crate::store::Request;
+use crate::store::{store_stream_for_keys, Store};
 use crate::timestamp::TimestampExt;
 use crate::transaction::HasLocks;
 use crate::util::iter::FlatMapOkIterExt;
@@ -866,6 +866,26 @@ impl HasLocks for kvrpcpb::PrewriteResponse {
             .collect()
     }
 }
+
+pub fn new_unsafe_destroy_range_request(
+    start_key: Vec<u8>,
+    end_key: Vec<u8>,
+) -> kvrpcpb::UnsafeDestroyRangeRequest {
+    let mut req = kvrpcpb::UnsafeDestroyRangeRequest::default();
+    req.start_key = start_key;
+    req.end_key = end_key;
+    req
+}
+
+impl KvRequest for kvrpcpb::UnsafeDestroyRangeRequest {
+    type Response = kvrpcpb::UnsafeDestroyRangeResponse;
+}
+
+impl StoreRequest for kvrpcpb::UnsafeDestroyRangeRequest {
+    fn apply_store(&mut self, _store: &Store) {}
+}
+
+impl HasLocks for kvrpcpb::UnsafeDestroyRangeResponse {}
 
 #[cfg(test)]
 #[cfg_attr(feature = "protobuf-codec", allow(clippy::useless_conversion))]

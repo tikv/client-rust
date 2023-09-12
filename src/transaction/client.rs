@@ -5,7 +5,7 @@ use std::sync::Arc;
 use log::debug;
 use log::info;
 
-use crate::backoff::DEFAULT_REGION_BACKOFF;
+use crate::backoff::{DEFAULT_REGION_BACKOFF, DEFAULT_STORE_BACKOFF};
 use crate::config::Config;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
@@ -20,6 +20,7 @@ use crate::transaction::ResolveLocksContext;
 use crate::transaction::Snapshot;
 use crate::transaction::Transaction;
 use crate::transaction::TransactionOptions;
+use crate::transaction_lowering::new_unsafe_destroy_range_request;
 use crate::Backoff;
 use crate::BoundRange;
 use crate::Result;
@@ -305,6 +306,16 @@ impl<Cod: Codec> Client<Cod> {
             .merge(crate::request::Collect)
             .plan();
         plan.execute().await
+    }
+
+    pub async fn unsafe_destroy_range(&self, range: impl Into<BoundRange>) -> Result<()> {
+        let req = new_unsafe_destroy_range_request(range.into());
+        let encoded_req = EncodedRequest::new(req, self.pd.get_codec());
+        let plan = crate::request::PlanBuilder::new(self.pd.clone(), encoded_req)
+            .all_stores(DEFAULT_STORE_BACKOFF)
+            .plan();
+        let _ = plan.execute().await?;
+        Ok(())
     }
 
     fn new_transaction(
