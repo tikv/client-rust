@@ -384,7 +384,7 @@ impl<P: Plan, PdC: PdClient> Clone for RetryableAllStores<P, PdC> {
 // About `HasRegionError`:
 // Store requests should be return region errors.
 // But as the response of only store request by now (UnsafeDestroyRangeResponse) has the `region_error` field,
-// we require `HasRegionError` to assert that there is no region error returned from TiKV.
+// we require `HasRegionError` to check whether there is region error returned from TiKV.
 #[async_trait]
 impl<P: Plan + StoreRequest, PdC: PdClient> Plan for RetryableAllStores<P, PdC>
 where
@@ -431,7 +431,7 @@ where
                         return Err(Error::MultipleKeyErrors(e));
                     } else if let Some(e) = resp.region_error() {
                         // Store request should not return region error.
-                        panic!("unexpected region error: {:?}", e);
+                        return Err(Error::RegionError(Box::new(e)));
                     } else {
                         return Ok(resp);
                     }

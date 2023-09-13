@@ -1,5 +1,6 @@
 edition = "2021"
 reorder_imports = true
+
 # Those options are disabled for not supported in stable rust.
 # We should enable them back once stabilized.
 #

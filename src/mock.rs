@@ -206,7 +206,7 @@ impl PdClient for MockPdClient {
         }
     }
 
-    async fn all_stores(self: Arc<Self>) -> Result<Vec<Store>> {
+    async fn all_stores(&self) -> Result<Vec<Store>> {
         Ok(vec![Store::new(Arc::new(self.client.clone()))])
     }
 

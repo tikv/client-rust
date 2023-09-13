@@ -78,7 +78,7 @@ pub trait PdClient: Send + Sync + 'static {
         self.map_region_to_store(region).await
     }
 
-    async fn all_stores(self: Arc<Self>) -> Result<Vec<Store>>;
+    async fn all_stores(&self) -> Result<Vec<Store>>;
 
     fn group_keys_by_region<K, K2>(
         self: Arc<Self>,
@@ -257,7 +257,7 @@ impl<Cod: Codec, KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClien
         Self::decode_region(region, self.enable_mvcc_codec)
     }
 
-    async fn all_stores(self: Arc<Self>) -> Result<Vec<Store>> {
+    async fn all_stores(&self) -> Result<Vec<Store>> {
         let pb_stores = self.region_cache.read_through_all_stores().await?;
         let mut stores = Vec::with_capacity(pb_stores.len());
         for store in pb_stores {
