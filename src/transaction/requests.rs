@@ -887,6 +887,16 @@ impl StoreRequest for kvrpcpb::UnsafeDestroyRangeRequest {
 
 impl HasLocks for kvrpcpb::UnsafeDestroyRangeResponse {}
 
+impl Merge<kvrpcpb::UnsafeDestroyRangeResponse> for Collect {
+    type Out = ();
+
+    fn merge(&self, input: Vec<Result<kvrpcpb::UnsafeDestroyRangeResponse>>) -> Result<Self::Out> {
+        let _: Vec<kvrpcpb::UnsafeDestroyRangeResponse> =
+            input.into_iter().collect::<Result<Vec<_>>>()?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 #[cfg_attr(feature = "protobuf-codec", allow(clippy::useless_conversion))]
 mod tests {

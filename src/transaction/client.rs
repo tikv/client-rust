@@ -16,11 +16,11 @@ use crate::request::Plan;
 use crate::timestamp::TimestampExt;
 use crate::transaction::lock::ResolveLocksOptions;
 use crate::transaction::lowering::new_scan_lock_request;
+use crate::transaction::lowering::new_unsafe_destroy_range_request;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::Snapshot;
 use crate::transaction::Transaction;
 use crate::transaction::TransactionOptions;
-use crate::transaction_lowering::new_unsafe_destroy_range_request;
 use crate::Backoff;
 use crate::BoundRange;
 use crate::Result;
@@ -308,14 +308,21 @@ impl<Cod: Codec> Client<Cod> {
         plan.execute().await
     }
 
+    /// Cleans up all keys in a range and quickly reclaim disk space.
+    ///
+    /// The range can span over multiple regions.
+    ///
+    /// Note that the request will directly delete data from RocksDB, and all MVCC will be erased.
+    ///
+    /// This interface is intended for special scenarios that resemble operations like "drop table" or "drop database" in TiDB.
     pub async fn unsafe_destroy_range(&self, range: impl Into<BoundRange>) -> Result<()> {
         let req = new_unsafe_destroy_range_request(range.into());
         let encoded_req = EncodedRequest::new(req, self.pd.get_codec());
         let plan = crate::request::PlanBuilder::new(self.pd.clone(), encoded_req)
             .all_stores(DEFAULT_STORE_BACKOFF)
+            .merge(crate::request::Collect)
             .plan();
-        let _ = plan.execute().await?;
-        Ok(())
+        plan.execute().await
     }
 
     fn new_transaction(

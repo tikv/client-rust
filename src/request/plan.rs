@@ -381,19 +381,22 @@ impl<P: Plan, PdC: PdClient> Clone for RetryableAllStores<P, PdC> {
     }
 }
 
+// About `HasRegionError`:
+// Store requests should be return region errors.
+// But as the response of only store request by now (UnsafeDestroyRangeResponse) has the `region_error` field,
+// we require `HasRegionError` to assert that there is no region error returned from TiKV.
 #[async_trait]
 impl<P: Plan + StoreRequest, PdC: PdClient> Plan for RetryableAllStores<P, PdC>
 where
     P::Result: HasKeyErrors + HasRegionError,
 {
-    type Result = Vec<P::Result>;
+    type Result = Vec<Result<P::Result>>;
 
     async fn execute(&self) -> Result<Self::Result> {
         let concurrency_permits = Arc::new(Semaphore::new(MULTI_STORES_CONCURRENCY));
         let stores = self.pd_client.clone().all_stores().await?;
-        let mut handles = Vec::new();
+        let mut handles = Vec::with_capacity(stores.len());
         for store in stores {
-            // let pd_client = self.pd_client.clone();
             let mut clone = self.inner.clone();
             clone.apply_store(&store);
             let handle = tokio::spawn(Self::single_store_handler(
@@ -404,7 +407,7 @@ where
             handles.push(handle);
         }
         let results = try_join_all(handles).await?;
-        results.into_iter().collect::<Result<Vec<_>>>()
+        Ok(results.into_iter().collect::<Vec<_>>())
     }
 }
 
@@ -427,7 +430,7 @@ where
                     if let Some(e) = resp.key_errors() {
                         return Err(Error::MultipleKeyErrors(e));
                     } else if let Some(e) = resp.region_error() {
-                        // store request should not return region error
+                        // Store request should not return region error.
                         panic!("unexpected region error: {:?}", e);
                     } else {
                         return Ok(resp);

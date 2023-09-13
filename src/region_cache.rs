@@ -232,6 +232,39 @@ impl<C: RetryClientTrait> RegionCache<C> {
             cache.key_to_ver_id.remove(&start_key);
         }
     }
+
+    pub async fn read_through_all_stores(&self) -> Result<Vec<Store>> {
+        let stores = self
+            .inner_client
+            .clone()
+            .get_all_stores()
+            .await?
+            .into_iter()
+            .filter(is_valid_tikv_store)
+            .collect::<Vec<_>>();
+        for store in &stores {
+            self.store_cache
+                .write()
+                .await
+                .insert(store.id, store.clone());
+        }
+        Ok(stores)
+    }
+}
+
+const ENGINE_LABEL_KEY: &str = "engine";
+const ENGINE_LABEL_TIFLASH: &str = "tiflash";
+const ENGINE_LABEL_TIFLASH_COMPUTE: &str = "tiflash_compute";
+
+fn is_valid_tikv_store(store: &metapb::Store) -> bool {
+    if store.state == metapb::StoreState::Tombstone.into() {
+        return false;
+    }
+    let is_tiflash = store.labels.iter().any(|label| {
+        label.key == ENGINE_LABEL_KEY
+            && (label.value == ENGINE_LABEL_TIFLASH || label.value == ENGINE_LABEL_TIFLASH_COMPUTE)
+    });
+    !is_tiflash
 }
 
 #[cfg(test)]
@@ -253,6 +286,7 @@ mod test {
     use crate::proto::metapb::{self};
     use crate::region::RegionId;
     use crate::region::RegionWithLeader;
+    use crate::region_cache::is_valid_tikv_store;
     use crate::Key;
     use crate::Result;
 
@@ -511,5 +545,35 @@ mod test {
         // We don't care about other fields here
 
         region
+    }
+
+    #[test]
+    fn test_is_valid_tikv_store() {
+        let mut store = metapb::Store::default();
+        assert!(is_valid_tikv_store(&store));
+
+        store.state = metapb::StoreState::Tombstone.into();
+        assert!(!is_valid_tikv_store(&store));
+
+        store.state = metapb::StoreState::Up.into();
+        assert!(is_valid_tikv_store(&store));
+
+        store.labels.push(metapb::StoreLabel {
+            key: "some_key".to_owned(),
+            value: "some_value".to_owned(),
+        });
+        assert!(is_valid_tikv_store(&store));
+
+        store.labels.push(metapb::StoreLabel {
+            key: "engine".to_owned(),
+            value: "tiflash".to_owned(),
+        });
+        assert!(!is_valid_tikv_store(&store));
+
+        store.labels[1].value = "tiflash_compute".to_owned();
+        assert!(!is_valid_tikv_store(&store));
+
+        store.labels[1].value = "other".to_owned();
+        assert!(is_valid_tikv_store(&store));
     }
 }

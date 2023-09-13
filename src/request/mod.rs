@@ -47,8 +47,9 @@ pub trait KvRequest: Request + Sized + Clone + Sync + Send + 'static {
     // TODO: fn decode_response()
 }
 
-/// For requests which are handled at TiKV store (other than region) level.
+/// For requests or plans which are handled at TiKV store (other than region) level.
 pub trait StoreRequest {
+    /// Apply the request to specified TiKV store.
     fn apply_store(&mut self, store: &Store);
 }
 

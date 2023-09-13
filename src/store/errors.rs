@@ -52,6 +52,7 @@ has_region_error!(kvrpcpb::CheckTxnStatusResponse);
 has_region_error!(kvrpcpb::CheckSecondaryLocksResponse);
 has_region_error!(kvrpcpb::DeleteRangeResponse);
 has_region_error!(kvrpcpb::GcResponse);
+has_region_error!(kvrpcpb::UnsafeDestroyRangeResponse);
 has_region_error!(kvrpcpb::RawGetResponse);
 has_region_error!(kvrpcpb::RawBatchGetResponse);
 has_region_error!(kvrpcpb::RawPutResponse);
@@ -63,7 +64,6 @@ has_region_error!(kvrpcpb::RawScanResponse);
 has_region_error!(kvrpcpb::RawBatchScanResponse);
 has_region_error!(kvrpcpb::RawCasResponse);
 has_region_error!(kvrpcpb::RawCoprocessorResponse);
-has_region_error!(kvrpcpb::UnsafeDestroyRangeResponse);
 
 macro_rules! has_key_error {
     ($type:ty) => {
