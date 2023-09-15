@@ -20,12 +20,15 @@ check: generate
 	cargo clippy --all-targets --features "${ALL_FEATURES}" -- -D clippy::all
 
 unit-test: generate
-	cargo test --all --no-default-features
+	cargo nextest run --all --no-default-features
 
 integration-test: generate
-	cargo test txn_ --all ${INTEGRATION_TEST_ARGS} -- --nocapture
-	cargo test raw_ --all ${INTEGRATION_TEST_ARGS} -- --nocapture
-	cargo test misc_ --all ${INTEGRATION_TEST_ARGS} -- --nocapture
+	cargo nextest run txn_ --all ${INTEGRATION_TEST_ARGS}
+#-- --nocapture
+	cargo nextest run raw_ --all ${INTEGRATION_TEST_ARGS}
+#-- --nocapture
+	cargo nextest run misc_ --all ${INTEGRATION_TEST_ARGS}
+#-- --nocapture
 
 test: unit-test integration-test
 

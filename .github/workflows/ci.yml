@@ -3,6 +3,9 @@ on:
   push:
     branches:
       - master
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 
 name: CI
 
@@ -11,14 +14,14 @@ jobs:
     name: check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Install Protoc
         uses: arduino/setup-protoc@v1
         with:
           version: '3.x'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v1.4.0
+        uses: Swatinem/rust-cache@v2
       - name: make check
         run: make check
       - name: Catch unexpected changes in the generated code
@@ -31,14 +34,16 @@ jobs:
       CARGO_INCREMENTAL: 0
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Install Protoc
         uses: arduino/setup-protoc@v1
         with:
           version: '3.x'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v1.4.0
+        uses: Swatinem/rust-cache@v2
+      - name: Install latest nextest release
+        uses: taiki-e/install-action@nextest
       - name: unit test
         run: make unit-test
 
@@ -48,14 +53,14 @@ jobs:
       CARGO_INCREMENTAL: 0
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Install Protoc
         uses: arduino/setup-protoc@v1
         with:
           version: '3.x'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v1.4.0
+        uses: Swatinem/rust-cache@v2
       - name: install tiup
         run: curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
       - name: start tiup playground
@@ -68,5 +73,7 @@ jobs:
             [[ "$(curl -I http://127.0.0.1:2379/pd/api/v1/regions 2>/dev/null | head -n 1 | cut -d$' ' -f2)" -ne "405" ]] || break
             sleep 1
           done
+      - name: Install latest nextest release
+        uses: taiki-e/install-action@nextest
       - name: integration test
         run: MULTI_REGION=1 make integration-test
