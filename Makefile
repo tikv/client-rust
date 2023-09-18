@@ -23,12 +23,9 @@ unit-test: generate
 	cargo nextest run --all --no-default-features
 
 integration-test: generate
-	cargo nextest run txn_ --all ${INTEGRATION_TEST_ARGS}
-#-- --nocapture
-	cargo nextest run raw_ --all ${INTEGRATION_TEST_ARGS}
-#-- --nocapture
-	cargo nextest run misc_ --all ${INTEGRATION_TEST_ARGS}
-#-- --nocapture
+	cargo test txn_ --all ${INTEGRATION_TEST_ARGS} -- --nocapture
+	cargo test raw_ --all ${INTEGRATION_TEST_ARGS} -- --nocapture
+	cargo test misc_ --all ${INTEGRATION_TEST_ARGS} -- --nocapture
 
 test: unit-test integration-test
 
