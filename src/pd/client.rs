@@ -21,10 +21,10 @@ use crate::region::RegionVerId;
 use crate::region::RegionWithLeader;
 use crate::region_cache::RegionCache;
 use crate::request::codec::{ApiV1TxnCodec, Codec};
-use crate::store::KvClient;
 use crate::store::KvConnect;
 use crate::store::RegionStore;
 use crate::store::TikvConnect;
+use crate::store::{KvClient, Store};
 use crate::BoundRange;
 use crate::Config;
 use crate::Key;
@@ -77,6 +77,8 @@ pub trait PdClient: Send + Sync + 'static {
         let region = self.region_for_id(id).await?;
         self.map_region_to_store(region).await
     }
+
+    async fn all_stores(&self) -> Result<Vec<Store>>;
 
     fn group_keys_by_region<K, K2>(
         self: Arc<Self>,
@@ -253,6 +255,16 @@ impl<Cod: Codec, KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClien
     async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {
         let region = self.region_cache.get_region_by_id(id).await?;
         Self::decode_region(region, self.enable_mvcc_codec)
+    }
+
+    async fn all_stores(&self) -> Result<Vec<Store>> {
+        let pb_stores = self.region_cache.read_through_all_stores().await?;
+        let mut stores = Vec::with_capacity(pb_stores.len());
+        for store in pb_stores {
+            let client = self.kv_client(&store.address).await?;
+            stores.push(Store::new(Arc::new(client)));
+        }
+        Ok(stores)
     }
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {

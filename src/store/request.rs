@@ -116,3 +116,8 @@ impl_request!(
 );
 impl_request!(GcRequest, kv_gc, "kv_gc");
 impl_request!(DeleteRangeRequest, kv_delete_range, "kv_delete_range");
+impl_request!(
+    UnsafeDestroyRangeRequest,
+    unsafe_destroy_range,
+    "unsafe_destroy_range"
+);

@@ -1200,3 +1200,63 @@ async fn verify_mutate(is_pessimistic: bool) {
         Some(Value::from("v2".to_owned())).as_ref()
     );
 }
+
+#[tokio::test]
+#[serial]
+async fn txn_unsafe_destroy_range() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+
+    const DATA_COUNT: usize = 10;
+
+    {
+        let mut txn = client.begin_pessimistic().await.unwrap();
+        for i in 0..DATA_COUNT {
+            let prefix = i % 2;
+            let idx = i / 2;
+            txn.put(
+                format!("prefix{}_key{}", prefix, idx).into_bytes(),
+                format!("value{}{}", prefix, idx).into_bytes(),
+            )
+            .await
+            .unwrap();
+        }
+        txn.commit().await.unwrap();
+
+        let mut snapshot = client.snapshot(
+            client.current_timestamp().await.unwrap(),
+            TransactionOptions::new_pessimistic(),
+        );
+        let kvs = snapshot
+            .scan(b"prefix0".to_vec()..b"prefix2".to_vec(), 100)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(kvs.len(), DATA_COUNT);
+    }
+
+    {
+        // destroy "prefix0"
+        client
+            .unsafe_destroy_range(b"prefix0".to_vec()..b"prefix1".to_vec())
+            .await
+            .unwrap();
+
+        let mut snapshot = client.snapshot(
+            client.current_timestamp().await.unwrap(),
+            TransactionOptions::new_pessimistic(),
+        );
+        let kvs = snapshot
+            .scan(b"prefix0".to_vec()..b"prefix2".to_vec(), 100)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(kvs.len(), DATA_COUNT / 2);
+        for (i, kv) in kvs.into_iter().enumerate() {
+            assert_eq!(kv.key(), &Key::from(format!("prefix1_key{}", i)));
+            assert_eq!(kv.value(), &format!("value1{}", i).into_bytes());
+        }
+    }
+
+    Ok(())
+}
