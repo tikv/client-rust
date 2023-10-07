@@ -160,7 +160,6 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
-    #[allow(dead_code)]
     async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
         retry!(self, "get_all_stores", |cluster| async {
             cluster

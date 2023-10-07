@@ -28,8 +28,8 @@ use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::backoff::OPTIMISTIC_BACKOFF;
 use crate::backoff::PESSIMISTIC_BACKOFF;
-use crate::store::HasKeyErrors;
 use crate::store::Request;
+use crate::store::{HasKeyErrors, Store};
 use crate::transaction::HasLocks;
 
 pub mod codec;
@@ -45,6 +45,12 @@ pub trait KvRequest: Request + Sized + Clone + Sync + Send + 'static {
 
     // TODO: fn encode_request()
     // TODO: fn decode_response()
+}
+
+/// For requests or plans which are handled at TiKV store (other than region) level.
+pub trait StoreRequest {
+    /// Apply the request to specified TiKV store.
+    fn apply_store(&mut self, store: &Store);
 }
 
 #[derive(Clone, Debug, new, Eq, PartialEq)]

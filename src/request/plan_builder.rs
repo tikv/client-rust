@@ -7,9 +7,8 @@ use super::plan::PreserveShard;
 use crate::backoff::Backoff;
 use crate::pd::PdClient;
 use crate::request::codec::EncodedRequest;
-use crate::request::plan::CleanupLocks;
+use crate::request::plan::{CleanupLocks, RetryableAllStores};
 use crate::request::shard::HasNextBatch;
-use crate::request::DefaultProcessor;
 use crate::request::Dispatch;
 use crate::request::ExtractError;
 use crate::request::KvRequest;
@@ -22,6 +21,7 @@ use crate::request::ProcessResponse;
 use crate::request::ResolveLock;
 use crate::request::RetryableMultiRegion;
 use crate::request::Shardable;
+use crate::request::{DefaultProcessor, StoreRequest};
 use crate::store::HasKeyErrors;
 use crate::store::HasRegionError;
 use crate::store::HasRegionErrors;
@@ -191,6 +191,26 @@ impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
         store: RegionStore,
     ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
         set_single_region_store(self.plan, store, self.pd_client)
+    }
+}
+
+impl<PdC: PdClient, P: Plan + StoreRequest> PlanBuilder<PdC, P, NoTarget>
+where
+    P::Result: HasKeyErrors + HasRegionError,
+{
+    pub fn all_stores(
+        self,
+        backoff: Backoff,
+    ) -> PlanBuilder<PdC, RetryableAllStores<P, PdC>, Targetted> {
+        PlanBuilder {
+            pd_client: self.pd_client.clone(),
+            plan: RetryableAllStores {
+                inner: self.plan,
+                pd_client: self.pd_client,
+                backoff,
+            },
+            phantom: PhantomData,
+        }
     }
 }
 
