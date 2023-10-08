@@ -113,7 +113,11 @@ We welcome your contributions! Contributing code is great, we also appreciate fi
 
 ## Building and testing
 
-We use the standard Cargo workflows, e.g., `cargo build` to build and `cargo test` to run unit tests. You will need to use a nightly Rust toolchain to build and run tests.
+We use the standard Cargo workflows, e.g., `cargo build` to build and `cargo test/nextest` to run unit tests. You will need to use a nightly Rust toolchain to build and run tests. Could use [nextest](https://nexte.st/index.html) to speed up ut, install nextest first.
+
+```
+cargo install cargo-nextest --locked
+```
 
 Running integration tests or manually testing the client with a TiKV cluster is a little bit more involved. The easiest way is to use [TiUp](https://github.com/pingcap/tiup) (>= 1.5) to initialise a cluster on your local machine:
 
@@ -131,7 +135,7 @@ PD_ADDRS="127.0.0.1:2379" cargo test --package tikv-client --test integration_te
 
 We use a standard GitHub PR workflow. We run CI on every PR and require all PRs to build without warnings (including clippy and Rustfmt warnings), pass tests, have a DCO sign-off (use `-s` when you commit, the DCO bot will guide you through completing the DCO agreement for your first PR), and have at least one review. If any of this is difficult for you, don't worry about it and ask on the PR.
 
-To run CI-like tests locally, we recommend you run `cargo clippy`, `cargo test`, and `cargo fmt` before submitting your PR. See above for running integration tests, but you probably won't need to worry about this for your first few PRs.
+To run CI-like tests locally, we recommend you run `cargo clippy`, `cargo test/nextest run`, and `cargo fmt` before submitting your PR. See above for running integration tests, but you probably won't need to worry about this for your first few PRs.
 
 Please follow PingCAP's  [Rust style guide](https://pingcap.github.io/style-guide/rust/). All code PRs should include new tests or test cases.
 
