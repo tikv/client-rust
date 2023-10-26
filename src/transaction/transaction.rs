@@ -791,6 +791,8 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         let range = range.into();
         Span::current().record("range", &tracing::field::debug(&range));
 
+        tracing::info!("scan_inner xxx");
+
         self.buffer
             .scan_and_fetch(
                 range,
