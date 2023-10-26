@@ -1,5 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::fmt;
 use std::iter;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -12,6 +13,7 @@ use log::debug;
 use log::warn;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
+use tracing::{instrument, Span};
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
@@ -85,6 +87,17 @@ pub struct Transaction<Cod: Codec = ApiV1TxnCodec, PdC: PdClient = PdRpcClient<C
     is_heartbeat_started: bool,
     start_instant: Instant,
     phantom: PhantomData<Cod>,
+}
+
+impl<Cod: Codec, PdC: PdClient<Codec = Cod>> fmt::Debug for Transaction<Cod, PdC> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Transaction")
+            .field("timestamp", &self.timestamp)
+            .field("options", &self.options)
+            .field("is_heartbeat_started", &self.is_heartbeat_started)
+            .field("start_instant", &self.start_instant)
+            .finish()
+    }
 }
 
 impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
@@ -353,6 +366,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
+    #[instrument(skip_all)]
     pub async fn scan(
         &mut self,
         range: impl Into<BoundRange>,
@@ -389,6 +403,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
+    #[instrument(skip_all)]
     pub async fn scan_keys(
         &mut self,
         range: impl Into<BoundRange>,
@@ -404,6 +419,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// Create a 'scan_reverse' request.
     ///
     /// Similar to [`scan`](Transaction::scan), but scans in the reverse direction.
+    #[instrument(skip_all)]
     pub async fn scan_reverse(
         &mut self,
         range: impl Into<BoundRange>,
@@ -416,6 +432,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// Create a 'scan_keys_reverse' request.
     ///
     /// Similar to [`scan`](Transaction::scan_keys), but scans in the reverse direction.
+    #[instrument(skip_all)]
     pub async fn scan_keys_reverse(
         &mut self,
         range: impl Into<BoundRange>,
@@ -758,6 +775,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         plan.execute().await
     }
 
+    #[instrument(skip(range), fields(range))]
     async fn scan_inner(
         &mut self,
         range: impl Into<BoundRange>,
@@ -770,9 +788,12 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         let rpc = self.rpc.clone();
         let retry_options = self.options.retry_options.clone();
 
+        let range = range.into();
+        Span::current().record("range", &tracing::field::debug(&range));
+
         self.buffer
             .scan_and_fetch(
-                range.into(),
+                range,
                 limit,
                 !key_only,
                 reverse,

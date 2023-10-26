@@ -11,6 +11,7 @@ use log::debug;
 use log::info;
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
+use tracing::instrument;
 
 use crate::backoff::Backoff;
 use crate::pd::PdClient;
@@ -104,6 +105,7 @@ where
 {
     // A plan may involve multiple shards
     #[async_recursion]
+    #[instrument(skip_all)]
     async fn single_plan_handler(
         pd_client: Arc<PdC>,
         current_plan: P,
