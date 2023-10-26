@@ -7,10 +7,10 @@ use async_recursion::async_recursion;
 use async_trait::async_trait;
 use futures::future::try_join_all;
 use futures::prelude::*;
-use log::debug;
-use log::info;
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
+use tracing::debug;
+use tracing::info;
 use tracing::instrument;
 
 use crate::backoff::Backoff;
@@ -58,7 +58,9 @@ pub struct Dispatch<Req: KvRequest> {
 impl<Req: KvRequest> Plan for Dispatch<Req> {
     type Result = Req::Response;
 
+    #[instrument(skip_all, fields(label = self.request.label(), request = ?self.request))]
     async fn execute(&self) -> Result<Self::Result> {
+        debug!("execute");
         let stats = tikv_stats(self.request.label());
         let result = self
             .kv_client
@@ -113,6 +115,7 @@ where
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
     ) -> Result<<Self as Plan>::Result> {
+        debug!("single_plan_handler");
         let shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
         let mut handles = Vec::new();
         for shard in shards {
@@ -151,6 +154,7 @@ where
     }
 
     #[async_recursion]
+    #[instrument(skip_all, fields(region = ?region_store.region_with_leader))]
     async fn single_shard_handler(
         pd_client: Arc<PdC>,
         plan: P,
@@ -159,6 +163,7 @@ where
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
     ) -> Result<<Self as Plan>::Result> {
+        debug!("single_shard_handler");
         // limit concurrent requests
         let permit = permits.acquire().await.unwrap();
         let res = plan.execute().await;
@@ -212,11 +217,13 @@ where
     // 1. Ok(true): error has been resolved, retry immediately
     // 2. Ok(false): backoff, and then retry
     // 3. Err(Error): can't be resolved, return the error to upper level
+    #[instrument(skip_all, fields(region = ?region_store.region_with_leader))]
     async fn handle_region_error(
         pd_client: Arc<PdC>,
         e: errorpb::Error,
         region_store: RegionStore,
     ) -> Result<bool> {
+        debug!("handle_region_error: {:?}", e);
         let ver_id = region_store.region_with_leader.ver_id();
         if let Some(not_leader) = e.not_leader {
             if let Some(leader) = not_leader.leader {
@@ -268,11 +275,13 @@ where
     // 1. Ok(true): error has been resolved, retry immediately
     // 2. Ok(false): backoff, and then retry
     // 3. Err(Error): can't be resolved, return the error to upper level
+    #[instrument(skip_all, fields(region = ?region_store.region_with_leader))]
     async fn on_region_epoch_not_match(
         pd_client: Arc<PdC>,
         region_store: RegionStore,
         error: EpochNotMatch,
     ) -> Result<bool> {
+        debug!("on_region_epoch_not_match: {:?}", error);
         let ver_id = region_store.region_with_leader.ver_id();
         if error.current_regions.is_empty() {
             pd_client.invalidate_region_cache(ver_id).await;
@@ -304,6 +313,7 @@ where
         Ok(false)
     }
 
+    #[instrument(skip_all, fields(region = ?region_store.region_with_leader))]
     async fn handle_grpc_error(
         pd_client: Arc<PdC>,
         plan: P,
@@ -313,7 +323,7 @@ where
         preserve_region_results: bool,
         e: Error,
     ) -> Result<<Self as Plan>::Result> {
-        debug!("handle grpc error: {:?}", e);
+        debug!("handle_grpc_error: {:?}", e);
         let ver_id = region_store.region_with_leader.ver_id();
         pd_client.invalidate_region_cache(ver_id).await;
         match backoff.next_delay_duration() {
@@ -351,6 +361,7 @@ where
 {
     type Result = Vec<Result<P::Result>>;
 
+    #[instrument(skip_all)]
     async fn execute(&self) -> Result<Self::Result> {
         // Limit the maximum concurrency of multi-region request. If there are
         // too many concurrent requests, TiKV is more likely to return a "TiKV

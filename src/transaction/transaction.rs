@@ -9,11 +9,12 @@ use std::time::Instant;
 use derive_new::new;
 use fail::fail_point;
 use futures::prelude::*;
-use log::debug;
-use log::warn;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
-use tracing::{instrument, Span};
+use tracing::debug;
+use tracing::instrument;
+use tracing::warn;
+use tracing::Span;
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
@@ -775,7 +776,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         plan.execute().await
     }
 
-    #[instrument(skip(range), fields(range))]
+    #[instrument(skip(self, range), fields(range))]
     async fn scan_inner(
         &mut self,
         range: impl Into<BoundRange>,
@@ -783,6 +784,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         key_only: bool,
         reverse: bool,
     ) -> Result<impl Iterator<Item = KvPair>> {
+        debug!("scan_inner");
         self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
@@ -790,8 +792,6 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
 
         let range = range.into();
         Span::current().record("range", &tracing::field::debug(&range));
-
-        tracing::info!("scan_inner xxx");
 
         self.buffer
             .scan_and_fetch(
