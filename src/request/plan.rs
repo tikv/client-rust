@@ -9,9 +9,9 @@ use futures::future::try_join_all;
 use futures::prelude::*;
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
-use tracing::instrument;
 use tracing::{debug, span};
 use tracing::{info, Instrument};
+use tracing::{info_span, instrument};
 
 use crate::backoff::Backoff;
 use crate::pd::PdClient;
@@ -58,7 +58,7 @@ pub struct Dispatch<Req: KvRequest> {
 impl<Req: KvRequest> Plan for Dispatch<Req> {
     type Result = Req::Response;
 
-    #[instrument(name = "Dispatch::execute", skip_all, fields(label = self.request.label(), request = ?self.request))]
+    #[instrument(name = "Dispatch::execute", skip_all, fields(label = self.request.label()))]
     async fn execute(&self) -> Result<Self::Result> {
         debug!("Dispatch::execute");
         let stats = tikv_stats(self.request.label());
@@ -69,6 +69,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             .dispatch(&self.request)
             .await;
         let result = stats.done(result);
+        debug!("Dispatch::execute done");
         result.map(|r| {
             *r.downcast()
                 .expect("Downcast failed: request and response type mismatch")
@@ -139,6 +140,7 @@ where
         }
 
         let results = try_join_all(handles).await?;
+        debug!("single_plan_handler done");
         if preserve_region_results {
             Ok(results
                 .into_iter()
@@ -173,6 +175,7 @@ where
         let permit = permits.acquire().await.unwrap();
         let res = plan.execute().await;
         drop(permit);
+        debug!("single_shard_handler execute done");
 
         let mut resp = match res {
             Ok(resp) => resp,
@@ -331,7 +334,7 @@ where
         debug!("handle_grpc_error: {:?}", e);
         let ver_id = region_store.region_with_leader.ver_id();
         pd_client.invalidate_region_cache(ver_id).await;
-        match backoff.next_delay_duration() {
+        let res = match backoff.next_delay_duration() {
             Some(duration) => {
                 sleep(duration).await;
                 Self::single_plan_handler(
@@ -344,7 +347,9 @@ where
                 .await
             }
             None => Err(e),
-        }
+        };
+        debug!("handle_grpc_error done");
+        res
     }
 }
 
@@ -487,6 +492,7 @@ impl<In: Clone + Send + Sync + 'static, P: Plan<Result = Vec<Result<In>>>, M: Me
 {
     type Result = M::Out;
 
+    #[instrument(name = "MergeResponse::execute", skip_all)]
     async fn execute(&self) -> Result<Self::Result> {
         self.merge.merge(self.inner.execute().await?)
     }
@@ -584,15 +590,21 @@ where
     type Result = P::Result;
 
     async fn execute(&self) -> Result<Self::Result> {
+        let span = info_span!("ResolveLock::execute");
+        let _enter = span.enter();
+        debug!("ResolveLock::execute");
+
         let mut result = self.inner.execute().await?;
         let mut clone = self.clone();
         loop {
             let locks = result.take_locks();
             if locks.is_empty() {
+                debug!("ResolveLock::execute ok");
                 return Ok(result);
             }
 
             if self.backoff.is_none() {
+                debug!("ResolveLock::execute lock error");
                 return Err(Error::ResolveLockError(locks));
             }
 
@@ -602,7 +614,10 @@ where
                 result = self.inner.execute().await?;
             } else {
                 match clone.backoff.next_delay_duration() {
-                    None => return Err(Error::ResolveLockError(live_locks)),
+                    None => {
+                        debug!("ResolveLock::execute lock error");
+                        return Err(Error::ResolveLockError(live_locks));
+                    }
                     Some(delay_duration) => {
                         sleep(delay_duration).await;
                         result = clone.inner.execute().await?;

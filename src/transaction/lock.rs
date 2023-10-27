@@ -5,13 +5,15 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use fail::fail_point;
-use log::debug;
-use log::error;
 use tokio::sync::RwLock;
+use tracing::error;
+use tracing::instrument;
+use tracing::{debug, info_span};
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::backoff::OPTIMISTIC_BACKOFF;
+use crate::kv::HexRepr;
 use crate::pd::PdClient;
 use crate::proto::kvrpcpb;
 use crate::proto::kvrpcpb::TxnInfo;
@@ -41,6 +43,7 @@ const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 /// the key. We first use `CleanupRequest` to let the status of the primary lock converge and get
 /// its status (committed or rolled back). Then, we use the status of its primary lock to determine
 /// the status of the other keys in the same transaction.
+#[instrument(skip_all)]
 pub async fn resolve_locks(
     locks: Vec<kvrpcpb::LockInfo>,
     pd_client: Arc<impl PdClient>,
@@ -59,6 +62,9 @@ pub async fn resolve_locks(
     let mut commit_versions: HashMap<u64, u64> = HashMap::new();
     let mut clean_regions: HashMap<u64, HashSet<RegionVerId>> = HashMap::new();
     for lock in expired_locks {
+        let span = info_span!("cleanup_expired_lock", lock.lock_version, lock.primary_lock = %HexRepr(&lock.primary_lock));
+        let _enter = span.enter();
+
         let region_ver_id = pd_client
             .region_for_key(&lock.primary_lock.clone().into())
             .await?
@@ -75,6 +81,7 @@ pub async fn resolve_locks(
         let commit_version = match commit_versions.get(&lock.lock_version) {
             Some(&commit_version) => commit_version,
             None => {
+                debug!("cleanup lock");
                 let request = requests::new_cleanup_request(lock.primary_lock, lock.lock_version);
                 let encoded_req = EncodedRequest::new(request, pd_client.get_codec());
                 let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
@@ -84,6 +91,7 @@ pub async fn resolve_locks(
                     .post_process_default()
                     .plan();
                 let commit_version = plan.execute().await?;
+                debug!("cleanup lock done: commit_version {}", commit_version);
                 commit_versions.insert(lock.lock_version, commit_version);
                 commit_version
             }
@@ -104,6 +112,7 @@ pub async fn resolve_locks(
     Ok(live_locks)
 }
 
+#[instrument(skip(key, pd_client), fields(key = %HexRepr(key)))]
 async fn resolve_lock_with_retry(
     #[allow(clippy::ptr_arg)] key: &Vec<u8>,
     start_version: u64,
@@ -134,6 +143,7 @@ async fn resolve_lock_with_retry(
                 // ResolveLockResponse can have at most 1 error
                 match errors.pop() {
                     e @ Some(Error::RegionError(_)) => {
+                        pd_client.invalidate_region_cache(ver_id).await;
                         error = e;
                         continue;
                     }

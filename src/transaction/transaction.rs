@@ -776,7 +776,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         plan.execute().await
     }
 
-    #[instrument(skip(self, range), fields(range))]
+    #[instrument(skip(self, range), fields(range, version=self.timestamp.version()))]
     async fn scan_inner(
         &mut self,
         range: impl Into<BoundRange>,

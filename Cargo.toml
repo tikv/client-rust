@@ -43,7 +43,7 @@ serde_derive = "1.0"
 thiserror = "1"
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
 tonic = { version = "0.9", features = ["tls"] }
-tracing = "0.1"
+tracing = "0.1.40"
 
 [dev-dependencies]
 clap = "2"
