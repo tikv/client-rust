@@ -367,7 +367,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    #[instrument(skip_all)]
+    #[instrument(name = "Transaction::scan", skip_all)]
     pub async fn scan(
         &mut self,
         range: impl Into<BoundRange>,
@@ -404,7 +404,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    #[instrument(skip_all)]
+    #[instrument(name = "Transaction::scan_keys", skip_all)]
     pub async fn scan_keys(
         &mut self,
         range: impl Into<BoundRange>,
@@ -420,7 +420,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// Create a 'scan_reverse' request.
     ///
     /// Similar to [`scan`](Transaction::scan), but scans in the reverse direction.
-    #[instrument(skip_all)]
+    #[instrument(name = "Transaction::scan_reverse", skip_all)]
     pub async fn scan_reverse(
         &mut self,
         range: impl Into<BoundRange>,
@@ -433,7 +433,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// Create a 'scan_keys_reverse' request.
     ///
     /// Similar to [`scan`](Transaction::scan_keys), but scans in the reverse direction.
-    #[instrument(skip_all)]
+    #[instrument(name = "Transaction::scan_keys_reverse", skip_all)]
     pub async fn scan_keys_reverse(
         &mut self,
         range: impl Into<BoundRange>,
@@ -784,7 +784,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         key_only: bool,
         reverse: bool,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        debug!("scan_inner");
+        debug!("Transaction::scan_inner");
         self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();

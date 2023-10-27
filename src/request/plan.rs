@@ -9,9 +9,9 @@ use futures::future::try_join_all;
 use futures::prelude::*;
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
-use tracing::debug;
-use tracing::info;
 use tracing::instrument;
+use tracing::{debug, span};
+use tracing::{info, Instrument};
 
 use crate::backoff::Backoff;
 use crate::pd::PdClient;
@@ -58,9 +58,9 @@ pub struct Dispatch<Req: KvRequest> {
 impl<Req: KvRequest> Plan for Dispatch<Req> {
     type Result = Req::Response;
 
-    #[instrument(skip_all, fields(label = self.request.label(), request = ?self.request))]
+    #[instrument(name = "Dispatch::execute", skip_all, fields(label = self.request.label(), request = ?self.request))]
     async fn execute(&self) -> Result<Self::Result> {
-        debug!("execute");
+        debug!("Dispatch::execute");
         let stats = tikv_stats(self.request.label());
         let result = self
             .kv_client
@@ -120,16 +120,21 @@ where
         let mut handles = Vec::new();
         for shard in shards {
             let (shard, region_store) = shard?;
+            let span = span!(tracing::Level::INFO, "shard", ?region_store);
+
             let mut clone = current_plan.clone();
             clone.apply_shard(shard, &region_store)?;
-            let handle = tokio::spawn(Self::single_shard_handler(
-                pd_client.clone(),
-                clone,
-                region_store,
-                backoff.clone(),
-                permits.clone(),
-                preserve_region_results,
-            ));
+            let handle = tokio::spawn(
+                Self::single_shard_handler(
+                    pd_client.clone(),
+                    clone,
+                    region_store,
+                    backoff.clone(),
+                    permits.clone(),
+                    preserve_region_results,
+                )
+                .instrument(span),
+            );
             handles.push(handle);
         }
 
@@ -154,7 +159,7 @@ where
     }
 
     #[async_recursion]
-    #[instrument(skip_all, fields(region = ?region_store.region_with_leader))]
+    #[instrument(skip_all, fields(region_store = ?region_store))]
     async fn single_shard_handler(
         pd_client: Arc<PdC>,
         plan: P,
@@ -217,7 +222,7 @@ where
     // 1. Ok(true): error has been resolved, retry immediately
     // 2. Ok(false): backoff, and then retry
     // 3. Err(Error): can't be resolved, return the error to upper level
-    #[instrument(skip_all, fields(region = ?region_store.region_with_leader))]
+    #[instrument(skip_all, fields(region_store = ?region_store))]
     async fn handle_region_error(
         pd_client: Arc<PdC>,
         e: errorpb::Error,
@@ -275,7 +280,7 @@ where
     // 1. Ok(true): error has been resolved, retry immediately
     // 2. Ok(false): backoff, and then retry
     // 3. Err(Error): can't be resolved, return the error to upper level
-    #[instrument(skip_all, fields(region = ?region_store.region_with_leader))]
+    #[instrument(skip_all, fields(region_store = ?region_store))]
     async fn on_region_epoch_not_match(
         pd_client: Arc<PdC>,
         region_store: RegionStore,
@@ -313,7 +318,7 @@ where
         Ok(false)
     }
 
-    #[instrument(skip_all, fields(region = ?region_store.region_with_leader))]
+    #[instrument(skip_all, fields(region_store = ?region_store))]
     async fn handle_grpc_error(
         pd_client: Arc<PdC>,
         plan: P,
@@ -361,7 +366,7 @@ where
 {
     type Result = Vec<Result<P::Result>>;
 
-    #[instrument(skip_all)]
+    #[instrument(name = "RetryableMultiRegion::execute", skip_all)]
     async fn execute(&self) -> Result<Self::Result> {
         // Limit the maximum concurrency of multi-region request. If there are
         // too many concurrent requests, TiKV is more likely to return a "TiKV

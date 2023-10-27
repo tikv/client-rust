@@ -3,6 +3,7 @@
 use derive_new::new;
 use log::debug;
 use std::marker::PhantomData;
+use tracing::instrument;
 
 use crate::codec::ApiV1TxnCodec;
 use crate::pd::{PdClient, PdRpcClient};
@@ -50,6 +51,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Snapshot<Cod, PdC> {
     }
 
     /// Scan a range, return at most `limit` key-value pairs that lying in the range.
+    #[instrument(name = "Snapshot::scan", skip_all)]
     pub async fn scan(
         &mut self,
         range: impl Into<BoundRange>,
