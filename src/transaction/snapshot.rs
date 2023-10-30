@@ -23,7 +23,7 @@ use crate::Value;
 ///
 /// See the [Transaction](struct@crate::Transaction) docs for more information on the methods.
 #[derive(new)]
-pub struct Snapshot<Cod: Codec = ApiV1TxnCodec, PdC: PdClient = PdRpcClient<Cod>> {
+pub struct Snapshot<Cod: Codec = ApiV1TxnCodec, PdC: PdClient<Codec = Cod> = PdRpcClient<Cod>> {
     transaction: Transaction<Cod, PdC>,
     phantom: PhantomData<Cod>,
 }

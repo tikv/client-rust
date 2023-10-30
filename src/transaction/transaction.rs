@@ -13,7 +13,6 @@ use tokio::sync::RwLock;
 use tokio::time::Duration;
 use tracing::debug;
 use tracing::instrument;
-use tracing::warn;
 use tracing::Span;
 
 use crate::backoff::Backoff;
@@ -79,7 +78,7 @@ use crate::Value;
 /// txn.commit().await.unwrap();
 /// # });
 /// ```
-pub struct Transaction<Cod: Codec = ApiV1TxnCodec, PdC: PdClient = PdRpcClient<Cod>> {
+pub struct Transaction<Cod: Codec = ApiV1TxnCodec, PdC: PdClient<Codec = Cod> = PdRpcClient<Cod>> {
     status: Arc<RwLock<TransactionStatus>>,
     timestamp: Timestamp,
     buffer: Buffer,
@@ -1002,28 +1001,29 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     }
 }
 
-impl<Cod: Codec, PdC: PdClient> Drop for Transaction<Cod, PdC> {
+impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Drop for Transaction<Cod, PdC> {
+    #[instrument(skip_all, fields(version=self.timestamp.version()))]
     fn drop(&mut self) {
         debug!("dropping transaction");
-        if std::thread::panicking() {
-            return;
-        }
-        // Don't use `futures::executor::block_on`.
-        // See https://github.com/tokio-rs/tokio/issues/2376.
-        let mut status = self.status.blocking_write();
-        if *status == TransactionStatus::Active {
-            match self.options.check_level {
-                CheckLevel::Panic => {
-                    panic!("Dropping an active transaction. Consider commit or rollback it.")
-                }
-                CheckLevel::Warn => {
-                    warn!("Dropping an active transaction. Consider commit or rollback it.")
-                }
-
-                CheckLevel::None => {}
-            }
-        }
-        *status = TransactionStatus::Dropped;
+        // if std::thread::panicking() {
+        //     return;
+        // }
+        // // Don't use `futures::executor::block_on`.
+        // // See https://github.com/tokio-rs/tokio/issues/2376.
+        // let mut status = tokio::task::spawn_blocking(self.status.write());
+        // if *status == TransactionStatus::Active {
+        //     match self.options.check_level {
+        //         CheckLevel::Panic => {
+        //             panic!("Dropping an active transaction. Consider commit or rollback it.")
+        //         }
+        //         CheckLevel::Warn => {
+        //             warn!("Dropping an active transaction. Consider commit or rollback it.")
+        //         }
+        //
+        //         CheckLevel::None => {}
+        //     }
+        // }
+        // *status = TransactionStatus::Dropped;
     }
 }
 
@@ -1472,6 +1472,7 @@ enum TransactionStatus {
     /// The transaction has tried to rollback. Only `rollback` is allowed.
     StartedRollback,
     /// The transaction has been dropped.
+    #[allow(dead_code)]
     Dropped,
 }
 
