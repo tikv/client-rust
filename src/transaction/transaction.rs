@@ -1008,7 +1008,9 @@ impl<Cod: Codec, PdC: PdClient> Drop for Transaction<Cod, PdC> {
         if std::thread::panicking() {
             return;
         }
-        let mut status = futures::executor::block_on(self.status.write());
+        // Don't use `futures::executor::block_on`.
+        // See https://github.com/tokio-rs/tokio/issues/2376.
+        let mut status = self.status.blocking_write();
         if *status == TransactionStatus::Active {
             match self.options.check_level {
                 CheckLevel::Panic => {
