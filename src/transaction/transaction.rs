@@ -3,14 +3,14 @@
 use std::fmt;
 use std::iter;
 use std::marker::PhantomData;
+use std::sync::atomic;
+use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
 use std::time::Instant;
 
 use derive_new::new;
 use fail::fail_point;
 use futures::prelude::*;
-use tokio::sync::RwLock;
-use tokio::time::Duration;
 use tracing::instrument;
 use tracing::Span;
 use tracing::{debug, warn};
@@ -79,7 +79,7 @@ use crate::Value;
 /// # });
 /// ```
 pub struct Transaction<Cod: Codec = ApiV1TxnCodec, PdC: PdClient<Codec = Cod> = PdRpcClient<Cod>> {
-    status: Arc<RwLock<TransactionStatus>>,
+    status: Arc<AtomicU8>,
     timestamp: Timestamp,
     buffer: Buffer,
     rpc: Arc<PdC>,
@@ -112,7 +112,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
             TransactionStatus::Active
         };
         Transaction {
-            status: Arc::new(RwLock::new(status)),
+            status: Arc::new(AtomicU8::new(status as u8)),
             timestamp,
             buffer: Buffer::new(options.is_pessimistic()),
             rpc,
@@ -649,15 +649,16 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// ```
     pub async fn commit(&mut self) -> Result<Option<Timestamp>> {
         debug!("commiting transaction");
-        {
-            let mut status = self.status.write().await;
-            if !matches!(
-                *status,
-                TransactionStatus::StartedCommit | TransactionStatus::Active
-            ) {
-                return Err(Error::OperationAfterCommitError);
-            }
-            *status = TransactionStatus::StartedCommit;
+        if !self.transit_status(
+            |status| {
+                matches!(
+                    status,
+                    TransactionStatus::StartedCommit | TransactionStatus::Active
+                )
+            },
+            TransactionStatus::StartedCommit,
+        ) {
+            return Err(Error::OperationAfterCommitError);
         }
 
         let primary_key = self.buffer.get_primary_key();
@@ -682,8 +683,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         .await;
 
         if res.is_ok() {
-            let mut status = self.status.write().await;
-            *status = TransactionStatus::Committed;
+            self.set_status(TransactionStatus::Committed);
         }
         res
     }
@@ -706,21 +706,18 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// ```
     pub async fn rollback(&mut self) -> Result<()> {
         debug!("rolling back transaction");
-        {
-            let status = self.status.read().await;
-            if !matches!(
-                *status,
-                TransactionStatus::StartedRollback
-                    | TransactionStatus::Active
-                    | TransactionStatus::StartedCommit
-            ) {
-                return Err(Error::OperationAfterCommitError);
-            }
-        }
-
-        {
-            let mut status = self.status.write().await;
-            *status = TransactionStatus::StartedRollback;
+        if !self.transit_status(
+            |status| {
+                matches!(
+                    status,
+                    TransactionStatus::StartedRollback
+                        | TransactionStatus::Active
+                        | TransactionStatus::StartedCommit
+                )
+            },
+            TransactionStatus::StartedRollback,
+        ) {
+            return Err(Error::OperationAfterCommitError);
         }
 
         let primary_key = self.buffer.get_primary_key();
@@ -738,8 +735,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         .await;
 
         if res.is_ok() {
-            let mut status = self.status.write().await;
-            *status = TransactionStatus::Rolledback;
+            self.set_status(TransactionStatus::Rolledback);
         }
         res
     }
@@ -927,8 +923,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
 
     /// Checks if the transaction can perform arbitrary operations.
     async fn check_allow_operation(&self) -> Result<()> {
-        let status = self.status.read().await;
-        match *status {
+        match self.get_status() {
             TransactionStatus::ReadOnly | TransactionStatus::Active => Ok(()),
             TransactionStatus::Committed
             | TransactionStatus::Rolledback
@@ -967,9 +962,9 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
             loop {
                 tokio::time::sleep(heartbeat_interval).await;
                 {
-                    let status = status.read().await;
+                    let status: TransactionStatus = status.load(atomic::Ordering::Acquire).into();
                     if matches!(
-                        *status,
+                        status,
                         TransactionStatus::Rolledback
                             | TransactionStatus::Committed
                             | TransactionStatus::Dropped
@@ -998,6 +993,36 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
             }
         });
     }
+
+    fn get_status(&self) -> TransactionStatus {
+        self.status.load(atomic::Ordering::Acquire).into()
+    }
+
+    fn set_status(&self, status: TransactionStatus) {
+        self.status.store(status as u8, atomic::Ordering::Release);
+    }
+
+    fn transit_status<F>(&self, check_status: F, next: TransactionStatus) -> bool
+    where
+        F: Fn(TransactionStatus) -> bool,
+    {
+        let mut current = self.get_status();
+        while check_status(current) {
+            if current == next {
+                return true;
+            }
+            match self.status.compare_exchange_weak(
+                current as u8,
+                next as u8,
+                atomic::Ordering::AcqRel,
+                atomic::Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(x) => current = x.into(),
+            }
+        }
+        false
+    }
 }
 
 impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Drop for Transaction<Cod, PdC> {
@@ -1007,8 +1032,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Drop for Transaction<Cod, PdC> {
         if std::thread::panicking() {
             return;
         }
-        let mut status = futures::executor::block_on(self.status.write());
-        if *status == TransactionStatus::Active {
+        if self.get_status() == TransactionStatus::Active {
             match self.options.check_level {
                 CheckLevel::Panic => {
                     panic!("Dropping an active transaction. Consider commit or rollback it.")
@@ -1020,7 +1044,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Drop for Transaction<Cod, PdC> {
                 CheckLevel::None => {}
             }
         }
-        *status = TransactionStatus::Dropped;
+        self.set_status(TransactionStatus::Dropped);
     }
 }
 
@@ -1454,22 +1478,38 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
 enum TransactionStatus {
     /// The transaction is read-only [`Snapshot`](super::Snapshot), no need to commit or rollback or panic on drop.
-    ReadOnly,
+    ReadOnly = 0,
     /// The transaction have not been committed or rolled back.
-    Active,
+    Active = 1,
     /// The transaction has committed.
-    Committed,
+    Committed = 2,
     /// The transaction has tried to commit. Only `commit` is allowed.
-    StartedCommit,
+    StartedCommit = 3,
     /// The transaction has rolled back.
-    Rolledback,
+    Rolledback = 4,
     /// The transaction has tried to rollback. Only `rollback` is allowed.
-    StartedRollback,
+    StartedRollback = 5,
     /// The transaction has been dropped.
-    Dropped,
+    Dropped = 6,
+}
+
+impl From<u8> for TransactionStatus {
+    fn from(num: u8) -> Self {
+        match num {
+            0 => TransactionStatus::ReadOnly,
+            1 => TransactionStatus::Active,
+            2 => TransactionStatus::Committed,
+            3 => TransactionStatus::StartedCommit,
+            4 => TransactionStatus::Rolledback,
+            5 => TransactionStatus::StartedRollback,
+            6 => TransactionStatus::Dropped,
+            _ => panic!("Unknown transaction status {}", num),
+        }
+    }
 }
 
 #[cfg(test)]
