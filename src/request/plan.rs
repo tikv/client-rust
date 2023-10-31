@@ -60,7 +60,6 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
 
     #[instrument(name = "Dispatch::execute", skip_all, fields(label = self.request.label()))]
     async fn execute(&self) -> Result<Self::Result> {
-        debug!("Dispatch::execute");
         let stats = tikv_stats(self.request.label());
         let result = self
             .kv_client
@@ -69,7 +68,6 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             .dispatch(&self.request)
             .await;
         let result = stats.done(result);
-        debug!("Dispatch::execute done");
         result.map(|r| {
             *r.downcast()
                 .expect("Downcast failed: request and response type mismatch")
@@ -116,7 +114,6 @@ where
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
     ) -> Result<<Self as Plan>::Result> {
-        debug!("single_plan_handler");
         let shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
         let mut handles = Vec::new();
         for shard in shards {
@@ -140,7 +137,6 @@ where
         }
 
         let results = try_join_all(handles).await?;
-        debug!("single_plan_handler done");
         if preserve_region_results {
             Ok(results
                 .into_iter()
@@ -170,12 +166,10 @@ where
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
     ) -> Result<<Self as Plan>::Result> {
-        debug!("single_shard_handler");
         // limit concurrent requests
         let permit = permits.acquire().await.unwrap();
         let res = plan.execute().await;
         drop(permit);
-        debug!("single_shard_handler execute done");
 
         let mut resp = match res {
             Ok(resp) => resp,
@@ -225,13 +219,12 @@ where
     // 1. Ok(true): error has been resolved, retry immediately
     // 2. Ok(false): backoff, and then retry
     // 3. Err(Error): can't be resolved, return the error to upper level
-    #[instrument(skip_all, fields(region_store = ?region_store))]
+    #[instrument(skip_all, fields(region_store = ?region_store, error = ?e))]
     async fn handle_region_error(
         pd_client: Arc<PdC>,
         e: errorpb::Error,
         region_store: RegionStore,
     ) -> Result<bool> {
-        debug!("handle_region_error: {:?}", e);
         let ver_id = region_store.region_with_leader.ver_id();
         if let Some(not_leader) = e.not_leader {
             if let Some(leader) = not_leader.leader {
@@ -283,13 +276,12 @@ where
     // 1. Ok(true): error has been resolved, retry immediately
     // 2. Ok(false): backoff, and then retry
     // 3. Err(Error): can't be resolved, return the error to upper level
-    #[instrument(skip_all, fields(region_store = ?region_store))]
+    #[instrument(skip_all, fields(region_store = ?region_store, error = ?error))]
     async fn on_region_epoch_not_match(
         pd_client: Arc<PdC>,
         region_store: RegionStore,
         error: EpochNotMatch,
     ) -> Result<bool> {
-        debug!("on_region_epoch_not_match: {:?}", error);
         let ver_id = region_store.region_with_leader.ver_id();
         if error.current_regions.is_empty() {
             pd_client.invalidate_region_cache(ver_id).await;
@@ -321,7 +313,7 @@ where
         Ok(false)
     }
 
-    #[instrument(skip_all, fields(region_store = ?region_store))]
+    #[instrument(skip_all, fields(region_store = ?region_store, error = ?e))]
     async fn handle_grpc_error(
         pd_client: Arc<PdC>,
         plan: P,
@@ -331,10 +323,9 @@ where
         preserve_region_results: bool,
         e: Error,
     ) -> Result<<Self as Plan>::Result> {
-        debug!("handle_grpc_error: {:?}", e);
         let ver_id = region_store.region_with_leader.ver_id();
         pd_client.invalidate_region_cache(ver_id).await;
-        let res = match backoff.next_delay_duration() {
+        match backoff.next_delay_duration() {
             Some(duration) => {
                 sleep(duration).await;
                 Self::single_plan_handler(
@@ -347,9 +338,7 @@ where
                 .await
             }
             None => Err(e),
-        };
-        debug!("handle_grpc_error done");
-        res
+        }
     }
 }
 
@@ -592,7 +581,6 @@ where
     async fn execute(&self) -> Result<Self::Result> {
         let span = info_span!("ResolveLock::execute");
         let _enter = span.enter();
-        debug!("ResolveLock::execute");
 
         let mut result = self.inner.execute().await?;
         let mut clone = self.clone();
