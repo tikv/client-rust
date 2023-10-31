@@ -6,6 +6,7 @@ use std::marker::PhantomData;
 use std::sync::atomic;
 use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
+use std::time::Duration;
 use std::time::Instant;
 
 use derive_new::new;
