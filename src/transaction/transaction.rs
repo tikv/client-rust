@@ -988,6 +988,9 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     {
         let mut current = self.get_status();
         while check_status(current) {
+            if current == next {
+                return true;
+            }
             match self.status.compare_exchange_weak(
                 current as u8,
                 next as u8,
