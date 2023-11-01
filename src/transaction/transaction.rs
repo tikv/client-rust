@@ -12,9 +12,10 @@ use std::time::Instant;
 use derive_new::new;
 use fail::fail_point;
 use futures::prelude::*;
+use tracing::debug;
 use tracing::instrument;
+use tracing::warn;
 use tracing::Span;
-use tracing::{debug, warn};
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;

@@ -9,9 +9,12 @@ use futures::future::try_join_all;
 use futures::prelude::*;
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
-use tracing::{debug, span};
-use tracing::{info, Instrument};
-use tracing::{info_span, instrument};
+use tracing::debug;
+use tracing::info;
+use tracing::info_span;
+use tracing::instrument;
+use tracing::span;
+use tracing::Instrument;
 
 use crate::backoff::Backoff;
 use crate::pd::PdClient;

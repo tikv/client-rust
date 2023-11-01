@@ -6,9 +6,10 @@ use std::sync::Arc;
 
 use fail::fail_point;
 use tokio::sync::RwLock;
+use tracing::debug;
 use tracing::error;
+use tracing::info_span;
 use tracing::instrument;
-use tracing::{debug, info_span};
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
