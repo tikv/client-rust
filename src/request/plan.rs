@@ -587,7 +587,12 @@ where
 
         let mut result = self.inner.execute().await?;
         let mut clone = self.clone();
+        let mut retry_cnt = 0;
         loop {
+            retry_cnt += 1;
+            let span = info_span!("ResolveLock::execute::retry", retry_cnt);
+            let _enter = span.enter();
+
             let locks = result.take_locks();
             if locks.is_empty() {
                 debug!("ResolveLock::execute ok");
@@ -602,6 +607,7 @@ where
             let pd_client = self.pd_client.clone();
             let live_locks = resolve_locks(locks, pd_client.clone()).await?;
             if live_locks.is_empty() {
+                debug!("ResolveLock::execute lock error retry (resolved)",);
                 result = self.inner.execute().await?;
             } else {
                 match clone.backoff.next_delay_duration() {
@@ -610,6 +616,10 @@ where
                         return Err(Error::ResolveLockError(live_locks));
                     }
                     Some(delay_duration) => {
+                        debug!(
+                            "ResolveLock::execute lock error retry (delay {:?})",
+                            delay_duration
+                        );
                         sleep(delay_duration).await;
                         result = clone.inner.execute().await?;
                     }

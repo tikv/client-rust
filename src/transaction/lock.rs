@@ -58,6 +58,11 @@ pub async fn resolve_locks(
                 ts.physical - Timestamp::from_version(lock.lock_version).physical
                     >= lock.lock_ttl as i64
             });
+    debug!(
+        "resolving locks: expired_locks {}, live_locks {}",
+        expired_locks.len(),
+        live_locks.len()
+    );
 
     // records the commit version of each primary lock (representing the status of the transaction)
     let mut commit_versions: HashMap<u64, u64> = HashMap::new();

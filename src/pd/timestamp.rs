@@ -20,13 +20,14 @@ use futures::prelude::*;
 use futures::task::AtomicWaker;
 use futures::task::Context;
 use futures::task::Poll;
-use log::debug;
-use log::info;
 use pin_project::pin_project;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tonic::transport::Channel;
+use tracing::debug;
+use tracing::info;
+use tracing::instrument;
 
 use crate::internal_err;
 use crate::proto::pdpb::pd_client::PdClient;
@@ -63,6 +64,7 @@ impl TimestampOracle {
         Ok(TimestampOracle { request_tx })
     }
 
+    #[instrument(name = "TimestampOracle::get_timestamp", skip_all)]
     pub(crate) async fn get_timestamp(self) -> Result<Timestamp> {
         debug!("getting current timestamp");
         let (request, response) = oneshot::channel();
