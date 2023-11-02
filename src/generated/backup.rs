@@ -15,7 +15,7 @@ pub struct BackupMeta {
     pub version: i32,
     /// A set of files that compose a backup.
     /// Note: `files` is deprecated, as it bloats backupmeta. It is kept for
-    ///        compatibility, so new BR can restore older backups.
+    /// compatibility, so new BR can restore older backups.
     #[prost(message, repeated, tag = "4")]
     pub files: ::prost::alloc::vec::Vec<File>,
     /// An index to files contains data files.
@@ -25,14 +25,14 @@ pub struct BackupMeta {
     /// For full backup, the start_version equals to the end_version,
     /// it means point in time.
     /// For incremental backup, the time range is specified as
-    /// (start_version, end_version].
+    /// (start_version, end_version\].
     #[prost(uint64, tag = "5")]
     pub start_version: u64,
     #[prost(uint64, tag = "6")]
     pub end_version: u64,
     /// Table metadata describes database and table info.
     /// Note: `schemas` is deprecated, as it bloats backupmeta. It is kept for
-    ///        compatibility, so new BR can restore older backups.
+    /// compatibility, so new BR can restore older backups.
     #[prost(message, repeated, tag = "7")]
     pub schemas: ::prost::alloc::vec::Vec<Schema>,
     /// An index to files contains Schemas.
@@ -43,16 +43,16 @@ pub struct BackupMeta {
     #[prost(bool, tag = "8")]
     pub is_raw_kv: bool,
     /// Note: `raw_ranges` is deprecated, as it bloats backupmeta. It is kept for
-    ///        compatibility, so new BR can restore older backups.
+    /// compatibility, so new BR can restore older backups.
     #[prost(message, repeated, tag = "9")]
     pub raw_ranges: ::prost::alloc::vec::Vec<RawRange>,
     /// An index to files contains RawRanges.
     #[prost(message, optional, tag = "15")]
     pub raw_range_index: ::core::option::Option<MetaFile>,
     /// In incremental backup, DDLs which are completed in
-    /// (lastBackupTS, backupTS] will be stored here.
+    /// (lastBackupTS, backupTS\] will be stored here.
     /// Note: `raw_ranges` is deprecated, as it bloats backupmeta. It is kept for
-    ///        compatibility, so new BR can restore older backups.
+    /// compatibility, so new BR can restore older backups.
     #[prost(bytes = "vec", tag = "10")]
     pub ddls: ::prost::alloc::vec::Vec<u8>,
     /// An index to files contains DDLs.
@@ -332,7 +332,7 @@ pub struct AzureBlobStorage {
     /// If the node's environment variables($AZURE_CLIENT_ID, $AZURE_TENANT_ID, $AZURE_CLIENT_SECRET) exist,
     /// prefer to use token to access the azure blob.
     ///
-    ///    See <https://docs.microsoft.com/en-us/azure/storage/common/identity-library-acquire-token?toc=/azure/storage/blobs/toc.json>
+    /// See <https://docs.microsoft.com/en-us/azure/storage/common/identity-library-acquire-token?toc=/azure/storage/blobs/toc.json>
     ///
     /// Otherwise, if empty, try to read shared key from the node's environment variable $AZURE_STORAGE_KEY.
     #[prost(string, tag = "6")]
@@ -371,7 +371,7 @@ pub struct CloudDynamic {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Hdfs {
-    ///   a URL: hdfs:///some/path or hdfs://host:port/some/path
+    /// a URL: hdfs:///some/path or hdfs://host:port/some/path
     #[prost(string, tag = "1")]
     pub remote: ::prost::alloc::string::String,
 }

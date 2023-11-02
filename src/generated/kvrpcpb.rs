@@ -49,8 +49,8 @@ pub struct ScanRequest {
     pub key_only: bool,
     #[prost(bool, tag = "6")]
     pub reverse: bool,
-    /// For compatibility, when scanning forward, the range to scan is [start_key, end_key), where start_key < end_key;
-    /// and when scanning backward, it scans [end_key, start_key) in descending order, where end_key < start_key.
+    /// For compatibility, when scanning forward, the range to scan is \[start_key, end_key), where start_key \< end_key;
+    /// and when scanning backward, it scans \[end_key, start_key) in descending order, where end_key \< start_key.
     #[prost(bytes = "vec", tag = "7")]
     pub end_key: ::prost::alloc::vec::Vec<u8>,
     /// If sample_step > 0, skips 'sample_step - 1' number of keys after each returned key.
@@ -313,9 +313,9 @@ pub struct CheckTxnStatusResponse {
     #[prost(message, optional, tag = "2")]
     pub error: ::core::option::Option<KeyError>,
     /// Three kinds of transaction status:
-    ///    locked: lock_ttl > 0
-    ///    committed: commit_version > 0
-    ///    rollbacked: lock_ttl = 0 && commit_version = 0
+    /// locked: lock_ttl > 0
+    /// committed: commit_version > 0
+    /// rollbacked: lock_ttl = 0 && commit_version = 0
     #[prost(uint64, tag = "3")]
     pub lock_ttl: u64,
     #[prost(uint64, tag = "4")]
@@ -723,8 +723,8 @@ pub struct RawScanRequest {
     pub cf: ::prost::alloc::string::String,
     #[prost(bool, tag = "6")]
     pub reverse: bool,
-    /// For compatibility, when scanning forward, the range to scan is [start_key, end_key), where start_key < end_key;
-    /// and when scanning backward, it scans [end_key, start_key) in descending order, where end_key < start_key.
+    /// For compatibility, when scanning forward, the range to scan is \[start_key, end_key), where start_key \< end_key;
+    /// and when scanning backward, it scans \[end_key, start_key) in descending order, where end_key \< start_key.
     #[prost(bytes = "vec", tag = "7")]
     pub end_key: ::prost::alloc::vec::Vec<u8>,
 }
@@ -1021,7 +1021,7 @@ pub struct Context {
     #[prost(enumeration = "ApiVersion", tag = "21")]
     pub api_version: i32,
     /// Read request should read through locks belonging to these transactions because these
-    /// transactions are committed and theirs commit_ts <= read request's start_ts.
+    /// transactions are committed and theirs commit_ts \<= read request's start_ts.
     #[prost(uint64, repeated, tag = "22")]
     pub committed_locks: ::prost::alloc::vec::Vec<u64>,
 }
@@ -1394,7 +1394,7 @@ pub struct CheckLeaderResponse {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StoreSafeTsRequest {
-    /// Get the minimal `safe_ts` from regions that overlap with the key range [`start_key`, `end_key`)
+    /// Get the minimal `safe_ts` from regions that overlap with the key range \[`start_key`, `end_key`)
     /// An empty key range means all regions in the store
     #[prost(message, optional, tag = "1")]
     pub key_range: ::core::option::Option<KeyRange>,
@@ -1542,11 +1542,11 @@ pub enum ApiVersion {
     /// Only RawKV is available, and then 8 bytes representing the unix timestamp in
     /// seconds for expiring time will be append to the value of all RawKV kv pairs.
     ///
-    /// ------------------------------------------------------------
-    /// | User value     | Expire Ts                               |
-    /// ------------------------------------------------------------
-    /// | 0x12 0x34 0x56 | 0x00 0x00 0x00 0x00 0x00 0x00 0xff 0xff |
-    /// ------------------------------------------------------------
+    /// ---
+    ///
+    /// ## \| User value     | Expire Ts                               |
+    ///
+    /// ## \| 0x12 0x34 0x56 | 0x00 0x00 0x00 0x00 0x00 0x00 0xff 0xff |
     ///
     /// V1TTL server only accepts V1 raw requests.
     /// V1 client should not use `V1TTL` in request. V1 client should always send `V1`.
@@ -1559,21 +1559,21 @@ pub enum ApiVersion {
     ///
     /// The last byte in the raw value must be a meta flag. For example:
     ///
-    /// --------------------------------------
-    /// | User value     | Meta flags        |
-    /// --------------------------------------
-    /// | 0x12 0x34 0x56 | 0x00 (0b00000000) |
-    /// --------------------------------------
+    /// ---
+    ///
+    /// ## \| User value     | Meta flags        |
+    ///
+    /// ## \| 0x12 0x34 0x56 | 0x00 (0b00000000) |
     ///
     /// As shown in the example below, the least significant bit of the meta flag
     /// indicates whether the value contains 8 bytes expire ts at the very left to the
     /// meta flags.
     ///
-    /// --------------------------------------------------------------------------------
-    /// | User value     | Expire Ts                               | Meta flags        |
-    /// --------------------------------------------------------------------------------
-    /// | 0x12 0x34 0x56 | 0x00 0x00 0x00 0x00 0x00 0x00 0xff 0xff | 0x01 (0b00000001) |
-    /// --------------------------------------------------------------------------------
+    /// ---
+    ///
+    /// ## \| User value     | Expire Ts                               | Meta flags        |
+    ///
+    /// ## \| 0x12 0x34 0x56 | 0x00 0x00 0x00 0x00 0x00 0x00 0xff 0xff | 0x01 (0b00000001) |
     ///
     /// V2 server accpets V2 requests and V1 txn requests that statrts with TiDB key
     /// prefix (`m` and `t`).

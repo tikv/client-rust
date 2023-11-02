@@ -95,12 +95,12 @@ pub struct ServerInfoItem {
     pub name: ::prost::alloc::string::String,
     /// all key-value pairs for specified item, e.g:
     /// ServerInfoItem {
-    ///      tp = "network"
-    ///      name = "eth0"
-    ///      paris = [
-    ///          ServerInfoPair { key = "readbytes", value = "4k"},
-    ///          ServerInfoPair { key = "writebytes", value = "1k"},
-    ///      ]
+    /// tp = "network"
+    /// name = "eth0"
+    /// paris = \[
+    /// ServerInfoPair { key = "readbytes", value = "4k"},
+    /// ServerInfoPair { key = "writebytes", value = "1k"},
+    /// \]
     /// }
     #[prost(message, repeated, tag = "3")]
     pub pairs: ::prost::alloc::vec::Vec<ServerInfoPair>,
