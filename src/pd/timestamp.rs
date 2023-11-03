@@ -150,8 +150,8 @@ impl Stream for TsoRequestStream {
                 Poll::Ready(Some(sender)) => {
                     requests.push(sender);
                 }
-                Poll::Ready(None) => return Poll::Ready(None),
-                Poll::Pending => break,
+                Poll::Ready(None) if requests.is_empty() => return Poll::Ready(None),
+                _ => break,
             }
         }
 
