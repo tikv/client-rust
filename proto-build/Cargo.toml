@@ -12,6 +12,4 @@ edition = "2021"
 
 [dependencies]
 glob = "0.3"
-tonic-build = "0.9"
-# Suppress doctest bug (https://stackoverflow.com/questions/66074003/how-to-turn-off-cargo-doc-test-and-compile-for-a-specific-module-in-rust)
-tonic-disable-doctest = "0.1.0"
+tonic-build = { version = "0.10", features = ["cleanup-markdown"] }

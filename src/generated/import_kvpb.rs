@@ -211,21 +211,22 @@ pub mod import_kv_client {
     /// ImportKV provides a service to import key-value pairs to TiKV.
     ///
     /// In order to import key-value pairs to TiKV, the user should:
+    ///
     /// 1. Open an engine identified by an UUID.
-    /// 2. Open write streams to write key-value batches to the opened engine.
-    ///    Different streams/clients can write to the same engine concurrently.
-    /// 3. Close the engine after all write batches have been finished. An
-    ///    engine can only be closed when all write streams are closed. An
-    ///    engine can only be closed once, and it can not be opened again
-    ///    once it is closed.
-    /// 4. Import the data in the engine to the target cluster. Note that
-    ///    the import process is not atomic, it requires the data to be
-    ///    idempotent on retry. An engine can only be imported after it is
-    ///    closed. An engine can be imported multiple times, but can not be
-    ///    imported concurrently.
-    /// 5. Clean up the engine after it has been imported. Delete all data
-    ///    in the engine. An engine can not be cleaned up when it is
-    ///    writing or importing.
+    /// 1. Open write streams to write key-value batches to the opened engine.
+    ///   Different streams/clients can write to the same engine concurrently.
+    /// 1. Close the engine after all write batches have been finished. An
+    ///   engine can only be closed when all write streams are closed. An
+    ///   engine can only be closed once, and it can not be opened again
+    ///   once it is closed.
+    /// 1. Import the data in the engine to the target cluster. Note that
+    ///   the import process is not atomic, it requires the data to be
+    ///   idempotent on retry. An engine can only be imported after it is
+    ///   closed. An engine can be imported multiple times, but can not be
+    ///   imported concurrently.
+    /// 1. Clean up the engine after it has been imported. Delete all data
+    ///   in the engine. An engine can not be cleaned up when it is
+    ///   writing or importing.
     #[derive(Debug, Clone)]
     pub struct ImportKvClient<T> {
         inner: tonic::client::Grpc<T>,

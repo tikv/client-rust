@@ -62,7 +62,7 @@ macro_rules! impl_request {
                     .map(|c| c.api_version)
                     .unwrap_or_default();
                 self.context = Some(context);
-                self.set_api_version(kvrpcpb::ApiVersion::from_i32(api_version).unwrap());
+                self.set_api_version(kvrpcpb::ApiVersion::try_from(api_version).unwrap());
             }
 
             fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {

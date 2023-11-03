@@ -715,7 +715,7 @@ pub struct TransactionStatus {
 impl From<kvrpcpb::CheckTxnStatusResponse> for TransactionStatus {
     fn from(mut resp: kvrpcpb::CheckTxnStatusResponse) -> TransactionStatus {
         TransactionStatus {
-            action: Action::from_i32(resp.action).unwrap(),
+            action: Action::try_from(resp.action).unwrap(),
             kind: (resp.commit_version, resp.lock_ttl, resp.lock_info.take()).into(),
             is_expired: false,
         }

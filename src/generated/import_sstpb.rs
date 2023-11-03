@@ -131,7 +131,7 @@ pub struct DownloadRequest {
     /// Performs a key prefix rewrite after downloading the SST file.
     /// All keys in the SST will be rewritten as:
     ///
-    ///   new_key = new_key_prefix + old_key\[len(old_key_prefix)..\]
+    /// new_key = new_key_prefix + old_key\[len(old_key_prefix)..\]
     ///
     /// When used for TiDB, rewriting the prefix changes the table ID. Please
     /// note that key-rewrite is applied on the origin keys in encoded
@@ -339,15 +339,15 @@ pub struct DuplicateDetectResponse {
     #[prost(message, optional, tag = "2")]
     pub key_error: ::core::option::Option<Error>,
     /// The these keys will be in asc order (but commit time is in desc order),
-    ///   and the content is just like following:
-    /// [
-    ///    {key: "key1", value: "value11", commit_ts: 1005},
-    ///    {key: "key1", value: "value12", commit_ts: 1004},
-    ///    {key: "key1", value: "value13", commit_ts: 1001},
-    ///    {key: "key2", value: "value21", commit_ts: 1004},
-    ///    {key: "key2", value: "value22", commit_ts: 1002},
-    ///    ...
-    /// ]
+    /// and the content is just like following:
+    /// \[
+    /// {key: "key1", value: "value11", commit_ts: 1005},
+    /// {key: "key1", value: "value12", commit_ts: 1004},
+    /// {key: "key1", value: "value13", commit_ts: 1001},
+    /// {key: "key2", value: "value21", commit_ts: 1004},
+    /// {key: "key2", value: "value22", commit_ts: 1002},
+    /// ...
+    /// \]
     #[prost(message, repeated, tag = "3")]
     pub pairs: ::prost::alloc::vec::Vec<KvPair>,
 }
@@ -385,9 +385,10 @@ pub mod import_sst_client {
     /// ImportSST provides a service to import a generated SST file to a region in TiKV.
     ///
     /// In order to import an SST file to a region, the user should:
+    ///
     /// 1. Retrieve the meta of the region according to the SST file's range.
-    /// 2. Upload the SST file to the servers where the region's peers locate in.
-    /// 3. Issue an ingest request to the region's leader with the SST file's metadata.
+    /// 1. Upload the SST file to the servers where the region's peers locate in.
+    /// 1. Issue an ingest request to the region's leader with the SST file's metadata.
     ///
     /// It's the user's responsibility to make sure that the SST file is uploaded to
     /// the servers where the region's peers locate in, before issue the ingest

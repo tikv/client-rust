@@ -14,7 +14,7 @@ pub struct RaftMessage {
     /// true means to_peer is a tombstone peer and it should remove itself.
     #[prost(bool, tag = "6")]
     pub is_tombstone: bool,
-    /// Region key range [start_key, end_key).
+    /// Region key range \[start_key, end_key).
     #[prost(bytes = "vec", tag = "7")]
     pub start_key: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "8")]
