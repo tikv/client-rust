@@ -6,12 +6,12 @@ use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use log::error;
-use log::info;
-use log::warn;
 use tonic::transport::Channel;
 use tonic::IntoRequest;
 use tonic::Request;
+use tracing::error;
+use tracing::info;
+use tracing::warn;
 
 use super::timestamp::TimestampOracle;
 use crate::internal_err;

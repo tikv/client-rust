@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use log::debug;
-use log::info;
+use tracing::debug;
+use tracing::info;
 
 use crate::backoff::{DEFAULT_REGION_BACKOFF, DEFAULT_STORE_BACKOFF};
 use crate::config::Config;

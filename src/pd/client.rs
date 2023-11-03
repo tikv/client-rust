@@ -6,8 +6,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::prelude::*;
 use futures::stream::BoxStream;
-use log::info;
 use tokio::sync::RwLock;
+use tracing::info;
 
 use crate::compat::stream_fn;
 use crate::kv::codec;

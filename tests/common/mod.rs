@@ -7,8 +7,6 @@ use std::convert::TryInto;
 use std::env;
 use std::time::Duration;
 
-use log::info;
-use log::warn;
 use rand::Rng;
 use tikv_client::Key;
 use tikv_client::RawClient;
@@ -17,6 +15,8 @@ use tikv_client::Transaction;
 use tikv_client::TransactionClient;
 use tikv_client::{ColumnFamily, Snapshot, TransactionOptions};
 use tokio::time::sleep;
+use tracing::info;
+use tracing::warn;
 
 const ENV_PD_ADDRS: &str = "PD_ADDRS";
 const ENV_ENABLE_MULIT_REGION: &str = "MULTI_REGION";

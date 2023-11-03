@@ -1,8 +1,8 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use derive_new::new;
-use log::debug;
 use std::marker::PhantomData;
+use tracing::debug;
 use tracing::instrument;
 
 use crate::codec::ApiV1TxnCodec;

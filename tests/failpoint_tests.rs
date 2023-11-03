@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use common::*;
 use fail::FailScenario;
-use log::info;
 use rand::thread_rng;
 use serial_test::serial;
 use tikv_client::transaction::Client;
@@ -21,6 +20,7 @@ use tikv_client::Result;
 use tikv_client::RetryOptions;
 use tikv_client::TransactionClient;
 use tikv_client::TransactionOptions;
+use tracing::info;
 
 #[tokio::test]
 #[serial]

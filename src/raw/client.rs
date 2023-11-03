@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::u32;
 
 use futures::StreamExt;
-use log::debug;
+use tracing::debug;
 
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::common::Error;
