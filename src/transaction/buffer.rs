@@ -245,7 +245,7 @@ impl Buffer {
     }
 
     pub(crate) fn mutate(&mut self, m: kvrpcpb::Mutation) {
-        let op = kvrpcpb::Op::from_i32(m.op).unwrap();
+        let op = kvrpcpb::Op::try_from(m.op).unwrap();
         match op {
             kvrpcpb::Op::Put => self.put(m.key.into(), m.value),
             kvrpcpb::Op::Del => self.delete(m.key.into()),

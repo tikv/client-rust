@@ -361,12 +361,13 @@ pub mod debug_client {
     /// Debug service for TiKV.
     ///
     /// Errors are defined as follow:
-    ///   - OK: Okay, we are good!
-    ///   - UNKNOWN: For unknown error.
-    ///   - INVALID_ARGUMENT: Something goes wrong within requests.
-    ///   - NOT_FOUND: It is key or region not found, it's based on context, detailed
-    ///                reason can be found in grpc message.
-    /// Note: It bypasses raft layer.
+    ///
+    /// * OK: Okay, we are good!
+    /// * UNKNOWN: For unknown error.
+    /// * INVALID_ARGUMENT: Something goes wrong within requests.
+    /// * NOT_FOUND: It is key or region not found, it's based on context, detailed
+    ///  reason can be found in grpc message.
+    ///  Note: It bypasses raft layer.
     #[derive(Debug, Clone)]
     pub struct DebugClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -539,7 +540,7 @@ pub mod debug_client {
         }
         /// Scan a specific range.
         /// Note: DO NOT CALL IT IN PRODUCTION, it's really expensive.
-        ///       Server uses keys directly w/o any encoding.
+        /// Server uses keys directly w/o any encoding.
         pub async fn scan_mvcc(
             &mut self,
             request: impl tonic::IntoRequest<super::ScanMvccRequest>,

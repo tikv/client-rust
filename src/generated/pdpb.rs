@@ -198,7 +198,7 @@ pub struct ScanRegionsRequest {
     pub header: ::core::option::Option<RequestHeader>,
     #[prost(bytes = "vec", tag = "2")]
     pub start_key: ::prost::alloc::vec::Vec<u8>,
-    /// no limit when limit <= 0.
+    /// no limit when limit \<= 0.
     #[prost(int32, tag = "3")]
     pub limit: i32,
     /// end_key is +inf when it is empty.
@@ -415,15 +415,16 @@ pub struct RegionHeartbeatResponse {
     /// to pd regularly, pd will determine whether this region
     /// should do ChangePeer or not.
     /// E,g, max peer number is 3, region A, first only peer 1 in A.
+    ///
     /// 1. Pd region state -> Peers (1), ConfVer (1).
-    /// 2. Leader peer 1 reports region state to pd, pd finds the
-    /// peer number is < 3, so first changes its current region
-    /// state -> Peers (1, 2), ConfVer (1), and returns ChangePeer Adding 2.
-    /// 3. Leader does ChangePeer, then reports Peers (1, 2), ConfVer (2),
-    /// pd updates its state -> Peers (1, 2), ConfVer (2).
-    /// 4. Leader may report old Peers (1), ConfVer (1) to pd before ConfChange
-    /// finished, pd stills responses ChangePeer Adding 2, of course, we must
-    /// guarantee the second ChangePeer can't be applied in TiKV.
+    /// 1. Leader peer 1 reports region state to pd, pd finds the
+    ///    peer number is \< 3, so first changes its current region
+    ///    state -> Peers (1, 2), ConfVer (1), and returns ChangePeer Adding 2.
+    /// 1. Leader does ChangePeer, then reports Peers (1, 2), ConfVer (2),
+    ///    pd updates its state -> Peers (1, 2), ConfVer (2).
+    /// 1. Leader may report old Peers (1), ConfVer (1) to pd before ConfChange
+    ///    finished, pd stills responses ChangePeer Adding 2, of course, we must
+    ///    guarantee the second ChangePeer can't be applied in TiKV.
     #[prost(message, optional, tag = "2")]
     pub change_peer: ::core::option::Option<ChangePeer>,
     /// Pd can return transfer_leader to let TiKV does leader transfer itself.
@@ -444,8 +445,8 @@ pub struct RegionHeartbeatResponse {
     pub split_region: ::core::option::Option<SplitRegion>,
     /// Multiple change peer operations atomically.
     /// Note: PD can use both ChangePeer and ChangePeerV2 at the same time
-    ///        (not in the same RegionHeartbeatResponse).
-    ///        Now, PD use ChangePeerV2 only for replacing peers.
+    /// (not in the same RegionHeartbeatResponse).
+    /// Now, PD use ChangePeerV2 only for replacing peers.
     #[prost(message, optional, tag = "9")]
     pub change_peer_v2: ::core::option::Option<ChangePeerV2>,
 }
@@ -622,7 +623,7 @@ pub struct StoreStats {
     /// Store query stats
     #[prost(message, optional, tag = "21")]
     pub query_stats: ::core::option::Option<QueryStats>,
-    /// Score that represents the speed of the store, ranges in [1, 100], lower is better.
+    /// Score that represents the speed of the store, ranges in \[1, 100\], lower is better.
     #[prost(uint64, tag = "22")]
     pub slow_score: u64,
     /// Damaged regions on the store that need to be removed by PD.
