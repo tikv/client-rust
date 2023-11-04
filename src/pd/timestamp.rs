@@ -27,6 +27,7 @@ use tokio::sync::Mutex;
 use tonic::transport::Channel;
 use tracing::debug;
 use tracing::info;
+use tracing::info_span;
 use tracing::instrument;
 
 use crate::internal_err;
@@ -76,6 +77,7 @@ impl TimestampOracle {
     }
 }
 
+#[instrument(name = "TimestampOracle::run_tso", skip_all)]
 async fn run_tso(
     cluster_id: u64,
     mut pd_client: PdClient<Channel>,
@@ -100,6 +102,10 @@ async fn run_tso(
     let mut responses = pd_client.tso(request_stream).await?.into_inner();
 
     while let Some(Ok(resp)) = responses.next().await {
+        let span = info_span!("handle_response");
+        let _enter = span.enter();
+        debug!("got response: {:?}", resp);
+
         let mut pending_requests = pending_requests.lock().await;
 
         // Wake up the sending future blocked by too many pending requests as we are consuming
@@ -132,6 +138,7 @@ struct TsoRequestStream {
 impl Stream for TsoRequestStream {
     type Item = TsoRequest;
 
+    #[instrument(name = "TsoRequestStream::poll_next", skip_all)]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
 
@@ -155,6 +162,12 @@ impl Stream for TsoRequestStream {
             }
         }
 
+        debug!(
+            "got requests: len {}, pending_requests {}",
+            requests.len(),
+            pending_requests.len()
+        );
+
         if !requests.is_empty() {
             let req = TsoRequest {
                 header: Some(RequestHeader {
@@ -170,6 +183,12 @@ impl Stream for TsoRequestStream {
                 requests,
             };
             pending_requests.push_back(request_group);
+
+            debug!(
+                "sending request to PD: {:?}, pending_requests {}",
+                req,
+                pending_requests.len()
+            );
 
             Poll::Ready(Some(req))
         } else {
