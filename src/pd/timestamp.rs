@@ -98,15 +98,13 @@ async fn run_tso(
     let mut responses = pd_client.tso(request_stream).await?.into_inner();
 
     while let Some(Ok(resp)) = responses.next().await {
-        let mut pending_requests = pending_requests.lock().await;
-
-        // Wake up the sending future blocked by too many pending requests as we are consuming
-        // some of them here.
-        if pending_requests.len() == MAX_PENDING_COUNT {
-            sending_future_waker.wake();
+        {
+            let mut pending_requests = pending_requests.lock().await;
+            allocate_timestamps(&resp, &mut pending_requests)?;
         }
 
-        allocate_timestamps(&resp, &mut pending_requests)?;
+        // Wake up the sending future blocked by too many pending requests or locked.
+        sending_future_waker.wake();
     }
     // TODO: distinguish between unexpected stream termination and expected end of test
     info!("TSO stream terminated");
@@ -139,6 +137,7 @@ impl Stream for TsoRequestStream {
         {
             pending_requests
         } else {
+            this.self_waker.register(cx.waker());
             return Poll::Pending;
         };
         let mut requests = Vec::new();
@@ -148,8 +147,8 @@ impl Stream for TsoRequestStream {
                 Poll::Ready(Some(sender)) => {
                     requests.push(sender);
                 }
-                Poll::Ready(None) => return Poll::Ready(None),
-                Poll::Pending => break,
+                Poll::Ready(None) if requests.is_empty() => return Poll::Ready(None),
+                _ => break,
             }
         }
 
