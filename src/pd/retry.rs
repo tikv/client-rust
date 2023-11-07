@@ -277,7 +277,7 @@ mod test {
         }
 
         async fn retry_ok(client: Arc<MockClient>) -> Result<()> {
-            retry_mut!(client, "test", |_c| ready(Ok::<_, Error>(())))
+            retry!(client, "test", |_c| ready(Ok::<_, Error>(())))
         }
 
         executor::block_on(async {
@@ -342,7 +342,7 @@ mod test {
             client: Arc<MockClient>,
             max_retries: Arc<AtomicUsize>,
         ) -> Result<()> {
-            retry_mut!(client, "test", |c| {
+            retry!(client, "test", |c| {
                 c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
                 let max_retries = max_retries.fetch_sub(1, Ordering::SeqCst) - 1;
