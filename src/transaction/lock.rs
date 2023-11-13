@@ -59,9 +59,9 @@ pub async fn resolve_locks(
                     >= lock.lock_ttl as i64
             });
     debug!(
-        "resolving locks: expired_locks {}, live_locks {}",
-        expired_locks.len(),
-        live_locks.len()
+        "resolving locks: expired_locks {:?}, live_locks {:?}",
+        expired_locks,
+        live_locks
     );
 
     // records the commit version of each primary lock (representing the status of the transaction)
