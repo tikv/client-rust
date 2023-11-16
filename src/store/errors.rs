@@ -52,6 +52,7 @@ has_region_error!(kvrpcpb::CheckTxnStatusResponse);
 has_region_error!(kvrpcpb::CheckSecondaryLocksResponse);
 has_region_error!(kvrpcpb::DeleteRangeResponse);
 has_region_error!(kvrpcpb::GcResponse);
+has_region_error!(kvrpcpb::UnsafeDestroyRangeResponse);
 has_region_error!(kvrpcpb::RawGetResponse);
 has_region_error!(kvrpcpb::RawBatchGetResponse);
 has_region_error!(kvrpcpb::RawPutResponse);
@@ -111,6 +112,7 @@ has_str_error!(kvrpcpb::RawCasResponse);
 has_str_error!(kvrpcpb::RawCoprocessorResponse);
 has_str_error!(kvrpcpb::ImportResponse);
 has_str_error!(kvrpcpb::DeleteRangeResponse);
+has_str_error!(kvrpcpb::UnsafeDestroyRangeResponse);
 
 impl HasKeyErrors for kvrpcpb::ScanResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {

@@ -18,15 +18,15 @@ use crate::proto::errorpb;
 use crate::proto::errorpb::EpochNotMatch;
 use crate::proto::kvrpcpb;
 use crate::request::shard::HasNextBatch;
-use crate::request::KvRequest;
 use crate::request::NextBatch;
 use crate::request::Shardable;
+use crate::request::{KvRequest, StoreRequest};
 use crate::stats::tikv_stats;
-use crate::store::HasKeyErrors;
 use crate::store::HasRegionError;
 use crate::store::HasRegionErrors;
 use crate::store::KvClient;
 use crate::store::RegionStore;
+use crate::store::{HasKeyErrors, Store};
 use crate::transaction::resolve_locks;
 use crate::transaction::HasLocks;
 use crate::transaction::ResolveLocksContext;
@@ -73,7 +73,19 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
     }
 }
 
+impl<Req: KvRequest + StoreRequest> StoreRequest for Dispatch<Req> {
+    fn apply_store(&mut self, store: &Store) {
+        self.kv_client = Some(store.client.clone());
+        self.request.apply_store(store);
+    }
+}
+
 const MULTI_REGION_CONCURRENCY: usize = 16;
+const MULTI_STORES_CONCURRENCY: usize = 16;
+
+fn is_grpc_error(e: &Error) -> bool {
+    matches!(e, Error::GrpcAPI(_) | Error::Grpc(_))
+}
 
 pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
     pub(super) inner: P,
@@ -147,8 +159,25 @@ where
     ) -> Result<<Self as Plan>::Result> {
         // limit concurrent requests
         let permit = permits.acquire().await.unwrap();
-        let mut resp = plan.execute().await?;
+        let res = plan.execute().await;
         drop(permit);
+
+        let mut resp = match res {
+            Ok(resp) => resp,
+            Err(e) if is_grpc_error(&e) => {
+                return Self::handle_grpc_error(
+                    pd_client,
+                    plan,
+                    region_store,
+                    backoff,
+                    permits,
+                    preserve_region_results,
+                    e,
+                )
+                .await;
+            }
+            Err(e) => return Err(e),
+        };
 
         if let Some(e) = resp.key_errors() {
             Ok(vec![Err(Error::MultipleKeyErrors(e))])
@@ -272,6 +301,34 @@ where
         pd_client.invalidate_region_cache(ver_id).await;
         Ok(false)
     }
+
+    async fn handle_grpc_error(
+        pd_client: Arc<PdC>,
+        plan: P,
+        region_store: RegionStore,
+        mut backoff: Backoff,
+        permits: Arc<Semaphore>,
+        preserve_region_results: bool,
+        e: Error,
+    ) -> Result<<Self as Plan>::Result> {
+        debug!("handle grpc error: {:?}", e);
+        let ver_id = region_store.region_with_leader.ver_id();
+        pd_client.invalidate_region_cache(ver_id).await;
+        match backoff.next_delay_duration() {
+            Some(duration) => {
+                sleep(duration).await;
+                Self::single_plan_handler(
+                    pd_client,
+                    plan,
+                    backoff,
+                    permits,
+                    preserve_region_results,
+                )
+                .await
+            }
+            None => Err(e),
+        }
+    }
 }
 
 impl<P: Plan, PdC: PdClient> Clone for RetryableMultiRegion<P, PdC> {
@@ -305,6 +362,90 @@ where
             self.preserve_region_results,
         )
         .await
+    }
+}
+
+pub struct RetryableAllStores<P: Plan, PdC: PdClient> {
+    pub(super) inner: P,
+    pub pd_client: Arc<PdC>,
+    pub backoff: Backoff,
+}
+
+impl<P: Plan, PdC: PdClient> Clone for RetryableAllStores<P, PdC> {
+    fn clone(&self) -> Self {
+        RetryableAllStores {
+            inner: self.inner.clone(),
+            pd_client: self.pd_client.clone(),
+            backoff: self.backoff.clone(),
+        }
+    }
+}
+
+// About `HasRegionError`:
+// Store requests should be return region errors.
+// But as the response of only store request by now (UnsafeDestroyRangeResponse) has the `region_error` field,
+// we require `HasRegionError` to check whether there is region error returned from TiKV.
+#[async_trait]
+impl<P: Plan + StoreRequest, PdC: PdClient> Plan for RetryableAllStores<P, PdC>
+where
+    P::Result: HasKeyErrors + HasRegionError,
+{
+    type Result = Vec<Result<P::Result>>;
+
+    async fn execute(&self) -> Result<Self::Result> {
+        let concurrency_permits = Arc::new(Semaphore::new(MULTI_STORES_CONCURRENCY));
+        let stores = self.pd_client.clone().all_stores().await?;
+        let mut handles = Vec::with_capacity(stores.len());
+        for store in stores {
+            let mut clone = self.inner.clone();
+            clone.apply_store(&store);
+            let handle = tokio::spawn(Self::single_store_handler(
+                clone,
+                self.backoff.clone(),
+                concurrency_permits.clone(),
+            ));
+            handles.push(handle);
+        }
+        let results = try_join_all(handles).await?;
+        Ok(results.into_iter().collect::<Vec<_>>())
+    }
+}
+
+impl<P: Plan, PdC: PdClient> RetryableAllStores<P, PdC>
+where
+    P::Result: HasKeyErrors + HasRegionError,
+{
+    async fn single_store_handler(
+        plan: P,
+        mut backoff: Backoff,
+        permits: Arc<Semaphore>,
+    ) -> Result<P::Result> {
+        loop {
+            let permit = permits.acquire().await.unwrap();
+            let res = plan.execute().await;
+            drop(permit);
+
+            match res {
+                Ok(mut resp) => {
+                    if let Some(e) = resp.key_errors() {
+                        return Err(Error::MultipleKeyErrors(e));
+                    } else if let Some(e) = resp.region_error() {
+                        // Store request should not return region error.
+                        return Err(Error::RegionError(Box::new(e)));
+                    } else {
+                        return Ok(resp);
+                    }
+                }
+                Err(e) if is_grpc_error(&e) => match backoff.next_delay_duration() {
+                    Some(duration) => {
+                        sleep(duration).await;
+                        continue;
+                    }
+                    None => return Err(e),
+                },
+                Err(e) => return Err(e),
+            }
+        }
     }
 }
 
@@ -434,15 +575,16 @@ where
             }
 
             if self.backoff.is_none() {
-                return Err(Error::ResolveLockError);
+                return Err(Error::ResolveLockError(locks));
             }
 
             let pd_client = self.pd_client.clone();
-            if resolve_locks(locks, pd_client.clone()).await? {
+            let live_locks = resolve_locks(locks, pd_client.clone()).await?;
+            if live_locks.is_empty() {
                 result = self.inner.execute().await?;
             } else {
                 match clone.backoff.next_delay_duration() {
-                    None => return Err(Error::ResolveLockError),
+                    None => return Err(Error::ResolveLockError(live_locks)),
                     Some(delay_duration) => {
                         sleep(delay_duration).await;
                         result = clone.inner.execute().await?;

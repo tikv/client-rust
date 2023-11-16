@@ -10,12 +10,12 @@ use std::time::Duration;
 use log::info;
 use log::warn;
 use rand::Rng;
-use tikv_client::ColumnFamily;
 use tikv_client::Key;
 use tikv_client::RawClient;
 use tikv_client::Result;
 use tikv_client::Transaction;
 use tikv_client::TransactionClient;
+use tikv_client::{ColumnFamily, Snapshot, TransactionOptions};
 use tokio::time::sleep;
 
 const ENV_PD_ADDRS: &str = "PD_ADDRS";
@@ -145,6 +145,15 @@ pub fn gen_u32_keys(num: u32, rng: &mut impl Rng) -> HashSet<Vec<u8>> {
         set.insert(rng.gen::<u32>().to_be_bytes().to_vec());
     }
     set
+}
+
+pub async fn snapshot(client: &TransactionClient, is_pessimistic: bool) -> Result<Snapshot> {
+    let options = if is_pessimistic {
+        TransactionOptions::new_pessimistic()
+    } else {
+        TransactionOptions::new_optimistic()
+    };
+    Ok(client.snapshot(client.current_timestamp().await?, options))
 }
 
 /// Copied from https://github.com/tikv/tikv/blob/d86a449d7f5b656cef28576f166e73291f501d77/components/tikv_util/src/macros.rs#L55

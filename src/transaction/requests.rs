@@ -19,7 +19,6 @@ use crate::proto::kvrpcpb::TxnHeartBeatResponse;
 use crate::proto::kvrpcpb::TxnInfo;
 use crate::proto::kvrpcpb::{self};
 use crate::proto::pdpb::Timestamp;
-use crate::request::Batchable;
 use crate::request::Collect;
 use crate::request::CollectSingle;
 use crate::request::CollectWithShard;
@@ -32,12 +31,14 @@ use crate::request::Process;
 use crate::request::ResponseWithShard;
 use crate::request::Shardable;
 use crate::request::SingleKey;
+use crate::request::{Batchable, StoreRequest};
 use crate::shardable_key;
 use crate::shardable_keys;
 use crate::shardable_range;
-use crate::store::store_stream_for_keys;
 use crate::store::store_stream_for_range;
 use crate::store::RegionStore;
+use crate::store::Request;
+use crate::store::{store_stream_for_keys, Store};
 use crate::timestamp::TimestampExt;
 use crate::transaction::HasLocks;
 use crate::util::iter::FlatMapOkIterExt;
@@ -294,7 +295,7 @@ impl Shardable for kvrpcpb::PrewriteRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.context = Some(store.region_with_leader.context()?);
+        self.set_context(store.region_with_leader.context()?);
 
         // Only need to set secondary keys if we're sending the primary key.
         if self.use_async_commit && !self.mutations.iter().any(|m| m.key == self.primary_lock) {
@@ -361,7 +362,7 @@ impl Shardable for kvrpcpb::CommitRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.context = Some(store.region_with_leader.context()?);
+        self.set_context(store.region_with_leader.context()?);
         self.keys = shard.into_iter().map(Into::into).collect();
         Ok(())
     }
@@ -452,7 +453,7 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.context = Some(store.region_with_leader.context()?);
+        self.set_context(store.region_with_leader.context()?);
         self.mutations = shard;
         Ok(())
     }
@@ -553,7 +554,7 @@ impl Shardable for kvrpcpb::ScanLockRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.context = Some(store.region_with_leader.context()?);
+        self.set_context(store.region_with_leader.context()?);
         self.start_key = shard.0;
         Ok(())
     }
@@ -614,7 +615,7 @@ impl Shardable for kvrpcpb::TxnHeartBeatRequest {
     }
 
     fn apply_shard(&mut self, mut shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.context = Some(store.region_with_leader.context()?);
+        self.set_context(store.region_with_leader.context()?);
         assert!(shard.len() == 1);
         self.primary_lock = shard.pop().unwrap();
         Ok(())
@@ -672,7 +673,7 @@ impl Shardable for kvrpcpb::CheckTxnStatusRequest {
     }
 
     fn apply_shard(&mut self, mut shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.context = Some(store.region_with_leader.context()?);
+        self.set_context(store.region_with_leader.context()?);
         assert!(shard.len() == 1);
         self.primary_key = shard.pop().unwrap();
         Ok(())
@@ -705,7 +706,7 @@ pub struct TransactionStatus {
 impl From<kvrpcpb::CheckTxnStatusResponse> for TransactionStatus {
     fn from(mut resp: kvrpcpb::CheckTxnStatusResponse) -> TransactionStatus {
         TransactionStatus {
-            action: Action::from_i32(resp.action).unwrap(),
+            action: Action::try_from(resp.action).unwrap(),
             kind: (resp.commit_version, resp.lock_ttl, resp.lock_info.take()).into(),
             is_expired: false,
         }
@@ -866,6 +867,36 @@ impl HasLocks for kvrpcpb::PrewriteResponse {
     }
 }
 
+pub fn new_unsafe_destroy_range_request(
+    start_key: Vec<u8>,
+    end_key: Vec<u8>,
+) -> kvrpcpb::UnsafeDestroyRangeRequest {
+    let mut req = kvrpcpb::UnsafeDestroyRangeRequest::default();
+    req.start_key = start_key;
+    req.end_key = end_key;
+    req
+}
+
+impl KvRequest for kvrpcpb::UnsafeDestroyRangeRequest {
+    type Response = kvrpcpb::UnsafeDestroyRangeResponse;
+}
+
+impl StoreRequest for kvrpcpb::UnsafeDestroyRangeRequest {
+    fn apply_store(&mut self, _store: &Store) {}
+}
+
+impl HasLocks for kvrpcpb::UnsafeDestroyRangeResponse {}
+
+impl Merge<kvrpcpb::UnsafeDestroyRangeResponse> for Collect {
+    type Out = ();
+
+    fn merge(&self, input: Vec<Result<kvrpcpb::UnsafeDestroyRangeResponse>>) -> Result<Self::Out> {
+        let _: Vec<kvrpcpb::UnsafeDestroyRangeResponse> =
+            input.into_iter().collect::<Result<Vec<_>>>()?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 #[cfg_attr(feature = "protobuf-codec", allow(clippy::useless_conversion))]
 mod tests {
@@ -949,7 +980,7 @@ mod tests {
             let input = vec![
                 Ok(resp1),
                 Ok(resp_empty_value),
-                Err(ResolveLockError),
+                Err(ResolveLockError(vec![])),
                 Ok(resp_not_found),
             ];
             let result = merger.merge(input);
@@ -959,7 +990,7 @@ mod tests {
                 success_keys,
             } = result.unwrap_err()
             {
-                assert!(matches!(*inner, ResolveLockError));
+                assert!(matches!(*inner, ResolveLockError(_)));
                 assert_eq!(
                     success_keys,
                     vec![key1.to_vec(), key2.to_vec(), key3.to_vec(), key4.to_vec()]

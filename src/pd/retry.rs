@@ -70,18 +70,12 @@ impl<Cl> RetryClient<Cl> {
     }
 }
 
-macro_rules! retry {
-    ($self: ident, $tag: literal, |$cluster: ident| $call: expr) => {{
+macro_rules! retry_core {
+    ($self: ident, $tag: literal, $call: expr) => {{
         let stats = pd_stats($tag);
         let mut last_err = Ok(());
         for _ in 0..LEADER_CHANGE_RETRY {
-            // use the block here to drop the guard of the read lock,
-            // otherwise `reconnect` will try to acquire the write lock and results in a deadlock
-            let res = {
-                let $cluster = &mut $self.cluster.write().await.0;
-                let res = $call.await;
-                res
-            };
+            let res = $call;
 
             match stats.done(res) {
                 Ok(r) => return Ok(r),
@@ -100,6 +94,28 @@ macro_rules! retry {
 
         last_err?;
         unreachable!();
+    }};
+}
+
+macro_rules! retry_mut {
+    ($self: ident, $tag: literal, |$cluster: ident| $call: expr) => {{
+        retry_core!($self, $tag, {
+            // use the block here to drop the guard of the lock,
+            // otherwise `reconnect` will try to acquire the write lock and results in a deadlock
+            let $cluster = &mut $self.cluster.write().await.0;
+            $call.await
+        })
+    }};
+}
+
+macro_rules! retry {
+    ($self: ident, $tag: literal, |$cluster: ident| $call: expr) => {{
+        retry_core!($self, $tag, {
+            // use the block here to drop the guard of the lock,
+            // otherwise `reconnect` will try to acquire the write lock and results in a deadlock
+            let $cluster = &$self.cluster.read().await.0;
+            $call.await
+        })
     }};
 }
 
@@ -127,7 +143,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
     // It does not know about encoding. Caller should take care of it.
     async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
-        retry!(self, "get_region", |cluster| {
+        retry_mut!(self, "get_region", |cluster| {
             let key = key.clone();
             async {
                 cluster
@@ -141,7 +157,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader> {
-        retry!(self, "get_region_by_id", |cluster| async {
+        retry_mut!(self, "get_region_by_id", |cluster| async {
             cluster
                 .get_region_by_id(region_id, self.timeout)
                 .await
@@ -152,7 +168,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store> {
-        retry!(self, "get_store", |cluster| async {
+        retry_mut!(self, "get_store", |cluster| async {
             cluster
                 .get_store(id, self.timeout)
                 .await
@@ -160,9 +176,8 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
-    #[allow(dead_code)]
     async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
-        retry!(self, "get_all_stores", |cluster| async {
+        retry_mut!(self, "get_all_stores", |cluster| async {
             cluster
                 .get_all_stores(self.timeout)
                 .await
@@ -175,7 +190,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
-        retry!(self, "update_gc_safepoint", |cluster| async {
+        retry_mut!(self, "update_gc_safepoint", |cluster| async {
             cluster
                 .update_safepoint(safepoint, self.timeout)
                 .await
@@ -258,7 +273,7 @@ mod test {
         }
 
         async fn retry_err(client: Arc<MockClient>) -> Result<()> {
-            retry!(client, "test", |_c| ready(Err(internal_err!("whoops"))))
+            retry_mut!(client, "test", |_c| ready(Err(internal_err!("whoops"))))
         }
 
         async fn retry_ok(client: Arc<MockClient>) -> Result<()> {
@@ -311,7 +326,7 @@ mod test {
             client: Arc<MockClient>,
             max_retries: Arc<AtomicUsize>,
         ) -> Result<()> {
-            retry!(client, "test", |c| {
+            retry_mut!(client, "test", |c| {
                 c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
                 let max_retries = max_retries.fetch_sub(1, Ordering::SeqCst) - 1;

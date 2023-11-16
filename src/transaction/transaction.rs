@@ -1,6 +1,9 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::iter;
+use std::marker::PhantomData;
+use std::sync::atomic;
+use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -9,15 +12,16 @@ use fail::fail_point;
 use futures::prelude::*;
 use log::debug;
 use log::warn;
-use tokio::sync::RwLock;
 use tokio::time::Duration;
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
+use crate::codec::ApiV1TxnCodec;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::kvrpcpb;
 use crate::proto::pdpb::Timestamp;
+use crate::request::codec::{Codec, EncodedRequest};
 use crate::request::Collect;
 use crate::request::CollectError;
 use crate::request::CollectSingle;
@@ -73,35 +77,37 @@ use crate::Value;
 /// txn.commit().await.unwrap();
 /// # });
 /// ```
-pub struct Transaction<PdC: PdClient = PdRpcClient> {
-    status: Arc<RwLock<TransactionStatus>>,
+pub struct Transaction<Cod: Codec = ApiV1TxnCodec, PdC: PdClient<Codec = Cod> = PdRpcClient<Cod>> {
+    status: Arc<AtomicU8>,
     timestamp: Timestamp,
     buffer: Buffer,
     rpc: Arc<PdC>,
     options: TransactionOptions,
     is_heartbeat_started: bool,
     start_instant: Instant,
+    phantom: PhantomData<Cod>,
 }
 
-impl<PdC: PdClient> Transaction<PdC> {
+impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     pub(crate) fn new(
         timestamp: Timestamp,
         rpc: Arc<PdC>,
         options: TransactionOptions,
-    ) -> Transaction<PdC> {
+    ) -> Transaction<Cod, PdC> {
         let status = if options.read_only {
             TransactionStatus::ReadOnly
         } else {
             TransactionStatus::Active
         };
         Transaction {
-            status: Arc::new(RwLock::new(status)),
+            status: Arc::new(AtomicU8::new(status as u8)),
             timestamp,
             buffer: Buffer::new(options.is_pessimistic()),
             rpc,
             options,
             is_heartbeat_started: false,
             start_instant: std::time::Instant::now(),
+            phantom: PhantomData,
         }
     }
 
@@ -134,7 +140,8 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.buffer
             .get_or_else(key, |key| async move {
                 let request = new_get_request(key, timestamp);
-                let plan = PlanBuilder::new(rpc, request)
+                let encoded_req = EncodedRequest::new(request, rpc.get_codec());
+                let plan = PlanBuilder::new(rpc, encoded_req)
                     .resolve_lock(retry_options.lock_backoff)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
                     .merge(CollectSingle)
@@ -264,7 +271,8 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.buffer
             .batch_get_or_else(keys.into_iter().map(|k| k.into()), move |keys| async move {
                 let request = new_batch_get_request(keys, timestamp);
-                let plan = PlanBuilder::new(rpc, request)
+                let encoded_req = EncodedRequest::new(request, rpc.get_codec());
+                let plan = PlanBuilder::new(rpc, encoded_req)
                     .resolve_lock(retry_options.lock_backoff)
                     .retry_multi_region(retry_options.region_backoff)
                     .merge(Collect)
@@ -515,6 +523,56 @@ impl<PdC: PdClient> Transaction<PdC> {
         Ok(())
     }
 
+    /// Batch mutate the database.
+    ///
+    /// Only `Put` and `Delete` are supported.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Config, TransactionClient, proto::kvrpcpb};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
+    /// let mutations = vec![
+    ///     kvrpcpb::Mutation {
+    ///         op: kvrpcpb::Op::Del.into(),
+    ///         key: b"k0".to_vec(),
+    ///         ..Default::default()
+    ///     },
+    ///     kvrpcpb::Mutation {
+    ///         op: kvrpcpb::Op::Put.into(),
+    ///         key: b"k1".to_vec(),
+    ///         value: b"v1".to_vec(),
+    ///         ..Default::default()
+    ///     },
+    /// ];
+    /// txn.batch_mutate(mutations).await.unwrap();
+    /// txn.commit().await.unwrap();
+    /// # });
+    /// ```
+    pub async fn batch_mutate(
+        &mut self,
+        mutations: impl IntoIterator<Item = kvrpcpb::Mutation>,
+    ) -> Result<()> {
+        debug!("invoking transactional batch mutate request");
+        self.check_allow_operation().await?;
+        if self.is_pessimistic() {
+            let mutations: Vec<kvrpcpb::Mutation> = mutations.into_iter().collect();
+            self.pessimistic_lock(mutations.iter().map(|m| Key::from(m.key.clone())), false)
+                .await?;
+            for m in mutations {
+                self.buffer.mutate(m);
+            }
+        } else {
+            for m in mutations.into_iter() {
+                self.buffer.mutate(m);
+            }
+        }
+        Ok(())
+    }
+
     /// Lock the given keys without mutating their values.
     ///
     /// In optimistic mode, write conflicts are not checked until commit.
@@ -575,15 +633,16 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```
     pub async fn commit(&mut self) -> Result<Option<Timestamp>> {
         debug!("commiting transaction");
-        {
-            let mut status = self.status.write().await;
-            if !matches!(
-                *status,
-                TransactionStatus::StartedCommit | TransactionStatus::Active
-            ) {
-                return Err(Error::OperationAfterCommitError);
-            }
-            *status = TransactionStatus::StartedCommit;
+        if !self.transit_status(
+            |status| {
+                matches!(
+                    status,
+                    TransactionStatus::StartedCommit | TransactionStatus::Active
+                )
+            },
+            TransactionStatus::StartedCommit,
+        ) {
+            return Err(Error::OperationAfterCommitError);
         }
 
         let primary_key = self.buffer.get_primary_key();
@@ -608,8 +667,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         .await;
 
         if res.is_ok() {
-            let mut status = self.status.write().await;
-            *status = TransactionStatus::Committed;
+            self.set_status(TransactionStatus::Committed);
         }
         res
     }
@@ -632,21 +690,18 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// ```
     pub async fn rollback(&mut self) -> Result<()> {
         debug!("rolling back transaction");
-        {
-            let status = self.status.read().await;
-            if !matches!(
-                *status,
-                TransactionStatus::StartedRollback
-                    | TransactionStatus::Active
-                    | TransactionStatus::StartedCommit
-            ) {
-                return Err(Error::OperationAfterCommitError);
-            }
-        }
-
-        {
-            let mut status = self.status.write().await;
-            *status = TransactionStatus::StartedRollback;
+        if !self.transit_status(
+            |status| {
+                matches!(
+                    status,
+                    TransactionStatus::StartedRollback
+                        | TransactionStatus::Active
+                        | TransactionStatus::StartedCommit
+                )
+            },
+            TransactionStatus::StartedRollback,
+        ) {
+            return Err(Error::OperationAfterCommitError);
         }
 
         let primary_key = self.buffer.get_primary_key();
@@ -664,8 +719,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         .await;
 
         if res.is_ok() {
-            let mut status = self.status.write().await;
-            *status = TransactionStatus::Rolledback;
+            self.set_status(TransactionStatus::Rolledback);
         }
         res
     }
@@ -691,7 +745,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             primary_key,
             self.start_instant.elapsed().as_millis() as u64 + MAX_TTL,
         );
-        let plan = PlanBuilder::new(self.rpc.clone(), request)
+        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
+        let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .merge(CollectSingle)
@@ -721,7 +776,8 @@ impl<PdC: PdClient> Transaction<PdC> {
                 move |new_range, new_limit| async move {
                     let request =
                         new_scan_request(new_range, timestamp, new_limit, key_only, reverse);
-                    let plan = PlanBuilder::new(rpc, request)
+                    let encoded_req = EncodedRequest::new(request, rpc.get_codec());
+                    let plan = PlanBuilder::new(rpc, encoded_req)
                         .resolve_lock(retry_options.lock_backoff)
                         .retry_multi_region(retry_options.region_backoff)
                         .merge(Collect)
@@ -776,7 +832,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             for_update_ts.clone(),
             need_value,
         );
-        let plan = PlanBuilder::new(self.rpc.clone(), request)
+        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
+        let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .preserve_shard()
             .retry_multi_region_preserve_results(self.options.retry_options.region_backoff.clone())
@@ -830,7 +887,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             start_version,
             for_update_ts,
         );
-        let plan = PlanBuilder::new(self.rpc.clone(), req)
+        let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
+        let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .extract_error()
@@ -845,8 +903,7 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     /// Checks if the transaction can perform arbitrary operations.
     async fn check_allow_operation(&self) -> Result<()> {
-        let status = self.status.read().await;
-        match *status {
+        match self.get_status() {
             TransactionStatus::ReadOnly | TransactionStatus::Active => Ok(()),
             TransactionStatus::Committed
             | TransactionStatus::Rolledback
@@ -885,9 +942,9 @@ impl<PdC: PdClient> Transaction<PdC> {
             loop {
                 tokio::time::sleep(heartbeat_interval).await;
                 {
-                    let status = status.read().await;
+                    let status: TransactionStatus = status.load(atomic::Ordering::Acquire).into();
                     if matches!(
-                        *status,
+                        status,
                         TransactionStatus::Rolledback
                             | TransactionStatus::Committed
                             | TransactionStatus::Dropped
@@ -900,7 +957,8 @@ impl<PdC: PdClient> Transaction<PdC> {
                     primary_key.clone(),
                     start_instant.elapsed().as_millis() as u64 + MAX_TTL,
                 );
-                let plan = PlanBuilder::new(rpc.clone(), request)
+                let encoded_req = EncodedRequest::new(request, rpc.get_codec());
+                let plan = PlanBuilder::new(rpc.clone(), encoded_req)
                     .retry_multi_region(region_backoff.clone())
                     .merge(CollectSingle)
                     .plan();
@@ -915,16 +973,45 @@ impl<PdC: PdClient> Transaction<PdC> {
             }
         });
     }
+
+    fn get_status(&self) -> TransactionStatus {
+        self.status.load(atomic::Ordering::Acquire).into()
+    }
+
+    fn set_status(&self, status: TransactionStatus) {
+        self.status.store(status as u8, atomic::Ordering::Release);
+    }
+
+    fn transit_status<F>(&self, check_status: F, next: TransactionStatus) -> bool
+    where
+        F: Fn(TransactionStatus) -> bool,
+    {
+        let mut current = self.get_status();
+        while check_status(current) {
+            if current == next {
+                return true;
+            }
+            match self.status.compare_exchange_weak(
+                current as u8,
+                next as u8,
+                atomic::Ordering::AcqRel,
+                atomic::Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(x) => current = x.into(),
+            }
+        }
+        false
+    }
 }
 
-impl<PdC: PdClient> Drop for Transaction<PdC> {
+impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Drop for Transaction<Cod, PdC> {
     fn drop(&mut self) {
         debug!("dropping transaction");
         if std::thread::panicking() {
             return;
         }
-        let mut status = futures::executor::block_on(self.status.write());
-        if *status == TransactionStatus::Active {
+        if self.get_status() == TransactionStatus::Active {
             match self.options.check_level {
                 CheckLevel::Panic => {
                     panic!("Dropping an active transaction. Consider commit or rollback it.")
@@ -936,7 +1023,7 @@ impl<PdC: PdClient> Drop for Transaction<PdC> {
                 CheckLevel::None => {}
             }
         }
-        *status = TransactionStatus::Dropped;
+        self.set_status(TransactionStatus::Dropped);
     }
 }
 
@@ -1209,7 +1296,8 @@ impl<PdC: PdClient> Committer<PdC> {
             .collect();
         // FIXME set max_commit_ts and min_commit_ts
 
-        let plan = PlanBuilder::new(self.rpc.clone(), request)
+        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
+        let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .merge(CollectError)
@@ -1249,7 +1337,8 @@ impl<PdC: PdClient> Committer<PdC> {
             self.start_version.clone(),
             commit_version.clone(),
         );
-        let plan = PlanBuilder::new(self.rpc.clone(), req)
+        let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
+        let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
             .resolve_lock(self.options.retry_options.lock_backoff.clone())
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .extract_error()
@@ -1313,7 +1402,8 @@ impl<PdC: PdClient> Committer<PdC> {
                 .filter(|key| &primary_key != key);
             new_commit_request(keys, self.start_version, commit_version)
         };
-        let plan = PlanBuilder::new(self.rpc, req)
+        let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
+        let plan = PlanBuilder::new(self.rpc, encoded_req)
             .resolve_lock(self.options.retry_options.lock_backoff)
             .retry_multi_region(self.options.retry_options.region_backoff)
             .extract_error()
@@ -1334,7 +1424,8 @@ impl<PdC: PdClient> Committer<PdC> {
         match self.options.kind {
             TransactionKind::Optimistic => {
                 let req = new_batch_rollback_request(keys, self.start_version);
-                let plan = PlanBuilder::new(self.rpc, req)
+                let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
+                let plan = PlanBuilder::new(self.rpc, encoded_req)
                     .resolve_lock(self.options.retry_options.lock_backoff)
                     .retry_multi_region(self.options.retry_options.region_backoff)
                     .extract_error()
@@ -1343,7 +1434,8 @@ impl<PdC: PdClient> Committer<PdC> {
             }
             TransactionKind::Pessimistic(for_update_ts) => {
                 let req = new_pessimistic_rollback_request(keys, self.start_version, for_update_ts);
-                let plan = PlanBuilder::new(self.rpc, req)
+                let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
+                let plan = PlanBuilder::new(self.rpc, encoded_req)
                     .resolve_lock(self.options.retry_options.lock_backoff)
                     .retry_multi_region(self.options.retry_options.region_backoff)
                     .extract_error()
@@ -1365,22 +1457,38 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
 enum TransactionStatus {
     /// The transaction is read-only [`Snapshot`](super::Snapshot), no need to commit or rollback or panic on drop.
-    ReadOnly,
+    ReadOnly = 0,
     /// The transaction have not been committed or rolled back.
-    Active,
+    Active = 1,
     /// The transaction has committed.
-    Committed,
+    Committed = 2,
     /// The transaction has tried to commit. Only `commit` is allowed.
-    StartedCommit,
+    StartedCommit = 3,
     /// The transaction has rolled back.
-    Rolledback,
+    Rolledback = 4,
     /// The transaction has tried to rollback. Only `rollback` is allowed.
-    StartedRollback,
+    StartedRollback = 5,
     /// The transaction has been dropped.
-    Dropped,
+    Dropped = 6,
+}
+
+impl From<u8> for TransactionStatus {
+    fn from(num: u8) -> Self {
+        match num {
+            0 => TransactionStatus::ReadOnly,
+            1 => TransactionStatus::Active,
+            2 => TransactionStatus::Committed,
+            3 => TransactionStatus::StartedCommit,
+            4 => TransactionStatus::Rolledback,
+            5 => TransactionStatus::StartedRollback,
+            6 => TransactionStatus::Dropped,
+            _ => panic!("Unknown transaction status {}", num),
+        }
+    }
 }
 
 #[cfg(test)]

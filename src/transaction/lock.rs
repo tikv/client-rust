@@ -17,6 +17,7 @@ use crate::proto::kvrpcpb;
 use crate::proto::kvrpcpb::TxnInfo;
 use crate::proto::pdpb::Timestamp;
 use crate::region::RegionVerId;
+use crate::request::codec::EncodedRequest;
 use crate::request::Collect;
 use crate::request::CollectSingle;
 use crate::request::Plan;
@@ -33,7 +34,7 @@ use crate::Result;
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 
-/// _Resolves_ the given locks. Returns whether all the given locks are resolved.
+/// _Resolves_ the given locks. Returns locks still live. When there is no live locks, all the given locks are resolved.
 ///
 /// If a key has a lock, the latest status of the key is unknown. We need to "resolve" the lock,
 /// which means the key is finally either committed or rolled back, before we read the value of
@@ -43,18 +44,16 @@ const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 pub async fn resolve_locks(
     locks: Vec<kvrpcpb::LockInfo>,
     pd_client: Arc<impl PdClient>,
-) -> Result<bool> {
+) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
     debug!("resolving locks");
     let ts = pd_client.clone().get_timestamp().await?;
-    let mut has_live_locks = false;
-    let expired_locks = locks.into_iter().filter(|lock| {
-        let expired = ts.physical - Timestamp::from_version(lock.lock_version).physical
-            >= lock.lock_ttl as i64;
-        if !expired {
-            has_live_locks = true;
-        }
-        expired
-    });
+    let (expired_locks, live_locks) =
+        locks
+            .into_iter()
+            .partition::<Vec<kvrpcpb::LockInfo>, _>(|lock| {
+                ts.physical - Timestamp::from_version(lock.lock_version).physical
+                    >= lock.lock_ttl as i64
+            });
 
     // records the commit version of each primary lock (representing the status of the transaction)
     let mut commit_versions: HashMap<u64, u64> = HashMap::new();
@@ -77,7 +76,8 @@ pub async fn resolve_locks(
             Some(&commit_version) => commit_version,
             None => {
                 let request = requests::new_cleanup_request(lock.primary_lock, lock.lock_version);
-                let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
+                let encoded_req = EncodedRequest::new(request, pd_client.get_codec());
+                let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
                     .resolve_lock(OPTIMISTIC_BACKOFF)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
                     .merge(CollectSingle)
@@ -98,10 +98,10 @@ pub async fn resolve_locks(
         .await?;
         clean_regions
             .entry(lock.lock_version)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(cleaned_region);
     }
-    Ok(!has_live_locks)
+    Ok(live_locks)
 }
 
 async fn resolve_lock_with_retry(
@@ -118,8 +118,8 @@ async fn resolve_lock_with_retry(
         let store = pd_client.clone().store_for_key(key.into()).await?;
         let ver_id = store.region_with_leader.ver_id();
         let request = requests::new_resolve_lock_request(start_version, commit_version);
-        // The only place where single-region is used
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
+        let encoded_req = EncodedRequest::new(request, pd_client.get_codec());
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
             .single_region_with_store(store)
             .await?
             .resolve_lock(Backoff::no_backoff())
@@ -288,12 +288,12 @@ impl LockResolver {
             }
 
             match &status.kind {
-                TransactionStatusKind::Locked(..) => {
+                TransactionStatusKind::Locked(_, lock_info) => {
                     error!(
                         "cleanup_locks fail to clean locks, this result is not expected. txn_id:{}",
                         txn_id
                     );
-                    return Err(Error::ResolveLockError);
+                    return Err(Error::ResolveLockError(vec![lock_info.clone()]));
                 }
                 TransactionStatusKind::Committed(ts) => txn_infos.insert(txn_id, ts.version()),
                 TransactionStatusKind::RolledBack => txn_infos.insert(txn_id, 0),
@@ -359,7 +359,8 @@ impl LockResolver {
             force_sync_commit,
             resolving_pessimistic_lock,
         );
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), req)
+        let encoded_req = EncodedRequest::new(req, pd_client.get_codec());
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(CollectSingle)
             .extract_error()
@@ -383,7 +384,8 @@ impl LockResolver {
         txn_id: u64,
     ) -> Result<SecondaryLocksStatus> {
         let req = new_check_secondary_locks_request(keys, txn_id);
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), req)
+        let encoded_req = EncodedRequest::new(req, pd_client.get_codec());
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .merge(Collect)
@@ -399,7 +401,8 @@ impl LockResolver {
     ) -> Result<RegionVerId> {
         let ver_id = store.region_with_leader.ver_id();
         let request = requests::new_batch_resolve_lock_request(txn_infos.clone());
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
+        let encoded_req = EncodedRequest::new(request, pd_client.get_codec());
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
             .single_region_with_store(store.clone())
             .await?
             .extract_error()

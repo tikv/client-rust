@@ -13,6 +13,7 @@ use super::RawRpcRequest;
 use crate::collect_first;
 use crate::pd::PdClient;
 use crate::proto::kvrpcpb;
+use crate::proto::kvrpcpb::ApiVersion;
 use crate::proto::metapb;
 use crate::proto::tikvpb::tikv_client::TikvClient;
 use crate::request::plan::ResponseWithShard;
@@ -161,7 +162,7 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.context = Some(store.region_with_leader.context()?);
+        self.set_context(store.region_with_leader.context()?);
         self.pairs = shard;
         Ok(())
     }
@@ -292,7 +293,7 @@ impl Shardable for kvrpcpb::RawBatchScanRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.context = Some(store.region_with_leader.context()?);
+        self.set_context(store.region_with_leader.context()?);
         self.ranges = shard;
         Ok(())
     }
@@ -397,6 +398,10 @@ impl Request for RawCoprocessorRequest {
     fn set_context(&mut self, context: kvrpcpb::Context) {
         self.inner.set_context(context);
     }
+
+    fn set_api_version(&mut self, api_version: ApiVersion) {
+        self.inner.set_api_version(api_version);
+    }
 }
 
 impl KvRequest for RawCoprocessorRequest {
@@ -496,6 +501,7 @@ mod test {
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb;
+    use crate::request::codec::EncodedRequest;
     use crate::request::Plan;
     use crate::Key;
 
@@ -530,7 +536,8 @@ mod test {
             key_only: true,
             ..Default::default()
         };
-        let plan = crate::request::PlanBuilder::new(client, scan)
+        let encoded_scan = EncodedRequest::new(scan, client.get_codec());
+        let plan = crate::request::PlanBuilder::new(client, encoded_scan)
             .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)

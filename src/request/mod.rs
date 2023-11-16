@@ -28,10 +28,11 @@ use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::backoff::OPTIMISTIC_BACKOFF;
 use crate::backoff::PESSIMISTIC_BACKOFF;
-use crate::store::HasKeyErrors;
 use crate::store::Request;
+use crate::store::{HasKeyErrors, Store};
 use crate::transaction::HasLocks;
 
+pub mod codec;
 pub mod plan;
 mod plan_builder;
 mod shard;
@@ -41,6 +42,15 @@ mod shard;
 pub trait KvRequest: Request + Sized + Clone + Sync + Send + 'static {
     /// The expected response to the request.
     type Response: HasKeyErrors + HasLocks + Clone + Send + 'static;
+
+    // TODO: fn encode_request()
+    // TODO: fn decode_response()
+}
+
+/// For requests or plans which are handled at TiKV store (other than region) level.
+pub trait StoreRequest {
+    /// Apply the request to specified TiKV store.
+    fn apply_store(&mut self, store: &Store);
 }
 
 #[derive(Clone, Debug, new, Eq, PartialEq)]
@@ -87,9 +97,12 @@ mod test {
     use super::*;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
+    use crate::pd::PdClient;
     use crate::proto::kvrpcpb;
+    use crate::proto::kvrpcpb::ApiVersion;
     use crate::proto::pdpb::Timestamp;
     use crate::proto::tikvpb::tikv_client::TikvClient;
+    use crate::request::codec::EncodedRequest;
     use crate::store::store_stream_for_keys;
     use crate::store::HasRegionError;
     use crate::transaction::lowering::new_commit_request;
@@ -138,6 +151,8 @@ mod test {
             fn set_context(&mut self, _: kvrpcpb::Context) {
                 unreachable!();
             }
+
+            fn set_api_version(&mut self, _api_version: ApiVersion) {}
         }
 
         #[async_trait]
@@ -183,7 +198,8 @@ mod test {
             |_: &dyn Any| Ok(Box::new(MockRpcResponse) as Box<dyn Any>),
         )));
 
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), request)
+        let encoded_req = EncodedRequest::new(request, pd_client.get_codec());
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
             .resolve_lock(Backoff::no_jitter_backoff(1, 1, 3))
             .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
             .extract_error()
@@ -207,16 +223,17 @@ mod test {
 
         let key: Key = "key".to_owned().into();
         let req = new_commit_request(iter::once(key), Timestamp::default(), Timestamp::default());
+        let encoded_req = EncodedRequest::new(req, pd_client.get_codec());
 
         // does not extract error
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), req.clone())
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req.clone())
             .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_multi_region(OPTIMISTIC_BACKOFF)
             .plan();
         assert!(plan.execute().await.is_ok());
 
         // extract error
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), req)
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
             .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_multi_region(OPTIMISTIC_BACKOFF)
             .extract_error()

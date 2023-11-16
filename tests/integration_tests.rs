@@ -21,8 +21,9 @@ use rand::seq::IteratorRandom;
 use rand::thread_rng;
 use rand::Rng;
 use serial_test::serial;
+use tikv_client::backoff::DEFAULT_REGION_BACKOFF;
+use tikv_client::proto::kvrpcpb;
 use tikv_client::transaction::HeartbeatOption;
-use tikv_client::BoundRange;
 use tikv_client::Error;
 use tikv_client::Key;
 use tikv_client::KvPair;
@@ -31,6 +32,7 @@ use tikv_client::Result;
 use tikv_client::TransactionClient;
 use tikv_client::TransactionOptions;
 use tikv_client::Value;
+use tikv_client::{Backoff, BoundRange, RetryOptions, Transaction};
 
 // Parameters used in test
 const NUM_PEOPLE: u32 = 100;
@@ -1076,5 +1078,185 @@ async fn txn_key_exists() -> Result<()> {
     let mut t3 = client.begin_optimistic().await?;
     assert!(!t3.key_exists(not_exists_key).await?);
     t3.commit().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn txn_batch_mutate_optimistic() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new(pd_addrs()).await?;
+
+    // Put k0
+    {
+        let mut txn = client.begin_optimistic().await?;
+        txn.put(b"k0".to_vec(), b"v0".to_vec()).await?;
+        txn.commit().await?;
+    }
+    // Delete k0 and put k1, k2
+    do_mutate(false).await.unwrap();
+    // Read and verify
+    verify_mutate(false).await;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn txn_batch_mutate_pessimistic() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new(pd_addrs()).await?;
+
+    // Put k0
+    {
+        let mut txn = client.begin_pessimistic().await?;
+        txn.put(b"k0".to_vec(), b"v0".to_vec()).await?;
+        txn.commit().await?;
+    }
+    // txn1 lock k0, to verify pessimistic locking.
+    let mut txn1 = client.begin_pessimistic().await?;
+    txn1.put(b"k0".to_vec(), b"vv".to_vec()).await?;
+
+    // txn2 is blocked by txn1, then timeout.
+    let txn2_handle = tokio::spawn(do_mutate(true));
+    assert!(matches!(
+        txn2_handle.await?.unwrap_err(),
+        Error::PessimisticLockError { .. }
+    ));
+
+    let txn3_handle = tokio::spawn(do_mutate(true));
+    // txn1 rollback to release lock.
+    txn1.rollback().await?;
+    txn3_handle.await?.unwrap();
+
+    // Read and verify
+    verify_mutate(true).await;
+    Ok(())
+}
+
+async fn begin_mutate(client: &TransactionClient, is_pessimistic: bool) -> Result<Transaction> {
+    if is_pessimistic {
+        let options = TransactionOptions::new_pessimistic().retry_options(RetryOptions {
+            region_backoff: DEFAULT_REGION_BACKOFF,
+            lock_backoff: Backoff::no_jitter_backoff(500, 500, 2),
+        });
+        client.begin_with_options(options).await
+    } else {
+        client.begin_optimistic().await
+    }
+}
+
+async fn do_mutate(is_pessimistic: bool) -> Result<()> {
+    let client = TransactionClient::new(pd_addrs()).await.unwrap();
+    let mut txn = begin_mutate(&client, is_pessimistic).await.unwrap();
+
+    let mutations = vec![
+        kvrpcpb::Mutation {
+            op: kvrpcpb::Op::Del.into(),
+            key: b"k0".to_vec(),
+            ..Default::default()
+        },
+        kvrpcpb::Mutation {
+            op: kvrpcpb::Op::Put.into(),
+            key: b"k1".to_vec(),
+            value: b"v1".to_vec(),
+            ..Default::default()
+        },
+        kvrpcpb::Mutation {
+            op: kvrpcpb::Op::Put.into(),
+            key: b"k2".to_vec(),
+            value: b"v2".to_vec(),
+            ..Default::default()
+        },
+    ];
+
+    match txn.batch_mutate(mutations).await {
+        Ok(()) => {
+            txn.commit().await?;
+            Ok(())
+        }
+        Err(err) => {
+            let _ = txn.rollback().await;
+            Err(err)
+        }
+    }
+}
+
+async fn verify_mutate(is_pessimistic: bool) {
+    let client = TransactionClient::new(pd_addrs()).await.unwrap();
+    let mut snapshot = snapshot(&client, is_pessimistic).await.unwrap();
+    let res: HashMap<Key, Value> = snapshot
+        .batch_get(vec!["k0".to_owned(), "k1".to_owned(), "k2".to_owned()])
+        .await
+        .unwrap()
+        .map(|pair| (pair.0, pair.1))
+        .collect();
+    assert_eq!(res.len(), 2);
+    assert_eq!(
+        res.get(&Key::from("k1".to_owned())),
+        Some(Value::from("v1".to_owned())).as_ref()
+    );
+    assert_eq!(
+        res.get(&Key::from("k2".to_owned())),
+        Some(Value::from("v2".to_owned())).as_ref()
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn txn_unsafe_destroy_range() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+
+    const DATA_COUNT: usize = 10;
+
+    {
+        let mut txn = client.begin_pessimistic().await.unwrap();
+        for i in 0..DATA_COUNT {
+            let prefix = i % 2;
+            let idx = i / 2;
+            txn.put(
+                format!("prefix{}_key{}", prefix, idx).into_bytes(),
+                format!("value{}{}", prefix, idx).into_bytes(),
+            )
+            .await
+            .unwrap();
+        }
+        txn.commit().await.unwrap();
+
+        let mut snapshot = client.snapshot(
+            client.current_timestamp().await.unwrap(),
+            TransactionOptions::new_pessimistic(),
+        );
+        let kvs = snapshot
+            .scan(b"prefix0".to_vec()..b"prefix2".to_vec(), 100)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(kvs.len(), DATA_COUNT);
+    }
+
+    {
+        // destroy "prefix0"
+        client
+            .unsafe_destroy_range(b"prefix0".to_vec()..b"prefix1".to_vec())
+            .await
+            .unwrap();
+
+        let mut snapshot = client.snapshot(
+            client.current_timestamp().await.unwrap(),
+            TransactionOptions::new_pessimistic(),
+        );
+        let kvs = snapshot
+            .scan(b"prefix0".to_vec()..b"prefix2".to_vec(), 100)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(kvs.len(), DATA_COUNT / 2);
+        for (i, kv) in kvs.into_iter().enumerate() {
+            assert_eq!(kv.key(), &Key::from(format!("prefix1_key{}", i)));
+            assert_eq!(kv.value(), &format!("value1{}", i).into_bytes());
+        }
+    }
+
     Ok(())
 }

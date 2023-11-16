@@ -69,7 +69,7 @@ pub struct RegionEpoch {
 pub struct Region {
     #[prost(uint64, tag = "1")]
     pub id: u64,
-    /// Region key range [start_key, end_key).
+    /// Region key range \[start_key, end_key).
     #[prost(bytes = "vec", tag = "2")]
     pub start_key: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "3")]

@@ -21,7 +21,10 @@ pub trait Request: Any + Sync + Send + 'static {
     ) -> Result<Box<dyn Any>>;
     fn label(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
+    /// Set the context for the request.
+    /// Should always use `set_context` other than modify the `self.context` directly.
     fn set_context(&mut self, context: kvrpcpb::Context);
+    fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion);
 }
 
 macro_rules! impl_request {
@@ -52,7 +55,18 @@ macro_rules! impl_request {
             }
 
             fn set_context(&mut self, context: kvrpcpb::Context) {
+                let api_version = self
+                    .context
+                    .as_ref()
+                    .map(|c| c.api_version)
+                    .unwrap_or_default();
                 self.context = Some(context);
+                self.set_api_version(kvrpcpb::ApiVersion::try_from(api_version).unwrap());
+            }
+
+            fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {
+                let context = self.context.get_or_insert(kvrpcpb::Context::default());
+                context.api_version = api_version.into();
             }
         }
     };
@@ -102,3 +116,8 @@ impl_request!(
 );
 impl_request!(GcRequest, kv_gc, "kv_gc");
 impl_request!(DeleteRangeRequest, kv_delete_range, "kv_delete_range");
+impl_request!(
+    UnsafeDestroyRangeRequest,
+    unsafe_destroy_range,
+    "unsafe_destroy_range"
+);
