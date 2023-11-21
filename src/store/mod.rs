@@ -100,10 +100,10 @@ pub fn store_stream_for_range<PdC: PdClient>(
 
 /// The range used for request should be the intersection of `region_range` and `range`.
 fn range_intersection(region_range: (Key, Key), range: (Key, Key)) -> (Key, Key) {
-    let (req_lower, req_upper) = if range.0 > range.1 {
-        (range.1, range.0)
+    let (req_lower, req_upper, reversed) = if range.0 > range.1 {
+        (range.1, range.0, true)
     } else {
-        (range.0, range.1)
+        (range.0, range.1, false)
     };
 
     let (lower, upper) = region_range;
@@ -114,7 +114,14 @@ fn range_intersection(region_range: (Key, Key), range: (Key, Key)) -> (Key, Key)
     } else {
         min(upper, req_upper)
     };
-    (max(lower, req_lower), up)
+
+    let (res_lower, res_upper) = (max(lower, req_lower), up);
+
+    if reversed {
+        (res_upper, res_lower)
+    } else {
+        (res_lower, res_upper)
+    }
 }
 
 pub fn store_stream_for_ranges<PdC: PdClient>(
