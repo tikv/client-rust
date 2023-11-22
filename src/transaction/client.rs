@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use tracing::debug;
 use tracing::info;
+use tracing::instrument;
+use tracing::Span;
 
 use crate::backoff::{DEFAULT_REGION_BACKOFF, DEFAULT_STORE_BACKOFF};
 use crate::config::Config;
@@ -248,6 +250,7 @@ impl<Cod: Codec> Client<Cod> {
     ///
     /// This is a simplified version of [GC in TiDB](https://docs.pingcap.com/tidb/stable/garbage-collection-overview).
     /// We skip the second step "delete ranges" which is an optimization for TiDB.
+    #[instrument(skip(self))]
     pub async fn gc(&self, safepoint: Timestamp) -> Result<bool> {
         debug!("invoking transactional gc request");
 
@@ -269,17 +272,20 @@ impl<Cod: Codec> Client<Cod> {
         Ok(res)
     }
 
+    #[instrument(skip(self, range), fields(range))]
     pub async fn cleanup_locks(
         &self,
         range: impl Into<BoundRange>,
         safepoint: &Timestamp,
         options: ResolveLocksOptions,
     ) -> Result<CleanupLocksResult> {
-        debug!("invoking cleanup async commit locks");
+        debug!("invoking cleanup locks");
         // scan all locks with ts <= safepoint
         let ctx = ResolveLocksContext::default();
         let backoff = Backoff::equal_jitter_backoff(100, 10000, 50);
-        let req = new_scan_lock_request(range.into(), safepoint, options.batch_size);
+        let range = range.into();
+        Span::current().record("range", &tracing::field::debug(&range));
+        let req = new_scan_lock_request(range, safepoint, options.batch_size);
         let encoded_req = EncodedRequest::new(req, self.pd.get_codec());
         let plan = crate::request::PlanBuilder::new(self.pd.clone(), encoded_req)
             .cleanup_locks(ctx.clone(), options, backoff)

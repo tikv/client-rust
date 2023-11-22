@@ -701,6 +701,7 @@ where
 {
     type Result = CleanupLocksResult;
 
+    #[instrument(name = "CleanupLocks::execute", skip_all)]
     async fn execute(&self) -> Result<Self::Result> {
         let mut result = CleanupLocksResult::default();
         let mut inner = self.inner.clone();

@@ -825,6 +825,7 @@ impl Merge<kvrpcpb::CheckSecondaryLocksResponse> for Collect {
     }
 }
 
+#[derive(Debug)]
 pub struct SecondaryLocksStatus {
     pub commit_ts: Option<Timestamp>,
     pub min_commit_ts: u64,

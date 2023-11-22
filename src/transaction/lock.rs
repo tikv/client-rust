@@ -10,6 +10,7 @@ use tracing::debug;
 use tracing::error;
 use tracing::info_span;
 use tracing::instrument;
+use tracing::Span;
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
@@ -60,8 +61,7 @@ pub async fn resolve_locks(
             });
     debug!(
         "resolving locks: expired_locks {:?}, live_locks {:?}",
-        expired_locks,
-        live_locks
+        expired_locks, live_locks
     );
 
     // records the commit version of each primary lock (representing the status of the transaction)
@@ -225,6 +225,7 @@ impl LockResolver {
     /// _Cleanup_ the given locks. Returns whether all the given locks are resolved.
     ///
     /// Note: Will rollback RUNNING transactions. ONLY use in GC.
+    #[instrument(skip_all, fields(store = ?store, locks = ?locks))]
     pub async fn cleanup_locks(
         &mut self,
         store: RegionStore,
@@ -343,6 +344,7 @@ impl LockResolver {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[instrument(skip(self, pd_client, primary), fields(primary), ret(Debug))]
     pub async fn check_txn_status(
         &mut self,
         pd_client: Arc<impl PdClient>,
@@ -354,6 +356,8 @@ impl LockResolver {
         force_sync_commit: bool,
         resolving_pessimistic_lock: bool,
     ) -> Result<Arc<TransactionStatus>> {
+        Span::current().record("primary", &tracing::field::display(HexRepr(&primary)));
+
         if let Some(txn_status) = self.ctx.get_resolved(txn_id).await {
             return Ok(txn_status);
         }
@@ -386,6 +390,7 @@ impl LockResolver {
 
         let current = pd_client.clone().get_timestamp().await?;
         res.check_ttl(current);
+        debug!("check_txn_status: status:{:?}", res);
         let res = Arc::new(res);
         if res.is_cacheable() {
             self.ctx.save_resolved(txn_id, res.clone()).await;
@@ -393,6 +398,7 @@ impl LockResolver {
         Ok(res)
     }
 
+    #[instrument(skip(self, pd_client), fields(keys = ?keys), ret(Debug))]
     async fn check_all_secondaries(
         &mut self,
         pd_client: Arc<impl PdClient>,
@@ -409,6 +415,7 @@ impl LockResolver {
         plan.execute().await
     }
 
+    #[instrument(skip(self, pd_client, txn_infos), fields(store = ?store, txn_infos = ?txn_infos), ret(Debug))]
     async fn batch_resolve_locks(
         &mut self,
         pd_client: Arc<impl PdClient>,
