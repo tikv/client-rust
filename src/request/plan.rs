@@ -226,6 +226,11 @@ where
         e: errorpb::Error,
         region_store: RegionStore,
     ) -> Result<bool> {
+        debug!(
+            "handle_region_error, error:{:?}, region_store:{:?}",
+            e, region_store
+        );
+
         let ver_id = region_store.region_with_leader.ver_id();
         if let Some(not_leader) = e.not_leader {
             if let Some(leader) = not_leader.leader {
