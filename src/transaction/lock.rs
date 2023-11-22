@@ -261,6 +261,12 @@ impl LockResolver {
                     l.lock_type == kvrpcpb::Op::PessimisticLock as i32,
                 )
                 .await?;
+            debug!(
+                "cleanup_locks: txn_id:{}, primary:{}, status:{:?}",
+                txn_id,
+                HexRepr(&l.primary_lock),
+                status
+            );
 
             // If the transaction uses async commit, check_txn_status will reject rolling back the primary lock.
             // Then we need to check the secondary locks to determine the final status of the transaction.
@@ -307,7 +313,7 @@ impl LockResolver {
             match &status.kind {
                 TransactionStatusKind::Locked(_, lock_info) => {
                     error!(
-                        "cleanup_locks fail to clean locks, this result is not expected. txn_id:{}",
+                        "cleanup_locks: fail to clean locks, this result is not expected. txn_id:{}",
                         txn_id
                     );
                     return Err(Error::ResolveLockError(vec![lock_info.clone()]));
@@ -318,7 +324,7 @@ impl LockResolver {
         }
 
         debug!(
-            "batch resolve locks, region:{:?}, txn:{:?}",
+            "cleanup_locks: batch resolve locks, region:{:?}, txn:{:?}",
             store.region_with_leader.ver_id(),
             txn_infos
         );
@@ -334,6 +340,10 @@ impl LockResolver {
         let cleaned_region = self
             .batch_resolve_locks(pd_client.clone(), store.clone(), txn_info_vec)
             .await?;
+        debug!(
+            "cleanup_locks: batch resolve locks, cleaned_region:{:?}",
+            cleaned_region
+        );
         for txn_id in txn_ids {
             self.ctx
                 .save_cleaned_region(txn_id, cleaned_region.clone())

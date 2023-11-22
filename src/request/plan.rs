@@ -13,8 +13,8 @@ use tracing::debug;
 use tracing::info;
 use tracing::info_span;
 use tracing::instrument;
-use tracing::span;
-use tracing::Instrument;
+// use tracing::span;
+// use tracing::Instrument;
 
 use crate::backoff::Backoff;
 use crate::pd::PdClient;
@@ -109,7 +109,7 @@ where
 {
     // A plan may involve multiple shards
     #[async_recursion]
-    #[instrument(skip_all)]
+    // #[instrument(skip_all)]
     async fn single_plan_handler(
         pd_client: Arc<PdC>,
         current_plan: P,
@@ -121,7 +121,7 @@ where
         let mut handles = Vec::new();
         for shard in shards {
             let (shard, region_store) = shard?;
-            let span = span!(tracing::Level::INFO, "shard", ?region_store);
+            // let span = span!(tracing::Level::INFO, "shard", ?region_store);
 
             let mut clone = current_plan.clone();
             clone.apply_shard(shard, &region_store)?;
@@ -133,7 +133,8 @@ where
                 permits.clone(),
                 preserve_region_results,
             ));
-            handles.push(handle.instrument(span));
+            handles.push(handle);
+            // handles.push(handle.instrument(span));
         }
 
         let results = try_join_all(handles).await?;
@@ -157,7 +158,7 @@ where
     }
 
     #[async_recursion]
-    #[instrument(skip_all, fields(region_store = ?region_store))]
+    // #[instrument(skip_all, fields(region_store = ?region_store))]
     async fn single_shard_handler(
         pd_client: Arc<PdC>,
         plan: P,
@@ -219,7 +220,7 @@ where
     // 1. Ok(true): error has been resolved, retry immediately
     // 2. Ok(false): backoff, and then retry
     // 3. Err(Error): can't be resolved, return the error to upper level
-    #[instrument(skip_all, fields(region_store = ?region_store, error = ?e))]
+    // #[instrument(skip_all, fields(region_store = ?region_store, error = ?e))]
     async fn handle_region_error(
         pd_client: Arc<PdC>,
         e: errorpb::Error,
@@ -276,7 +277,7 @@ where
     // 1. Ok(true): error has been resolved, retry immediately
     // 2. Ok(false): backoff, and then retry
     // 3. Err(Error): can't be resolved, return the error to upper level
-    #[instrument(skip_all, fields(region_store = ?region_store, error = ?error))]
+    // #[instrument(skip_all, fields(region_store = ?region_store, error = ?error))]
     async fn on_region_epoch_not_match(
         pd_client: Arc<PdC>,
         region_store: RegionStore,
@@ -313,7 +314,7 @@ where
         Ok(false)
     }
 
-    #[instrument(skip_all, fields(region_store = ?region_store, error = ?e))]
+    // #[instrument(skip_all, fields(region_store = ?region_store, error = ?e))]
     async fn handle_grpc_error(
         pd_client: Arc<PdC>,
         plan: P,
