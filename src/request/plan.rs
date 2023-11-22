@@ -626,7 +626,7 @@ where
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct CleanupLocksResult {
     pub region_error: Option<errorpb::Error>,
     pub key_error: Option<Vec<Error>>,

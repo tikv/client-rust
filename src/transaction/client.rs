@@ -250,15 +250,18 @@ impl<Cod: Codec> Client<Cod> {
     ///
     /// This is a simplified version of [GC in TiDB](https://docs.pingcap.com/tidb/stable/garbage-collection-overview).
     /// We skip the second step "delete ranges" which is an optimization for TiDB.
-    #[instrument(skip(self))]
-    pub async fn gc(&self, safepoint: Timestamp) -> Result<bool> {
+    #[instrument(skip(self, range), fields(range), ret(Debug))]
+    pub async fn gc(&self, range: impl Into<BoundRange>, safepoint: Timestamp) -> Result<bool> {
         debug!("invoking transactional gc request");
 
         let options = ResolveLocksOptions {
             batch_size: SCAN_LOCK_BATCH_SIZE,
             ..Default::default()
         };
-        self.cleanup_locks(.., &safepoint, options).await?;
+        let range = range.into();
+        Span::current().record("range", &tracing::field::debug(&range));
+
+        self.cleanup_locks(range, &safepoint, options).await?;
 
         // update safepoint to PD
         let res: bool = self
@@ -272,7 +275,7 @@ impl<Cod: Codec> Client<Cod> {
         Ok(res)
     }
 
-    #[instrument(skip(self, range), fields(range))]
+    #[instrument(skip(self, range), fields(range), ret(Debug))]
     pub async fn cleanup_locks(
         &self,
         range: impl Into<BoundRange>,
