@@ -585,8 +585,8 @@ where
     type Result = P::Result;
 
     async fn execute(&self) -> Result<Self::Result> {
-        let span = info_span!("ResolveLock::execute");
-        let _enter = span.enter();
+        // let span = info_span!("ResolveLock::execute");
+        // let _enter = span.enter();
 
         let mut result = self.inner.execute().await?;
         let mut clone = self.clone();
