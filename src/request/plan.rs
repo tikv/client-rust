@@ -125,18 +125,15 @@ where
 
             let mut clone = current_plan.clone();
             clone.apply_shard(shard, &region_store)?;
-            let handle = tokio::spawn(
-                Self::single_shard_handler(
-                    pd_client.clone(),
-                    clone,
-                    region_store,
-                    backoff.clone(),
-                    permits.clone(),
-                    preserve_region_results,
-                )
-                .instrument(span),
-            );
-            handles.push(handle);
+            let handle = tokio::spawn(Self::single_shard_handler(
+                pd_client.clone(),
+                clone,
+                region_store,
+                backoff.clone(),
+                permits.clone(),
+                preserve_region_results,
+            ));
+            handles.push(handle.instrument(span));
         }
 
         let results = try_join_all(handles).await?;
