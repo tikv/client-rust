@@ -1028,27 +1028,37 @@ async fn txn_scan_reverse() -> Result<()> {
     init().await?;
     let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
 
-    let k1 = b"a1".to_vec();
-    let k2 = b"a2".to_vec();
-    let v1 = b"b1".to_vec();
-    let v2 = b"b2".to_vec();
-
-    let reverse_resp = vec![
-        (Key::from(k2.clone()), v2.clone()),
-        (Key::from(k1.clone()), v1.clone()),
-    ];
+    // Keys in `keys` should locate in different regions. See `init()` for boundary of regions.
+    let keys: Vec<Key> = vec![
+        0x00000000_u32.to_be_bytes().to_vec(),
+        0x40000000_u32.to_be_bytes().to_vec(),
+        b"a1".to_vec(), // 0x6149
+        b"a2".to_vec(), // 0x614A
+        0x80000000_u32.to_be_bytes().to_vec(),
+        0xC0000000_u32.to_be_bytes().to_vec(),
+    ]
+    .into_iter()
+    .map(Into::into)
+    .collect();
+    let values: Vec<Vec<u8>> = (0..keys.len())
+        .map(|i| format!("v{}", i).into_bytes())
+        .collect();
+    let bound_range: BoundRange =
+        (keys.first().unwrap().clone()..=keys.last().unwrap().clone()).into();
 
     // Pessimistic option is not stable in this case. Use optimistic options instead.
     let option = TransactionOptions::new_optimistic().drop_check(tikv_client::CheckLevel::Warn);
     let mut t = client.begin_with_options(option.clone()).await?;
-    t.put(k1.clone(), v1).await?;
-    t.put(k2.clone(), v2).await?;
+    let mut reverse_resp = Vec::with_capacity(keys.len());
+    for (k, v) in keys.into_iter().zip(values.into_iter()).rev() {
+        t.put(k.clone(), v.clone()).await?;
+        reverse_resp.push((k, v));
+    }
     t.commit().await?;
 
     let mut t2 = client.begin_with_options(option).await?;
-    let bound_range: BoundRange = (k1..=k2).into();
     let resp = t2
-        .scan_reverse(bound_range, 2)
+        .scan_reverse(bound_range, 100)
         .await?
         .map(|kv| (kv.0, kv.1))
         .collect::<Vec<(Key, Vec<u8>)>>();
