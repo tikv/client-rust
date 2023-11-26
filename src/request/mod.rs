@@ -23,6 +23,7 @@ pub use self::plan_builder::SingleKey;
 pub use self::shard::Batchable;
 pub use self::shard::HasNextBatch;
 pub use self::shard::NextBatch;
+pub use self::shard::RangeRequest;
 pub use self::shard::Shardable;
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
