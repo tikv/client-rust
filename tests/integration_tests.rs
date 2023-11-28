@@ -1028,27 +1028,108 @@ async fn txn_scan_reverse() -> Result<()> {
     init().await?;
     let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
 
-    let k1 = b"a1".to_vec();
-    let k2 = b"a2".to_vec();
-    let v1 = b"b1".to_vec();
-    let v2 = b"b2".to_vec();
+    let k1 = b"k1".to_vec();
+    let k2 = b"k2".to_vec();
+    let k3 = b"k3".to_vec();
 
-    let reverse_resp = vec![
-        (Key::from(k2.clone()), v2.clone()),
-        (Key::from(k1.clone()), v1.clone()),
-    ];
+    let v1 = b"v1".to_vec();
+    let v2 = b"v2".to_vec();
+    let v3 = b"v3".to_vec();
 
     // Pessimistic option is not stable in this case. Use optimistic options instead.
     let option = TransactionOptions::new_optimistic().drop_check(tikv_client::CheckLevel::Warn);
     let mut t = client.begin_with_options(option.clone()).await?;
-    t.put(k1.clone(), v1).await?;
-    t.put(k2.clone(), v2).await?;
+    t.put(k1.clone(), v1.clone()).await?;
+    t.put(k2.clone(), v2.clone()).await?;
+    t.put(k3.clone(), v3.clone()).await?;
     t.commit().await?;
 
     let mut t2 = client.begin_with_options(option).await?;
-    let bound_range: BoundRange = (k1..=k2).into();
+    {
+        // For [k1, k3]:
+        let bound_range: BoundRange = (k1.clone()..=k3.clone()).into();
+        let resp = t2
+            .scan_reverse(bound_range, 3)
+            .await?
+            .map(|kv| (kv.0, kv.1))
+            .collect::<Vec<(Key, Vec<u8>)>>();
+        assert_eq!(
+            resp,
+            vec![
+                (Key::from(k3.clone()), v3.clone()),
+                (Key::from(k2.clone()), v2.clone()),
+                (Key::from(k1.clone()), v1.clone()),
+            ]
+        );
+    }
+    {
+        // For [k1, k3):
+        let bound_range: BoundRange = (k1.clone()..k3.clone()).into();
+        let resp = t2
+            .scan_reverse(bound_range, 3)
+            .await?
+            .map(|kv| (kv.0, kv.1))
+            .collect::<Vec<(Key, Vec<u8>)>>();
+        assert_eq!(
+            resp,
+            vec![
+                (Key::from(k2.clone()), v2.clone()),
+                (Key::from(k1.clone()), v1),
+            ]
+        );
+    }
+    {
+        // For (k1, k3):
+        let mut start_key = k1.clone();
+        start_key.push(0);
+        let bound_range: BoundRange = (start_key..k3).into();
+        let resp = t2
+            .scan_reverse(bound_range, 3)
+            .await?
+            .map(|kv| (kv.0, kv.1))
+            .collect::<Vec<(Key, Vec<u8>)>>();
+        assert_eq!(resp, vec![(Key::from(k2), v2),]);
+    }
+    t2.commit().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn txn_scan_reverse_multi_regions() -> Result<()> {
+    init().await?;
+    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+
+    // Keys in `keys` should locate in different regions. See `init()` for boundary of regions.
+    let keys: Vec<Key> = vec![
+        0x00000000_u32.to_be_bytes().to_vec(),
+        0x40000000_u32.to_be_bytes().to_vec(),
+        0x80000000_u32.to_be_bytes().to_vec(),
+        0xC0000000_u32.to_be_bytes().to_vec(),
+    ]
+    .into_iter()
+    .map(Into::into)
+    .collect();
+    let values: Vec<Vec<u8>> = (0..keys.len())
+        .map(|i| format!("v{}", i).into_bytes())
+        .collect();
+    let bound_range: BoundRange =
+        (keys.first().unwrap().clone()..=keys.last().unwrap().clone()).into();
+
+    // Pessimistic option is not stable in this case. Use optimistic options instead.
+    let option = TransactionOptions::new_optimistic().drop_check(tikv_client::CheckLevel::Warn);
+    let mut t = client.begin_with_options(option.clone()).await?;
+    let mut reverse_resp = Vec::with_capacity(keys.len());
+    for (k, v) in keys.into_iter().zip(values.into_iter()).rev() {
+        t.put(k.clone(), v.clone()).await?;
+        reverse_resp.push((k, v));
+    }
+    t.commit().await?;
+
+    let mut t2 = client.begin_with_options(option).await?;
     let resp = t2
-        .scan_reverse(bound_range, 2)
+        .scan_reverse(bound_range, 100)
         .await?
         .map(|kv| (kv.0, kv.1))
         .collect::<Vec<(Key, Vec<u8>)>>();

@@ -2,8 +2,8 @@ export RUSTFLAGS=-Dwarnings
 
 .PHONY: default check unit-test integration-tests test doc docker-pd docker-kv docker all
 
-PD_ADDRS ?= "127.0.0.1:2379"
-MULTI_REGION ?= 1
+export PD_ADDRS     ?= 127.0.0.1:2379
+export MULTI_REGION ?= 1
 
 ALL_FEATURES := integration-tests
 
