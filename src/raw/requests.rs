@@ -16,6 +16,7 @@ use crate::proto::kvrpcpb;
 use crate::proto::kvrpcpb::ApiVersion;
 use crate::proto::metapb;
 use crate::proto::tikvpb::tikv_client::TikvClient;
+use crate::range_request;
 use crate::request::plan::ResponseWithShard;
 use crate::request::Collect;
 use crate::request::CollectSingle;
@@ -23,6 +24,7 @@ use crate::request::DefaultProcessor;
 use crate::request::KvRequest;
 use crate::request::Merge;
 use crate::request::Process;
+use crate::request::RangeRequest;
 use crate::request::Shardable;
 use crate::request::SingleKey;
 use crate::shardable_key;
@@ -227,6 +229,7 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
     type Response = kvrpcpb::RawDeleteRangeResponse;
 }
 
+range_request!(kvrpcpb::RawDeleteRangeRequest);
 shardable_range!(kvrpcpb::RawDeleteRangeRequest);
 
 pub fn new_raw_scan_request(
@@ -250,6 +253,7 @@ impl KvRequest for kvrpcpb::RawScanRequest {
     type Response = kvrpcpb::RawScanResponse;
 }
 
+range_request!(kvrpcpb::RawScanRequest); // TODO: support reverse raw scan.
 shardable_range!(kvrpcpb::RawScanRequest);
 
 impl Merge<kvrpcpb::RawScanResponse> for Collect {

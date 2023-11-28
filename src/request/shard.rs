@@ -12,6 +12,7 @@ use crate::request::KvRequest;
 use crate::request::Plan;
 use crate::request::ResolveLock;
 use crate::store::RegionStore;
+use crate::store::Request;
 use crate::Result;
 
 macro_rules! impl_inner_shardable {
@@ -204,6 +205,32 @@ macro_rules! shardable_keys {
     };
 }
 
+pub trait RangeRequest: Request {
+    fn is_reverse(&self) -> bool {
+        false
+    }
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! range_request {
+    ($type_: ty) => {
+        impl RangeRequest for $type_ {}
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! reversible_range_request {
+    ($type_: ty) => {
+        impl RangeRequest for $type_ {
+            fn is_reverse(&self) -> bool {
+                self.reverse
+            }
+        }
+    };
+}
+
 #[doc(hidden)]
 #[macro_export]
 macro_rules! shardable_range {
@@ -215,8 +242,13 @@ macro_rules! shardable_range {
                 &self,
                 pd_client: &Arc<impl $crate::pd::PdClient>,
             ) -> BoxStream<'static, $crate::Result<(Self::Shard, $crate::store::RegionStore)>> {
-                let start_key = self.start_key.clone().into();
-                let end_key = self.end_key.clone().into();
+                let mut start_key = self.start_key.clone().into();
+                let mut end_key = self.end_key.clone().into();
+                // In a reverse range request, the range is in the meaning of [end_key, start_key), i.e. end_key <= x < start_key.
+                // Therefore, before fetching the regions from PD, it is necessary to swap the values of start_key and end_key.
+                if self.is_reverse() {
+                    std::mem::swap(&mut start_key, &mut end_key);
+                }
                 $crate::store::store_stream_for_range((start_key, end_key), pd_client.clone())
             }
 
@@ -227,8 +259,13 @@ macro_rules! shardable_range {
             ) -> $crate::Result<()> {
                 self.set_context(store.region_with_leader.context()?);
 
+                // In a reverse range request, the range is in the meaning of [end_key, start_key), i.e. end_key <= x < start_key.
+                // As a result, after obtaining start_key and end_key from PD, we need to swap their values when assigning them to the request.
                 self.start_key = shard.0.into();
                 self.end_key = shard.1.into();
+                if self.is_reverse() {
+                    std::mem::swap(&mut self.start_key, &mut self.end_key);
+                }
                 Ok(())
             }
         }

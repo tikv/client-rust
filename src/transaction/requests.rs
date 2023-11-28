@@ -28,10 +28,12 @@ use crate::request::KvRequest;
 use crate::request::Merge;
 use crate::request::NextBatch;
 use crate::request::Process;
+use crate::request::RangeRequest;
 use crate::request::ResponseWithShard;
 use crate::request::Shardable;
 use crate::request::SingleKey;
 use crate::request::{Batchable, StoreRequest};
+use crate::reversible_range_request;
 use crate::shardable_key;
 use crate::shardable_keys;
 use crate::shardable_range;
@@ -170,6 +172,7 @@ impl KvRequest for kvrpcpb::ScanRequest {
     type Response = kvrpcpb::ScanResponse;
 }
 
+reversible_range_request!(kvrpcpb::ScanRequest);
 shardable_range!(kvrpcpb::ScanRequest);
 
 impl Merge<kvrpcpb::ScanResponse> for Collect {
