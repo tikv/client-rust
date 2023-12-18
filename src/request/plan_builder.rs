@@ -159,6 +159,7 @@ where
 
     /// Preserve all results, even some of them are Err.
     /// To pass all responses to merge, and handle partial successful results correctly.
+    #[minitrace::trace]
     pub fn retry_multi_region_preserve_results(
         self,
         backoff: Backoff,

@@ -554,7 +554,7 @@ async fn raw_req() -> Result<()> {
 async fn txn_update_safepoint() -> Result<()> {
     init().await?;
     let client = TransactionClient::new(pd_addrs()).await?;
-    let res = client.gc(client.current_timestamp().await?).await?;
+    let res = client.gc(.., client.current_timestamp().await?).await?;
     assert!(res);
     Ok(())
 }

@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::any::Any;
+use std::fmt::Formatter;
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
@@ -405,6 +406,14 @@ impl Request for RawCoprocessorRequest {
 
     fn set_api_version(&mut self, api_version: ApiVersion) {
         self.inner.set_api_version(api_version);
+    }
+}
+
+impl std::fmt::Debug for RawCoprocessorRequest {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RawCoprocessorRequest")
+            .field("inner", &self.inner)
+            .finish()
     }
 }
 

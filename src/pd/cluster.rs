@@ -103,6 +103,7 @@ impl Connection {
         Connection { security_mgr }
     }
 
+    #[minitrace::trace]
     pub async fn connect_cluster(
         &self,
         endpoints: &[String],
@@ -122,6 +123,7 @@ impl Connection {
     }
 
     // Re-establish connection with PD leader in asynchronous fashion.
+    #[minitrace::trace]
     pub async fn reconnect(&self, cluster: &mut Cluster, timeout: Duration) -> Result<()> {
         warn!("updating pd client");
         let start = Instant::now();

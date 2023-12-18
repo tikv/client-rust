@@ -6,6 +6,7 @@ mod request;
 
 use std::cmp::max;
 use std::cmp::min;
+use std::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -31,6 +32,33 @@ use crate::Result;
 pub struct RegionStore {
     pub region_with_leader: RegionWithLeader,
     pub client: Arc<dyn KvClient + Send + Sync>,
+}
+
+impl fmt::Debug for RegionStore {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RegionStore")
+            .field("region_id", &self.region_with_leader.region.id)
+            .field(
+                "region_version",
+                &self
+                    .region_with_leader
+                    .region
+                    .region_epoch
+                    .as_ref()
+                    .map(|e| e.version)
+                    .unwrap_or_default(),
+            )
+            .field(
+                "leader_store_id",
+                &self
+                    .region_with_leader
+                    .leader
+                    .as_ref()
+                    .map(|l| l.store_id)
+                    .unwrap_or_default(),
+            )
+            .finish()
+    }
 }
 
 #[derive(new, Clone)]

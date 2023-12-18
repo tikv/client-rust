@@ -5,13 +5,17 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use fail::fail_point;
+use log::as_display;
 use log::debug;
 use log::error;
+use log::info;
+use minitrace::prelude::*;
 use tokio::sync::RwLock;
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::backoff::OPTIMISTIC_BACKOFF;
+use crate::kv::HexRepr;
 use crate::pd::PdClient;
 use crate::proto::kvrpcpb;
 use crate::proto::kvrpcpb::TxnInfo;
@@ -41,6 +45,7 @@ const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 /// the key. We first use `CleanupRequest` to let the status of the primary lock converge and get
 /// its status (committed or rolled back). Then, we use the status of its primary lock to determine
 /// the status of the other keys in the same transaction.
+#[minitrace::trace]
 pub async fn resolve_locks(
     locks: Vec<kvrpcpb::LockInfo>,
     pd_client: Arc<impl PdClient>,
@@ -54,11 +59,23 @@ pub async fn resolve_locks(
                 ts.physical - Timestamp::from_version(lock.lock_version).physical
                     >= lock.lock_ttl as i64
             });
+    debug!(
+        "resolving locks: expired_locks {:?}, live_locks {:?}",
+        expired_locks, live_locks
+    );
 
     // records the commit version of each primary lock (representing the status of the transaction)
     let mut commit_versions: HashMap<u64, u64> = HashMap::new();
     let mut clean_regions: HashMap<u64, HashSet<RegionVerId>> = HashMap::new();
     for lock in expired_locks {
+        let _span =
+            LocalSpan::enter_with_local_parent("cleanup_expired_lock").with_properties(|| {
+                [
+                    ("lock_version", lock.lock_version.to_string()),
+                    ("primary_lock", HexRepr(&lock.primary_lock).to_string()),
+                ]
+            });
+
         let region_ver_id = pd_client
             .region_for_key(&lock.primary_lock.clone().into())
             .await?
@@ -75,6 +92,7 @@ pub async fn resolve_locks(
         let commit_version = match commit_versions.get(&lock.lock_version) {
             Some(&commit_version) => commit_version,
             None => {
+                debug!("cleanup lock");
                 let request = requests::new_cleanup_request(lock.primary_lock, lock.lock_version);
                 let encoded_req = EncodedRequest::new(request, pd_client.get_codec());
                 let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
@@ -84,6 +102,7 @@ pub async fn resolve_locks(
                     .post_process_default()
                     .plan();
                 let commit_version = plan.execute().await?;
+                debug!("cleanup lock done: commit_version {}", commit_version);
                 commit_versions.insert(lock.lock_version, commit_version);
                 commit_version
             }
@@ -104,6 +123,7 @@ pub async fn resolve_locks(
     Ok(live_locks)
 }
 
+#[minitrace::trace]
 async fn resolve_lock_with_retry(
     #[allow(clippy::ptr_arg)] key: &Vec<u8>,
     start_version: u64,
@@ -134,6 +154,7 @@ async fn resolve_lock_with_retry(
                 // ResolveLockResponse can have at most 1 error
                 match errors.pop() {
                     e @ Some(Error::RegionError(_)) => {
+                        pd_client.invalidate_region_cache(ver_id).await;
                         error = e;
                         continue;
                     }
@@ -209,6 +230,7 @@ impl LockResolver {
     /// _Cleanup_ the given locks. Returns whether all the given locks are resolved.
     ///
     /// Note: Will rollback RUNNING transactions. ONLY use in GC.
+    #[minitrace::trace]
     pub async fn cleanup_locks(
         &mut self,
         store: RegionStore,
@@ -244,6 +266,12 @@ impl LockResolver {
                     l.lock_type == kvrpcpb::Op::PessimisticLock as i32,
                 )
                 .await?;
+            debug!(
+                "cleanup_locks: txn_id:{}, primary:{}, status:{:?}",
+                txn_id,
+                HexRepr(&l.primary_lock),
+                status
+            );
 
             // If the transaction uses async commit, check_txn_status will reject rolling back the primary lock.
             // Then we need to check the secondary locks to determine the final status of the transaction.
@@ -290,7 +318,7 @@ impl LockResolver {
             match &status.kind {
                 TransactionStatusKind::Locked(_, lock_info) => {
                     error!(
-                        "cleanup_locks fail to clean locks, this result is not expected. txn_id:{}",
+                        "cleanup_locks: fail to clean locks, this result is not expected. txn_id:{}",
                         txn_id
                     );
                     return Err(Error::ResolveLockError(vec![lock_info.clone()]));
@@ -301,7 +329,7 @@ impl LockResolver {
         }
 
         debug!(
-            "batch resolve locks, region:{:?}, txn:{:?}",
+            "cleanup_locks: batch resolve locks, region:{:?}, txn:{:?}",
             store.region_with_leader.ver_id(),
             txn_infos
         );
@@ -317,6 +345,10 @@ impl LockResolver {
         let cleaned_region = self
             .batch_resolve_locks(pd_client.clone(), store.clone(), txn_info_vec)
             .await?;
+        debug!(
+            "cleanup_locks: batch resolve locks, cleaned_region:{:?}",
+            cleaned_region
+        );
         for txn_id in txn_ids {
             self.ctx
                 .save_cleaned_region(txn_id, cleaned_region.clone())
@@ -327,6 +359,7 @@ impl LockResolver {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[minitrace::trace]
     pub async fn check_txn_status(
         &mut self,
         pd_client: Arc<impl PdClient>,
@@ -338,6 +371,8 @@ impl LockResolver {
         force_sync_commit: bool,
         resolving_pessimistic_lock: bool,
     ) -> Result<Arc<TransactionStatus>> {
+        info!("primary" = as_display!(HexRepr(&primary)); "check_txn_status");
+
         if let Some(txn_status) = self.ctx.get_resolved(txn_id).await {
             return Ok(txn_status);
         }
@@ -370,6 +405,7 @@ impl LockResolver {
 
         let current = pd_client.clone().get_timestamp().await?;
         res.check_ttl(current);
+        debug!("check_txn_status: status:{:?}", res);
         let res = Arc::new(res);
         if res.is_cacheable() {
             self.ctx.save_resolved(txn_id, res.clone()).await;
@@ -377,6 +413,7 @@ impl LockResolver {
         Ok(res)
     }
 
+    #[minitrace::trace]
     async fn check_all_secondaries(
         &mut self,
         pd_client: Arc<impl PdClient>,
@@ -393,6 +430,7 @@ impl LockResolver {
         plan.execute().await
     }
 
+    #[minitrace::trace]
     async fn batch_resolve_locks(
         &mut self,
         pd_client: Arc<impl PdClient>,

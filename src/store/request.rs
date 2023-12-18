@@ -1,6 +1,7 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::any::Any;
+use std::fmt::Debug;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -13,7 +14,7 @@ use crate::Error;
 use crate::Result;
 
 #[async_trait]
-pub trait Request: Any + Sync + Send + 'static {
+pub trait Request: Any + Sync + Send + Debug + 'static {
     async fn dispatch(
         &self,
         client: &TikvClient<Channel>,

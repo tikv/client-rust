@@ -8,6 +8,7 @@ use either::Either;
 use futures::stream::BoxStream;
 use futures::stream::{self};
 use futures::StreamExt;
+use log::debug;
 
 use super::transaction::TXN_COMMIT_BATCH_SIZE;
 use crate::collect_first;
@@ -178,7 +179,14 @@ shardable_range!(kvrpcpb::ScanRequest);
 impl Merge<kvrpcpb::ScanResponse> for Collect {
     type Out = Vec<KvPair>;
 
+    #[minitrace::trace]
     fn merge(&self, input: Vec<Result<kvrpcpb::ScanResponse>>) -> Result<Self::Out> {
+        let length: usize = input
+            .iter()
+            .map(|r| r.as_ref().map(|r| r.pairs.len()).unwrap_or_default())
+            .sum();
+        debug!("Collect<ScanResponse>::merge: result length {}", length);
+
         input
             .into_iter()
             .flat_map_ok(|resp| resp.pairs.into_iter().map(Into::into))
@@ -819,6 +827,7 @@ impl Merge<kvrpcpb::CheckSecondaryLocksResponse> for Collect {
     }
 }
 
+#[derive(Debug)]
 pub struct SecondaryLocksStatus {
     pub commit_ts: Option<Timestamp>,
     pub min_commit_ts: u64,

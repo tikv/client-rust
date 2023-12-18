@@ -22,6 +22,7 @@ use futures::task::Context;
 use futures::task::Poll;
 use log::debug;
 use log::info;
+use minitrace::prelude::*;
 use pin_project::pin_project;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -63,6 +64,7 @@ impl TimestampOracle {
         Ok(TimestampOracle { request_tx })
     }
 
+    #[minitrace::trace]
     pub(crate) async fn get_timestamp(self) -> Result<Timestamp> {
         debug!("getting current timestamp");
         let (request, response) = oneshot::channel();
@@ -74,6 +76,7 @@ impl TimestampOracle {
     }
 }
 
+#[minitrace::trace]
 async fn run_tso(
     cluster_id: u64,
     mut pd_client: PdClient<Channel>,
@@ -98,6 +101,9 @@ async fn run_tso(
     let mut responses = pd_client.tso(request_stream).await?.into_inner();
 
     while let Some(Ok(resp)) = responses.next().await {
+        let _span = LocalSpan::enter_with_local_parent("handle_response");
+        debug!("got response: {:?}", resp);
+
         {
             let mut pending_requests = pending_requests.lock().await;
             allocate_timestamps(&resp, &mut pending_requests)?;
@@ -128,6 +134,7 @@ struct TsoRequestStream {
 impl Stream for TsoRequestStream {
     type Item = TsoRequest;
 
+    #[minitrace::trace]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
 
@@ -152,6 +159,12 @@ impl Stream for TsoRequestStream {
             }
         }
 
+        debug!(
+            "got requests: len {}, pending_requests {}",
+            requests.len(),
+            pending_requests.len()
+        );
+
         if !requests.is_empty() {
             let req = TsoRequest {
                 header: Some(RequestHeader {
@@ -167,6 +180,12 @@ impl Stream for TsoRequestStream {
                 requests,
             };
             pending_requests.push_back(request_group);
+
+            debug!(
+                "sending request to PD: {:?}, pending_requests {}",
+                req,
+                pending_requests.len()
+            );
 
             Poll::Ready(Some(req))
         } else {

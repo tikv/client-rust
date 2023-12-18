@@ -1,5 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::fmt;
 use std::iter;
 use std::marker::PhantomData;
 use std::sync::atomic;
@@ -10,9 +11,11 @@ use std::time::Instant;
 use derive_new::new;
 use fail::fail_point;
 use futures::prelude::*;
+use log::as_debug;
 use log::debug;
+use log::info;
 use log::warn;
-use tokio::time::Duration;
+use std::time::Duration;
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
@@ -86,6 +89,17 @@ pub struct Transaction<Cod: Codec = ApiV1TxnCodec, PdC: PdClient<Codec = Cod> = 
     is_heartbeat_started: bool,
     start_instant: Instant,
     phantom: PhantomData<Cod>,
+}
+
+impl<Cod: Codec, PdC: PdClient<Codec = Cod>> fmt::Debug for Transaction<Cod, PdC> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Transaction")
+            .field("timestamp", &self.timestamp)
+            .field("options", &self.options)
+            .field("is_heartbeat_started", &self.is_heartbeat_started)
+            .field("start_instant", &self.start_instant)
+            .finish()
+    }
 }
 
 impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
@@ -354,6 +368,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
+    #[minitrace::trace]
     pub async fn scan(
         &mut self,
         range: impl Into<BoundRange>,
@@ -390,6 +405,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
+    #[minitrace::trace]
     pub async fn scan_keys(
         &mut self,
         range: impl Into<BoundRange>,
@@ -405,6 +421,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// Create a 'scan_reverse' request.
     ///
     /// Similar to [`scan`](Transaction::scan), but scans in the reverse direction.
+    #[minitrace::trace]
     pub async fn scan_reverse(
         &mut self,
         range: impl Into<BoundRange>,
@@ -417,6 +434,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// Create a 'scan_keys_reverse' request.
     ///
     /// Similar to [`scan`](Transaction::scan_keys), but scans in the reverse direction.
+    #[minitrace::trace]
     pub async fn scan_keys_reverse(
         &mut self,
         range: impl Into<BoundRange>,
@@ -755,6 +773,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         plan.execute().await
     }
 
+    #[minitrace::trace]
     async fn scan_inner(
         &mut self,
         range: impl Into<BoundRange>,
@@ -767,9 +786,12 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         let rpc = self.rpc.clone();
         let retry_options = self.options.retry_options.clone();
 
+        let range = range.into();
+        info!(range = as_debug!(&range); "scanning range");
+
         self.buffer
             .scan_and_fetch(
-                range.into(),
+                range,
                 limit,
                 !key_only,
                 reverse,
@@ -1006,6 +1028,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
 }
 
 impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Drop for Transaction<Cod, PdC> {
+    #[minitrace::trace]
     fn drop(&mut self) {
         debug!("dropping transaction");
         if std::thread::panicking() {
