@@ -5,12 +5,12 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use fail::fail_point;
+use log::as_display;
+use log::debug;
+use log::error;
+use log::info;
+use minitrace::prelude::*;
 use tokio::sync::RwLock;
-use tracing::debug;
-use tracing::error;
-use tracing::info_span;
-use tracing::instrument;
-use tracing::Span;
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
@@ -45,7 +45,7 @@ const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 /// the key. We first use `CleanupRequest` to let the status of the primary lock converge and get
 /// its status (committed or rolled back). Then, we use the status of its primary lock to determine
 /// the status of the other keys in the same transaction.
-#[instrument(skip_all)]
+#[minitrace::trace]
 pub async fn resolve_locks(
     locks: Vec<kvrpcpb::LockInfo>,
     pd_client: Arc<impl PdClient>,
@@ -68,8 +68,13 @@ pub async fn resolve_locks(
     let mut commit_versions: HashMap<u64, u64> = HashMap::new();
     let mut clean_regions: HashMap<u64, HashSet<RegionVerId>> = HashMap::new();
     for lock in expired_locks {
-        let span = info_span!("cleanup_expired_lock", lock.lock_version, lock.primary_lock = %HexRepr(&lock.primary_lock));
-        let _enter = span.enter();
+        let _span =
+            LocalSpan::enter_with_local_parent("cleanup_expired_lock").with_properties(|| {
+                [
+                    ("lock_version", lock.lock_version.to_string()),
+                    ("primary_lock", HexRepr(&lock.primary_lock).to_string()),
+                ]
+            });
 
         let region_ver_id = pd_client
             .region_for_key(&lock.primary_lock.clone().into())
@@ -118,7 +123,7 @@ pub async fn resolve_locks(
     Ok(live_locks)
 }
 
-#[instrument(skip(key, pd_client), fields(key = %HexRepr(key)))]
+#[minitrace::trace]
 async fn resolve_lock_with_retry(
     #[allow(clippy::ptr_arg)] key: &Vec<u8>,
     start_version: u64,
@@ -225,7 +230,7 @@ impl LockResolver {
     /// _Cleanup_ the given locks. Returns whether all the given locks are resolved.
     ///
     /// Note: Will rollback RUNNING transactions. ONLY use in GC.
-    #[instrument(skip_all, fields(store = ?store, locks = ?locks))]
+    #[minitrace::trace]
     pub async fn cleanup_locks(
         &mut self,
         store: RegionStore,
@@ -354,7 +359,7 @@ impl LockResolver {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[instrument(skip(self, pd_client, primary), fields(primary), ret(Debug))]
+    #[minitrace::trace]
     pub async fn check_txn_status(
         &mut self,
         pd_client: Arc<impl PdClient>,
@@ -366,7 +371,7 @@ impl LockResolver {
         force_sync_commit: bool,
         resolving_pessimistic_lock: bool,
     ) -> Result<Arc<TransactionStatus>> {
-        Span::current().record("primary", &tracing::field::display(HexRepr(&primary)));
+        info!("primary" = as_display!(HexRepr(&primary)); "check_txn_status");
 
         if let Some(txn_status) = self.ctx.get_resolved(txn_id).await {
             return Ok(txn_status);
@@ -408,7 +413,7 @@ impl LockResolver {
         Ok(res)
     }
 
-    #[instrument(skip(self, pd_client), fields(keys = ?keys), ret(Debug))]
+    #[minitrace::trace]
     async fn check_all_secondaries(
         &mut self,
         pd_client: Arc<impl PdClient>,
@@ -425,7 +430,7 @@ impl LockResolver {
         plan.execute().await
     }
 
-    #[instrument(skip(self, pd_client, txn_infos), fields(store = ?store, txn_infos = ?txn_infos), ret(Debug))]
+    #[minitrace::trace]
     async fn batch_resolve_locks(
         &mut self,
         pd_client: Arc<impl PdClient>,

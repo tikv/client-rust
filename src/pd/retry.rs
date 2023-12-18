@@ -8,11 +8,10 @@ use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
+use log::debug;
+use minitrace::prelude::*;
 use tokio::sync::RwLock;
 use tokio::time::sleep;
-use tracing::debug;
-use tracing::info_span;
-use tracing::instrument;
 
 use crate::pd::Cluster;
 use crate::pd::Connection;
@@ -78,8 +77,7 @@ macro_rules! retry_core {
         let stats = pd_stats($tag);
         let mut last_err = Ok(());
         for retry in 0..LEADER_CHANGE_RETRY {
-            let span = info_span!("RetryClient::retry", retry);
-            let _enter = span.enter();
+            let _span = LocalSpan::enter_with_local_parent("RetryClient::retry");
 
             let res = $call;
 
@@ -88,7 +86,7 @@ macro_rules! retry_core {
                 Err(e) => last_err = Err(e),
             }
 
-            debug!("retry on last_err: {:?}", last_err);
+            debug!("retry {} on last_err: {:?}", retry, last_err);
             let mut reconnect_count = MAX_REQUEST_COUNT;
             while let Err(e) = $self.reconnect(RECONNECT_INTERVAL_SEC).await {
                 reconnect_count -= 1;
@@ -149,7 +147,7 @@ impl RetryClient<Cluster> {
 impl RetryClientTrait for RetryClient<Cluster> {
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
     // It does not know about encoding. Caller should take care of it.
-    #[instrument(name = "RetryClient::get_region", skip_all)]
+    #[minitrace::trace]
     async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
         retry_mut!(self, "get_region", |cluster| {
             let key = key.clone();
@@ -164,7 +162,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
-    #[instrument(name = "RetryClient::get_region_by_id", skip(self))]
+    #[minitrace::trace]
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader> {
         retry_mut!(self, "get_region_by_id", |cluster| async {
             cluster
@@ -176,7 +174,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
-    #[instrument(name = "RetryClient::get_store", skip(self))]
+    #[minitrace::trace]
     async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store> {
         retry_mut!(self, "get_store", |cluster| async {
             cluster
@@ -186,7 +184,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
-    #[instrument(name = "RetryClient::get_all_stores", skip(self))]
+    #[minitrace::trace]
     async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
         retry_mut!(self, "get_all_stores", |cluster| async {
             cluster
@@ -196,12 +194,12 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
-    #[instrument(name = "RetryClient::get_timestamp", skip(self))]
+    #[minitrace::trace]
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
         retry!(self, "get_timestamp", |cluster| cluster.get_timestamp())
     }
 
-    #[instrument(name = "RetryClient::update_safepoint", skip(self))]
+    #[minitrace::trace]
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
         retry_mut!(self, "update_gc_safepoint", |cluster| async {
             cluster

@@ -6,16 +6,16 @@ use std::marker::PhantomData;
 use std::sync::atomic;
 use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
-use std::time::Duration;
 use std::time::Instant;
 
 use derive_new::new;
 use fail::fail_point;
 use futures::prelude::*;
-use tracing::debug;
-use tracing::instrument;
-use tracing::warn;
-use tracing::Span;
+use log::as_debug;
+use log::debug;
+use log::info;
+use log::warn;
+use std::time::Duration;
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
@@ -368,7 +368,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    #[instrument(name = "Transaction::scan", skip_all)]
+    #[minitrace::trace]
     pub async fn scan(
         &mut self,
         range: impl Into<BoundRange>,
@@ -405,7 +405,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// txn.commit().await.unwrap();
     /// # });
     /// ```
-    #[instrument(name = "Transaction::scan_keys", skip_all)]
+    #[minitrace::trace]
     pub async fn scan_keys(
         &mut self,
         range: impl Into<BoundRange>,
@@ -421,7 +421,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// Create a 'scan_reverse' request.
     ///
     /// Similar to [`scan`](Transaction::scan), but scans in the reverse direction.
-    #[instrument(name = "Transaction::scan_reverse", skip_all)]
+    #[minitrace::trace]
     pub async fn scan_reverse(
         &mut self,
         range: impl Into<BoundRange>,
@@ -434,7 +434,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// Create a 'scan_keys_reverse' request.
     ///
     /// Similar to [`scan`](Transaction::scan_keys), but scans in the reverse direction.
-    #[instrument(name = "Transaction::scan_keys_reverse", skip_all)]
+    #[minitrace::trace]
     pub async fn scan_keys_reverse(
         &mut self,
         range: impl Into<BoundRange>,
@@ -773,7 +773,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         plan.execute().await
     }
 
-    #[instrument(skip(self, range), fields(range, version=self.timestamp.version()))]
+    #[minitrace::trace]
     async fn scan_inner(
         &mut self,
         range: impl Into<BoundRange>,
@@ -787,7 +787,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         let retry_options = self.options.retry_options.clone();
 
         let range = range.into();
-        Span::current().record("range", &tracing::field::debug(&range));
+        info!(range = as_debug!(&range); "scanning range");
 
         self.buffer
             .scan_and_fetch(
@@ -1028,7 +1028,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
 }
 
 impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Drop for Transaction<Cod, PdC> {
-    #[instrument(skip_all, fields(version=self.timestamp.version()))]
+    #[minitrace::trace]
     fn drop(&mut self) {
         debug!("dropping transaction");
         if std::thread::panicking() {

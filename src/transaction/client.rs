@@ -2,10 +2,9 @@
 
 use std::sync::Arc;
 
-use tracing::debug;
-use tracing::info;
-use tracing::instrument;
-use tracing::Span;
+use log::as_debug;
+use log::debug;
+use log::info;
 
 use crate::backoff::{DEFAULT_REGION_BACKOFF, DEFAULT_STORE_BACKOFF};
 use crate::config::Config;
@@ -250,16 +249,15 @@ impl<Cod: Codec> Client<Cod> {
     ///
     /// This is a simplified version of [GC in TiDB](https://docs.pingcap.com/tidb/stable/garbage-collection-overview).
     /// We skip the second step "delete ranges" which is an optimization for TiDB.
-    #[instrument(skip(self, range), fields(range), ret(Debug))]
+    #[minitrace::trace]
     pub async fn gc(&self, range: impl Into<BoundRange>, safepoint: Timestamp) -> Result<bool> {
-        debug!("invoking transactional gc request");
+        let range = range.into();
+        debug!(range = as_debug!(range); "invoking transactional gc request");
 
         let options = ResolveLocksOptions {
             batch_size: SCAN_LOCK_BATCH_SIZE,
             ..Default::default()
         };
-        let range = range.into();
-        Span::current().record("range", &tracing::field::debug(&range));
 
         self.cleanup_locks(range, &safepoint, options).await?;
 
@@ -275,19 +273,18 @@ impl<Cod: Codec> Client<Cod> {
         Ok(res)
     }
 
-    #[instrument(skip(self, range), fields(range), ret(Debug))]
+    #[minitrace::trace]
     pub async fn cleanup_locks(
         &self,
         range: impl Into<BoundRange>,
         safepoint: &Timestamp,
         options: ResolveLocksOptions,
     ) -> Result<CleanupLocksResult> {
-        debug!("invoking cleanup locks");
+        let range = range.into();
+        debug!(range = as_debug!(range); "invoking transactional gc request");
         // scan all locks with ts <= safepoint
         let ctx = ResolveLocksContext::default();
         let backoff = Backoff::equal_jitter_backoff(100, 10000, 50);
-        let range = range.into();
-        Span::current().record("range", &tracing::field::debug(&range));
         let req = new_scan_lock_request(range, safepoint, options.batch_size);
         let encoded_req = EncodedRequest::new(req, self.pd.get_codec());
         let plan = crate::request::PlanBuilder::new(self.pd.clone(), encoded_req)

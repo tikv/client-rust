@@ -6,13 +6,12 @@ use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
+use log::error;
+use log::info;
+use log::warn;
 use tonic::transport::Channel;
 use tonic::IntoRequest;
 use tonic::Request;
-use tracing::error;
-use tracing::info;
-use tracing::instrument;
-use tracing::warn;
 
 use super::timestamp::TimestampOracle;
 use crate::internal_err;
@@ -104,7 +103,7 @@ impl Connection {
         Connection { security_mgr }
     }
 
-    #[instrument(name = "pd::Connection::connect_cluster", skip_all)]
+    #[minitrace::trace]
     pub async fn connect_cluster(
         &self,
         endpoints: &[String],
@@ -124,7 +123,7 @@ impl Connection {
     }
 
     // Re-establish connection with PD leader in asynchronous fashion.
-    #[instrument(name = "pd::Connection::reconnect", skip_all)]
+    #[minitrace::trace]
     pub async fn reconnect(&self, cluster: &mut Cluster, timeout: Duration) -> Result<()> {
         warn!("updating pd client");
         let start = Instant::now();

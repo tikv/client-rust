@@ -32,7 +32,8 @@ either = "1.6"
 fail = "0.4"
 futures = { version = "0.3" }
 lazy_static = "1"
-log = "0.4"
+log = { version = "0.4", features = ["kv_unstable"] }
+minitrace = "0.6.2"
 pin-project = "1"
 prometheus = { version = "0.13", default-features = false }
 prost = "0.12"
@@ -44,7 +45,6 @@ serde_derive = "1.0"
 thiserror = "1"
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
 tonic = { version = "0.10", features = ["tls"] }
-tracing = "0.1.40"
 
 [dev-dependencies]
 clap = "2"

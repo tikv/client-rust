@@ -7,14 +7,12 @@ use async_recursion::async_recursion;
 use async_trait::async_trait;
 use futures::future::try_join_all;
 use futures::prelude::*;
+use log::debug;
+use log::info;
+use minitrace::future::FutureExt;
+use minitrace::prelude::*;
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
-use tracing::debug;
-use tracing::info;
-use tracing::info_span;
-use tracing::instrument;
-// use tracing::span;
-// use tracing::Instrument;
 
 use crate::backoff::Backoff;
 use crate::pd::PdClient;
@@ -61,7 +59,7 @@ pub struct Dispatch<Req: KvRequest> {
 impl<Req: KvRequest> Plan for Dispatch<Req> {
     type Result = Req::Response;
 
-    #[instrument(name = "Dispatch::execute", skip_all, fields(label = self.request.label()))]
+    #[minitrace::trace]
     async fn execute(&self) -> Result<Self::Result> {
         let stats = tikv_stats(self.request.label());
         let result = self
@@ -109,7 +107,7 @@ where
 {
     // A plan may involve multiple shards
     #[async_recursion]
-    // #[instrument(skip_all)]
+    #[minitrace::trace]
     async fn single_plan_handler(
         pd_client: Arc<PdC>,
         current_plan: P,
@@ -121,20 +119,20 @@ where
         let mut handles = Vec::new();
         for shard in shards {
             let (shard, region_store) = shard?;
-            // let span = span!(tracing::Level::INFO, "shard", ?region_store);
-
             let mut clone = current_plan.clone();
             clone.apply_shard(shard, &region_store)?;
-            let handle = tokio::spawn(Self::single_shard_handler(
-                pd_client.clone(),
-                clone,
-                region_store,
-                backoff.clone(),
-                permits.clone(),
-                preserve_region_results,
-            ));
+            let handle = tokio::spawn(
+                Self::single_shard_handler(
+                    pd_client.clone(),
+                    clone,
+                    region_store,
+                    backoff.clone(),
+                    permits.clone(),
+                    preserve_region_results,
+                )
+                .in_span(Span::enter_with_local_parent("single_shard_handler")),
+            );
             handles.push(handle);
-            // handles.push(handle.instrument(span));
         }
 
         let results = try_join_all(handles).await?;
@@ -158,7 +156,7 @@ where
     }
 
     #[async_recursion]
-    // #[instrument(skip_all, fields(region_store = ?region_store))]
+    #[minitrace::trace]
     async fn single_shard_handler(
         pd_client: Arc<PdC>,
         plan: P,
@@ -220,7 +218,7 @@ where
     // 1. Ok(true): error has been resolved, retry immediately
     // 2. Ok(false): backoff, and then retry
     // 3. Err(Error): can't be resolved, return the error to upper level
-    // #[instrument(skip_all, fields(region_store = ?region_store, error = ?e))]
+    #[minitrace::trace]
     async fn handle_region_error(
         pd_client: Arc<PdC>,
         e: errorpb::Error,
@@ -282,7 +280,7 @@ where
     // 1. Ok(true): error has been resolved, retry immediately
     // 2. Ok(false): backoff, and then retry
     // 3. Err(Error): can't be resolved, return the error to upper level
-    // #[instrument(skip_all, fields(region_store = ?region_store, error = ?error))]
+    #[minitrace::trace]
     async fn on_region_epoch_not_match(
         pd_client: Arc<PdC>,
         region_store: RegionStore,
@@ -319,7 +317,7 @@ where
         Ok(false)
     }
 
-    // #[instrument(skip_all, fields(region_store = ?region_store, error = ?e))]
+    #[minitrace::trace]
     async fn handle_grpc_error(
         pd_client: Arc<PdC>,
         plan: P,
@@ -329,6 +327,7 @@ where
         preserve_region_results: bool,
         e: Error,
     ) -> Result<<Self as Plan>::Result> {
+        debug!("handle grpc error: {:?}", e);
         let ver_id = region_store.region_with_leader.ver_id();
         pd_client.invalidate_region_cache(ver_id).await;
         match backoff.next_delay_duration() {
@@ -366,7 +365,7 @@ where
 {
     type Result = Vec<Result<P::Result>>;
 
-    #[instrument(name = "RetryableMultiRegion::execute", skip_all)]
+    #[minitrace::trace]
     async fn execute(&self) -> Result<Self::Result> {
         // Limit the maximum concurrency of multi-region request. If there are
         // too many concurrent requests, TiKV is more likely to return a "TiKV
@@ -487,7 +486,7 @@ impl<In: Clone + Send + Sync + 'static, P: Plan<Result = Vec<Result<In>>>, M: Me
 {
     type Result = M::Out;
 
-    #[instrument(name = "MergeResponse::execute", skip_all)]
+    #[minitrace::trace]
     async fn execute(&self) -> Result<Self::Result> {
         self.merge.merge(self.inner.execute().await?)
     }
@@ -584,17 +583,15 @@ where
 {
     type Result = P::Result;
 
+    #[minitrace::trace]
     async fn execute(&self) -> Result<Self::Result> {
-        // let span = info_span!("ResolveLock::execute");
-        // let _enter = span.enter();
-
         let mut result = self.inner.execute().await?;
         let mut clone = self.clone();
         let mut retry_cnt = 0;
         loop {
             retry_cnt += 1;
-            let span = info_span!("ResolveLock::execute::retry", retry_cnt);
-            let _enter = span.enter();
+            let _span = LocalSpan::enter_with_local_parent("ResolveLock::execute::retry")
+                .with_property(|| ("retry_count", retry_cnt.to_string()));
 
             let locks = result.take_locks();
             if locks.is_empty() {
@@ -704,7 +701,7 @@ where
 {
     type Result = CleanupLocksResult;
 
-    #[instrument(name = "CleanupLocks::execute", skip_all)]
+    #[minitrace::trace]
     async fn execute(&self) -> Result<Self::Result> {
         let mut result = CleanupLocksResult::default();
         let mut inner = self.inner.clone();

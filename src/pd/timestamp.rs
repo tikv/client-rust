@@ -20,15 +20,14 @@ use futures::prelude::*;
 use futures::task::AtomicWaker;
 use futures::task::Context;
 use futures::task::Poll;
+use log::debug;
+use log::info;
+use minitrace::prelude::*;
 use pin_project::pin_project;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tonic::transport::Channel;
-use tracing::debug;
-use tracing::info;
-use tracing::info_span;
-use tracing::instrument;
 
 use crate::internal_err;
 use crate::proto::pdpb::pd_client::PdClient;
@@ -65,7 +64,7 @@ impl TimestampOracle {
         Ok(TimestampOracle { request_tx })
     }
 
-    #[instrument(name = "TimestampOracle::get_timestamp", skip_all)]
+    #[minitrace::trace]
     pub(crate) async fn get_timestamp(self) -> Result<Timestamp> {
         debug!("getting current timestamp");
         let (request, response) = oneshot::channel();
@@ -77,7 +76,7 @@ impl TimestampOracle {
     }
 }
 
-#[instrument(name = "TimestampOracle::run_tso", skip_all)]
+#[minitrace::trace]
 async fn run_tso(
     cluster_id: u64,
     mut pd_client: PdClient<Channel>,
@@ -102,8 +101,7 @@ async fn run_tso(
     let mut responses = pd_client.tso(request_stream).await?.into_inner();
 
     while let Some(Ok(resp)) = responses.next().await {
-        let span = info_span!("handle_response");
-        let _enter = span.enter();
+        let _span = LocalSpan::enter_with_local_parent("handle_response");
         debug!("got response: {:?}", resp);
 
         {
@@ -136,7 +134,7 @@ struct TsoRequestStream {
 impl Stream for TsoRequestStream {
     type Item = TsoRequest;
 
-    #[instrument(name = "TsoRequestStream::poll_next", skip_all)]
+    #[minitrace::trace]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
 

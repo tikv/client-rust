@@ -8,8 +8,7 @@ use either::Either;
 use futures::stream::BoxStream;
 use futures::stream::{self};
 use futures::StreamExt;
-use tracing::debug;
-use tracing::instrument;
+use log::debug;
 
 use super::transaction::TXN_COMMIT_BATCH_SIZE;
 use crate::collect_first;
@@ -177,7 +176,7 @@ shardable_range!(kvrpcpb::ScanRequest);
 impl Merge<kvrpcpb::ScanResponse> for Collect {
     type Out = Vec<KvPair>;
 
-    #[instrument(name = "Collect<ScanResponse>::merge", skip_all)]
+    #[minitrace::trace]
     fn merge(&self, input: Vec<Result<kvrpcpb::ScanResponse>>) -> Result<Self::Out> {
         let length: usize = input
             .iter()

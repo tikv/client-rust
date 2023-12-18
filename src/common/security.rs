@@ -6,12 +6,12 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use log::info;
 use regex::Regex;
 use tonic::transport::Certificate;
 use tonic::transport::Channel;
 use tonic::transport::ClientTlsConfig;
 use tonic::transport::Identity;
-use tracing::info;
 
 use crate::internal_err;
 use crate::Result;
