@@ -35,6 +35,8 @@ use crate::util::iter::FlatMapOkIterExt;
 use crate::Error;
 use crate::Result;
 
+use super::keyspace::Keyspace;
+
 /// A plan for how to execute a request. A user builds up a plan with various
 /// options, then exectutes it.
 #[async_trait]
@@ -546,6 +548,7 @@ pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub inner: P,
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
+    pub keyspace: Keyspace,
 }
 
 impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
@@ -554,6 +557,7 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
             inner: self.inner.clone(),
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
+            keyspace: self.keyspace,
         }
     }
 }
@@ -579,7 +583,7 @@ where
             }
 
             let pd_client = self.pd_client.clone();
-            let live_locks = resolve_locks(locks, pd_client.clone()).await?;
+            let live_locks = resolve_locks(locks, pd_client.clone(), self.keyspace).await?;
             if live_locks.is_empty() {
                 result = self.inner.execute().await?;
             } else {
@@ -595,7 +599,7 @@ where
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct CleanupLocksResult {
     pub region_error: Option<errorpb::Error>,
     pub key_error: Option<Vec<Error>>,
@@ -644,6 +648,7 @@ pub struct CleanupLocks<P: Plan, PdC: PdClient> {
     pub options: ResolveLocksOptions,
     pub store: Option<RegionStore>,
     pub pd_client: Arc<PdC>,
+    pub keyspace: Keyspace,
     pub backoff: Backoff,
 }
 
@@ -655,6 +660,7 @@ impl<P: Plan, PdC: PdClient> Clone for CleanupLocks<P, PdC> {
             options: self.options,
             store: None,
             pd_client: self.pd_client.clone(),
+            keyspace: self.keyspace,
             backoff: self.backoff.clone(),
         }
     }
@@ -715,7 +721,12 @@ where
 
             let lock_size = locks.len();
             match lock_resolver
-                .cleanup_locks(self.store.clone().unwrap(), locks, self.pd_client.clone())
+                .cleanup_locks(
+                    self.store.clone().unwrap(),
+                    locks,
+                    self.pd_client.clone(),
+                    self.keyspace,
+                )
                 .await
             {
                 Ok(()) => {
@@ -891,6 +902,7 @@ mod test {
                 inner: ErrPlan,
                 backoff: Backoff::no_backoff(),
                 pd_client: Arc::new(MockPdClient::default()),
+                keyspace: Keyspace::Disable,
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),

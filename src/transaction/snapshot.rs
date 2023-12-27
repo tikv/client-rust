@@ -2,11 +2,7 @@
 
 use derive_new::new;
 use log::debug;
-use std::marker::PhantomData;
 
-use crate::codec::ApiV1TxnCodec;
-use crate::pd::{PdClient, PdRpcClient};
-use crate::request::codec::Codec;
 use crate::BoundRange;
 use crate::Key;
 use crate::KvPair;
@@ -22,12 +18,11 @@ use crate::Value;
 ///
 /// See the [Transaction](struct@crate::Transaction) docs for more information on the methods.
 #[derive(new)]
-pub struct Snapshot<Cod: Codec = ApiV1TxnCodec, PdC: PdClient<Codec = Cod> = PdRpcClient<Cod>> {
-    transaction: Transaction<Cod, PdC>,
-    phantom: PhantomData<Cod>,
+pub struct Snapshot {
+    transaction: Transaction,
 }
 
-impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Snapshot<Cod, PdC> {
+impl Snapshot {
     /// Get the value associated with the given key.
     pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         debug!("invoking get request on snapshot");

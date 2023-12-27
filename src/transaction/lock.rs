@@ -13,13 +13,14 @@ use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::backoff::OPTIMISTIC_BACKOFF;
 use crate::pd::PdClient;
+
 use crate::proto::kvrpcpb;
 use crate::proto::kvrpcpb::TxnInfo;
 use crate::proto::pdpb::Timestamp;
 use crate::region::RegionVerId;
-use crate::request::codec::EncodedRequest;
 use crate::request::Collect;
 use crate::request::CollectSingle;
+use crate::request::Keyspace;
 use crate::request::Plan;
 use crate::store::RegionStore;
 use crate::timestamp::TimestampExt;
@@ -44,6 +45,7 @@ const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 pub async fn resolve_locks(
     locks: Vec<kvrpcpb::LockInfo>,
     pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
 ) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
     debug!("resolving locks");
     let ts = pd_client.clone().get_timestamp().await?;
@@ -76,9 +78,8 @@ pub async fn resolve_locks(
             Some(&commit_version) => commit_version,
             None => {
                 let request = requests::new_cleanup_request(lock.primary_lock, lock.lock_version);
-                let encoded_req = EncodedRequest::new(request, pd_client.get_codec());
-                let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
-                    .resolve_lock(OPTIMISTIC_BACKOFF)
+                let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
+                    .resolve_lock(OPTIMISTIC_BACKOFF, keyspace)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
                     .merge(CollectSingle)
                     .post_process_default()
@@ -94,6 +95,7 @@ pub async fn resolve_locks(
             lock.lock_version,
             commit_version,
             pd_client.clone(),
+            keyspace,
         )
         .await?;
         clean_regions
@@ -109,6 +111,7 @@ async fn resolve_lock_with_retry(
     start_version: u64,
     commit_version: u64,
     pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
 ) -> Result<RegionVerId> {
     debug!("resolving locks with retry");
     // FIXME: Add backoff
@@ -118,11 +121,10 @@ async fn resolve_lock_with_retry(
         let store = pd_client.clone().store_for_key(key.into()).await?;
         let ver_id = store.region_with_leader.ver_id();
         let request = requests::new_resolve_lock_request(start_version, commit_version);
-        let encoded_req = EncodedRequest::new(request, pd_client.get_codec());
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
             .single_region_with_store(store)
             .await?
-            .resolve_lock(Backoff::no_backoff())
+            .resolve_lock(Backoff::no_backoff(), keyspace)
             .extract_error()
             .plan();
         match plan.execute().await {
@@ -214,6 +216,7 @@ impl LockResolver {
         store: RegionStore,
         locks: Vec<kvrpcpb::LockInfo>,
         pd_client: Arc<impl PdClient>, // TODO: make pd_client a member of LockResolver
+        keyspace: Keyspace,
     ) -> Result<()> {
         if locks.is_empty() {
             return Ok(());
@@ -235,6 +238,7 @@ impl LockResolver {
             let mut status = self
                 .check_txn_status(
                     pd_client.clone(),
+                    keyspace,
                     txn_id,
                     l.primary_lock.clone(),
                     0,
@@ -249,7 +253,12 @@ impl LockResolver {
             // Then we need to check the secondary locks to determine the final status of the transaction.
             if let TransactionStatusKind::Locked(_, lock_info) = &status.kind {
                 let secondary_status = self
-                    .check_all_secondaries(pd_client.clone(), lock_info.secondaries.clone(), txn_id)
+                    .check_all_secondaries(
+                        pd_client.clone(),
+                        keyspace,
+                        lock_info.secondaries.clone(),
+                        txn_id,
+                    )
                     .await?;
                 debug!(
                     "secondary status, txn_id:{}, commit_ts:{:?}, min_commit_version:{}, fallback_2pc:{}",
@@ -267,6 +276,7 @@ impl LockResolver {
                     status = self
                         .check_txn_status(
                             pd_client.clone(),
+                            keyspace,
                             txn_id,
                             l.primary_lock,
                             0,
@@ -315,7 +325,7 @@ impl LockResolver {
             txn_info_vec.push(txn_info);
         }
         let cleaned_region = self
-            .batch_resolve_locks(pd_client.clone(), store.clone(), txn_info_vec)
+            .batch_resolve_locks(pd_client.clone(), keyspace, store.clone(), txn_info_vec)
             .await?;
         for txn_id in txn_ids {
             self.ctx
@@ -330,6 +340,7 @@ impl LockResolver {
     pub async fn check_txn_status(
         &mut self,
         pd_client: Arc<impl PdClient>,
+        keyspace: Keyspace,
         txn_id: u64,
         primary: Vec<u8>,
         caller_start_ts: u64,
@@ -359,8 +370,7 @@ impl LockResolver {
             force_sync_commit,
             resolving_pessimistic_lock,
         );
-        let encoded_req = EncodedRequest::new(req, pd_client.get_codec());
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, req)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(CollectSingle)
             .extract_error()
@@ -380,12 +390,12 @@ impl LockResolver {
     async fn check_all_secondaries(
         &mut self,
         pd_client: Arc<impl PdClient>,
+        keyspace: Keyspace,
         keys: Vec<Vec<u8>>,
         txn_id: u64,
     ) -> Result<SecondaryLocksStatus> {
         let req = new_check_secondary_locks_request(keys, txn_id);
-        let encoded_req = EncodedRequest::new(req, pd_client.get_codec());
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, req)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .merge(Collect)
@@ -396,13 +406,13 @@ impl LockResolver {
     async fn batch_resolve_locks(
         &mut self,
         pd_client: Arc<impl PdClient>,
+        keyspace: Keyspace,
         store: RegionStore,
         txn_infos: Vec<TxnInfo>,
     ) -> Result<RegionVerId> {
         let ver_id = store.region_with_leader.ver_id();
         let request = requests::new_batch_resolve_lock_request(txn_infos.clone());
-        let encoded_req = EncodedRequest::new(request, pd_client.get_codec());
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
             .single_region_with_store(store.clone())
             .await?
             .extract_error()
@@ -422,13 +432,19 @@ pub trait HasLocks {
 mod tests {
     use std::any::Any;
 
+    use serial_test::serial;
+
     use super::*;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
     use crate::proto::errorpb;
 
+    #[rstest::rstest]
+    #[case(Keyspace::Disable)]
+    #[case(Keyspace::Enable { keyspace_id: 0 })]
     #[tokio::test]
-    async fn test_resolve_lock_with_retry() {
+    #[serial]
+    async fn test_resolve_lock_with_retry(#[case] keyspace: Keyspace) {
         // Test resolve lock within retry limit
         fail::cfg("region-error", "9*return").unwrap();
 
@@ -447,7 +463,7 @@ mod tests {
 
         let key = vec![1];
         let region1 = MockPdClient::region1();
-        let resolved_region = resolve_lock_with_retry(&key, 1, 2, client.clone())
+        let resolved_region = resolve_lock_with_retry(&key, 1, 2, client.clone(), keyspace)
             .await
             .unwrap();
         assert_eq!(region1.ver_id(), resolved_region);
@@ -455,7 +471,7 @@ mod tests {
         // Test resolve lock over retry limit
         fail::cfg("region-error", "10*return").unwrap();
         let key = vec![100];
-        resolve_lock_with_retry(&key, 3, 4, client)
+        resolve_lock_with_retry(&key, 3, 4, client, keyspace)
             .await
             .expect_err("should return error");
     }

@@ -17,6 +17,7 @@ use tikv_client::transaction::HeartbeatOption;
 use tikv_client::transaction::ResolveLocksOptions;
 use tikv_client::Backoff;
 use tikv_client::CheckLevel;
+use tikv_client::Config;
 use tikv_client::Result;
 use tikv_client::RetryOptions;
 use tikv_client::TransactionClient;
@@ -34,7 +35,9 @@ async fn txn_optimistic_heartbeat() -> Result<()> {
 
     let key1 = "key1".to_owned();
     let key2 = "key2".to_owned();
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
 
     // CheckLevel::Panic makes the case unstable, change to Warn level for now.
     // See https://github.com/tikv/client-rust/issues/389
@@ -110,7 +113,9 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
         fail::cfg("before-cleanup-locks", "off").unwrap();
     }}
 
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
     let keys = write_data(&client, true, true).await?;
     assert_eq!(count_locks(&client).await?, keys.len());
 
@@ -145,7 +150,11 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
             fail::cfg("after-prewrite", "off").unwrap()
         }
 
-        let client = TransactionClient::new(pd_addrs()).await?;
+        let client = TransactionClient::new_with_config(
+            pd_addrs(),
+            Config::default().with_default_keyspace(),
+        )
+        .await?;
         let keys = write_data(&client, true, true).await?;
         assert_eq!(count_locks(&client).await?, keys.len());
 
@@ -171,7 +180,11 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
             fail::cfg("before-commit-secondary", "off").unwrap()
         }
 
-        let client = TransactionClient::new(pd_addrs()).await?;
+        let client = TransactionClient::new_with_config(
+            pd_addrs(),
+            Config::default().with_default_keyspace(),
+        )
+        .await?;
         let keys = write_data(&client, true, false).await?;
         thread::sleep(Duration::from_secs(1)); // Wait for async commit to complete.
         assert_eq!(count_locks(&client).await?, keys.len() * percent / 100);
@@ -192,7 +205,11 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
     // all committed
     {
         info!("test all committed");
-        let client = TransactionClient::new(pd_addrs()).await?;
+        let client = TransactionClient::new_with_config(
+            pd_addrs(),
+            Config::default().with_default_keyspace(),
+        )
+        .await?;
         let keys = write_data(&client, true, false).await?;
 
         let safepoint = client.current_timestamp().await?;
@@ -227,7 +244,9 @@ async fn txn_cleanup_range_async_commit_locks() -> Result<()> {
         fail::cfg("after-prewrite", "off").unwrap()
     }
 
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
     let keys = write_data(&client, true, true).await?;
     assert_eq!(count_locks(&client).await?, keys.len());
 
@@ -276,7 +295,11 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
             fail::cfg("after-prewrite", "off").unwrap()
         }
 
-        let client = TransactionClient::new(pd_addrs()).await?;
+        let client = TransactionClient::new_with_config(
+            pd_addrs(),
+            Config::default().with_default_keyspace(),
+        )
+        .await?;
         let keys = write_data(&client, false, true).await?;
         assert_eq!(count_locks(&client).await?, keys.len());
 
@@ -306,7 +329,11 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
     // all committed
     {
         info!("test all committed");
-        let client = TransactionClient::new(pd_addrs()).await?;
+        let client = TransactionClient::new_with_config(
+            pd_addrs(),
+            Config::default().with_default_keyspace(),
+        )
+        .await?;
         let keys = write_data(&client, false, false).await?;
         assert_eq!(count_locks(&client).await?, 0);
 
@@ -347,7 +374,7 @@ async fn must_rollbacked(client: &TransactionClient, keys: HashSet<Vec<u8>>) {
 
 async fn count_locks(client: &TransactionClient) -> Result<usize> {
     let ts = client.current_timestamp().await.unwrap();
-    let locks = client.scan_locks(&ts, vec![].., 1024).await?;
+    let locks = client.scan_locks(&ts, .., 1024).await?;
     // De-duplicated as `scan_locks` will return duplicated locks due to retry on region changes.
     let locks_set: HashSet<Vec<u8>> = HashSet::from_iter(locks.into_iter().map(|l| l.key));
     Ok(locks_set.len())

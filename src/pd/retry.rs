@@ -45,6 +45,8 @@ pub trait RetryClientTrait {
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp>;
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
+
+    async fn get_keyspace_id(&self, keyspace: &str) -> Result<u32>;
 }
 /// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
 pub struct RetryClient<Cl = Cluster> {
@@ -195,6 +197,12 @@ impl RetryClientTrait for RetryClient<Cluster> {
                 .update_safepoint(safepoint, self.timeout)
                 .await
                 .map(|resp| resp.new_safe_point == safepoint)
+        })
+    }
+
+    async fn get_keyspace_id(&self, keyspace: &str) -> Result<u32> {
+        retry!(self, "get_keyspace_id", |cluster| async {
+            cluster.get_keyspace_id(keyspace).await
         })
     }
 }
