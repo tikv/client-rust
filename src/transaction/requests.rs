@@ -10,7 +10,7 @@ use futures::stream::{self};
 use futures::StreamExt;
 
 use super::transaction::TXN_COMMIT_BATCH_SIZE;
-use crate::collect_first;
+use crate::collect_single;
 use crate::common::Error::PessimisticLockError;
 use crate::pd::PdClient;
 use crate::proto::kvrpcpb::Action;
@@ -42,6 +42,7 @@ use crate::store::RegionStore;
 use crate::store::Request;
 use crate::store::{store_stream_for_keys, Store};
 use crate::timestamp::TimestampExt;
+use crate::transaction::requests::kvrpcpb::prewrite_request::PessimisticAction;
 use crate::transaction::HasLocks;
 use crate::util::iter::FlatMapOkIterExt;
 use crate::KvPair;
@@ -101,7 +102,7 @@ impl KvRequest for kvrpcpb::GetRequest {
 }
 
 shardable_key!(kvrpcpb::GetRequest);
-collect_first!(kvrpcpb::GetResponse);
+collect_single!(kvrpcpb::GetResponse);
 impl SingleKey for kvrpcpb::GetRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -224,7 +225,7 @@ impl KvRequest for kvrpcpb::CleanupRequest {
 }
 
 shardable_key!(kvrpcpb::CleanupRequest);
-collect_first!(kvrpcpb::CleanupResponse);
+collect_single!(kvrpcpb::CleanupResponse);
 impl SingleKey for kvrpcpb::CleanupRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -266,7 +267,9 @@ pub fn new_pessimistic_prewrite_request(
     let len = mutations.len();
     let mut req = new_prewrite_request(mutations, primary_lock, start_version, lock_ttl);
     req.for_update_ts = for_update_ts;
-    req.is_pessimistic_lock = iter::repeat(true).take(len).collect();
+    req.pessimistic_actions = iter::repeat(PessimisticAction::DoPessimisticCheck.into())
+        .take(len)
+        .collect();
     req
 }
 
@@ -625,7 +628,7 @@ impl Shardable for kvrpcpb::TxnHeartBeatRequest {
     }
 }
 
-collect_first!(TxnHeartBeatResponse);
+collect_single!(TxnHeartBeatResponse);
 
 impl SingleKey for kvrpcpb::TxnHeartBeatRequest {
     fn key(&self) -> &Vec<u8> {
@@ -689,7 +692,7 @@ impl SingleKey for kvrpcpb::CheckTxnStatusRequest {
     }
 }
 
-collect_first!(kvrpcpb::CheckTxnStatusResponse);
+collect_single!(kvrpcpb::CheckTxnStatusResponse);
 
 impl Process<kvrpcpb::CheckTxnStatusResponse> for DefaultProcessor {
     type Out = TransactionStatus;

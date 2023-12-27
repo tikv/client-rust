@@ -282,6 +282,7 @@ mod test {
     use super::RegionCache;
     use crate::common::Error;
     use crate::pd::RetryClientTrait;
+    use crate::proto::keyspacepb;
     use crate::proto::metapb::RegionEpoch;
     use crate::proto::metapb::{self};
     use crate::region::RegionId;
@@ -347,8 +348,8 @@ mod test {
             todo!()
         }
 
-        async fn get_keyspace_id(&self, _keyspace: &str) -> Result<u32> {
-            todo!()
+        async fn load_keyspace(&self, _keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
+            unimplemented!()
         }
     }
 

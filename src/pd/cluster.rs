@@ -15,6 +15,7 @@ use tonic::Request;
 
 use super::timestamp::TimestampOracle;
 use crate::internal_err;
+use crate::proto::keyspacepb;
 use crate::proto::pdpb;
 use crate::Error;
 use crate::Result;
@@ -25,7 +26,7 @@ use crate::Timestamp;
 pub struct Cluster {
     id: u64,
     client: pdpb::pd_client::PdClient<Channel>,
-    endpoint: String,
+    keyspace_client: keyspacepb::keyspace_client::KeyspaceClient<Channel>,
     members: pdpb::GetMembersResponse,
     tso: TimestampOracle,
 }
@@ -94,16 +95,18 @@ impl Cluster {
         req.send(&mut self.client, timeout).await
     }
 
-    pub async fn get_keyspace_id(&self, keyspace: &str) -> Result<u32> {
-        let resp =
-            reqwest::get(format!("{}/pd/api/v2/keyspaces/{keyspace}", self.endpoint)).await?;
-        let body = resp.json::<serde_json::Value>().await?;
-        let keyspace_id = body
-            .get("id")
-            .ok_or_else(|| Error::UnknownHttpRespond(body.to_string()))?
-            .as_u64()
-            .ok_or_else(|| Error::UnknownHttpRespond(body.to_string()))?;
-        Ok(keyspace_id as u32)
+    pub async fn load_keyspace(
+        &mut self,
+        keyspace: &str,
+        timeout: Duration,
+    ) -> Result<keyspacepb::KeyspaceMeta> {
+        let mut req = pd_request!(self.id, keyspacepb::LoadKeyspaceRequest);
+        req.name = keyspace.to_owned();
+        let resp = req.send(&mut self.keyspace_client, timeout).await?;
+        let keyspace = resp
+            .keyspace
+            .ok_or_else(|| Error::KeyspaceNotFound(keyspace.to_owned()))?;
+        Ok(keyspace)
     }
 }
 
@@ -123,13 +126,13 @@ impl Connection {
         timeout: Duration,
     ) -> Result<Cluster> {
         let members = self.validate_endpoints(endpoints, timeout).await?;
-        let (client, endpoint, members) = self.try_connect_leader(&members, timeout).await?;
+        let (client, keyspace_client, members) = self.try_connect_leader(&members, timeout).await?;
         let id = members.header.as_ref().unwrap().cluster_id;
         let tso = TimestampOracle::new(id, &client)?;
         let cluster = Cluster {
             id,
             client,
-            endpoint,
+            keyspace_client,
             members,
             tso,
         };
@@ -140,13 +143,13 @@ impl Connection {
     pub async fn reconnect(&self, cluster: &mut Cluster, timeout: Duration) -> Result<()> {
         warn!("updating pd client");
         let start = Instant::now();
-        let (client, endpoint, members) =
+        let (client, keyspace_client, members) =
             self.try_connect_leader(&cluster.members, timeout).await?;
         let tso = TimestampOracle::new(cluster.id, &client)?;
         *cluster = Cluster {
             id: cluster.id,
             client,
-            endpoint,
+            keyspace_client,
             members,
             tso,
         };
@@ -169,7 +172,7 @@ impl Connection {
                 return Err(internal_err!("duplicated PD endpoint {}", ep));
             }
 
-            let (_, resp) = match self.connect(ep, timeout).await {
+            let (_, _, resp) = match self.connect(ep, timeout).await {
                 Ok(resp) => resp,
                 // Ignore failed PD node.
                 Err(e) => {
@@ -211,16 +214,27 @@ impl Connection {
         &self,
         addr: &str,
         _timeout: Duration,
-    ) -> Result<(pdpb::pd_client::PdClient<Channel>, pdpb::GetMembersResponse)> {
+    ) -> Result<(
+        pdpb::pd_client::PdClient<Channel>,
+        keyspacepb::keyspace_client::KeyspaceClient<Channel>,
+        pdpb::GetMembersResponse,
+    )> {
         let mut client = self
             .security_mgr
             .connect(addr, pdpb::pd_client::PdClient::<Channel>::new)
+            .await?;
+        let keyspace_client = self
+            .security_mgr
+            .connect(
+                addr,
+                keyspacepb::keyspace_client::KeyspaceClient::<Channel>::new,
+            )
             .await?;
         let resp: pdpb::GetMembersResponse = client
             .get_members(pdpb::GetMembersRequest::default())
             .await?
             .into_inner();
-        Ok((client, resp))
+        Ok((client, keyspace_client, resp))
     }
 
     async fn try_connect(
@@ -228,10 +242,14 @@ impl Connection {
         addr: &str,
         cluster_id: u64,
         timeout: Duration,
-    ) -> Result<(pdpb::pd_client::PdClient<Channel>, pdpb::GetMembersResponse)> {
-        let (client, r) = self.connect(addr, timeout).await?;
+    ) -> Result<(
+        pdpb::pd_client::PdClient<Channel>,
+        keyspacepb::keyspace_client::KeyspaceClient<Channel>,
+        pdpb::GetMembersResponse,
+    )> {
+        let (client, keyspace_client, r) = self.connect(addr, timeout).await?;
         Connection::validate_cluster_id(addr, &r, cluster_id)?;
-        Ok((client, r))
+        Ok((client, keyspace_client, r))
     }
 
     fn validate_cluster_id(
@@ -258,7 +276,7 @@ impl Connection {
         timeout: Duration,
     ) -> Result<(
         pdpb::pd_client::PdClient<Channel>,
-        String,
+        keyspacepb::keyspace_client::KeyspaceClient<Channel>,
         pdpb::GetMembersResponse,
     )> {
         let previous_leader = previous.leader.as_ref().unwrap();
@@ -274,7 +292,7 @@ impl Connection {
         {
             for ep in &m.client_urls {
                 match self.try_connect(ep.as_str(), cluster_id, timeout).await {
-                    Ok((_, r)) => {
+                    Ok((_, _, r)) => {
                         resp = Some(r);
                         break 'outer;
                     }
@@ -290,10 +308,10 @@ impl Connection {
         if let Some(resp) = resp {
             let leader = resp.leader.as_ref().unwrap();
             for ep in &leader.client_urls {
-                if let Ok((client, members)) =
+                if let Ok((client, keyspace_client, members)) =
                     self.try_connect(ep.as_str(), cluster_id, timeout).await
                 {
-                    return Ok((client, ep.to_string(), members));
+                    return Ok((client, keyspace_client, members));
                 }
             }
         }
@@ -306,18 +324,12 @@ type GrpcResult<T> = std::result::Result<T, tonic::Status>;
 
 #[async_trait]
 trait PdMessage: Sized {
+    type Client: Send;
     type Response: PdResponse;
 
-    async fn rpc(
-        req: Request<Self>,
-        client: &mut pdpb::pd_client::PdClient<Channel>,
-    ) -> GrpcResult<Self::Response>;
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response>;
 
-    async fn send(
-        self,
-        client: &mut pdpb::pd_client::PdClient<Channel>,
-        timeout: Duration,
-    ) -> Result<Self::Response> {
+    async fn send(self, client: &mut Self::Client, timeout: Duration) -> Result<Self::Response> {
         let mut req = self.into_request();
         req.set_timeout(timeout);
         let response = Self::rpc(req, client).await?;
@@ -332,61 +344,61 @@ trait PdMessage: Sized {
 
 #[async_trait]
 impl PdMessage for pdpb::GetRegionRequest {
+    type Client = pdpb::pd_client::PdClient<Channel>;
     type Response = pdpb::GetRegionResponse;
 
-    async fn rpc(
-        req: Request<Self>,
-        client: &mut pdpb::pd_client::PdClient<Channel>,
-    ) -> GrpcResult<Self::Response> {
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
         Ok(client.get_region(req).await?.into_inner())
     }
 }
 
 #[async_trait]
 impl PdMessage for pdpb::GetRegionByIdRequest {
+    type Client = pdpb::pd_client::PdClient<Channel>;
     type Response = pdpb::GetRegionResponse;
 
-    async fn rpc(
-        req: Request<Self>,
-        client: &mut pdpb::pd_client::PdClient<Channel>,
-    ) -> GrpcResult<Self::Response> {
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
         Ok(client.get_region_by_id(req).await?.into_inner())
     }
 }
 
 #[async_trait]
 impl PdMessage for pdpb::GetStoreRequest {
+    type Client = pdpb::pd_client::PdClient<Channel>;
     type Response = pdpb::GetStoreResponse;
 
-    async fn rpc(
-        req: Request<Self>,
-        client: &mut pdpb::pd_client::PdClient<Channel>,
-    ) -> GrpcResult<Self::Response> {
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
         Ok(client.get_store(req).await?.into_inner())
     }
 }
 
 #[async_trait]
 impl PdMessage for pdpb::GetAllStoresRequest {
+    type Client = pdpb::pd_client::PdClient<Channel>;
     type Response = pdpb::GetAllStoresResponse;
 
-    async fn rpc(
-        req: Request<Self>,
-        client: &mut pdpb::pd_client::PdClient<Channel>,
-    ) -> GrpcResult<Self::Response> {
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
         Ok(client.get_all_stores(req).await?.into_inner())
     }
 }
 
 #[async_trait]
 impl PdMessage for pdpb::UpdateGcSafePointRequest {
+    type Client = pdpb::pd_client::PdClient<Channel>;
     type Response = pdpb::UpdateGcSafePointResponse;
 
-    async fn rpc(
-        req: Request<Self>,
-        client: &mut pdpb::pd_client::PdClient<Channel>,
-    ) -> GrpcResult<Self::Response> {
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
         Ok(client.update_gc_safe_point(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
+impl PdMessage for keyspacepb::LoadKeyspaceRequest {
+    type Client = keyspacepb::keyspace_client::KeyspaceClient<Channel>;
+    type Response = keyspacepb::LoadKeyspaceResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.load_keyspace(req).await?.into_inner())
     }
 }
 
@@ -413,6 +425,12 @@ impl PdResponse for pdpb::GetAllStoresResponse {
 }
 
 impl PdResponse for pdpb::UpdateGcSafePointResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.header.as_ref().unwrap()
+    }
+}
+
+impl PdResponse for keyspacepb::LoadKeyspaceResponse {
     fn header(&self) -> &pdpb::ResponseHeader {
         self.header.as_ref().unwrap()
     }

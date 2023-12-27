@@ -14,6 +14,7 @@ use crate::kv::codec;
 use crate::pd::retry::RetryClientTrait;
 use crate::pd::Cluster;
 use crate::pd::RetryClient;
+use crate::proto::keyspacepb;
 use crate::proto::kvrpcpb;
 use crate::proto::metapb;
 use crate::region::RegionId;
@@ -65,7 +66,7 @@ pub trait PdClient: Send + Sync + 'static {
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
 
-    async fn get_keyspace_id(&self, keyspace: &str) -> Result<u32>;
+    async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta>;
 
     /// In transactional API, `key` is in raw format
     async fn store_for_key(self: Arc<Self>, key: &Key) -> Result<RegionStore> {
@@ -270,8 +271,8 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         self.region_cache.invalidate_region_cache(ver_id).await
     }
 
-    async fn get_keyspace_id(&self, keyspace: &str) -> Result<u32> {
-        self.pd.get_keyspace_id(keyspace).await
+    async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
+        self.pd.load_keyspace(keyspace).await
     }
 }
 

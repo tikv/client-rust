@@ -17,10 +17,12 @@ message ReplicationStatus {
 enum DRAutoSyncState {
     // Raft logs need to sync between different DCs
     SYNC = 0;
+    // Wait for switching to ASYNC. Stop sync raft logs between DCs.
+    ASYNC_WAIT = 1;
     // Raft logs need to sync to majority peers
-    ASYNC = 1;
+    ASYNC = 2;
     // Switching from ASYNC to SYNC mode
-    SYNC_RECOVER = 2;
+    SYNC_RECOVER = 3;
 }
 
 // The status of dr-autosync mode.
@@ -32,6 +34,10 @@ message DRAutoSync {
     uint64 state_id = 3;
     // Duration to wait before switching to SYNC by force (in seconds)
     int32 wait_sync_timeout_hint = 4;
+    // Stores should only sync messages with available stores when state is ASYNC or ASYNC_WAIT.
+    repeated uint64 available_stores = 5;
+    // Stores should forbid region split.
+    bool pause_region_split = 6;
 }
 
 enum RegionReplicationState {
@@ -47,5 +53,10 @@ enum RegionReplicationState {
 message RegionReplicationStatus {
     RegionReplicationState state = 1;
     // Unique ID of the state, it increases after each state transfer.
+    uint64 state_id = 2;
+}
+
+message StoreDRAutoSyncStatus {
+    DRAutoSyncState state = 1;
     uint64 state_id = 2;
 }

@@ -6,6 +6,7 @@ import "errorpb.proto";
 import "eraftpb.proto";
 import "kvrpcpb.proto";
 import "import_sstpb.proto";
+import "raft_serverpb.proto";
 import "rustproto.proto";
 
 option (rustproto.lite_runtime_all) = true;
@@ -145,6 +146,11 @@ message SplitRequest {
     // left region use new_region_id.
     // Will be ignored in batch split, use `BatchSplitRequest::right_derive` instead.
     bool right_derive = 4 [deprecated=true];
+    // It should be false iff the region split by user key such as split table or create partion table etc, 
+    // the new region's will not share the source region size, so it's region size is zero.
+    // It should be true iff the region's load reaches the threshold such as size, keys, load check etc,
+    // the new region's size will share the origin region, so it's region size is half of the source region.
+    bool share_source_region_size = 5;
 }
 
 message SplitResponse {
@@ -157,6 +163,11 @@ message BatchSplitRequest {
     // If true, the last region derive the origin region_id, 
     // other regions use new ids.
     bool right_derive = 2;
+    // It should be false iff the region split by user key such as split table or create partion table etc, 
+    // the new region's will not share the source region size, so it's region size is zero.
+    // It should be true iff the region's load reaches the threshold such as size, keys, load check etc,
+    // the new region's size will share the origin region, so it's region size is half of the source region.
+    bool share_source_region_size = 3;
 }
 
 message BatchSplitResponse {
@@ -166,6 +177,7 @@ message BatchSplitResponse {
 message CompactLogRequest {
     uint64 compact_index = 1;
     uint64 compact_term = 2;
+    uint64 voter_replicated_index = 3;
 }
 
 message CompactLogResponse {}
@@ -197,10 +209,25 @@ message PrepareMergeRequest {
 
 message PrepareMergeResponse {}
 
+message PrepareFlashbackRequest {
+    // The start_ts that the current flashback progress is using.
+    uint64 start_ts = 1;
+}
+
+message PrepareFlashbackResponse {}
+
+message FinishFlashbackRequest {}
+
+message FinishFlashbackResponse {}
+
 message CommitMergeRequest {
     metapb.Region source = 1;
     uint64 commit = 2;
     repeated eraftpb.Entry entries = 3;
+    // Used in v2. When it's present, `source` and `commit` will not be set.
+    raft_serverpb.RegionLocalState source_state = 4;
+
+    reserved 100 to 200;
 }
 
 message CommitMergeResponse {}
@@ -210,6 +237,21 @@ message RollbackMergeRequest {
 }
 
 message RollbackMergeResponse {}
+
+message SwitchWitnessRequest {
+    uint64 peer_id = 1;
+    bool is_witness = 2;
+}
+
+message BatchSwitchWitnessRequest {
+    repeated SwitchWitnessRequest switch_witnesses = 1;
+}
+
+message BatchSwitchWitnessResponse {}
+
+message UpdateGcPeerRequest {
+    repeated uint64 peer_id = 1;
+}
 
 enum AdminCmdType {
     InvalidAdmin = 0;
@@ -225,6 +267,11 @@ enum AdminCmdType {
     RollbackMerge = 9;
     BatchSplit = 10;
     ChangePeerV2 = 11;
+    PrepareFlashback = 12;
+    FinishFlashback = 13;
+    BatchSwitchWitness = 14;
+    // Command that updates RegionLocalState.gc_peers
+    UpdateGcPeer = 15;
 }
 
 message AdminRequest {
@@ -240,6 +287,10 @@ message AdminRequest {
     BatchSplitRequest splits = 10;
     ChangePeerV2Request change_peer_v2 = 11;
     ComputeHashRequest compute_hash = 12;
+    PrepareFlashbackRequest prepare_flashback = 13;
+    FinishFlashbackRequest finish_flashback = 14;
+    BatchSwitchWitnessRequest switch_witnesses = 15;
+    UpdateGcPeerRequest update_gc_peers = 16;
 }
 
 message AdminResponse {
@@ -254,6 +305,10 @@ message AdminResponse {
     RollbackMergeResponse rollback_merge = 9;
     BatchSplitResponse splits = 10;
     ChangePeerV2Response change_peer_v2 = 11;
+    PrepareFlashbackResponse prepare_flashback = 12;
+    FinishFlashbackResponse finish_flashback = 13;
+    BatchSwitchWitnessResponse switch_witnesses = 14;
+    // UpdateGcPeer doesn't need to be responded. Avoid consuming a tag number.
 }
 
 // For get the leader of the region.
@@ -318,6 +373,9 @@ message RaftRequestHeader {
     // Custom flags for this raft request.
     uint64 flags = 10;
     bytes flag_data = 11;
+    
+    kvrpcpb.CommandPri priority = 12;
+    string resource_group_name = 13;
 }
 
 message RaftResponseHeader {
@@ -333,6 +391,9 @@ message RaftCmdRequest {
     repeated Request requests = 2;
     AdminRequest admin_request = 3;
     StatusRequest status_request = 4;
+
+    reserved 5;
+    reserved 100 to 200;
 }
 
 message RaftCmdResponse {
