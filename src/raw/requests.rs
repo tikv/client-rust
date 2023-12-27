@@ -13,10 +13,10 @@ use super::RawRpcRequest;
 use crate::collect_first;
 use crate::pd::PdClient;
 use crate::proto::kvrpcpb;
-use crate::proto::kvrpcpb::ApiVersion;
 use crate::proto::metapb;
 use crate::proto::tikvpb::tikv_client::TikvClient;
 use crate::range_request;
+use crate::region::RegionWithLeader;
 use crate::request::plan::ResponseWithShard;
 use crate::request::Collect;
 use crate::request::CollectSingle;
@@ -164,7 +164,7 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region_with_leader.context()?);
+        self.set_leader(&store.region_with_leader)?;
         self.pairs = shard;
         Ok(())
     }
@@ -297,7 +297,7 @@ impl Shardable for kvrpcpb::RawBatchScanRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region_with_leader.context()?);
+        self.set_leader(&store.region_with_leader)?;
         self.ranges = shard;
         Ok(())
     }
@@ -399,11 +399,11 @@ impl Request for RawCoprocessorRequest {
         self.inner.as_any()
     }
 
-    fn set_context(&mut self, context: kvrpcpb::Context) {
-        self.inner.set_context(context);
+    fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()> {
+        self.inner.set_leader(leader)
     }
 
-    fn set_api_version(&mut self, api_version: ApiVersion) {
+    fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {
         self.inner.set_api_version(api_version);
     }
 }
@@ -423,7 +423,7 @@ impl Shardable for RawCoprocessorRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.inner.context = Some(store.region_with_leader.context()?);
+        self.set_leader(&store.region_with_leader)?;
         self.inner.ranges = shard.clone();
         self.inner.data = (self.data_builder)(store.region_with_leader.region.clone(), shard);
         Ok(())
@@ -435,7 +435,7 @@ impl
     Process<Vec<Result<ResponseWithShard<kvrpcpb::RawCoprocessorResponse, Vec<kvrpcpb::KeyRange>>>>>
     for DefaultProcessor
 {
-    type Out = Vec<(Vec<u8>, Vec<Range<Key>>)>;
+    type Out = Vec<(Vec<Range<Key>>, Vec<u8>)>;
 
     fn process(
         &self,
@@ -448,11 +448,11 @@ impl
             .map(|shard_resp| {
                 shard_resp.map(|ResponseWithShard(resp, ranges)| {
                     (
-                        resp.data,
                         ranges
                             .into_iter()
                             .map(|range| range.start_key.into()..range.end_key.into())
                             .collect(),
+                        resp.data,
                     )
                 })
             })
@@ -497,21 +497,21 @@ impl HasLocks for kvrpcpb::RawCoprocessorResponse {}
 mod test {
     use std::any::Any;
 
-    use futures::executor;
-
     use super::*;
     use crate::backoff::DEFAULT_REGION_BACKOFF;
     use crate::backoff::OPTIMISTIC_BACKOFF;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb;
-    use crate::request::codec::EncodedRequest;
+    use crate::request::Keyspace;
     use crate::request::Plan;
     use crate::Key;
 
-    #[test]
-    #[ignore]
-    fn test_raw_scan() {
+    #[rstest::rstest]
+    #[case(Keyspace::Disable)]
+    #[case(Keyspace::Enable { keyspace_id: 0 })]
+    #[tokio::test]
+    async fn test_raw_scan(#[case] keyspace: Keyspace) {
         let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |req: &dyn Any| {
                 let req: &kvrpcpb::RawScanRequest = req.downcast_ref().unwrap();
@@ -540,15 +540,14 @@ mod test {
             key_only: true,
             ..Default::default()
         };
-        let encoded_scan = EncodedRequest::new(scan, client.get_codec());
-        let plan = crate::request::PlanBuilder::new(client, encoded_scan)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
+        let plan = crate::request::PlanBuilder::new(client, keyspace, scan)
+            .resolve_lock(OPTIMISTIC_BACKOFF, keyspace)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
-        let scan = executor::block_on(async { plan.execute().await }).unwrap();
+        let scan = plan.execute().await.unwrap();
 
-        assert_eq!(scan.len(), 10);
+        assert_eq!(scan.len(), 49);
         // FIXME test the keys returned.
     }
 }

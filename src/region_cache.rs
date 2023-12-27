@@ -346,6 +346,10 @@ mod test {
         async fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> Result<bool> {
             todo!()
         }
+
+        async fn get_keyspace_id(&self, _keyspace: &str) -> Result<u32> {
+            todo!()
+        }
     }
 
     #[tokio::test]

@@ -12,6 +12,8 @@ use crate::KvPair;
 use crate::Result;
 use crate::Value;
 
+use super::transaction::Mutation;
+
 /// A caching layer which buffers reads and writes in a transaction.
 pub struct Buffer {
     primary_key: Option<Key>,
@@ -244,12 +246,10 @@ impl Buffer {
         }
     }
 
-    pub(crate) fn mutate(&mut self, m: kvrpcpb::Mutation) {
-        let op = kvrpcpb::Op::try_from(m.op).unwrap();
-        match op {
-            kvrpcpb::Op::Put => self.put(m.key.into(), m.value),
-            kvrpcpb::Op::Del => self.delete(m.key.into()),
-            _ => unimplemented!("only put and delete are supported in mutate"),
+    pub(crate) fn mutate(&mut self, m: Mutation) {
+        match m {
+            Mutation::Put(key, value) => self.put(key, value),
+            Mutation::Delete(key) => self.delete(key),
         };
     }
 

@@ -12,18 +12,18 @@
 //! requirements on the region boundaries.
 
 mod common;
-use std::collections::HashMap;
-use std::iter;
-
 use common::*;
 use futures::prelude::*;
 use rand::seq::IteratorRandom;
 use rand::thread_rng;
 use rand::Rng;
 use serial_test::serial;
+use std::collections::HashMap;
+use std::iter;
 use tikv_client::backoff::DEFAULT_REGION_BACKOFF;
-use tikv_client::proto::kvrpcpb;
 use tikv_client::transaction::HeartbeatOption;
+use tikv_client::transaction::Mutation;
+use tikv_client::Config;
 use tikv_client::Error;
 use tikv_client::Key;
 use tikv_client::KvPair;
@@ -42,7 +42,9 @@ const NUM_TRNASFER: u32 = 100;
 #[serial]
 async fn txn_get_timestamp() -> Result<()> {
     const COUNT: usize = 1 << 8; // use a small number to make test fast
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
 
     let mut versions = future::join_all((0..COUNT).map(|_| client.current_timestamp()))
         .await
@@ -63,7 +65,9 @@ async fn txn_get_timestamp() -> Result<()> {
 async fn txn_crud() -> Result<()> {
     init().await?;
 
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
     let mut txn = client.begin_optimistic().await?;
 
     // Get non-existent keys
@@ -147,7 +151,9 @@ async fn txn_crud() -> Result<()> {
 async fn txn_insert_duplicate_keys() -> Result<()> {
     init().await?;
 
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
     // Initialize TiKV store with {foo => bar}
     let mut txn = client.begin_optimistic().await?;
     txn.put("foo".to_owned(), "bar".to_owned()).await?;
@@ -171,7 +177,9 @@ async fn txn_insert_duplicate_keys() -> Result<()> {
 async fn txn_pessimistic() -> Result<()> {
     init().await?;
 
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
     let mut txn = client.begin_pessimistic().await?;
     txn.put("foo".to_owned(), "foo".to_owned()).await.unwrap();
 
@@ -188,7 +196,9 @@ async fn txn_pessimistic() -> Result<()> {
 async fn txn_split_batch() -> Result<()> {
     init().await?;
 
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
     let mut txn = client.begin_optimistic().await?;
     let mut rng = thread_rng();
 
@@ -226,7 +236,8 @@ async fn txn_split_batch() -> Result<()> {
 #[serial]
 async fn raw_bank_transfer() -> Result<()> {
     init().await?;
-    let client = RawClient::new(pd_addrs()).await?;
+    let client =
+        RawClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace()).await?;
     let mut rng = thread_rng();
 
     let people = gen_u32_keys(NUM_PEOPLE, &mut rng);
@@ -278,7 +289,9 @@ async fn txn_read() -> Result<()> {
     let value = "large_value".repeat(10);
 
     init().await?;
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
 
     for i in 0..2u32.pow(NUM_BITS_TXN) {
         let mut cur = i * 2u32.pow(32 - NUM_BITS_TXN);
@@ -370,7 +383,9 @@ async fn txn_read() -> Result<()> {
 #[serial]
 async fn txn_bank_transfer() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
     let mut rng = thread_rng();
     let options = TransactionOptions::new_optimistic()
         .use_async_commit()
@@ -423,7 +438,8 @@ async fn txn_bank_transfer() -> Result<()> {
 #[serial]
 async fn raw_req() -> Result<()> {
     init().await?;
-    let client = RawClient::new(pd_addrs()).await?;
+    let client =
+        RawClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace()).await?;
 
     // empty; get non-existent key
     let res = client.get("k1".to_owned()).await;
@@ -553,7 +569,9 @@ async fn raw_req() -> Result<()> {
 #[serial]
 async fn txn_update_safepoint() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
     let res = client.gc(client.current_timestamp().await?).await?;
     assert!(res);
     Ok(())
@@ -568,7 +586,8 @@ async fn raw_write_million() -> Result<()> {
     let interval = 2u32.pow(32 - NUM_BITS_TXN - NUM_BITS_KEY_PER_TXN);
 
     init().await?;
-    let client = RawClient::new(pd_addrs()).await?;
+    let client =
+        RawClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace()).await?;
 
     for i in 0..2u32.pow(NUM_BITS_TXN) {
         let mut cur = i * 2u32.pow(32 - NUM_BITS_TXN);
@@ -702,7 +721,9 @@ async fn raw_write_million() -> Result<()> {
 #[serial]
 async fn txn_pessimistic_rollback() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
     let mut preload_txn = client.begin_optimistic().await?;
     let key1 = vec![1];
     let key2 = vec![2];
@@ -734,7 +755,9 @@ async fn txn_pessimistic_rollback() -> Result<()> {
 #[serial]
 async fn txn_pessimistic_delete() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
 
     // The transaction will lock the keys and must release the locks on commit,
     // even when values are not written to the DB.
@@ -785,7 +808,9 @@ async fn txn_pessimistic_delete() -> Result<()> {
 #[serial]
 async fn txn_lock_keys() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
 
     let k1 = b"key1".to_vec();
     let k2 = b"key2".to_vec();
@@ -819,7 +844,9 @@ async fn txn_lock_keys() -> Result<()> {
 #[serial]
 async fn txn_lock_keys_error_handle() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
 
     // Keys in `k` should locate in different regions. See `init()` for boundary of regions.
     let k: Vec<Key> = vec![
@@ -856,7 +883,9 @@ async fn txn_lock_keys_error_handle() -> Result<()> {
 #[serial]
 async fn txn_get_for_update() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
     let key1 = "key".to_owned();
     let key2 = "another key".to_owned();
     let value1 = b"some value".to_owned();
@@ -903,7 +932,9 @@ async fn txn_pessimistic_heartbeat() -> Result<()> {
 
     let key1 = "key1".to_owned();
     let key2 = "key2".to_owned();
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
 
     let mut heartbeat_txn = client
         .begin_with_options(TransactionOptions::new_pessimistic())
@@ -943,7 +974,9 @@ async fn txn_pessimistic_heartbeat() -> Result<()> {
 #[serial]
 async fn raw_cas() -> Result<()> {
     init().await?;
-    let client = RawClient::new(pd_addrs()).await?.with_atomic_for_cas();
+    let client = RawClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+        .await?
+        .with_atomic_for_cas();
     let key = "key".to_owned();
     let value = "value".to_owned();
     let new_value = "new value".to_owned();
@@ -986,7 +1019,8 @@ async fn raw_cas() -> Result<()> {
         client.batch_delete(vec![key.clone()]).await.err().unwrap(),
         Error::UnsupportedMode
     ));
-    let client = RawClient::new(pd_addrs()).await?;
+    let client =
+        RawClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace()).await?;
     assert!(matches!(
         client
             .compare_and_swap(key.clone(), None, vec![])
@@ -1003,7 +1037,9 @@ async fn raw_cas() -> Result<()> {
 #[serial]
 async fn txn_scan() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
 
     let k1 = b"a".to_vec();
     let v = b"b".to_vec();
@@ -1026,7 +1062,9 @@ async fn txn_scan() -> Result<()> {
 #[serial]
 async fn txn_scan_reverse() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
 
     let k1 = b"k1".to_vec();
     let k2 = b"k2".to_vec();
@@ -1099,7 +1137,9 @@ async fn txn_scan_reverse() -> Result<()> {
 #[serial]
 async fn txn_scan_reverse_multi_regions() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
 
     // Keys in `keys` should locate in different regions. See `init()` for boundary of regions.
     let keys: Vec<Key> = vec![
@@ -1143,7 +1183,9 @@ async fn txn_scan_reverse_multi_regions() -> Result<()> {
 #[serial]
 async fn txn_key_exists() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
     let key = "key".to_owned();
     let value = "value".to_owned();
     let mut t1 = client.begin_optimistic().await?;
@@ -1166,7 +1208,9 @@ async fn txn_key_exists() -> Result<()> {
 #[serial]
 async fn txn_batch_mutate_optimistic() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
 
     // Put k0
     {
@@ -1177,7 +1221,7 @@ async fn txn_batch_mutate_optimistic() -> Result<()> {
     // Delete k0 and put k1, k2
     do_mutate(false).await.unwrap();
     // Read and verify
-    verify_mutate(false).await;
+    verify_mutate(false).await?;
     Ok(())
 }
 
@@ -1185,7 +1229,9 @@ async fn txn_batch_mutate_optimistic() -> Result<()> {
 #[serial]
 async fn txn_batch_mutate_pessimistic() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
 
     // Put k0
     {
@@ -1210,7 +1256,7 @@ async fn txn_batch_mutate_pessimistic() -> Result<()> {
     txn3_handle.await?.unwrap();
 
     // Read and verify
-    verify_mutate(true).await;
+    verify_mutate(true).await?;
     Ok(())
 }
 
@@ -1227,27 +1273,15 @@ async fn begin_mutate(client: &TransactionClient, is_pessimistic: bool) -> Resul
 }
 
 async fn do_mutate(is_pessimistic: bool) -> Result<()> {
-    let client = TransactionClient::new(pd_addrs()).await.unwrap();
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
     let mut txn = begin_mutate(&client, is_pessimistic).await.unwrap();
 
     let mutations = vec![
-        kvrpcpb::Mutation {
-            op: kvrpcpb::Op::Del.into(),
-            key: b"k0".to_vec(),
-            ..Default::default()
-        },
-        kvrpcpb::Mutation {
-            op: kvrpcpb::Op::Put.into(),
-            key: b"k1".to_vec(),
-            value: b"v1".to_vec(),
-            ..Default::default()
-        },
-        kvrpcpb::Mutation {
-            op: kvrpcpb::Op::Put.into(),
-            key: b"k2".to_vec(),
-            value: b"v2".to_vec(),
-            ..Default::default()
-        },
+        Mutation::Delete(Key::from("k0".to_owned())),
+        Mutation::Put(Key::from("k1".to_owned()), Value::from("v1".to_owned())),
+        Mutation::Put(Key::from("k2".to_owned()), Value::from("v2".to_owned())),
     ];
 
     match txn.batch_mutate(mutations).await {
@@ -1262,8 +1296,10 @@ async fn do_mutate(is_pessimistic: bool) -> Result<()> {
     }
 }
 
-async fn verify_mutate(is_pessimistic: bool) {
-    let client = TransactionClient::new(pd_addrs()).await.unwrap();
+async fn verify_mutate(is_pessimistic: bool) -> Result<()> {
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
     let mut snapshot = snapshot(&client, is_pessimistic).await.unwrap();
     let res: HashMap<Key, Value> = snapshot
         .batch_get(vec!["k0".to_owned(), "k1".to_owned(), "k2".to_owned()])
@@ -1280,13 +1316,16 @@ async fn verify_mutate(is_pessimistic: bool) {
         res.get(&Key::from("k2".to_owned())),
         Some(Value::from("v2".to_owned())).as_ref()
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[serial]
 async fn txn_unsafe_destroy_range() -> Result<()> {
     init().await?;
-    let client = TransactionClient::new_with_config(pd_addrs(), Default::default()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
 
     const DATA_COUNT: usize = 10;
 

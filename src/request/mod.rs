@@ -3,6 +3,10 @@
 use async_trait::async_trait;
 use derive_new::new;
 
+pub use self::keyspace::EncodeKeyspace;
+pub use self::keyspace::KeyMode;
+pub use self::keyspace::Keyspace;
+pub use self::keyspace::TruncateKeyspace;
 pub use self::plan::Collect;
 pub use self::plan::CollectError;
 pub use self::plan::CollectSingle;
@@ -33,7 +37,7 @@ use crate::store::Request;
 use crate::store::{HasKeyErrors, Store};
 use crate::transaction::HasLocks;
 
-pub mod codec;
+mod keyspace;
 pub mod plan;
 mod plan_builder;
 mod shard;
@@ -43,9 +47,6 @@ mod shard;
 pub trait KvRequest: Request + Sized + Clone + Sync + Send + 'static {
     /// The expected response to the request.
     type Response: HasKeyErrors + HasLocks + Clone + Send + 'static;
-
-    // TODO: fn encode_request()
-    // TODO: fn decode_response()
 }
 
 /// For requests or plans which are handled at TiKV store (other than region) level.
@@ -98,12 +99,10 @@ mod test {
     use super::*;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
-    use crate::pd::PdClient;
     use crate::proto::kvrpcpb;
-    use crate::proto::kvrpcpb::ApiVersion;
     use crate::proto::pdpb::Timestamp;
     use crate::proto::tikvpb::tikv_client::TikvClient;
-    use crate::request::codec::EncodedRequest;
+    use crate::region::RegionWithLeader;
     use crate::store::store_stream_for_keys;
     use crate::store::HasRegionError;
     use crate::transaction::lowering::new_commit_request;
@@ -113,7 +112,7 @@ mod test {
 
     #[tokio::test]
     async fn test_region_retry() {
-        #[derive(Clone)]
+        #[derive(Debug, Clone)]
         struct MockRpcResponse;
 
         impl HasKeyErrors for MockRpcResponse {
@@ -149,11 +148,11 @@ mod test {
                 self
             }
 
-            fn set_context(&mut self, _: kvrpcpb::Context) {
-                unreachable!();
+            fn set_leader(&mut self, _: &RegionWithLeader) -> Result<()> {
+                Ok(())
             }
 
-            fn set_api_version(&mut self, _api_version: ApiVersion) {}
+            fn set_api_version(&mut self, _: kvrpcpb::ApiVersion) {}
         }
 
         #[async_trait]
@@ -199,9 +198,8 @@ mod test {
             |_: &dyn Any| Ok(Box::new(MockRpcResponse) as Box<dyn Any>),
         )));
 
-        let encoded_req = EncodedRequest::new(request, pd_client.get_codec());
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
-            .resolve_lock(Backoff::no_jitter_backoff(1, 1, 3))
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, request)
+            .resolve_lock(Backoff::no_jitter_backoff(1, 1, 3), Keyspace::Disable)
             .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
             .extract_error()
             .plan();
@@ -224,18 +222,18 @@ mod test {
 
         let key: Key = "key".to_owned().into();
         let req = new_commit_request(iter::once(key), Timestamp::default(), Timestamp::default());
-        let encoded_req = EncodedRequest::new(req, pd_client.get_codec());
 
         // does not extract error
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req.clone())
-            .resolve_lock(OPTIMISTIC_BACKOFF)
-            .retry_multi_region(OPTIMISTIC_BACKOFF)
-            .plan();
+        let plan =
+            crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, req.clone())
+                .resolve_lock(OPTIMISTIC_BACKOFF, Keyspace::Disable)
+                .retry_multi_region(OPTIMISTIC_BACKOFF)
+                .plan();
         assert!(plan.execute().await.is_ok());
 
         // extract error
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, req)
+            .resolve_lock(OPTIMISTIC_BACKOFF, Keyspace::Disable)
             .retry_multi_region(OPTIMISTIC_BACKOFF)
             .extract_error()
             .plan();
