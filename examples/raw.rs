@@ -31,7 +31,9 @@ async fn main() -> Result<()> {
         Config::default().with_security(ca, cert, key)
     } else {
         Config::default()
-    };
+    }
+    // This example uses the default keyspace, so api-v2 must be enabled on the server.
+    .with_default_keyspace();
 
     // When we first create a client we receive a `Connect` structure which must be resolved before
     // the client is actually connected and usable.
@@ -136,6 +138,8 @@ async fn main() -> Result<()> {
     );
     println!("Scanning batch scan from {batch_scan_keys:?} gives: {vals:?}");
 
-    // Cleanly exit.
+    // Delete all keys in the whole range.
+    client.delete_range("".to_owned().."".to_owned()).await?;
+
     Ok(())
 }

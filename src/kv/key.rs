@@ -71,7 +71,7 @@ pub struct Key(
         test,
         proptest(strategy = "any_with::<Vec<u8>>((size_range(_PROPTEST_KEY_MAX), ()))")
     )]
-    pub(super) Vec<u8>,
+    pub(crate) Vec<u8>,
 );
 
 impl AsRef<Key> for kvrpcpb::Mutation {
@@ -98,10 +98,11 @@ impl Key {
 
     /// Push a zero to the end of the key.
     ///
-    /// Extending a zero makes the new key the smallest key that is greater than than the original one, i.e. the succeeder.
+    /// Extending a zero makes the new key the smallest key that is greater than than the original one.
     #[inline]
-    pub(super) fn push_zero(&mut self) {
-        self.0.push(0)
+    pub(crate) fn next_key(mut self) -> Self {
+        self.0.push(0);
+        self
     }
 
     /// Convert the key to a lower bound. The key is treated as inclusive.

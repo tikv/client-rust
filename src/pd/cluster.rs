@@ -16,6 +16,7 @@ use tonic::Request;
 use super::timestamp::TimestampOracle;
 use crate::internal_err;
 use crate::proto::pdpb;
+use crate::Error;
 use crate::Result;
 use crate::SecurityManager;
 use crate::Timestamp;
@@ -24,6 +25,7 @@ use crate::Timestamp;
 pub struct Cluster {
     id: u64,
     client: pdpb::pd_client::PdClient<Channel>,
+    endpoint: String,
     members: pdpb::GetMembersResponse,
     tso: TimestampOracle,
 }
@@ -91,6 +93,18 @@ impl Cluster {
         req.safe_point = safepoint;
         req.send(&mut self.client, timeout).await
     }
+
+    pub async fn get_keyspace_id(&self, keyspace: &str) -> Result<u32> {
+        let resp =
+            reqwest::get(format!("{}/pd/api/v2/keyspaces/{keyspace}", self.endpoint)).await?;
+        let body = resp.json::<serde_json::Value>().await?;
+        let keyspace_id = body
+            .get("id")
+            .ok_or_else(|| Error::UnknownHttpRespond(body.to_string()))?
+            .as_u64()
+            .ok_or_else(|| Error::UnknownHttpRespond(body.to_string()))?;
+        Ok(keyspace_id as u32)
+    }
 }
 
 /// An object for connecting and reconnecting to a PD cluster.
@@ -109,12 +123,13 @@ impl Connection {
         timeout: Duration,
     ) -> Result<Cluster> {
         let members = self.validate_endpoints(endpoints, timeout).await?;
-        let (client, members) = self.try_connect_leader(&members, timeout).await?;
+        let (client, endpoint, members) = self.try_connect_leader(&members, timeout).await?;
         let id = members.header.as_ref().unwrap().cluster_id;
         let tso = TimestampOracle::new(id, &client)?;
         let cluster = Cluster {
             id,
             client,
+            endpoint,
             members,
             tso,
         };
@@ -125,11 +140,13 @@ impl Connection {
     pub async fn reconnect(&self, cluster: &mut Cluster, timeout: Duration) -> Result<()> {
         warn!("updating pd client");
         let start = Instant::now();
-        let (client, members) = self.try_connect_leader(&cluster.members, timeout).await?;
+        let (client, endpoint, members) =
+            self.try_connect_leader(&cluster.members, timeout).await?;
         let tso = TimestampOracle::new(cluster.id, &client)?;
         *cluster = Cluster {
             id: cluster.id,
             client,
+            endpoint,
             members,
             tso,
         };
@@ -239,7 +256,11 @@ impl Connection {
         &self,
         previous: &pdpb::GetMembersResponse,
         timeout: Duration,
-    ) -> Result<(pdpb::pd_client::PdClient<Channel>, pdpb::GetMembersResponse)> {
+    ) -> Result<(
+        pdpb::pd_client::PdClient<Channel>,
+        String,
+        pdpb::GetMembersResponse,
+    )> {
         let previous_leader = previous.leader.as_ref().unwrap();
         let members = &previous.members;
         let cluster_id = previous.header.as_ref().unwrap().cluster_id;
@@ -269,9 +290,10 @@ impl Connection {
         if let Some(resp) = resp {
             let leader = resp.leader.as_ref().unwrap();
             for ep in &leader.client_urls {
-                let r = self.try_connect(ep.as_str(), cluster_id, timeout).await;
-                if r.is_ok() {
-                    return r;
+                if let Ok((client, members)) =
+                    self.try_connect(ep.as_str(), cluster_id, timeout).await
+                {
+                    return Ok((client, ep.to_string(), members));
                 }
             }
         }

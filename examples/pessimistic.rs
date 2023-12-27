@@ -24,7 +24,9 @@ async fn main() {
         Config::default().with_security(ca, cert, key)
     } else {
         Config::default()
-    };
+    }
+    // This example uses the default keyspace, so api-v2 must be enabled on the server.
+    .with_default_keyspace();
 
     // init
     let client = Client::new_with_config(args.pd, config)

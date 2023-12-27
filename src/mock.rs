@@ -18,7 +18,6 @@ use crate::proto::metapb::RegionEpoch;
 use crate::proto::metapb::{self};
 use crate::region::RegionId;
 use crate::region::RegionWithLeader;
-use crate::request::codec::ApiV1TxnCodec;
 use crate::store::KvConnect;
 use crate::store::RegionStore;
 use crate::store::Request;
@@ -31,7 +30,7 @@ use crate::Timestamp;
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
-pub async fn pd_rpc_client() -> PdRpcClient<ApiV1TxnCodec, MockKvConnect, MockCluster> {
+pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
     let config = Config::default();
     PdRpcClient::new(
         config.clone(),
@@ -44,7 +43,6 @@ pub async fn pd_rpc_client() -> PdRpcClient<ApiV1TxnCodec, MockKvConnect, MockCl
             ))
         },
         false,
-        Some(ApiV1TxnCodec::default()),
     )
     .await
     .unwrap()
@@ -73,18 +71,9 @@ pub struct MockKvConnect;
 
 pub struct MockCluster;
 
+#[derive(new)]
 pub struct MockPdClient {
     client: MockKvClient,
-    codec: ApiV1TxnCodec,
-}
-
-impl MockPdClient {
-    pub fn new(client: MockKvClient) -> MockPdClient {
-        MockPdClient {
-            client,
-            codec: ApiV1TxnCodec::default(),
-        }
-    }
 }
 
 #[async_trait]
@@ -113,7 +102,6 @@ impl MockPdClient {
     pub fn default() -> MockPdClient {
         MockPdClient {
             client: MockKvClient::default(),
-            codec: ApiV1TxnCodec::default(),
         }
     }
 
@@ -177,7 +165,6 @@ impl MockPdClient {
 
 #[async_trait]
 impl PdClient for MockPdClient {
-    type Codec = ApiV1TxnCodec;
     type KvClient = MockKvClient;
 
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
@@ -228,7 +215,7 @@ impl PdClient for MockPdClient {
 
     async fn invalidate_region_cache(&self, _ver_id: crate::region::RegionVerId) {}
 
-    fn get_codec(&self) -> &Self::Codec {
-        &self.codec
+    async fn get_keyspace_id(&self, _keyspace: &str) -> Result<u32> {
+        unimplemented!()
     }
 }

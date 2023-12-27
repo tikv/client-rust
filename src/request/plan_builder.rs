@@ -4,9 +4,9 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use super::plan::PreserveShard;
+use super::Keyspace;
 use crate::backoff::Backoff;
 use crate::pd::PdClient;
-use crate::request::codec::EncodedRequest;
 use crate::request::plan::{CleanupLocks, RetryableAllStores};
 use crate::request::shard::HasNextBatch;
 use crate::request::Dispatch;
@@ -47,11 +47,12 @@ pub struct Targetted;
 impl PlanBuilderPhase for Targetted {}
 
 impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
-    pub fn new(pd_client: Arc<PdC>, encoded_request: EncodedRequest<Req>) -> Self {
+    pub fn new(pd_client: Arc<PdC>, keyspace: Keyspace, mut request: Req) -> Self {
+        request.set_api_version(keyspace.api_version());
         PlanBuilder {
             pd_client,
             plan: Dispatch {
-                request: encoded_request.inner,
+                request,
                 kv_client: None,
             },
             phantom: PhantomData,
@@ -69,7 +70,11 @@ impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted> {
 
 impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     /// If there is a lock error, then resolve the lock and retry the request.
-    pub fn resolve_lock(self, backoff: Backoff) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
+    pub fn resolve_lock(
+        self,
+        backoff: Backoff,
+        keyspace: Keyspace,
+    ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
     where
         P::Result: HasLocks,
     {
@@ -79,6 +84,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 inner: self.plan,
                 backoff,
                 pd_client: self.pd_client,
+                keyspace,
             },
             phantom: PhantomData,
         }
@@ -89,6 +95,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         ctx: ResolveLocksContext,
         options: ResolveLocksOptions,
         backoff: Backoff,
+        keyspace: Keyspace,
     ) -> PlanBuilder<PdC, CleanupLocks<P, PdC>, Ph>
     where
         P: Shardable + NextBatch,
@@ -103,6 +110,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 store: None,
                 backoff,
                 pd_client: self.pd_client,
+                keyspace,
             },
             phantom: PhantomData,
         }
@@ -248,8 +256,7 @@ fn set_single_region_store<PdC: PdClient, R: KvRequest>(
     store: RegionStore,
     pd_client: Arc<PdC>,
 ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
-    plan.request
-        .set_context(store.region_with_leader.context()?);
+    plan.request.set_leader(&store.region_with_leader)?;
     plan.kv_client = Some(store.client);
     Ok(PlanBuilder {
         plan,
