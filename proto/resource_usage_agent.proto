@@ -14,48 +14,10 @@ option java_package = "org.tikv.kvproto";
 
 // ResourceUsageAgent is the service for storing resource usage records.
 service ResourceUsageAgent {
-    // DEPRECATED: We now use `Report` to report not only CPU time.
-    //
-    // Report the CPU time records. By default, the records with the same
-    // resource group tag will be batched by minute.
-    rpc ReportCPUTime(stream CPUTimeRecord) returns (EmptyResponse) {}
-
     // Report the resource usage records. By default, the records with the same
     // resource group tag will be batched by minute.
     rpc Report(stream ResourceUsageRecord) returns (EmptyResponse) {}
 }
-
-message CPUTimeRecord {
-    bytes resource_group_tag = 1;
-
-    // The following 2 repeated zipped together represents a List<(UnixTimestamp, CPUTime)>
-
-    // UNIX timestamp in second.
-    repeated uint64 record_list_timestamp_sec = 2;
-    // The value can be greater than 1000ms if the requests are running parallelly.
-    repeated uint32 record_list_cpu_time_ms = 3;
-
-}
-
-message ResourceUsageRecord {
-    bytes resource_group_tag = 1;
-
-    // The following repeated zipped together represents a List<(UnixTimestamp, Record)>
-
-    // UNIX timestamp in second.
-    repeated uint64 record_list_timestamp_sec = 2;
-
-    // The value can be greater than 1000ms if the requests are running parallelly.
-    repeated uint32 record_list_cpu_time_ms = 3;
-
-    // The number of reads of keys associated with resource_group_tag.
-    repeated uint32 record_list_read_keys = 4;
-
-    // The number of writes of keys associated with resource_group_tag.
-    repeated uint32 record_list_write_keys = 5;
-}
-
-message EmptyResponse {}
 
 // TiKV implements ResourceMeteringPubSub service for clients to subscribe to resource metering records.
 service ResourceMeteringPubSub {
@@ -65,3 +27,24 @@ service ResourceMeteringPubSub {
 }
 
 message ResourceMeteringRequest {}
+
+message EmptyResponse {}
+
+message ResourceUsageRecord {
+    oneof record_oneof {
+        GroupTagRecord record = 1;
+    }
+}
+
+// GroupTagRecord is a set of resource usage data grouped by resource_group_tag.
+message GroupTagRecord {
+    bytes resource_group_tag = 1;
+    repeated GroupTagRecordItem items = 2;
+}
+
+message GroupTagRecordItem {
+    uint64 timestamp_sec = 1;
+    uint32 cpu_time_ms = 2;
+    uint32 read_keys = 3;
+    uint32 write_keys = 4;
+}

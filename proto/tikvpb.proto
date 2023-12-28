@@ -5,6 +5,7 @@ import "coprocessor.proto";
 import "kvrpcpb.proto";
 import "mpp.proto";
 import "raft_serverpb.proto";
+import "disaggregated.proto";
 
 import "gogoproto/gogo.proto";
 import "rustproto.proto";
@@ -36,6 +37,8 @@ service Tikv {
     rpc KvResolveLock(kvrpcpb.ResolveLockRequest) returns (kvrpcpb.ResolveLockResponse) {}
     rpc KvGC(kvrpcpb.GCRequest) returns (kvrpcpb.GCResponse) {}
     rpc KvDeleteRange(kvrpcpb.DeleteRangeRequest) returns (kvrpcpb.DeleteRangeResponse) {}
+    rpc KvPrepareFlashbackToVersion(kvrpcpb.PrepareFlashbackToVersionRequest) returns (kvrpcpb.PrepareFlashbackToVersionResponse) {}
+    rpc KvFlashbackToVersion(kvrpcpb.FlashbackToVersionRequest) returns (kvrpcpb.FlashbackToVersionResponse) {}
 
     // Raw commands; no transaction support.
     rpc RawGet(kvrpcpb.RawGetRequest) returns (kvrpcpb.RawGetResponse) {}
@@ -73,6 +76,7 @@ service Tikv {
     rpc Raft(stream raft_serverpb.RaftMessage) returns (raft_serverpb.Done) {}
     rpc BatchRaft(stream BatchRaftMessage) returns (raft_serverpb.Done) {}
     rpc Snapshot(stream raft_serverpb.SnapshotChunk) returns (raft_serverpb.Done) {}
+    rpc TabletSnapshot(stream raft_serverpb.TabletSnapshotRequest) returns (stream raft_serverpb.TabletSnapshotResponse) {}
 
     // Sent from PD or TiDB to a TiKV node.
     rpc SplitRegion (kvrpcpb.SplitRegionRequest) returns (kvrpcpb.SplitRegionResponse) {}
@@ -91,6 +95,7 @@ service Tikv {
     rpc CancelMPPTask(mpp.CancelTaskRequest) returns (mpp.CancelTaskResponse) {}
     rpc EstablishMPPConnection(mpp.EstablishMPPConnectionRequest) returns (stream mpp.MPPDataPacket) {}
     rpc IsAlive(mpp.IsAliveRequest) returns (mpp.IsAliveResponse) {}
+    rpc ReportMPPTaskStatus(mpp.ReportTaskStatusRequest) returns (mpp.ReportTaskStatusResponse) {}
 
     /// CheckLeader sends all information (includes region term and epoch) to other stores.
     /// Once a store receives a request, it checks term and epoch for each region, and sends the regions whose
@@ -104,6 +109,31 @@ service Tikv {
 
     /// Get the information about lock waiting from TiKV.
     rpc GetLockWaitInfo(kvrpcpb.GetLockWaitInfoRequest) returns (kvrpcpb.GetLockWaitInfoResponse);
+
+    /// Compact a specified key range. This request is not restricted to raft leaders and will not be replicated.
+    /// It only compacts data on this node.
+    /// TODO: Currently this RPC is designed to be only compatible with TiFlash.
+    /// Shall be move out in https://github.com/pingcap/kvproto/issues/912
+    rpc Compact(kvrpcpb.CompactRequest) returns (kvrpcpb.CompactResponse);
+    /// Get the information about history lock waiting from TiKV.
+    rpc GetLockWaitHistory(kvrpcpb.GetLockWaitHistoryRequest) returns (kvrpcpb.GetLockWaitHistoryResponse);
+
+    /// Get system table from TiFlash
+    rpc GetTiFlashSystemTable(kvrpcpb.TiFlashSystemTableRequest) returns (kvrpcpb.TiFlashSystemTableResponse) {}
+
+    // These are for TiFlash disaggregated architecture
+    /// Try to lock a S3 object, atomically
+    rpc tryAddLock(disaggregated.TryAddLockRequest) returns (disaggregated.TryAddLockResponse) {};
+    /// Try to delete a S3 object, atomically
+    rpc tryMarkDelete(disaggregated.TryMarkDeleteRequest) returns (disaggregated.TryMarkDeleteResponse) {};
+    /// Build the disaggregated task on TiFlash write node
+    rpc EstablishDisaggTask(disaggregated.EstablishDisaggTaskRequest) returns (disaggregated.EstablishDisaggTaskResponse) {}
+    /// Cancel the disaggregated task on TiFlash write node
+    rpc CancelDisaggTask(disaggregated.CancelDisaggTaskRequest) returns (disaggregated.CancelDisaggTaskResponse) {}
+    /// Exchange page data between TiFlash write node and compute node
+    rpc FetchDisaggPages(disaggregated.FetchDisaggPagesRequest) returns (stream disaggregated.PagesPacket) {}
+    /// Compute node get configuration from Write node
+    rpc GetDisaggConfig(disaggregated.GetDisaggConfigRequest) returns (disaggregated.GetDisaggConfigResponse) {}
 }
 
 message BatchCommandsRequest {
@@ -145,6 +175,9 @@ message BatchCommandsRequest {
             kvrpcpb.CheckSecondaryLocksRequest CheckSecondaryLocks = 33;
 
             kvrpcpb.RawCoprocessorRequest RawCoprocessor = 34;
+
+            kvrpcpb.FlashbackToVersionRequest FlashbackToVersion = 35;
+            kvrpcpb.PrepareFlashbackToVersionRequest PrepareFlashbackToVersion = 36;
 
             // For some test cases.
             BatchCommandsEmptyRequest Empty = 255;
@@ -196,6 +229,9 @@ message BatchCommandsResponse {
             kvrpcpb.CheckSecondaryLocksResponse CheckSecondaryLocks = 33;
 
             kvrpcpb.RawCoprocessorResponse RawCoprocessor = 34;
+
+            kvrpcpb.FlashbackToVersionResponse FlashbackToVersion = 35;
+            kvrpcpb.PrepareFlashbackToVersionResponse PrepareFlashbackToVersion = 36;
 
             // For some test cases.
             BatchCommandsEmptyResponse Empty = 255;

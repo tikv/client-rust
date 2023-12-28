@@ -141,6 +141,7 @@ pub enum EncryptionMethod {
     Aes128Ctr = 2,
     Aes192Ctr = 3,
     Aes256Ctr = 4,
+    Sm4Ctr = 5,
 }
 impl EncryptionMethod {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -154,6 +155,7 @@ impl EncryptionMethod {
             EncryptionMethod::Aes128Ctr => "AES128_CTR",
             EncryptionMethod::Aes192Ctr => "AES192_CTR",
             EncryptionMethod::Aes256Ctr => "AES256_CTR",
+            EncryptionMethod::Sm4Ctr => "SM4_CTR",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -164,6 +166,7 @@ impl EncryptionMethod {
             "AES128_CTR" => Some(Self::Aes128Ctr),
             "AES192_CTR" => Some(Self::Aes192Ctr),
             "AES256_CTR" => Some(Self::Aes256Ctr),
+            "SM4_CTR" => Some(Self::Sm4Ctr),
             _ => None,
         }
     }

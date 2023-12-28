@@ -717,6 +717,35 @@ async fn raw_write_million() -> Result<()> {
     Ok(())
 }
 
+/// Tests raw ttl API.
+#[tokio::test]
+#[serial]
+async fn raw_ttl() -> Result<()> {
+    init().await?;
+    let client =
+        RawClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace()).await?;
+    let key1 = vec![1];
+    let key2 = vec![2];
+    let val = vec![42];
+
+    assert_eq!(client.get_key_ttl_secs(key1.clone()).await?, None);
+    client.put_with_ttl(key1.clone(), val.clone(), 10).await?;
+    assert_eq!(client.get(key1.clone()).await?, Some(val.clone()));
+    assert_eq!(client.get_key_ttl_secs(key1.clone()).await?, Some(10));
+    client
+        .batch_put_with_ttl(
+            vec![(key1.clone(), val.clone()), (key2.clone(), val.clone())],
+            vec![20, 20],
+        )
+        .await?;
+    assert_eq!(client.get(key1.clone()).await?, Some(val.clone()));
+    assert_eq!(client.get(key2.clone()).await?, Some(val.clone()));
+    assert_eq!(client.get_key_ttl_secs(key1.clone()).await?, Some(20));
+    assert_eq!(client.get_key_ttl_secs(key2.clone()).await?, Some(20));
+
+    Ok(())
+}
+
 #[tokio::test]
 #[serial]
 async fn txn_pessimistic_rollback() -> Result<()> {

@@ -10,7 +10,7 @@ use futures::stream::BoxStream;
 use tonic::transport::Channel;
 
 use super::RawRpcRequest;
-use crate::collect_first;
+use crate::collect_single;
 use crate::pd::PdClient;
 use crate::proto::kvrpcpb;
 use crate::proto::metapb;
@@ -55,7 +55,7 @@ impl KvRequest for kvrpcpb::RawGetRequest {
 }
 
 shardable_key!(kvrpcpb::RawGetRequest);
-collect_first!(kvrpcpb::RawGetResponse);
+collect_single!(kvrpcpb::RawGetResponse);
 
 impl SingleKey for kvrpcpb::RawGetRequest {
     fn key(&self) -> &Vec<u8> {
@@ -104,15 +104,54 @@ impl Merge<kvrpcpb::RawBatchGetResponse> for Collect {
     }
 }
 
+pub fn new_raw_get_key_ttl_request(
+    key: Vec<u8>,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawGetKeyTtlRequest {
+    let mut req = kvrpcpb::RawGetKeyTtlRequest::default();
+    req.key = key;
+    req.maybe_set_cf(cf);
+
+    req
+}
+
+impl KvRequest for kvrpcpb::RawGetKeyTtlRequest {
+    type Response = kvrpcpb::RawGetKeyTtlResponse;
+}
+
+shardable_key!(kvrpcpb::RawGetKeyTtlRequest);
+collect_single!(kvrpcpb::RawGetKeyTtlResponse);
+
+impl SingleKey for kvrpcpb::RawGetKeyTtlRequest {
+    fn key(&self) -> &Vec<u8> {
+        &self.key
+    }
+}
+
+impl Process<kvrpcpb::RawGetKeyTtlResponse> for DefaultProcessor {
+    type Out = Option<u64>;
+
+    fn process(&self, input: Result<kvrpcpb::RawGetKeyTtlResponse>) -> Result<Self::Out> {
+        let input = input?;
+        Ok(if input.not_found {
+            None
+        } else {
+            Some(input.ttl)
+        })
+    }
+}
+
 pub fn new_raw_put_request(
     key: Vec<u8>,
     value: Vec<u8>,
+    ttl: u64,
     cf: Option<ColumnFamily>,
     atomic: bool,
 ) -> kvrpcpb::RawPutRequest {
     let mut req = kvrpcpb::RawPutRequest::default();
     req.key = key;
     req.value = value;
+    req.ttl = ttl;
     req.maybe_set_cf(cf);
     req.for_cas = atomic;
 
@@ -124,7 +163,7 @@ impl KvRequest for kvrpcpb::RawPutRequest {
 }
 
 shardable_key!(kvrpcpb::RawPutRequest);
-collect_first!(kvrpcpb::RawPutResponse);
+collect_single!(kvrpcpb::RawPutResponse);
 impl SingleKey for kvrpcpb::RawPutRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -133,11 +172,13 @@ impl SingleKey for kvrpcpb::RawPutRequest {
 
 pub fn new_raw_batch_put_request(
     pairs: Vec<kvrpcpb::KvPair>,
+    ttls: Vec<u64>,
     cf: Option<ColumnFamily>,
     atomic: bool,
 ) -> kvrpcpb::RawBatchPutRequest {
     let mut req = kvrpcpb::RawBatchPutRequest::default();
     req.pairs = pairs;
+    req.ttls = ttls;
     req.maybe_set_cf(cf);
     req.for_cas = atomic;
 
@@ -188,7 +229,7 @@ impl KvRequest for kvrpcpb::RawDeleteRequest {
 }
 
 shardable_key!(kvrpcpb::RawDeleteRequest);
-collect_first!(kvrpcpb::RawDeleteResponse);
+collect_single!(kvrpcpb::RawDeleteResponse);
 impl SingleKey for kvrpcpb::RawDeleteRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -336,7 +377,7 @@ impl KvRequest for kvrpcpb::RawCasRequest {
 }
 
 shardable_key!(kvrpcpb::RawCasRequest);
-collect_first!(kvrpcpb::RawCasResponse);
+collect_single!(kvrpcpb::RawCasResponse);
 impl SingleKey for kvrpcpb::RawCasRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -472,6 +513,7 @@ macro_rules! impl_raw_rpc_request {
 
 impl_raw_rpc_request!(RawGetRequest);
 impl_raw_rpc_request!(RawBatchGetRequest);
+impl_raw_rpc_request!(RawGetKeyTtlRequest);
 impl_raw_rpc_request!(RawPutRequest);
 impl_raw_rpc_request!(RawBatchPutRequest);
 impl_raw_rpc_request!(RawDeleteRequest);
@@ -483,6 +525,7 @@ impl_raw_rpc_request!(RawCasRequest);
 
 impl HasLocks for kvrpcpb::RawGetResponse {}
 impl HasLocks for kvrpcpb::RawBatchGetResponse {}
+impl HasLocks for kvrpcpb::RawGetKeyTtlResponse {}
 impl HasLocks for kvrpcpb::RawPutResponse {}
 impl HasLocks for kvrpcpb::RawBatchPutResponse {}
 impl HasLocks for kvrpcpb::RawDeleteResponse {}

@@ -21,6 +21,20 @@ message NotLeader {
     metapb.Peer leader = 2;
 }
 
+// IsWitness is the error variant that tells a request be handle by witness
+// which should be forbidden and retry.
+message IsWitness {
+    // The requested region ID
+    uint64 region_id = 1;
+}
+
+// BucketVersionNotMatch is the error variant that tells the request buckets version is not match.
+// client should update the buckets version and retry.
+message BucketVersionNotMatch{
+    uint64 version = 1;
+    repeated bytes keys = 2;
+}
+
 message DiskFull {
     // The requested store ID
     repeated uint64 store_id = 1;
@@ -77,6 +91,9 @@ message ServerIsBusy {
     string reason = 1;
     // The suggested backoff time
     uint64 backoff_ms = 2;
+    uint32 estimated_wait_ms = 3;
+    // Current applied_index at the leader, may be used in replica read.
+    uint64 applied_index = 4;
 }
 
 // StaleCommand is the error variant that tells the command is stale, that is,
@@ -128,6 +145,29 @@ message DataIsNotReady {
     uint64 safe_ts = 3;
 }
 
+message RecoveryInProgress {
+    // The requested region ID
+    uint64 region_id = 1;
+}
+
+message FlashbackInProgress {
+    // The requested region ID
+    uint64 region_id = 1;
+    uint64 flashback_start_ts = 2;
+}
+
+message FlashbackNotPrepared {
+    // The requested region ID
+    uint64 region_id = 1;
+}
+
+// MismatchPeerId is the error variant that tells the request is sent to wrong peer.
+// Client receives this error should reload the region info and retry.
+message MismatchPeerId {
+    uint64 request_peer_id = 1;
+    uint64 store_peer_id = 2;
+}
+
 // Error wraps all region errors, indicates an error encountered by a request.
 message Error {
     reserved "stale_epoch";
@@ -148,4 +188,21 @@ message Error {
     DataIsNotReady data_is_not_ready = 13;
     RegionNotInitialized region_not_initialized = 14;
     DiskFull disk_full = 15;
+    // Online recovery is still in performing, reject writes to avoid potential issues
+    RecoveryInProgress RecoveryInProgress = 16;
+    // Flashback is still in performing, reject any read or write to avoid potential issues.
+    // NOTICE: this error is non-retryable, the request should fail ASAP when it meets this error.
+    FlashbackInProgress FlashbackInProgress = 17;
+    // If the second phase flashback request is sent to a region that is not prepared for the flashback,
+    // this error will be returned.
+    // NOTICE: this error is non-retryable, the client should retry the first phase flashback request when it meets this error.
+    FlashbackNotPrepared FlashbackNotPrepared = 18;
+    // IsWitness is the error variant that tells a request be handle by witness
+    // which should be forbidden and retry.
+    IsWitness is_witness = 19;
+
+    MismatchPeerId mismatch_peer_id = 20;
+    
+    // BucketVersionNotMatch is the error variant that tells the request buckets version is not match.
+    BucketVersionNotMatch bucket_version_not_match = 21;
 }

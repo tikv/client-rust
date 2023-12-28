@@ -14,6 +14,7 @@ use derive_new::new;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::pd::RetryClient;
+use crate::proto::keyspacepb;
 use crate::proto::metapb::RegionEpoch;
 use crate::proto::metapb::{self};
 use crate::region::RegionId;
@@ -215,7 +216,7 @@ impl PdClient for MockPdClient {
 
     async fn invalidate_region_cache(&self, _ver_id: crate::region::RegionVerId) {}
 
-    async fn get_keyspace_id(&self, _keyspace: &str) -> Result<u32> {
+    async fn load_keyspace(&self, _keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
         unimplemented!()
     }
 }

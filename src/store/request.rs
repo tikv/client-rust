@@ -74,6 +74,7 @@ macro_rules! impl_request {
 
 impl_request!(RawGetRequest, raw_get, "raw_get");
 impl_request!(RawBatchGetRequest, raw_batch_get, "raw_batch_get");
+impl_request!(RawGetKeyTtlRequest, raw_get_key_ttl, "raw_get_key_ttl");
 impl_request!(RawPutRequest, raw_put, "raw_put");
 impl_request!(RawBatchPutRequest, raw_batch_put, "raw_batch_put");
 impl_request!(RawDeleteRequest, raw_delete, "raw_delete");

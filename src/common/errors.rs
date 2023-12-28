@@ -51,13 +51,9 @@ pub enum Error {
     #[error("gRPC error: {0}")]
     Grpc(#[from] tonic::transport::Error),
     /// Wraps a `reqwest::Error`.
-    #[error("http error: {0}")]
-    Http(#[from] reqwest::Error),
     /// Wraps a `grpcio::Error`.
     #[error("gRPC api error: {0}")]
     GrpcAPI(#[from] tonic::Status),
-    #[error("Http request failed: unknown respond {0}")]
-    UnknownHttpRespond(String),
     /// Wraps a `grpcio::Error`.
     #[error("url error: {0}")]
     Url(#[from] tonic::codegen::http::uri::InvalidUri),
@@ -113,6 +109,8 @@ pub enum Error {
         inner: Box<Error>,
         success_keys: Vec<Vec<u8>>,
     },
+    #[error("Keyspace not found: {0}")]
+    KeyspaceNotFound(String),
 }
 
 impl From<crate::proto::errorpb::Error> for Error {

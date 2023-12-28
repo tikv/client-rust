@@ -5,6 +5,7 @@ import "eraftpb.proto";
 import "metapb.proto";
 import "kvrpcpb.proto";
 import "disk_usage.proto";
+import "encryptionpb.proto";
 import "rustproto.proto";
 
 option (rustproto.lite_runtime_all) = true;
@@ -45,6 +46,19 @@ message SnapshotMeta {
     repeated SnapshotCFFile cf_files = 1;
     // true means this snapshot is triggered for load balance
     bool for_balance = 2;
+    // true means this is an empty snapshot for witness
+    bool for_witness = 3;
+    // the timestamp second to generate snapshot
+    uint64 start = 4;
+    // the duration of generating snapshot
+    uint64 generate_duration_sec = 5;
+    // the path of the tablet snapshot, it should only be used for v1 to receive
+    // snapshot from v2
+    string tablet_snap_path = 6;
+    // A hint of the latest commit index on leader when sending snapshot.
+    // It should only be used for v2 to send snapshot to v1.
+    // See https://github.com/pingcap/tiflash/issues/7568
+    uint64 commit_index_hint = 7;
 }
 
 message SnapshotChunk {
@@ -53,6 +67,64 @@ message SnapshotChunk {
 }
 
 message Done {}
+
+message TabletSnapshotFileMeta {
+    uint64 file_size = 1;
+    string file_name = 2;
+    // Some block data. Unencrypted.
+    bytes head_chunk = 3;
+    // trailing data including checksum. Unencrypted.
+    bytes trailing_chunk = 4;
+}
+
+// Snapshot preview for server to decide whether skip some files.
+// Server should send back an `AcceptedSnapshotFile` to let client
+// keep sending specified files. Only SST files can be skipped, all
+// other files should always be sent.
+message TabletSnapshotPreview {
+    repeated TabletSnapshotFileMeta metas = 1;
+    // There may be too many metas, use a flag to indicate all metas
+    // are sent.
+    bool end = 2;
+}
+
+message TabletSnapshotFileChunk {
+    uint64 file_size = 1;
+    string file_name = 2;
+    // Encrypted.
+    bytes data = 3;
+    // Initial vector if encryption is enabled.
+    bytes iv = 4;
+    encryptionpb.DataKey key = 5;
+}
+
+message TabletSnapshotHead {
+    RaftMessage message = 1;
+    bool use_cache = 2;
+}
+
+message TabletSnapshotEnd {
+    // Checksum of all data sent in `TabletSnapshotFileChunk.data` and
+    // `TabletSnapshotFileChunk.file_name`.
+    uint64 checksum = 1;
+}
+
+message TabletSnapshotRequest {
+    oneof payload {
+        TabletSnapshotHead head = 1;
+        TabletSnapshotPreview preview = 2;
+        TabletSnapshotFileChunk chunk = 3;
+        TabletSnapshotEnd end = 4;
+    }
+}
+
+message AcceptedSnapshotFiles {
+    repeated string file_name = 1;
+}
+
+message TabletSnapshotResponse {
+    AcceptedSnapshotFiles files = 1;
+}
 
 message KeyValue {
     bytes key      = 1;
@@ -65,12 +137,23 @@ message RaftSnapshotData {
     repeated KeyValue data = 3;
     uint64 version = 4;
     SnapshotMeta meta = 5;
+    repeated metapb.Peer removed_records = 6;
+    repeated MergedRecord merged_records = 7;
 }
 
 message StoreIdent {
     uint64 cluster_id = 1;
     uint64 store_id = 2;
     kvrpcpb.APIVersion api_version = 3;
+}
+
+message StoreRecoverState {
+    // Used for TiKV start recovery when WAL of KVDB was disabled.
+    // TiKV may read all relations between seqno and raft log index, and replay
+    // all raft logs which corresponding seqno smaller than the seqno here.
+    // After TiKV replays all raft logs and flushed KV data, the seqno here must
+    // be updated.
+    uint64 seqno = 1;
 }
 
 message RaftLocalState {
@@ -91,6 +174,11 @@ enum PeerState {
     Applying = 1;
     Tombstone = 2;
     Merging = 3;
+    // Currently used for witness to non-witness conversion: When a witness
+    // has just become a non-witness, we need to set and persist this state,
+    // so that when the service restarts before applying snapshot, we can
+    // actively request snapshot when initializing this peer.
+    Unavailable = 4;
 }
 
 message MergeState {
@@ -99,10 +187,50 @@ message MergeState {
     uint64 commit = 3;
 }
 
+message MergedRecord {
+    uint64 source_region_id = 1;
+    metapb.RegionEpoch source_epoch = 2;
+    // Peers of source region when merge is committed.
+    repeated metapb.Peer source_peers = 3;
+    // Removed peers (by confchange) of source region when merge is committed.
+    repeated metapb.Peer source_removed_records = 9;
+    uint64 target_region_id = 4;
+    metapb.RegionEpoch target_epoch = 5;
+    repeated metapb.Peer target_peers = 6;
+    // Commit merge index.
+    uint64 index = 7;
+    // Prepare merge index.
+    uint64 source_index = 8;
+}
+
 message RegionLocalState {
     PeerState state = 1;
     metapb.Region region = 2;
     MergeState merge_state = 3;
+    // The apply index corresponding to the storage when it's initialized.
+    uint64 tablet_index = 4;
+    // Raft doesn't guarantee peer will be removed in the end. In v1, peer finds
+    // out its destiny by logs or broadcast; in v2, leader is responsible to
+    // ensure removed peers are destroyed.
+    // Note: only peers who has been part of this region can be in this list.
+    repeated metapb.Peer removed_records = 5;
+    // Merged peer can't be deleted like gc peers. Instead, leader needs to
+    // query target peer to decide whether source peer can be destroyed.
+    repeated MergedRecord merged_records = 6;
+}
+
+message RegionSequenceNumberRelation {
+    uint64 region_id = 1;
+    uint64 sequence_number = 2;
+    RaftApplyState apply_state = 3;
+    RegionLocalState region_state = 4;
+}
+
+message AvailabilityContext {
+    uint64 from_region_id = 1;
+    metapb.RegionEpoch from_region_epoch = 2;
+    bool unavailable = 3;
+    bool trimmed = 4;
 }
 
 enum ExtraMessageType {
@@ -114,10 +242,55 @@ enum ExtraMessageType {
     // to make sure they all agree to sleep.
     MsgHibernateRequest = 4;
     MsgHibernateResponse = 5;
+    MsgRejectRaftLogCausedByMemoryUsage = 6;
+    MsgAvailabilityRequest = 7;
+    MsgAvailabilityResponse = 8;
+    MsgVoterReplicatedIndexRequest = 9;
+    MsgVoterReplicatedIndexResponse = 10;
+    // Message means that `from` is tombstone. Leader can then update removed_records.
+    MsgGcPeerRequest = 11;
+    MsgGcPeerResponse = 12;
+    MsgFlushMemtable = 13;
+    MsgRefreshBuckets = 14;
+}
+
+message FlushMemtable {
+    uint64 region_id = 1;
+}
+
+message RefreshBuckets {
+    uint64 version = 1;
+    repeated bytes keys = 2;
+    repeated uint64 sizes = 3;
+}
+
+message CheckGcPeer {
+    // The region ID who triggers the check and wait for report. It should be
+    // the ID of RaftMessage.from.
+    uint64 from_region_id = 1;
+    // The region ID to be checked if should be destroyed.
+    uint64 check_region_id = 2;
+    // The epoch of the region to be checked.
+    metapb.RegionEpoch check_region_epoch = 3;
+    // The peer to be checked.
+    metapb.Peer check_peer = 4;
 }
 
 message ExtraMessage {
     ExtraMessageType type = 1;
-    uint64 premerge_commit = 2;
+    // It's merge related index. In `WantRollbackMerge`, it's prepare merge index. In
+    // `MsgGcPeerRequest`, it's the commit merge index. In `MsgVoterReplicatedIndexRequest`
+    // it's the voter_replicated_index.
+    uint64 index = 2;
+    // In `MsgCheckStalePeerResponse`, it's the peers that receiver can continue to query.
     repeated metapb.Peer check_peers = 3;
+    bool wait_data = 4;
+    // Flag for forcely wake up hibernate regions if true.
+    bool forcely_awaken = 5;
+    CheckGcPeer check_gc_peer = 6;
+    FlushMemtable flush_memtable = 7;
+    // Used by `MsgAvailabilityRequest` and `MsgAvailabilityResponse` in v2.
+    AvailabilityContext availability_context = 8;
+    // notice the peer to refresh buckets version
+    RefreshBuckets refresh_buckets = 9;
 }
