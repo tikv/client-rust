@@ -111,8 +111,10 @@ impl Client {
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?);
         let keyspace = match config.keyspace {
             Some(keyspace) => {
-                let keyspace_id = pd.get_keyspace_id(&keyspace).await?;
-                Keyspace::Enable { keyspace_id }
+                let keyspace = pd.load_keyspace(&keyspace).await?;
+                Keyspace::Enable {
+                    keyspace_id: keyspace.id,
+                }
             }
             None => Keyspace::Disable,
         };

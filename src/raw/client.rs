@@ -111,8 +111,10 @@ impl Client<PdRpcClient> {
             Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), enable_codec).await?);
         let keyspace = match config.keyspace {
             Some(keyspace) => {
-                let keyspace_id = rpc.get_keyspace_id(&keyspace).await?;
-                Keyspace::Enable { keyspace_id }
+                let keyspace = rpc.load_keyspace(&keyspace).await?;
+                Keyspace::Enable {
+                    keyspace_id: keyspace.id,
+                }
             }
             None => Keyspace::Disable,
         };
@@ -277,6 +279,34 @@ impl<PdC: PdClient> Client<PdC> {
         })
     }
 
+    /// Create a new 'get key ttl' request.
+    ///
+    /// Once resolved this request will result in the fetching of the alive time left for the
+    /// given key.
+    ///
+    /// Retuning `Ok(None)` indicates the key does not exist in TiKV.
+    ///
+    /// # Examples
+    /// # use tikv_client::{Value, Config, RawClient};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let key = "TiKV".to_owned();
+    /// let req = client.get_key_ttl_secs(key);
+    /// let result: Option<Value> = req.await.unwrap();
+    /// # });
+    pub async fn get_key_ttl_secs(&self, key: impl Into<Key>) -> Result<Option<u64>> {
+        debug!("invoking raw get_key_ttl_secs request");
+        let key = key.into().encode_keyspace(self.keyspace, KeyMode::Raw);
+        let request = new_raw_get_key_ttl_request(key, self.cf.clone());
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
+            .retry_multi_region(self.backoff.clone())
+            .merge(CollectSingle)
+            .post_process_default()
+            .plan();
+        plan.execute().await
+    }
+
     /// Create a new 'put' request.
     ///
     /// Once resolved this request will result in the setting of the value associated with the given key.
@@ -294,9 +324,19 @@ impl<PdC: PdClient> Client<PdC> {
     /// # });
     /// ```
     pub async fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
+        self.put_with_ttl(key, value, 0).await
+    }
+
+    pub async fn put_with_ttl(
+        &self,
+        key: impl Into<Key>,
+        value: impl Into<Value>,
+        ttl_secs: u64,
+    ) -> Result<()> {
         debug!("invoking raw put request");
         let key = key.into().encode_keyspace(self.keyspace, KeyMode::Raw);
-        let request = new_raw_put_request(key, value.into(), self.cf.clone(), self.atomic);
+        let request =
+            new_raw_put_request(key, value.into(), self.cf.clone(), ttl_secs, self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
             .retry_multi_region(self.backoff.clone())
             .merge(CollectSingle)
@@ -327,11 +367,20 @@ impl<PdC: PdClient> Client<PdC> {
         &self,
         pairs: impl IntoIterator<Item = impl Into<KvPair>>,
     ) -> Result<()> {
+        self.batch_put_with_ttl(pairs, std::iter::repeat(0)).await
+    }
+
+    pub async fn batch_put_with_ttl(
+        &self,
+        pairs: impl IntoIterator<Item = impl Into<KvPair>>,
+        ttls: impl IntoIterator<Item = u64>,
+    ) -> Result<()> {
         debug!("invoking raw batch_put request");
         let pairs = pairs
             .into_iter()
             .map(|pair| pair.into().encode_keyspace(self.keyspace, KeyMode::Raw));
-        let request = new_raw_batch_put_request(pairs, self.cf.clone(), self.atomic);
+        let request =
+            new_raw_batch_put_request(pairs, ttls.into_iter(), self.cf.clone(), self.atomic);
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
             .retry_multi_region(self.backoff.clone())
             .extract_error()

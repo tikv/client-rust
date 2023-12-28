@@ -26,6 +26,17 @@ enum StoreState {
     Tombstone = 2;
 }
 
+// NodeState is going to replace StoreState to make the state concept more clear.
+// "Up" is devided into "Preparing" and "Serving" stages so that we can better describe the online process.
+// "Removing" is just like previous `Offline` which is more accurate.
+// "Removed" has the same meaning with `Tombstone`.
+enum NodeState {
+    Preparing = 0;
+    Serving = 1;
+    Removing = 2;
+    Removed = 3;
+}
+
 // Case insensitive key/value for replica constraints.
 message StoreLabel {
     string key = 1;
@@ -52,6 +63,8 @@ message Store {
     int64 last_heartbeat = 11;
     // If the store is physically destroyed, which means it can never up again.
     bool physically_destroyed = 12;
+    // NodeState is used to replace StoreState which will be deprecated in the future.
+    NodeState node_state = 13;
 }
 
 message RegionEpoch {
@@ -59,6 +72,42 @@ message RegionEpoch {
     uint64 conf_ver = 1;
     // Region version, auto increment when split or merge
     uint64 version = 2;
+}
+
+message BucketStats {
+    // total read in bytes of each bucket
+    repeated uint64 read_bytes = 1;
+
+    // total write in bytes of each bucket
+    repeated uint64 write_bytes = 2;
+
+    // total read qps of each bucket
+    repeated uint64 read_qps = 3;
+
+    // total write qps of each bucket
+    repeated uint64 write_qps = 4;
+
+    // total read keys of each bucket
+    repeated uint64 read_keys = 5;
+
+    // total write keys of each bucket
+    repeated uint64 write_keys = 6;
+}
+
+message Buckets {
+    uint64 region_id = 1;
+
+    // A hint indicate if keys have changed.
+    uint64 version = 2;
+
+    // keys of buckets, include start/end key of region
+    repeated bytes keys = 3;
+
+    // bucket stats
+    BucketStats stats = 4;
+
+    // The period in milliseconds that stats are collected with in
+    uint64 period_in_ms = 5;
 }
 
 message Region {
@@ -73,6 +122,11 @@ message Region {
     // The field is only used by PD and should be ignored otherwise.
     // If encryption_meta is empty (i.e. nil), it means start_key and end_key are unencrypted.
     encryptionpb.EncryptionMeta encryption_meta = 6;
+    // The flashback state indicates whether this region is in the flashback state.
+    // TODO: only check by `flashback_start_ts` in the future. Keep for compatibility now.
+    bool is_in_flashback  = 7;
+    // The start_ts that the current flashback progress is using.
+    uint64 flashback_start_ts = 8;
 }
 
 enum PeerRole {
@@ -94,4 +148,5 @@ message Peer {
     uint64 id = 1;
     uint64 store_id = 2;
     PeerRole role = 3;
+    bool is_witness = 4;
 }
