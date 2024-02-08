@@ -278,6 +278,7 @@ pub fn new_raw_scan_request(
     end_key: Vec<u8>,
     limit: u32,
     key_only: bool,
+    reverse: bool,
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawScanRequest {
     let mut req = kvrpcpb::RawScanRequest::default();
@@ -285,6 +286,7 @@ pub fn new_raw_scan_request(
     req.end_key = end_key;
     req.limit = limit;
     req.key_only = key_only;
+    req.reverse = reverse;
     req.maybe_set_cf(cf);
 
     req

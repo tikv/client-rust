@@ -561,6 +561,58 @@ async fn raw_req() -> Result<()> {
     assert_eq!(res[5].1, "v4".as_bytes());
     assert_eq!(res[6].1, "v5".as_bytes());
 
+    // reverse scan
+    // By default end key is exclusive, so k5 is not included and start key in included
+
+    let res = client
+        .scan_reverse("k5".to_owned().."k2".to_owned(), 5)
+        .await?;
+    assert_eq!(res.len(), 3);
+    assert_eq!(res[0].1, "v4".as_bytes());
+    assert_eq!(res[1].1, "v3".as_bytes());
+    assert_eq!(res[2].1, "v2".as_bytes());
+
+    // by default end key in exclusive and start key is inclusive but now exclude start key
+    let res = client
+        .scan_reverse("k5".to_owned()..="k2".to_owned(), 5)
+        .await?;
+    assert_eq!(res.len(), 2);
+    assert_eq!(res[0].1, "v4".as_bytes());
+    assert_eq!(res[1].1, "v3".as_bytes());
+
+    // reverse scan
+    // by default end key is exclusive and start key is inclusive but now include end key
+    let res = client
+        .scan_reverse("k5\0".to_owned().."k2".to_owned(), 5)
+        .await?;
+    assert_eq!(res.len(), 4);
+    assert_eq!(res[0].1, "v5".as_bytes());
+    assert_eq!(res[1].1, "v4".as_bytes());
+    assert_eq!(res[2].1, "v3".as_bytes());
+    assert_eq!(res[3].1, "v2".as_bytes());
+
+    // by default end key is exclusive and start key is inclusive but now include end key and exclude start key
+    let res = client
+        .scan_reverse("k5\0".to_owned()..="k2".to_owned(), 5)
+        .await?;
+    assert_eq!(res.len(), 3);
+    assert_eq!(res[0].1, "v5".as_bytes());
+    assert_eq!(res[1].1, "v4".as_bytes());
+    assert_eq!(res[2].1, "v3".as_bytes());
+
+    // limit results to first 2
+    let res = client
+        .scan_reverse("k5".to_owned().."k2".to_owned(), 2)
+        .await?;
+    assert_eq!(res.len(), 2);
+    assert_eq!(res[0].1, "v4".as_bytes());
+    assert_eq!(res[1].1, "v3".as_bytes());
+
+    //let range = "k5"..; // Upperbound (k5, +inf). This is NOT SUPPORTED by TiKV.
+    let range = BoundRange::range_from(Key::from("k5".to_owned()));
+    let res = client.scan_reverse(range, 20).await?;
+    assert_eq!(res.len(), 0);
+
     Ok(())
 }
 

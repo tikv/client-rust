@@ -500,7 +500,40 @@ impl<PdC: PdClient> Client<PdC> {
     /// ```
     pub async fn scan(&self, range: impl Into<BoundRange>, limit: u32) -> Result<Vec<KvPair>> {
         debug!("invoking raw scan request");
-        self.scan_inner(range.into(), limit, false).await
+        self.scan_inner(range.into(), limit, false, false).await
+    }
+
+    // Create a new 'scan' request but scans in "reverse" direction.
+    ///
+    /// Once resolved this request will result in a `Vec` of key-value pairs that lies in the specified range.
+    ///
+    /// If the number of eligible key-value pairs are greater than `limit`,
+    /// only the first `limit` pairs are returned, ordered by the key.
+    ///
+    ///
+    /// Reverse Scan queries continuous kv pairs in range (endKey, startKey],
+    /// from startKey(upperBound) to endKey(lowerBound), up to limit pairs.
+    /// The returned keys are in reversed lexicographical order.
+    /// If you want to include the endKey or exclude the startKey, push a '\0' to the key.
+    /// It doesn't support Scanning from "", because locating the last Region is not yet implemented.
+    /// # Examples
+    /// ```rust,no_run
+    /// # use tikv_client::{KvPair, Config, RawClient, IntoOwnedRange};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let inclusive_range = "TiDB"..="TiKV";
+    /// let req = client.scan_reverse(inclusive_range.into_owned(), 2);
+    /// let result: Vec<KvPair> = req.await.unwrap();
+    /// # });
+    /// ```
+    pub async fn scan_reverse(
+        &self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<Vec<KvPair>> {
+        debug!("invoking raw reverse scan request");
+        self.scan_inner(range.into(), limit, false, true).await
     }
 
     /// Create a new 'scan' request that only returns the keys.
@@ -525,7 +558,7 @@ impl<PdC: PdClient> Client<PdC> {
     pub async fn scan_keys(&self, range: impl Into<BoundRange>, limit: u32) -> Result<Vec<Key>> {
         debug!("invoking raw scan_keys request");
         Ok(self
-            .scan_inner(range, limit, true)
+            .scan_inner(range, limit, true, false)
             .await?
             .into_iter()
             .map(KvPair::into_key)
@@ -682,6 +715,7 @@ impl<PdC: PdClient> Client<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
         key_only: bool,
+        reverse: bool,
     ) -> Result<Vec<KvPair>> {
         if limit > MAX_RAW_KV_SCAN_LIMIT {
             return Err(Error::MaxScanLimitExceeded {
@@ -703,8 +737,13 @@ impl<PdC: PdClient> Client<PdC> {
         let mut cur_limit = limit;
 
         while cur_limit > 0 {
-            let request =
-                new_raw_scan_request(cur_range.clone(), cur_limit, key_only, self.cf.clone());
+            let request = new_raw_scan_request(
+                cur_range.clone(),
+                cur_limit,
+                key_only,
+                reverse,
+                self.cf.clone(),
+            );
             let resp = crate::request::PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
                 .single_region_with_store(region_store.clone())
                 .await?
