@@ -282,8 +282,13 @@ pub fn new_raw_scan_request(
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawScanRequest {
     let mut req = kvrpcpb::RawScanRequest::default();
-    req.start_key = start_key;
-    req.end_key = end_key;
+    if !reverse {
+        req.start_key = start_key;
+        req.end_key = end_key;
+    } else {
+        req.start_key = end_key;
+        req.end_key = start_key;
+    }
     req.limit = limit;
     req.key_only = key_only;
     req.reverse = reverse;

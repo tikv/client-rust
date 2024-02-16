@@ -503,7 +503,7 @@ impl<PdC: PdClient> Client<PdC> {
         self.scan_inner(range.into(), limit, false, false).await
     }
 
-    // Create a new 'scan' request but scans in "reverse" direction.
+    /// Create a new 'scan' request but scans in "reverse" direction.
     ///
     /// Once resolved this request will result in a `Vec` of key-value pairs that lies in the specified range.
     ///
@@ -511,8 +511,8 @@ impl<PdC: PdClient> Client<PdC> {
     /// only the first `limit` pairs are returned, ordered by the key.
     ///
     ///
-    /// Reverse Scan queries continuous kv pairs in range (endKey, startKey],
-    /// from startKey(upperBound) to endKey(lowerBound), up to limit pairs.
+    /// Reverse Scan queries continuous kv pairs in range [startKey, endKey),
+    /// from startKey(lowerBound) to endKey(upperBound) in reverse order, up to limit pairs.
     /// The returned keys are in reversed lexicographical order.
     /// If you want to include the endKey or exclude the startKey, push a '\0' to the key.
     /// It doesn't support Scanning from "", because locating the last Region is not yet implemented.
@@ -522,7 +522,7 @@ impl<PdC: PdClient> Client<PdC> {
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
-    /// let inclusive_range = "TiDB"..="TiKV";
+    /// let inclusive_range = "TiKV"..="TiDB";
     /// let req = client.scan_reverse(inclusive_range.into_owned(), 2);
     /// let result: Vec<KvPair> = req.await.unwrap();
     /// # });
