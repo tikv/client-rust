@@ -301,7 +301,7 @@ impl KvRequest for kvrpcpb::RawScanRequest {
     type Response = kvrpcpb::RawScanResponse;
 }
 
-range_request!(kvrpcpb::RawScanRequest); // TODO: support reverse raw scan.
+range_request!(kvrpcpb::RawScanRequest);
 shardable_range!(kvrpcpb::RawScanRequest);
 
 impl Merge<kvrpcpb::RawScanResponse> for Collect {

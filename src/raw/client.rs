@@ -565,6 +565,39 @@ impl<PdC: PdClient> Client<PdC> {
             .collect())
     }
 
+    /// Create a new 'scan' request that only returns the keys in reverse order.
+    ///
+    /// Once resolved this request will result in a `Vec` of keys that lies in the specified range.
+    ///
+    /// If the number of eligible keys are greater than `limit`,
+    /// only the first `limit` pairs are returned, ordered by the key.
+    ///
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Config, RawClient, IntoOwnedRange};
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let inclusive_range = "TiKV"..="TiDB";
+    /// let req = client.scan_keys(inclusive_range.into_owned(), 2);
+    /// let result: Vec<Key> = req.await.unwrap();
+    /// # });
+    /// ```
+    pub async fn scan_keys_reverse(
+        &self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<Vec<Key>> {
+        debug!("invoking raw scan_keys request");
+        Ok(self
+            .scan_inner(range, limit, true, true)
+            .await?
+            .into_iter()
+            .map(KvPair::into_key)
+            .collect())
+    }
+
     /// Create a new 'batch scan' request.
     ///
     /// Once resolved this request will result in a set of scanners over the given keys.
