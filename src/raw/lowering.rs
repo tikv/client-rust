@@ -84,6 +84,7 @@ pub fn new_raw_scan_request(
     range: BoundRange,
     limit: u32,
     key_only: bool,
+    reverse: bool,
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawScanRequest {
     let (start_key, end_key) = range.into_keys();
@@ -92,6 +93,7 @@ pub fn new_raw_scan_request(
         end_key.unwrap_or_default().into(),
         limit,
         key_only,
+        reverse,
         cf,
     )
 }

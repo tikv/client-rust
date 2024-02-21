@@ -561,6 +561,62 @@ async fn raw_req() -> Result<()> {
     assert_eq!(res[5].1, "v4".as_bytes());
     assert_eq!(res[6].1, "v5".as_bytes());
 
+    // reverse scan
+
+    // By default end key is exclusive, so k5 is not included and start key in included
+    let res = client
+        .scan_reverse("k2".to_owned().."k5".to_owned(), 5)
+        .await?;
+    assert_eq!(res.len(), 3);
+    assert_eq!(res[0].1, "v4".as_bytes());
+    assert_eq!(res[1].1, "v3".as_bytes());
+    assert_eq!(res[2].1, "v2".as_bytes());
+
+    // by default end key in exclusive and start key is inclusive but now exclude start key
+    let res = client
+        .scan_reverse("k2\0".to_owned().."k5".to_owned(), 5)
+        .await?;
+    assert_eq!(res.len(), 2);
+    assert_eq!(res[0].1, "v4".as_bytes());
+    assert_eq!(res[1].1, "v3".as_bytes());
+
+    // reverse scan
+    // by default end key is exclusive and start key is inclusive but now include end key
+    let res = client
+        .scan_reverse("k2".to_owned()..="k5".to_owned(), 5)
+        .await?;
+    assert_eq!(res.len(), 4);
+    assert_eq!(res[0].1, "v5".as_bytes());
+    assert_eq!(res[1].1, "v4".as_bytes());
+    assert_eq!(res[2].1, "v3".as_bytes());
+    assert_eq!(res[3].1, "v2".as_bytes());
+
+    // by default end key is exclusive and start key is inclusive but now include end key and exclude start key
+    let res = client
+        .scan_reverse("k2\0".to_owned()..="k5".to_owned(), 5)
+        .await?;
+    assert_eq!(res.len(), 3);
+    assert_eq!(res[0].1, "v5".as_bytes());
+    assert_eq!(res[1].1, "v4".as_bytes());
+    assert_eq!(res[2].1, "v3".as_bytes());
+
+    // limit results to first 2
+    let res = client
+        .scan_reverse("k2".to_owned().."k5".to_owned(), 2)
+        .await?;
+    assert_eq!(res.len(), 2);
+    assert_eq!(res[0].1, "v4".as_bytes());
+    assert_eq!(res[1].1, "v3".as_bytes());
+
+    // if endKey is not provided then it scan everything including end key
+    let range = BoundRange::range_from(Key::from("k2".to_owned()));
+    let res = client.scan_reverse(range, 20).await?;
+    assert_eq!(res.len(), 4);
+    assert_eq!(res[0].1, "v5".as_bytes());
+    assert_eq!(res[1].1, "v4".as_bytes());
+    assert_eq!(res[2].1, "v3".as_bytes());
+    assert_eq!(res[3].1, "v2".as_bytes());
+
     Ok(())
 }
 
@@ -702,6 +758,105 @@ async fn raw_write_million() -> Result<()> {
 
     limit = 0;
     r = client.scan(.., limit).await?;
+    assert_eq!(r.len(), limit as usize);
+
+    // test scan_reverse
+    // test scan, key range from [0,0,0,0] to [255.0.0.0]
+    let mut limit = 2000;
+    let mut r = client.scan_reverse(.., limit).await?;
+    assert_eq!(r.len(), 256);
+    for (i, val) in r.iter().rev().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8);
+    }
+    r = client.scan_reverse(vec![100, 0, 0, 0].., limit).await?;
+    assert_eq!(r.len(), 156);
+    for (i, val) in r.iter().rev().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + 100);
+    }
+    r = client
+        .scan_reverse(vec![5, 0, 0, 0]..vec![200, 0, 0, 0], limit)
+        .await?;
+    assert_eq!(r.len(), 195);
+    for (i, val) in r.iter().rev().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + 5);
+    }
+    r = client
+        .scan_reverse(vec![5, 0, 0, 0]..=vec![200, 0, 0, 0], limit)
+        .await?;
+    assert_eq!(r.len(), 196);
+    for (i, val) in r.iter().rev().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + 5);
+    }
+    r = client
+        .scan_reverse(vec![5, 0, 0, 0]..=vec![255, 10, 0, 0], limit)
+        .await?;
+    assert_eq!(r.len(), 251);
+    for (i, val) in r.iter().rev().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + 5);
+    }
+    r = client
+        .scan_reverse(vec![255, 1, 0, 0]..=vec![255, 10, 0, 0], limit)
+        .await?;
+    assert_eq!(r.len(), 0);
+    r = client.scan_reverse(..vec![0, 0, 0, 0], limit).await?;
+    assert_eq!(r.len(), 0);
+
+    limit = 3;
+    let mut r = client.scan_reverse(.., limit).await?;
+    let mut expected_start: u8 = 255 - limit as u8 + 1; // including endKey
+    assert_eq!(r.len(), limit as usize);
+    for (i, val) in r.iter().rev().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + expected_start);
+    }
+    r = client.scan_reverse(vec![100, 0, 0, 0].., limit).await?;
+    expected_start = 255 - limit as u8 + 1; // including endKey
+    assert_eq!(r.len(), limit as usize);
+    for (i, val) in r.iter().rev().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + expected_start);
+    }
+    r = client
+        .scan_reverse(vec![5, 0, 0, 0]..vec![200, 0, 0, 0], limit)
+        .await?;
+    expected_start = 200 - limit as u8;
+    assert_eq!(r.len(), limit as usize);
+    for (i, val) in r.iter().rev().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + expected_start);
+    }
+    r = client
+        .scan_reverse(vec![5, 0, 0, 0]..=vec![200, 0, 0, 0], limit)
+        .await?;
+    expected_start = 200 - limit as u8 + 1; // including endKey
+    assert_eq!(r.len(), limit as usize);
+    for (i, val) in r.iter().rev().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + expected_start);
+    }
+    r = client
+        .scan_reverse(vec![5, 0, 0, 0]..=vec![255, 10, 0, 0], limit)
+        .await?;
+    expected_start = 255 - limit as u8 + 1; // including endKey
+    assert_eq!(r.len(), limit as usize);
+    for (i, val) in r.iter().rev().enumerate() {
+        let k: Vec<u8> = val.0.clone().into();
+        assert_eq!(k[0], i as u8 + expected_start);
+    }
+    r = client
+        .scan_reverse(vec![255, 1, 0, 0]..=vec![255, 10, 0, 0], limit)
+        .await?;
+    assert_eq!(r.len(), 0);
+    r = client.scan_reverse(..vec![0, 0, 0, 0], limit).await?;
+    assert_eq!(r.len(), 0);
+
+    limit = 0;
+    r = client.scan_reverse(.., limit).await?;
     assert_eq!(r.len(), limit as usize);
 
     // test batch_scan
