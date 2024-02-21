@@ -278,13 +278,20 @@ pub fn new_raw_scan_request(
     end_key: Vec<u8>,
     limit: u32,
     key_only: bool,
+    reverse: bool,
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawScanRequest {
     let mut req = kvrpcpb::RawScanRequest::default();
-    req.start_key = start_key;
-    req.end_key = end_key;
+    if !reverse {
+        req.start_key = start_key;
+        req.end_key = end_key;
+    } else {
+        req.start_key = end_key;
+        req.end_key = start_key;
+    }
     req.limit = limit;
     req.key_only = key_only;
+    req.reverse = reverse;
     req.maybe_set_cf(cf);
 
     req
@@ -294,7 +301,7 @@ impl KvRequest for kvrpcpb::RawScanRequest {
     type Response = kvrpcpb::RawScanResponse;
 }
 
-range_request!(kvrpcpb::RawScanRequest); // TODO: support reverse raw scan.
+range_request!(kvrpcpb::RawScanRequest);
 shardable_range!(kvrpcpb::RawScanRequest);
 
 impl Merge<kvrpcpb::RawScanResponse> for Collect {
