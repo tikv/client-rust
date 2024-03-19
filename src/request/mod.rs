@@ -105,6 +105,7 @@ mod test {
     use crate::region::RegionWithLeader;
     use crate::store::region_stream_for_keys;
     use crate::store::HasRegionError;
+    use crate::timestamp::TimestampExt as _;
     use crate::transaction::lowering::new_commit_request;
     use crate::Error;
     use crate::Key;
@@ -197,7 +198,11 @@ mod test {
         )));
 
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, request)
-            .resolve_lock(Backoff::no_jitter_backoff(1, 1, 3), Keyspace::Disable)
+            .resolve_lock(
+                Timestamp::max(),
+                Backoff::no_jitter_backoff(1, 1, 3),
+                Keyspace::Disable,
+            )
             .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
             .extract_error()
             .plan();
@@ -224,14 +229,14 @@ mod test {
         // does not extract error
         let plan =
             crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, req.clone())
-                .resolve_lock(OPTIMISTIC_BACKOFF, Keyspace::Disable)
+                .resolve_lock(Timestamp::max(), OPTIMISTIC_BACKOFF, Keyspace::Disable)
                 .retry_multi_region(OPTIMISTIC_BACKOFF)
                 .plan();
         assert!(plan.execute().await.is_ok());
 
         // extract error
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, req)
-            .resolve_lock(OPTIMISTIC_BACKOFF, Keyspace::Disable)
+            .resolve_lock(Timestamp::max(), OPTIMISTIC_BACKOFF, Keyspace::Disable)
             .retry_multi_region(OPTIMISTIC_BACKOFF)
             .extract_error()
             .plan();

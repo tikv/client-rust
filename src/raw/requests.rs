@@ -663,6 +663,7 @@ mod test {
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb;
+    use crate::proto::pdpb::Timestamp;
     use crate::request::Keyspace;
     use crate::request::Plan;
 
@@ -700,7 +701,7 @@ mod test {
             ..Default::default()
         };
         let plan = crate::request::PlanBuilder::new(client, keyspace, scan)
-            .resolve_lock(OPTIMISTIC_BACKOFF, keyspace)
+            .resolve_lock(Timestamp::default(), OPTIMISTIC_BACKOFF, keyspace)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
@@ -756,7 +757,7 @@ mod test {
             new_raw_batch_put_request(pairs.clone(), ttls.clone(), Some(cf), false);
         let keyspace = Keyspace::Enable { keyspace_id: 0 };
         let plan = crate::request::PlanBuilder::new(client, keyspace, batch_put_request)
-            .resolve_lock(OPTIMISTIC_BACKOFF, keyspace)
+            .resolve_lock(Timestamp::default(), OPTIMISTIC_BACKOFF, keyspace)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .plan();
         let _ = plan.execute().await;

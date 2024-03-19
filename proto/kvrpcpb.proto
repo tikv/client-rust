@@ -132,6 +132,9 @@ message PrewriteRequest {
     // for_update_ts constriants that should be checked when prewriting a pessimistic transaction.
     // See https://github.com/tikv/tikv/issues/14311
     repeated ForUpdateTSConstraint for_update_ts_constraints = 16;
+
+    // Reserved for file based transaction.
+    repeated uint64 txn_file_chunks = 100;
 }
 
 message PrewriteResponse {
@@ -315,6 +318,9 @@ message CheckTxnStatusRequest {
     // because the old versions of clients cannot handle some results returned from TiKV correctly.
     // For new versions, this field should always be set to true.
     bool verify_is_primary = 9;
+
+    // Reserved for file based transaction.
+    bool is_txn_file = 100;
 }
 
 message CheckTxnStatusResponse {
@@ -480,6 +486,9 @@ message ResolveLockRequest {
     repeated TxnInfo txn_infos = 4;
     // Only resolve specified keys.
     repeated bytes keys = 5;
+
+    // Reserved for file based transaction.
+    bool is_txn_file = 100;
 }
 
 message ResolveLockResponse {
@@ -971,6 +980,9 @@ message LockInfo {
     // It's used in timeout errors. 0 means unknown or not applicable. 
     // It can be used to help the client decide whether to try resolving the lock.
     uint64 duration_to_last_update_ms = 11;
+
+    // Reserved for file based transaction.
+    bool is_txn_file = 100;
 }
 
 message KeyError {
@@ -1320,6 +1332,9 @@ message MvccInfo {
 message TxnInfo {
     uint64 txn = 1;
     uint64 status = 2;
+
+    // Reserved for file based transaction.
+    bool is_txn_file = 100;
 }
 
 enum Action {
