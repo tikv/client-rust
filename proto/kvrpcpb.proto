@@ -108,6 +108,9 @@ message PrewriteRequest {
     uint64 max_commit_ts = 14;
     // The level of assertion to use on this prewrte request.
     AssertionLevel assertion_level = 15;
+
+    // Reserved for file based transaction.
+    repeated uint64 txn_file_chunks = 100;
 }
 
 message PrewriteResponse {
@@ -196,6 +199,9 @@ message TxnHeartBeatRequest {
     uint64 start_version = 3;
     // The new TTL the sender would like.
     uint64 advise_lock_ttl = 4;
+
+    // Reserved for file based transaction.
+    bool is_txn_file = 100;
 }
 
 message TxnHeartBeatResponse {
@@ -232,6 +238,9 @@ message CheckTxnStatusRequest {
     // lock, the transaction status could not be decided if the primary lock is pessimistic too and
     // it's still uncertain.
     bool resolving_pessimistic_lock = 8;
+
+    // Reserved for file based transaction.
+    bool is_txn_file = 100;
 }
 
 message CheckTxnStatusResponse {
@@ -282,6 +291,9 @@ message CommitRequest {
     repeated bytes keys = 3;
     // Timestamp for the end of the transaction. Must be greater than `start_version`.
     uint64 commit_version = 4;
+
+    // Reserved for file based transaction.
+    bool is_txn_file = 100;
 }
 
 message CommitResponse {
@@ -348,6 +360,9 @@ message BatchRollbackRequest {
     uint64 start_version = 2;
     // The keys to rollback.
     repeated bytes keys = 3;
+
+    // Reserved for file based transaction.
+    bool is_txn_file = 100;
 }
 
 message BatchRollbackResponse {
@@ -387,6 +402,9 @@ message ResolveLockRequest {
     repeated TxnInfo txn_infos = 4;
     // Only resolve specified keys.
     repeated bytes keys = 5;
+
+    // Reserved for file based transaction.
+    bool is_txn_file = 100;
 }
 
 message ResolveLockResponse {
@@ -774,6 +792,9 @@ message LockInfo {
     bool use_async_commit = 8;
     uint64 min_commit_ts = 9;
     repeated bytes secondaries = 10;
+    
+    // Reserved for file based transaction.
+    bool is_txn_file = 100;
 }
 
 message KeyError {
@@ -1009,6 +1030,9 @@ message MvccInfo {
 message TxnInfo {
     uint64 txn = 1;
     uint64 status = 2;
+
+    // Reserved for file based transaction.
+    bool is_txn_file = 100;
 }
 
 enum Action {

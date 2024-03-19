@@ -110,6 +110,7 @@ mod test {
     use crate::Error;
     use crate::Key;
     use crate::Result;
+    use crate::TimestampExt as _;
 
     #[tokio::test]
     async fn test_region_retry() {
@@ -201,7 +202,7 @@ mod test {
 
         let encoded_req = EncodedRequest::new(request, pd_client.get_codec());
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
-            .resolve_lock(Backoff::no_jitter_backoff(1, 1, 3))
+            .resolve_lock(Timestamp::max(), Backoff::no_jitter_backoff(1, 1, 3))
             .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
             .extract_error()
             .plan();
@@ -228,14 +229,14 @@ mod test {
 
         // does not extract error
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req.clone())
-            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .resolve_lock(Timestamp::max(), OPTIMISTIC_BACKOFF)
             .retry_multi_region(OPTIMISTIC_BACKOFF)
             .plan();
         assert!(plan.execute().await.is_ok());
 
         // extract error
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), encoded_req)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
+            .resolve_lock(Timestamp::max(), OPTIMISTIC_BACKOFF)
             .retry_multi_region(OPTIMISTIC_BACKOFF)
             .extract_error()
             .plan();

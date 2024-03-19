@@ -501,7 +501,6 @@ mod test {
 
     use super::*;
     use crate::backoff::DEFAULT_REGION_BACKOFF;
-    use crate::backoff::OPTIMISTIC_BACKOFF;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb;
@@ -542,7 +541,6 @@ mod test {
         };
         let encoded_scan = EncodedRequest::new(scan, client.get_codec());
         let plan = crate::request::PlanBuilder::new(client, encoded_scan)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();

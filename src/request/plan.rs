@@ -34,6 +34,7 @@ use crate::transaction::ResolveLocksOptions;
 use crate::util::iter::FlatMapOkIterExt;
 use crate::Error;
 use crate::Result;
+use crate::Timestamp;
 
 /// A plan for how to execute a request. A user builds up a plan with various
 /// options, then exectutes it.
@@ -544,6 +545,7 @@ pub struct DefaultProcessor;
 
 pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub inner: P,
+    pub timestamp: Timestamp,
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
 }
@@ -552,6 +554,7 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
     fn clone(&self) -> Self {
         ResolveLock {
             inner: self.inner.clone(),
+            timestamp: self.timestamp.clone(),
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
         }
@@ -579,7 +582,8 @@ where
             }
 
             let pd_client = self.pd_client.clone();
-            let live_locks = resolve_locks(locks, pd_client.clone()).await?;
+            let live_locks =
+                resolve_locks(locks, self.timestamp.clone(), pd_client.clone()).await?;
             if live_locks.is_empty() {
                 result = self.inner.execute().await?;
             } else {
@@ -856,6 +860,7 @@ mod test {
     use super::*;
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb::BatchGetResponse;
+    use crate::TimestampExt as _;
 
     #[derive(Clone)]
     struct ErrPlan;
@@ -889,6 +894,7 @@ mod test {
         let plan = RetryableMultiRegion {
             inner: ResolveLock {
                 inner: ErrPlan,
+                timestamp: Timestamp::max(),
                 backoff: Backoff::no_backoff(),
                 pd_client: Arc::new(MockPdClient::default()),
             },

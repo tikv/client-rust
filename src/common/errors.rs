@@ -108,6 +108,8 @@ pub enum Error {
         inner: Box<Error>,
         success_keys: Vec<Vec<u8>>,
     },
+    #[error("Transaction not found error: {:?}", _0)]
+    TxnNotFound(kvrpcpb::TxnNotFound),
 }
 
 impl From<crate::proto::errorpb::Error> for Error {

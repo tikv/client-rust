@@ -139,10 +139,10 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
 
         self.buffer
             .get_or_else(key, |key| async move {
-                let request = new_get_request(key, timestamp);
+                let request = new_get_request(key, timestamp.clone());
                 let encoded_req = EncodedRequest::new(request, rpc.get_codec());
                 let plan = PlanBuilder::new(rpc, encoded_req)
-                    .resolve_lock(retry_options.lock_backoff)
+                    .resolve_lock(timestamp, retry_options.lock_backoff)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
                     .merge(CollectSingle)
                     .post_process_default()
@@ -270,10 +270,10 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
 
         self.buffer
             .batch_get_or_else(keys.into_iter().map(|k| k.into()), move |keys| async move {
-                let request = new_batch_get_request(keys, timestamp);
+                let request = new_batch_get_request(keys, timestamp.clone());
                 let encoded_req = EncodedRequest::new(request, rpc.get_codec());
                 let plan = PlanBuilder::new(rpc, encoded_req)
-                    .resolve_lock(retry_options.lock_backoff)
+                    .resolve_lock(timestamp, retry_options.lock_backoff)
                     .retry_multi_region(retry_options.region_backoff)
                     .merge(Collect)
                     .plan();
@@ -747,7 +747,10 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         );
         let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
         let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
-            .resolve_lock(self.options.retry_options.lock_backoff.clone())
+            .resolve_lock(
+                self.timestamp.clone(),
+                self.options.retry_options.lock_backoff.clone(),
+            )
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .merge(CollectSingle)
             .post_process_default()
@@ -774,11 +777,16 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
                 !key_only,
                 reverse,
                 move |new_range, new_limit| async move {
-                    let request =
-                        new_scan_request(new_range, timestamp, new_limit, key_only, reverse);
+                    let request = new_scan_request(
+                        new_range,
+                        timestamp.clone(),
+                        new_limit,
+                        key_only,
+                        reverse,
+                    );
                     let encoded_req = EncodedRequest::new(request, rpc.get_codec());
                     let plan = PlanBuilder::new(rpc, encoded_req)
-                        .resolve_lock(retry_options.lock_backoff)
+                        .resolve_lock(timestamp, retry_options.lock_backoff)
                         .retry_multi_region(retry_options.region_backoff)
                         .merge(Collect)
                         .plan();
@@ -834,7 +842,10 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         );
         let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
         let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
-            .resolve_lock(self.options.retry_options.lock_backoff.clone())
+            .resolve_lock(
+                self.timestamp.clone(),
+                self.options.retry_options.lock_backoff.clone(),
+            )
             .preserve_shard()
             .retry_multi_region_preserve_results(self.options.retry_options.region_backoff.clone())
             .merge(CollectWithShard)
@@ -889,7 +900,10 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         );
         let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
         let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
-            .resolve_lock(self.options.retry_options.lock_backoff.clone())
+            .resolve_lock(
+                self.timestamp.clone(),
+                self.options.retry_options.lock_backoff.clone(),
+            )
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .extract_error()
             .plan();
@@ -1298,7 +1312,10 @@ impl<PdC: PdClient> Committer<PdC> {
 
         let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
         let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
-            .resolve_lock(self.options.retry_options.lock_backoff.clone())
+            .resolve_lock(
+                self.start_version.clone(),
+                self.options.retry_options.lock_backoff.clone(),
+            )
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .merge(CollectError)
             .extract_error()
@@ -1339,7 +1356,10 @@ impl<PdC: PdClient> Committer<PdC> {
         );
         let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
         let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
-            .resolve_lock(self.options.retry_options.lock_backoff.clone())
+            .resolve_lock(
+                self.start_version.clone(),
+                self.options.retry_options.lock_backoff.clone(),
+            )
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .extract_error()
             .plan();
@@ -1392,7 +1412,7 @@ impl<PdC: PdClient> Committer<PdC> {
 
         let req = if self.options.async_commit {
             let keys = mutations.map(|m| m.key.into());
-            new_commit_request(keys, self.start_version, commit_version)
+            new_commit_request(keys, self.start_version.clone(), commit_version)
         } else if primary_only {
             return Ok(());
         } else {
@@ -1400,11 +1420,11 @@ impl<PdC: PdClient> Committer<PdC> {
             let keys = mutations
                 .map(|m| m.key.into())
                 .filter(|key| &primary_key != key);
-            new_commit_request(keys, self.start_version, commit_version)
+            new_commit_request(keys, self.start_version.clone(), commit_version)
         };
         let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
         let plan = PlanBuilder::new(self.rpc, encoded_req)
-            .resolve_lock(self.options.retry_options.lock_backoff)
+            .resolve_lock(self.start_version, self.options.retry_options.lock_backoff)
             .retry_multi_region(self.options.retry_options.region_backoff)
             .extract_error()
             .plan();
@@ -1423,20 +1443,24 @@ impl<PdC: PdClient> Committer<PdC> {
             .map(|mutation| mutation.key.into());
         match self.options.kind {
             TransactionKind::Optimistic => {
-                let req = new_batch_rollback_request(keys, self.start_version);
+                let req = new_batch_rollback_request(keys, self.start_version.clone());
                 let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
                 let plan = PlanBuilder::new(self.rpc, encoded_req)
-                    .resolve_lock(self.options.retry_options.lock_backoff)
+                    .resolve_lock(self.start_version, self.options.retry_options.lock_backoff)
                     .retry_multi_region(self.options.retry_options.region_backoff)
                     .extract_error()
                     .plan();
                 plan.execute().await?;
             }
             TransactionKind::Pessimistic(for_update_ts) => {
-                let req = new_pessimistic_rollback_request(keys, self.start_version, for_update_ts);
+                let req = new_pessimistic_rollback_request(
+                    keys,
+                    self.start_version.clone(),
+                    for_update_ts,
+                );
                 let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
                 let plan = PlanBuilder::new(self.rpc, encoded_req)
-                    .resolve_lock(self.options.retry_options.lock_backoff)
+                    .resolve_lock(self.start_version, self.options.retry_options.lock_backoff)
                     .retry_multi_region(self.options.retry_options.region_backoff)
                     .extract_error()
                     .plan();

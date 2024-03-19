@@ -30,6 +30,7 @@ use crate::transaction::HasLocks;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::ResolveLocksOptions;
 use crate::Result;
+use crate::Timestamp;
 
 /// Builder type for plans (see that module for more).
 pub struct PlanBuilder<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> {
@@ -69,7 +70,11 @@ impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted> {
 
 impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     /// If there is a lock error, then resolve the lock and retry the request.
-    pub fn resolve_lock(self, backoff: Backoff) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
+    pub fn resolve_lock(
+        self,
+        timestamp: Timestamp,
+        backoff: Backoff,
+    ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
     where
         P::Result: HasLocks,
     {
@@ -77,6 +82,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
             pd_client: self.pd_client.clone(),
             plan: ResolveLock {
                 inner: self.plan,
+                timestamp,
                 backoff,
                 pd_client: self.pd_client,
             },
