@@ -643,6 +643,7 @@ impl Process<kvrpcpb::TxnHeartBeatResponse> for DefaultProcessor {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn new_check_txn_status_request(
     primary_key: Vec<u8>,
     lock_ts: u64,
