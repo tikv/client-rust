@@ -7,6 +7,7 @@ use std::sync::Arc;
 use fail::fail_point;
 use log::debug;
 use log::error;
+use log::info;
 use log::warn;
 use tokio::sync::RwLock;
 use tokio::time::sleep;
@@ -14,6 +15,7 @@ use tokio::time::sleep;
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::backoff::OPTIMISTIC_BACKOFF;
+use crate::kv::HexRepr;
 use crate::pd::PdClient;
 use crate::proto::kvrpcpb;
 use crate::proto::kvrpcpb::TxnInfo;
@@ -378,7 +380,7 @@ impl LockResolver {
         // 2.2 Txn Rollbacked -- rollback itself, rollback by others, GC tomb etc.
         // 2.3 No lock -- pessimistic lock rollback, concurrence prewrite.
         let req = new_check_txn_status_request(
-            primary,
+            primary.clone(),
             txn_id,
             caller_start_ts,
             current_ts,
@@ -414,6 +416,8 @@ impl LockResolver {
 
         let current = pd_client.clone().get_timestamp().await?;
         status.check_ttl(current);
+        info!("check_txn_status: primary {}, status {:?}", HexRepr(&primary), status);
+
         let res = Arc::new(status);
         if res.is_cacheable() {
             self.ctx.save_resolved(txn_id, res.clone()).await;

@@ -14,7 +14,7 @@ pub use key::Key;
 pub use kvpair::KvPair;
 pub use value::Value;
 
-struct HexRepr<'a>(pub &'a [u8]);
+pub struct HexRepr<'a>(pub &'a [u8]);
 
 impl<'a> fmt::Display for HexRepr<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
