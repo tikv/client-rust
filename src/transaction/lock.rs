@@ -97,7 +97,10 @@ pub async fn resolve_locks(
                         commit_versions.insert(lock.lock_version, 0);
                         Some(0)
                     }
-                    TransactionStatusKind::Locked(..) => None,
+                    TransactionStatusKind::Locked(_ttl, lock) => {
+                        live_locks.push(lock.clone());
+                        None
+                    }
                 }
             }
         };
@@ -115,10 +118,9 @@ pub async fn resolve_locks(
                 .entry(lock.lock_version)
                 .or_default()
                 .insert(cleaned_region);
-        } else {
-            live_locks.push(lock);
         }
     }
+    info!("resolved locks, live_locks: {:?}", live_locks);
     Ok(live_locks)
 }
 
