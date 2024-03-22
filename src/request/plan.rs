@@ -577,15 +577,15 @@ where
                 return Ok(result);
             }
 
-            if self.backoff.is_none() {
+            if clone.backoff.is_none() {
                 return Err(Error::ResolveLockError(locks));
             }
 
-            let pd_client = self.pd_client.clone();
+            let pd_client = clone.pd_client.clone();
             let live_locks =
-                resolve_locks(locks, self.timestamp.clone(), pd_client.clone()).await?;
+                resolve_locks(locks, clone.timestamp.clone(), pd_client.clone()).await?;
             if live_locks.is_empty() {
-                result = self.inner.execute().await?;
+                result = clone.inner.execute().await?;
             } else {
                 match clone.backoff.next_delay_duration() {
                     None => return Err(Error::ResolveLockError(live_locks)),

@@ -120,7 +120,7 @@ pub async fn resolve_locks(
                 .insert(cleaned_region);
         }
     }
-    info!("resolved locks, live_locks: {:?}", live_locks);
+    info!("resolved_locks, live_locks: {:?}", live_locks);
     Ok(live_locks)
 }
 
