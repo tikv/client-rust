@@ -91,7 +91,9 @@ pub enum Error {
     RegionNotFoundInResponse { region_id: u64 },
     /// No leader is found for the given id.
     #[error("Leader of region {} is not found", region_id)]
-    LeaderNotFound { region_id: u64 },
+    LeaderOfRegionNotFound { region_id: u64 },
+    #[error("Leader of cluster {} is not found", cluster_id)]
+    LeaderOfClusterNotFound { cluster_id: u64 },
     /// Scan limit exceeds the maximum
     #[error("Limit {} exceeds max scan limit {}", limit, max_limit)]
     MaxScanLimitExceeded { limit: u32, max_limit: u32 },

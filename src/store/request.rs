@@ -55,7 +55,7 @@ macro_rules! impl_request {
 
             fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()> {
                 let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
-                let leader_peer = leader.leader.as_ref().ok_or(Error::LeaderNotFound {
+                let leader_peer = leader.leader.as_ref().ok_or(Error::LeaderOfRegionNotFound {
                     region_id: leader.region.id,
                 })?;
                 ctx.region_id = leader.region.id;
