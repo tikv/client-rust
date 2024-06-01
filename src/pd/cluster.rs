@@ -234,6 +234,19 @@ impl Connection {
             .get_members(pdpb::GetMembersRequest::default())
             .await?
             .into_inner();
+        if let Some(err) = resp
+            .header
+            .as_ref()
+            .and_then(|header| header.error.as_ref())
+        {
+            return Err(internal_err!("failed to get PD members, err {:?}", err));
+        }
+        if resp.leader.is_none() {
+            return Err(internal_err!(
+                "unexpected no PD leader in get member resp: {:?}",
+                resp
+            ));
+        }
         Ok((client, keyspace_client, resp))
     }
 
