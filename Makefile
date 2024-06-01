@@ -19,9 +19,6 @@ check: generate
 	cargo fmt -- --check
 	cargo clippy --all-targets --features "${ALL_FEATURES}" -- -D clippy::all
 
-clippy:
-	cargo clippy --all-targets --features "${ALL_FEATURES}" -- -D clippy::all
-
 unit-test: generate
 	cargo nextest run --all --no-default-features
 
