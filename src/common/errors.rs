@@ -111,6 +111,8 @@ pub enum Error {
     },
     #[error("Transaction not found error: {:?}", _0)]
     TxnNotFound(kvrpcpb::TxnNotFound),
+    #[error("PD has no leader")]
+    PdNoLeader,
 }
 
 impl From<crate::proto::errorpb::Error> for Error {
