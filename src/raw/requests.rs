@@ -472,7 +472,7 @@ impl Shardable for RawCoprocessorRequest {
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
         self.set_leader(&store.region_with_leader)?;
-        self.inner.ranges = shard.clone();
+        self.inner.ranges.clone_from(&shard);
         self.inner.data = (self.data_builder)(store.region_with_leader.region.clone(), shard);
         Ok(())
     }

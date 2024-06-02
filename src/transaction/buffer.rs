@@ -358,13 +358,13 @@ impl BufferEntry {
             BufferEntry::Cached(_) => return None,
             BufferEntry::Put(v) => {
                 pb.op = kvrpcpb::Op::Put.into();
-                pb.value = v.clone();
+                pb.value.clone_from(v);
             }
             BufferEntry::Del => pb.op = kvrpcpb::Op::Del.into(),
             BufferEntry::Locked(_) => pb.op = kvrpcpb::Op::Lock.into(),
             BufferEntry::Insert(v) => {
                 pb.op = kvrpcpb::Op::Insert.into();
-                pb.value = v.clone();
+                pb.value.clone_from(v);
             }
             BufferEntry::CheckNotExist => pb.op = kvrpcpb::Op::CheckNotExists.into(),
         };
