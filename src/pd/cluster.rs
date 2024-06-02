@@ -49,7 +49,7 @@ impl Cluster {
         timeout: Duration,
     ) -> Result<pdpb::GetRegionResponse> {
         let mut req = pd_request!(self.id, pdpb::GetRegionRequest);
-        req.region_key = key.clone();
+        req.region_key = key;
         req.send(&mut self.client, timeout).await
     }
 
@@ -101,7 +101,7 @@ impl Cluster {
         timeout: Duration,
     ) -> Result<keyspacepb::KeyspaceMeta> {
         let mut req = pd_request!(self.id, keyspacepb::LoadKeyspaceRequest);
-        req.name = keyspace.to_owned();
+        req.name = keyspace.to_string();
         let resp = req.send(&mut self.keyspace_client, timeout).await?;
         let keyspace = resp
             .keyspace
