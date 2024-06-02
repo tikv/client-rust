@@ -292,7 +292,7 @@ impl Connection {
         keyspacepb::keyspace_client::KeyspaceClient<Channel>,
         pdpb::GetMembersResponse,
     )> {
-        let previous_leader = previous.leader.as_ref().unwrap();
+        let previous_leader = previous.leader.as_ref();
         let members = &previous.members;
         let cluster_id = previous.header.as_ref().unwrap().cluster_id;
 
@@ -300,8 +300,8 @@ impl Connection {
         // Try to connect to other members, then the previous leader.
         'outer: for m in members
             .iter()
-            .filter(|m| *m != previous_leader)
-            .chain(Some(previous_leader))
+            .filter(|m| !previous_leader.is_some_and(|pl| *m == pl))
+            .chain(previous_leader)
         {
             for ep in &m.client_urls {
                 match self.try_connect(ep.as_str(), cluster_id, timeout).await {
@@ -319,7 +319,9 @@ impl Connection {
 
         // Then try to connect the PD cluster leader.
         if let Some(resp) = resp {
-            let leader = resp.leader.as_ref().unwrap();
+            let leader = resp.leader.as_ref().ok_or(Error::LeaderOfClusterNotFound{
+                cluster_id,
+            })?;
             for ep in &leader.client_urls {
                 if let Ok((client, keyspace_client, members)) =
                     self.try_connect(ep.as_str(), cluster_id, timeout).await
