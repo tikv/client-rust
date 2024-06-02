@@ -575,10 +575,10 @@ mod test {
         });
         assert!(!is_valid_tikv_store(&store));
 
-        store.labels[1].value = "tiflash_compute".to_owned();
+        store.labels[1].value = "tiflash_compute".to_string();
         assert!(!is_valid_tikv_store(&store));
 
-        store.labels[1].value = "other".to_owned();
+        store.labels[1].value = "other".to_string();
         assert!(is_valid_tikv_store(&store));
     }
 }
