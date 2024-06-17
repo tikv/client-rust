@@ -36,7 +36,7 @@ pub struct RegionStore {
 pub struct Store {
     pub client: Arc<dyn KvClient + Send + Sync>,
 }
-
+#[allow(dead_code)]
 /// Maps keys to a stream of stores. `key_data` must be sorted in increasing order
 pub fn store_stream_for_keys<K, KOut, PdC>(
     key_data: impl Iterator<Item = K> + Send + Sync + 'static,

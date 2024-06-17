@@ -877,6 +877,36 @@ mod tests {
     use crate::Result;
 
     #[tokio::test]
+    async fn test_batch_put_with_ttl() -> Result<()> {
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(_) = req.downcast_ref::<kvrpcpb::RawBatchPutRequest>() {
+                    let resp = kvrpcpb::RawBatchPutResponse {
+                        ..Default::default()
+                    };
+                    Ok(Box::new(resp) as Box<dyn Any>)
+                } else {
+                    unreachable!()
+                }
+            },
+        )));
+        let client = Client {
+            rpc: pd_client,
+            cf: Some(ColumnFamily::Default),
+            backoff: DEFAULT_REGION_BACKOFF,
+            atomic: false,
+            keyspace: Keyspace::Enable { keyspace_id: 0 },
+        };
+        let pairs = vec![
+            KvPair(vec![11].into(), vec![12].into()),
+            KvPair(vec![11].into(), vec![12].into()),
+        ];
+        let ttls = vec![0, 0];
+        assert!(client.batch_put_with_ttl(pairs, ttls).await.is_ok());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_raw_coprocessor() -> Result<()> {
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |req: &dyn Any| {
