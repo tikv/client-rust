@@ -743,6 +743,13 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.timestamp.clone()
     }
 
+    /// Get the current timestamp from PD.
+    pub async fn current_timestamp(&mut self) -> Result<Timestamp> {
+        self.check_allow_operation().await?;
+        let rpc = self.rpc.clone();
+        rpc.get_timestamp().await
+    }
+
     /// Send a heart beat message to keep the transaction alive on the server and update its TTL.
     ///
     /// Returns the TTL set on the transaction's locks by TiKV.
