@@ -74,8 +74,8 @@ impl SecurityManager {
         addr: &str,
         factory: Factory,
     ) -> Result<Client>
-        where
-            Factory: FnOnce(Channel) -> Client,
+    where
+        Factory: FnOnce(Channel) -> Client,
     {
         info!("connect to rpc server at endpoint: {:?}", addr);
         let channel = if !self.ca.is_empty() {
