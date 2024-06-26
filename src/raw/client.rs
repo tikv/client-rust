@@ -4,7 +4,6 @@ use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::u32;
 
 use log::debug;
 use tokio::time::sleep;
