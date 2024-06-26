@@ -1030,7 +1030,7 @@ mod tests {
         let tikv_flag = flag.clone();
         let error_handler_flag = flag.clone();
         let mock_tikv_client = MockKvClient::with_dispatch_hook(move |req: &dyn Any| {
-            if let Some(_) = req.downcast_ref::<RawScanRequest>() {
+            if req.downcast_ref::<RawScanRequest>().is_some() {
                 let v = tikv_flag.clone().load(Ordering::Relaxed);
                 let resp = if v {
                     RawScanResponse {
