@@ -207,11 +207,7 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
             .map(|(kv, ttl)| KvPairTTL(kv.clone(), ttl))
             .collect();
         kv_ttl.sort_by(|a, b| a.0.key.clone().cmp(&b.0.key));
-        store_stream_for_keys(kv_ttl.into_iter(), pd_client.clone())
-            .map(move |r| {
-                r.map(|(kv, store): (Vec<(kvrpcpb::KvPair, u64)>, RegionStore)| (kv, store))
-            })
-            .boxed()
+        store_stream_for_keys(kv_ttl.into_iter(), pd_client.clone()).boxed()
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
