@@ -1,6 +1,5 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 use std::fmt;
-use std::u8;
 
 mod bound_range;
 pub mod codec;

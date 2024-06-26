@@ -3,7 +3,6 @@
 use core::ops::Range;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::u32;
 
 use futures::StreamExt;
 use log::debug;
