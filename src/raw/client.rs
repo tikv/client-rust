@@ -880,7 +880,7 @@ mod tests {
     async fn test_batch_put_with_ttl() -> Result<()> {
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |req: &dyn Any| {
-                if let Some(_) = req.downcast_ref::<kvrpcpb::RawBatchPutRequest>() {
+                if req.downcast_ref::<kvrpcpb::RawBatchPutRequest>().is_some() {
                     let resp = kvrpcpb::RawBatchPutResponse {
                         ..Default::default()
                     };
@@ -898,8 +898,8 @@ mod tests {
             keyspace: Keyspace::Enable { keyspace_id: 0 },
         };
         let pairs = vec![
-            KvPair(vec![11].into(), vec![12].into()),
-            KvPair(vec![11].into(), vec![12].into()),
+            KvPair(vec![11].into(), vec![12]),
+            KvPair(vec![11].into(), vec![12]),
         ];
         let ttls = vec![0, 0];
         assert!(client.batch_put_with_ttl(pairs, ttls).await.is_ok());
