@@ -252,7 +252,7 @@ pub fn new_prewrite_request(
     req.start_version = start_version;
     req.lock_ttl = lock_ttl;
     // FIXME: Lite resolve lock is currently disabled
-    req.txn_size = std::u64::MAX;
+    req.txn_size = u64::MAX;
 
     req
 }
