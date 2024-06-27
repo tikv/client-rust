@@ -2,7 +2,6 @@
 
 use std::fmt;
 use std::ops::Bound;
-use std::u8;
 
 #[allow(unused_imports)]
 #[cfg(test)]
