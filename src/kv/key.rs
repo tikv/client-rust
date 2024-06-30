@@ -90,7 +90,7 @@ impl AsRef<Key> for KvPairTTL {
 
 impl From<KvPairTTL> for (KvPair, u64) {
     fn from(value: KvPairTTL) -> Self {
-        (value.0.clone(), value.1)
+        (value.0, value.1)
     }
 }
 

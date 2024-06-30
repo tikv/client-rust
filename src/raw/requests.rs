@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use futures::StreamExt;
 
 use tonic::transport::Channel;
 
@@ -202,12 +201,12 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
         let kvs = self.pairs.clone();
         let ttls = self.ttls.clone();
         let mut kv_ttl: Vec<KvPairTTL> = kvs
-            .iter()
+            .into_iter()
             .zip(ttls)
-            .map(|(kv, ttl)| KvPairTTL(kv.clone(), ttl))
+            .map(|(kv, ttl)| KvPairTTL(kv, ttl))
             .collect();
         kv_ttl.sort_by(|a, b| a.0.key.clone().cmp(&b.0.key));
-        store_stream_for_keys(kv_ttl.into_iter(), pd_client.clone()).boxed()
+        store_stream_for_keys(kv_ttl.into_iter(), pd_client.clone())
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
@@ -672,8 +671,7 @@ mod test {
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .plan();
         let _ = plan.execute().await;
-        assert_eq!(actual_map.lock().unwrap().len(), 2);
-        assert_eq!(actual_map.lock().unwrap().deref().clone(), expected_map);
+        assert_eq!(actual_map.lock().unwrap().deref(), &expected_map);
         Ok(())
     }
 }
