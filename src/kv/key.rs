@@ -16,6 +16,7 @@ use super::HexRepr;
 use crate::kv::codec::BytesEncoder;
 use crate::kv::codec::{self};
 use crate::proto::kvrpcpb;
+use crate::proto::kvrpcpb::KvPair;
 
 const _PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
 
@@ -76,6 +77,20 @@ pub struct Key(
 impl AsRef<Key> for kvrpcpb::Mutation {
     fn as_ref(&self) -> &Key {
         self.key.as_ref()
+    }
+}
+
+pub struct KvPairTTL(pub KvPair, pub u64);
+
+impl AsRef<Key> for KvPairTTL {
+    fn as_ref(&self) -> &Key {
+        self.0.key.as_ref()
+    }
+}
+
+impl From<KvPairTTL> for (KvPair, u64) {
+    fn from(value: KvPairTTL) -> Self {
+        (value.0, value.1)
     }
 }
 
