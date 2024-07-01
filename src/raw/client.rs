@@ -1,29 +1,33 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
-
 use core::ops::Range;
+use std::future::Future;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use futures::StreamExt;
 use log::debug;
+use tokio::time::sleep;
 
-use crate::backoff::DEFAULT_REGION_BACKOFF;
+use crate::backoff::{DEFAULT_REGION_BACKOFF, DEFAULT_STORE_BACKOFF};
 use crate::common::Error;
 use crate::config::Config;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
-use crate::proto::metapb;
+use crate::proto::kvrpcpb::{RawScanRequest, RawScanResponse};
+use crate::proto::{errorpb, metapb};
 use crate::raw::lowering::*;
-use crate::request::Collect;
 use crate::request::CollectSingle;
 use crate::request::EncodeKeyspace;
 use crate::request::KeyMode;
 use crate::request::Keyspace;
 use crate::request::Plan;
 use crate::request::TruncateKeyspace;
+use crate::request::{plan, Collect};
+use crate::store::{HasRegionError, RegionStore};
 use crate::Backoff;
 use crate::BoundRange;
 use crate::ColumnFamily;
+use crate::Error::RegionError;
 use crate::Key;
 use crate::KvPair;
 use crate::Result;
@@ -755,57 +759,45 @@ impl<PdC: PdClient> Client<PdC> {
                 max_limit: MAX_RAW_KV_SCAN_LIMIT,
             });
         }
-
-        let mut cur_range = range.into().encode_keyspace(self.keyspace, KeyMode::Raw);
+        let backoff = DEFAULT_STORE_BACKOFF;
+        let range = range.into().encode_keyspace(self.keyspace, KeyMode::Raw);
         let mut result = Vec::new();
-        let mut scan_regions = self.rpc.clone().stores_for_range(cur_range.clone()).boxed();
-        let mut region_store =
-            scan_regions
-                .next()
-                .await
-                .ok_or(Error::RegionForRangeNotFound {
-                    range: (cur_range.clone()),
-                })??;
-        let mut cur_limit = limit;
+        let mut current_limit = limit;
+        let (start_key, end_key) = range.clone().into_keys();
+        let mut current_key: Key = start_key;
 
-        while cur_limit > 0 {
-            let request = new_raw_scan_request(
-                cur_range.clone(),
-                cur_limit,
+        let region_error_handler =
+            |pd_rpc_client: Arc<PdC>, err: errorpb::Error, store: RegionStore| {
+                Box::pin(plan::handle_region_error(pd_rpc_client, err, store))
+            } as _;
+        while current_limit > 0 {
+            let scan_args = ScanInnerArgs {
+                start_key: current_key.clone(),
+                range: range.clone(),
+                limit,
                 key_only,
                 reverse,
-                self.cf.clone(),
-            );
-            let resp = crate::request::PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
-                .single_region_with_store(region_store.clone())
-                .await?
-                .plan()
-                .execute()
-                .await?;
-            let mut region_scan_res = resp
-                .kvs
-                .into_iter()
-                .map(Into::into)
-                .collect::<Vec<KvPair>>();
-            let res_len = region_scan_res.len();
-            result.append(&mut region_scan_res);
+                backoff: backoff.clone(),
+            };
+            let (res, next_key) = self.retryable_scan(scan_args, region_error_handler).await?;
 
-            // if the number of results is less than cur_limit, it means this scan range contains more than one region, so we need to scan next region
-            if res_len < cur_limit as usize {
-                region_store = match scan_regions.next().await {
-                    Some(Ok(rs)) => {
-                        cur_range = BoundRange::new(
-                            std::ops::Bound::Included(region_store.region_with_leader.range().1),
-                            cur_range.to,
-                        );
-                        rs
-                    }
-                    Some(Err(e)) => return Err(e),
-                    None => break,
-                };
-                cur_limit -= res_len as u32;
-            } else {
+            let mut kvs = res
+                .map(|r| r.kvs.into_iter().map(Into::into).collect::<Vec<KvPair>>())
+                .unwrap_or(Vec::new());
+
+            if !kvs.is_empty() {
+                current_limit -= kvs.len() as u32;
+                result.append(&mut kvs);
+            }
+            if end_key
+                .as_ref()
+                .map(|ek| ek <= next_key.as_ref())
+                .unwrap_or(false)
+                || next_key.is_empty()
+            {
                 break;
+            } else {
+                current_key = next_key;
             }
         }
 
@@ -816,6 +808,65 @@ impl<PdC: PdClient> Client<PdC> {
         let result = result.truncate_keyspace(self.keyspace);
 
         Ok(result)
+    }
+
+    async fn retryable_scan<'a, F>(
+        &self,
+        mut scan_args: ScanInnerArgs,
+        mut error_handler: F,
+    ) -> Result<(Option<RawScanResponse>, Key)>
+    where
+        F: FnMut(
+            Arc<PdC>,
+            errorpb::Error,
+            RegionStore,
+        ) -> Pin<Box<dyn Future<Output = Result<bool>>>>,
+    {
+        let start_key = scan_args.start_key;
+
+        let region = self.rpc.clone().region_for_key(&start_key).await?;
+        let store = self.rpc.clone().store_for_id(region.id()).await?;
+        let request = new_raw_scan_request(
+            scan_args.range.clone(),
+            scan_args.limit,
+            scan_args.key_only,
+            scan_args.reverse,
+            self.cf.clone(),
+        );
+        loop {
+            let resp = self.do_store_scan(store.clone(), request.clone()).await;
+            return match resp {
+                Ok(mut r) => {
+                    if let Some(err) = r.region_error() {
+                        let status =
+                            error_handler(self.rpc.clone(), err.clone(), store.clone()).await?;
+                        if status {
+                            continue;
+                        } else if let Some(duration) = scan_args.backoff.next_delay_duration() {
+                            sleep(duration).await;
+                            continue;
+                        } else {
+                            return Err(RegionError(Box::new(err)));
+                        }
+                    }
+                    Ok((Some(r), region.end_key()))
+                }
+                Err(err) => Err(err),
+            };
+        }
+    }
+
+    async fn do_store_scan(
+        &self,
+        store: RegionStore,
+        scan_request: RawScanRequest,
+    ) -> Result<RawScanResponse> {
+        crate::request::PlanBuilder::new(self.rpc.clone(), self.keyspace, scan_request)
+            .single_region_with_store(store.clone())
+            .await?
+            .plan()
+            .execute()
+            .await
     }
 
     async fn batch_scan_inner(
@@ -864,14 +915,26 @@ impl<PdC: PdClient> Client<PdC> {
     }
 }
 
+#[derive(Clone)]
+struct ScanInnerArgs {
+    start_key: Key,
+    range: BoundRange,
+    limit: u32,
+    key_only: bool,
+    reverse: bool,
+    backoff: Backoff,
+}
+
 #[cfg(test)]
 mod tests {
     use std::any::Any;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
     use super::*;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
+    use crate::proto::errorpb::EpochNotMatch;
     use crate::proto::kvrpcpb;
     use crate::Result;
 
@@ -951,6 +1014,65 @@ mod tests {
                 "2:[Key(05)..Key(0F), Key(14)..Key()]".to_string(),
             ),]
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_raw_scan_retryer() -> Result<()> {
+        let epoch_not_match_error = EpochNotMatch {
+            current_regions: vec![],
+        };
+        let region_error = errorpb::Error {
+            epoch_not_match: Some(epoch_not_match_error),
+            ..Default::default()
+        };
+        let flag = Arc::new(AtomicBool::new(true));
+        let tikv_flag = flag.clone();
+        let error_handler_flag = flag.clone();
+        let mock_tikv_client = MockKvClient::with_dispatch_hook(move |req: &dyn Any| {
+            if req.downcast_ref::<RawScanRequest>().is_some() {
+                let v = tikv_flag.clone().load(Ordering::Relaxed);
+                let resp = if v {
+                    RawScanResponse {
+                        region_error: Some(region_error.clone()),
+                        ..Default::default()
+                    }
+                } else {
+                    RawScanResponse {
+                        ..Default::default()
+                    }
+                };
+                Ok(Box::new(resp) as Box<dyn Any>)
+            } else {
+                unreachable!()
+            }
+        });
+        let mock_pd_client = MockPdClient::new(mock_tikv_client);
+        let client = Client {
+            rpc: Arc::new(mock_pd_client),
+            cf: Some(ColumnFamily::Default),
+            backoff: DEFAULT_REGION_BACKOFF,
+            atomic: false,
+            keyspace: Keyspace::Enable { keyspace_id: 0 },
+        };
+
+        let scan_args = ScanInnerArgs {
+            start_key: "k1".to_string().into(),
+            range: BoundRange::from("k1".to_owned().."k2".to_owned()),
+            limit: 10,
+            key_only: false,
+            reverse: false,
+            backoff: Backoff::no_backoff(),
+        };
+        let error_handler = |_, _, _| {
+            error_handler_flag.clone().store(false, Ordering::Relaxed);
+            Box::pin(async move {
+                let res: Result<bool> = Ok(true);
+                res
+            })
+        } as _;
+        client.retryable_scan(scan_args, error_handler).await?;
+        assert!(!error_handler_flag.load(Ordering::Relaxed));
         Ok(())
     }
 }
