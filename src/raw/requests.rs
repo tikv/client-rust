@@ -1,15 +1,5 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::any::Any;
-use std::ops::Range;
-use std::sync::Arc;
-use std::time::Duration;
-
-use async_trait::async_trait;
-use futures::stream::BoxStream;
-
-use tonic::transport::Channel;
-
 use super::RawRpcRequest;
 use crate::collect_single;
 use crate::kv::KvPairTTL;
@@ -43,6 +33,13 @@ use crate::Key;
 use crate::KvPair;
 use crate::Result;
 use crate::Value;
+use async_trait::async_trait;
+use futures::stream::BoxStream;
+use std::any::Any;
+use std::ops::Range;
+use std::sync::Arc;
+use std::time::Duration;
+use tonic::transport::Channel;
 
 pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::RawGetRequest {
     let mut req = kvrpcpb::RawGetRequest::default();
@@ -205,7 +202,7 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
             .zip(ttls)
             .map(|(kv, ttl)| KvPairTTL(kv, ttl))
             .collect();
-        kv_ttl.sort_by(|a, b| a.0.key.clone().cmp(&b.0.key));
+        kv_ttl.sort_by(|a, b| a.0.key.cmp(&b.0.key));
         store_stream_for_keys(kv_ttl.into_iter(), pd_client.clone())
     }
 
