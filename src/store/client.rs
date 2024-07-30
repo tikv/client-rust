@@ -35,7 +35,7 @@ impl KvConnect for TikvConnect {
         self.security_mgr
             .connect(address, TikvClient::new)
             .await
-            .map(|c| KvRpcClient::new(c, self.timeout))
+            .map(|c| KvRpcClient::new(c.max_decoding_message_size(usize::MAX), self.timeout))
     }
 }
 
