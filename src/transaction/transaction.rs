@@ -1046,6 +1046,47 @@ pub enum TransactionKind {
     Pessimistic(Timestamp),
 }
 
+#[derive(Clone, PartialEq, Debug)]
+pub struct CommitTTLParameters {
+    max_ttl: u64,
+    min_ttl: u64,
+    txn_commit_batch_size: u64,
+    ttl_factor: f64,
+}
+
+impl Default for CommitTTLParameters {
+    fn default() -> Self {
+        Self {
+            max_ttl: MAX_TTL,
+            min_ttl: DEFAULT_LOCK_TTL,
+            txn_commit_batch_size: TXN_COMMIT_BATCH_SIZE,
+            ttl_factor: TTL_FACTOR,
+        }
+    }
+}
+
+impl CommitTTLParameters {
+    pub fn max_ttl(mut self, millis: u64) -> Self {
+        self.max_ttl = millis;
+        self
+    }
+
+    pub fn min_ttl(mut self, millis: u64) -> Self {
+        self.min_ttl = millis;
+        self
+    }
+
+    pub fn txn_commit_batch_size(mut self, size: u64) -> Self {
+        self.txn_commit_batch_size = size;
+        self
+    }
+
+    pub fn ttl_factor(mut self, factor: f64) -> Self {
+        self.ttl_factor = factor;
+        self
+    }
+}
+
 /// Options for configuring a transaction.
 ///
 /// `TransactionOptions` has a builder-style API.
@@ -1063,6 +1104,8 @@ pub struct TransactionOptions {
     retry_options: RetryOptions,
     /// What to do if the transaction is dropped without an attempt to commit or rollback
     check_level: CheckLevel,
+    /// Variables related to commit TTL calculation
+    ttl_parameters: CommitTTLParameters,
     #[doc(hidden)]
     heartbeat_option: HeartbeatOption,
 }
@@ -1089,6 +1132,7 @@ impl TransactionOptions {
             read_only: false,
             retry_options: RetryOptions::default_optimistic(),
             check_level: CheckLevel::Panic,
+            ttl_parameters: Default::default(),
             heartbeat_option: HeartbeatOption::FixedTime(DEFAULT_HEARTBEAT_INTERVAL),
         }
     }
@@ -1102,6 +1146,7 @@ impl TransactionOptions {
             read_only: false,
             retry_options: RetryOptions::default_pessimistic(),
             check_level: CheckLevel::Panic,
+            ttl_parameters: Default::default(),
             heartbeat_option: HeartbeatOption::FixedTime(DEFAULT_HEARTBEAT_INTERVAL),
         }
     }
@@ -1152,6 +1197,13 @@ impl TransactionOptions {
     #[must_use]
     pub fn drop_check(mut self, level: CheckLevel) -> TransactionOptions {
         self.check_level = level;
+        self
+    }
+
+    /// Set Commit TTL parameters.
+    #[must_use]
+    pub fn ttl_parameters(mut self, options: CommitTTLParameters) -> TransactionOptions {
+        self.ttl_parameters = options;
         self
     }
 
@@ -1447,11 +1499,18 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     fn calc_txn_lock_ttl(&mut self) -> u64 {
-        let mut lock_ttl = DEFAULT_LOCK_TTL;
-        if self.write_size > TXN_COMMIT_BATCH_SIZE {
+        let CommitTTLParameters {
+            max_ttl,
+            min_ttl,
+            txn_commit_batch_size,
+            ttl_factor,
+        } = self.options.ttl_parameters;
+
+        let mut lock_ttl = min_ttl;
+        if self.write_size > txn_commit_batch_size {
             let size_mb = self.write_size as f64 / 1024.0 / 1024.0;
-            lock_ttl = (TTL_FACTOR * size_mb.sqrt()) as u64;
-            lock_ttl = lock_ttl.clamp(DEFAULT_LOCK_TTL, MAX_TTL);
+            lock_ttl = (ttl_factor * size_mb.sqrt()) as u64;
+            lock_ttl = lock_ttl.clamp(min_ttl, max_ttl);
         }
         lock_ttl
     }
