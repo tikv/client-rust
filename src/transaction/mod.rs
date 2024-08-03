@@ -13,6 +13,7 @@ pub(crate) use lock::resolve_locks;
 pub(crate) use lock::HasLocks;
 pub use snapshot::Snapshot;
 pub use transaction::CheckLevel;
+pub use transaction::CommitTTLParameters;
 #[doc(hidden)]
 pub use transaction::HeartbeatOption;
 pub use transaction::Transaction;
