@@ -806,16 +806,16 @@ impl<PdC: PdClient> Client<PdC> {
     ) -> Result<(Option<RawScanResponse>, Key)> {
         let start_key = scan_args.start_key;
 
-        let region = self.rpc.clone().region_for_key(&start_key).await?;
-        let store = self.rpc.clone().store_for_id(region.id()).await?;
-        let request = new_raw_scan_request(
-            scan_args.range.clone(),
-            scan_args.limit,
-            scan_args.key_only,
-            scan_args.reverse,
-            self.cf.clone(),
-        );
         loop {
+            let region = self.rpc.clone().region_for_key(&start_key).await?;
+            let store = self.rpc.clone().store_for_id(region.id()).await?;
+            let request = new_raw_scan_request(
+                scan_args.range.clone(),
+                scan_args.limit,
+                scan_args.key_only,
+                scan_args.reverse,
+                self.cf.clone(),
+            );
             let resp = self.do_store_scan(store.clone(), request.clone()).await;
             return match resp {
                 Ok(mut r) => {
