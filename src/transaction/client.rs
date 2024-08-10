@@ -42,7 +42,7 @@ const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
 /// - `gc`: trigger a GC process which clears stale data in the cluster.
 /// - `current_timestamp`: get the current `Timestamp` from PD.
 /// - `snapshot`: get a [`Snapshot`] of the database at a specified timestamp.
-/// A `Snapshot` is a read-only transaction.
+///   A `Snapshot` is a read-only transaction.
 ///
 /// The returned results of transactional requests are [`Future`](std::future::Future)s that must be
 /// awaited to execute.
