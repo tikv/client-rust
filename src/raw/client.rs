@@ -759,7 +759,7 @@ impl<PdC: PdClient> Client<PdC> {
             });
         }
         let backoff = DEFAULT_STORE_BACKOFF;
-        let range = range.into().encode_keyspace(self.keyspace, KeyMode::Raw);
+        let mut range = range.into().encode_keyspace(self.keyspace, KeyMode::Raw);
         let mut result = Vec::new();
         let mut current_limit = limit;
         let (start_key, end_key) = range.clone().into_keys();
@@ -788,6 +788,7 @@ impl<PdC: PdClient> Client<PdC> {
                 break;
             } else {
                 current_key = next_key;
+                range = BoundRange::new(std::ops::Bound::Included(current_key.clone()), range.to);
             }
         }
 
@@ -805,7 +806,6 @@ impl<PdC: PdClient> Client<PdC> {
         mut scan_args: ScanInnerArgs,
     ) -> Result<(Option<RawScanResponse>, Key)> {
         let start_key = scan_args.start_key;
-
         loop {
             let region = self.rpc.clone().region_for_key(&start_key).await?;
             let store = self.rpc.clone().store_for_id(region.id()).await?;
