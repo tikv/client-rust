@@ -5,6 +5,7 @@
 
 pub use protos::*;
 
+#[allow(clippy::doc_lazy_continuation)]
 mod protos {
     include!("generated/mod.rs");
 }

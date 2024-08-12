@@ -904,7 +904,6 @@ impl Merge<kvrpcpb::UnsafeDestroyRangeResponse> for Collect {
 }
 
 #[cfg(test)]
-#[cfg_attr(feature = "protobuf-codec", allow(clippy::useless_conversion))]
 mod tests {
     use crate::common::Error::PessimisticLockError;
     use crate::common::Error::ResolveLockError;
