@@ -768,7 +768,7 @@ impl<PdC: PdClient> Client<PdC> {
         while current_limit > 0 {
             let scan_args = ScanInnerArgs {
                 start_key: current_key.clone(),
-                range: range.clone(),
+                end_key: end_key.clone(),
                 limit: current_limit,
                 key_only,
                 reverse,
@@ -806,11 +806,12 @@ impl<PdC: PdClient> Client<PdC> {
         mut scan_args: ScanInnerArgs,
     ) -> Result<(Option<RawScanResponse>, Key)> {
         let start_key = scan_args.start_key;
+        let end_key = scan_args.end_key;
         loop {
             let region = self.rpc.clone().region_for_key(&start_key).await?;
             let store = self.rpc.clone().store_for_id(region.id()).await?;
             let request = new_raw_scan_request(
-                scan_args.range.clone(),
+                (start_key.clone(), end_key.clone()).into(),
                 scan_args.limit,
                 scan_args.key_only,
                 scan_args.reverse,
@@ -901,7 +902,7 @@ impl<PdC: PdClient> Client<PdC> {
 #[derive(Clone)]
 struct ScanInnerArgs {
     start_key: Key,
-    range: BoundRange,
+    end_key: Option<Key>,
     limit: u32,
     key_only: bool,
     reverse: bool,
