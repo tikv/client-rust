@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use futures::future::try_join_all;
 use futures::prelude::*;
 use log::debug;
+use log::error;
 use log::info;
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
@@ -579,6 +580,7 @@ where
             }
 
             if self.backoff.is_none() {
+                error!("no backoff, resolve lock error: {locks:?}");
                 return Err(Error::ResolveLockError(locks));
             }
 
@@ -588,7 +590,10 @@ where
                 result = self.inner.execute().await?;
             } else {
                 match clone.backoff.next_delay_duration() {
-                    None => return Err(Error::ResolveLockError(live_locks)),
+                    None => {
+                        error!("backoff exhausted, resolve lock error: {live_locks:?}");
+                        return Err(Error::ResolveLockError(live_locks))
+                    },
                     Some(delay_duration) => {
                         sleep(delay_duration).await;
                         result = clone.inner.execute().await?;
