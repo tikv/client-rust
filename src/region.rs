@@ -2,7 +2,6 @@
 
 use derive_new::new;
 
-use crate::proto::kvrpcpb;
 use crate::proto::metapb;
 use crate::Error;
 use crate::Key;
@@ -41,21 +40,6 @@ impl RegionWithLeader {
         let start_key = &self.region.start_key;
         let end_key = &self.region.end_key;
         key >= start_key.as_slice() && (key < end_key.as_slice() || end_key.is_empty())
-    }
-
-    pub fn context(&self) -> Result<kvrpcpb::Context> {
-        self.leader
-            .as_ref()
-            .ok_or(Error::LeaderNotFound {
-                region_id: self.region.id,
-            })
-            .map(|l| {
-                let mut ctx = kvrpcpb::Context::default();
-                ctx.region_id = self.region.id;
-                ctx.region_epoch = self.region.region_epoch.clone();
-                ctx.peer = Some(l.clone());
-                ctx
-            })
     }
 
     pub fn start_key(&self) -> Key {

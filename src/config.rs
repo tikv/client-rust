@@ -19,6 +19,7 @@ pub struct Config {
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
     pub timeout: Duration,
+    pub keyspace: Option<String>,
 }
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -30,6 +31,7 @@ impl Default for Config {
             cert_path: None,
             key_path: None,
             timeout: DEFAULT_REQUEST_TIMEOUT,
+            keyspace: None,
         }
     }
 }
@@ -81,6 +83,23 @@ impl Config {
     #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Set to use default keyspace.
+    ///
+    /// Server should enable `storage.api-version = 2` to use this feature.
+    #[must_use]
+    pub fn with_default_keyspace(self) -> Self {
+        self.with_keyspace("DEFAULT")
+    }
+
+    /// Set the use keyspace for the client.
+    ///
+    /// Server should enable `storage.api-version = 2` to use this feature.
+    #[must_use]
+    pub fn with_keyspace(mut self, keyspace: &str) -> Self {
+        self.keyspace = Some(keyspace.to_owned());
         self
     }
 }

@@ -2,7 +2,6 @@
 
 use std::fmt;
 use std::ops::Bound;
-use std::u8;
 
 #[allow(unused_imports)]
 #[cfg(test)]
@@ -17,6 +16,7 @@ use super::HexRepr;
 use crate::kv::codec::BytesEncoder;
 use crate::kv::codec::{self};
 use crate::proto::kvrpcpb;
+use crate::proto::kvrpcpb::KvPair;
 
 const _PROPTEST_KEY_MAX: usize = 1024 * 2; // 2 KB
 
@@ -71,12 +71,26 @@ pub struct Key(
         test,
         proptest(strategy = "any_with::<Vec<u8>>((size_range(_PROPTEST_KEY_MAX), ()))")
     )]
-    pub(super) Vec<u8>,
+    pub(crate) Vec<u8>,
 );
 
 impl AsRef<Key> for kvrpcpb::Mutation {
     fn as_ref(&self) -> &Key {
         self.key.as_ref()
+    }
+}
+
+pub struct KvPairTTL(pub KvPair, pub u64);
+
+impl AsRef<Key> for KvPairTTL {
+    fn as_ref(&self) -> &Key {
+        self.0.key.as_ref()
+    }
+}
+
+impl From<KvPairTTL> for (KvPair, u64) {
+    fn from(value: KvPairTTL) -> Self {
+        (value.0, value.1)
     }
 }
 
@@ -98,10 +112,11 @@ impl Key {
 
     /// Push a zero to the end of the key.
     ///
-    /// Extending a zero makes the new key the smallest key that is greater than than the original one, i.e. the succeeder.
+    /// Extending a zero makes the new key the smallest key that is greater than than the original one.
     #[inline]
-    pub(super) fn push_zero(&mut self) {
-        self.0.push(0)
+    pub(crate) fn next_key(mut self) -> Self {
+        self.0.push(0);
+        self
     }
 
     /// Convert the key to a lower bound. The key is treated as inclusive.

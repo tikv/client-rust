@@ -2,20 +2,20 @@
 
 mod ctl;
 
+use log::info;
+use log::warn;
+use rand::Rng;
 use std::collections::HashSet;
 use std::convert::TryInto;
 use std::env;
 use std::time::Duration;
-
-use log::info;
-use log::warn;
-use rand::Rng;
+use tikv_client::Config;
 use tikv_client::Key;
 use tikv_client::RawClient;
 use tikv_client::Result;
 use tikv_client::Transaction;
 use tikv_client::TransactionClient;
-use tikv_client::{ColumnFamily, Snapshot, TransactionOptions};
+use tikv_client::{Snapshot, TransactionOptions};
 use tokio::time::sleep;
 
 const ENV_PD_ADDRS: &str = "PD_ADDRS";
@@ -24,21 +24,23 @@ const REGION_SPLIT_TIME_LIMIT: Duration = Duration::from_secs(15);
 
 // Delete all entries in TiKV to leave a clean space for following tests.
 pub async fn clear_tikv() {
-    let cfs = vec![
-        ColumnFamily::Default,
-        ColumnFamily::Lock,
-        ColumnFamily::Write,
-    ];
     // DEFAULT_REGION_BACKOFF is not long enough for CI environment. So set a longer backoff.
     let backoff = tikv_client::Backoff::no_jitter_backoff(100, 30000, 20);
-    for cf in cfs {
-        let raw_client = RawClient::new(pd_addrs()).await.unwrap().with_cf(cf);
-        raw_client
-            .with_backoff(backoff.clone())
-            .delete_range(vec![]..)
+    let raw_client =
+        RawClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
             .await
             .unwrap();
-    }
+    raw_client
+        .with_backoff(backoff)
+        .delete_range(..)
+        .await
+        .unwrap();
+
+    let txn_client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await
+            .unwrap();
+    txn_client.unsafe_destroy_range(..).await.unwrap();
 }
 
 // To test with multiple regions, prewrite some data. Tests that hope to test
@@ -78,14 +80,16 @@ async fn ensure_region_split(
     // 1. write plenty transactional keys
     // 2. wait until regions split
 
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
     let mut txn = client.begin_optimistic().await?;
     for key in keys.into_iter() {
         txn.put(key.into(), vec![0, 0, 0, 0]).await?;
     }
     txn.commit().await?;
     let mut txn = client.begin_optimistic().await?;
-    let _ = txn.scan(vec![].., 2048).await?;
+    let _ = txn.scan(.., 2048).await?;
     txn.commit().await?;
 
     info!("splitting regions...");

@@ -9,6 +9,7 @@ use tonic::IntoRequest;
 
 use crate::proto::kvrpcpb;
 use crate::proto::tikvpb::tikv_client::TikvClient;
+use crate::store::RegionWithLeader;
 use crate::Error;
 use crate::Result;
 
@@ -21,9 +22,7 @@ pub trait Request: Any + Sync + Send + 'static {
     ) -> Result<Box<dyn Any>>;
     fn label(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
-    /// Set the context for the request.
-    /// Should always use `set_context` other than modify the `self.context` directly.
-    fn set_context(&mut self, context: kvrpcpb::Context);
+    fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()>;
     fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion);
 }
 
@@ -54,19 +53,20 @@ macro_rules! impl_request {
                 self
             }
 
-            fn set_context(&mut self, context: kvrpcpb::Context) {
-                let api_version = self
-                    .context
-                    .as_ref()
-                    .map(|c| c.api_version)
-                    .unwrap_or_default();
-                self.context = Some(context);
-                self.set_api_version(kvrpcpb::ApiVersion::try_from(api_version).unwrap());
+            fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()> {
+                let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
+                let leader_peer = leader.leader.as_ref().ok_or(Error::LeaderNotFound {
+                    region_id: leader.region.id,
+                })?;
+                ctx.region_id = leader.region.id;
+                ctx.region_epoch = leader.region.region_epoch.clone();
+                ctx.peer = Some(leader_peer.clone());
+                Ok(())
             }
 
             fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {
-                let context = self.context.get_or_insert(kvrpcpb::Context::default());
-                context.api_version = api_version.into();
+                let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
+                ctx.api_version = api_version.into();
             }
         }
     };
@@ -74,6 +74,7 @@ macro_rules! impl_request {
 
 impl_request!(RawGetRequest, raw_get, "raw_get");
 impl_request!(RawBatchGetRequest, raw_batch_get, "raw_batch_get");
+impl_request!(RawGetKeyTtlRequest, raw_get_key_ttl, "raw_get_key_ttl");
 impl_request!(RawPutRequest, raw_put, "raw_put");
 impl_request!(RawBatchPutRequest, raw_batch_put, "raw_batch_put");
 impl_request!(RawDeleteRequest, raw_delete, "raw_delete");

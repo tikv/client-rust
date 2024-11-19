@@ -13,6 +13,7 @@ use tokio::time::sleep;
 
 use crate::pd::Cluster;
 use crate::pd::Connection;
+use crate::proto::keyspacepb;
 use crate::proto::metapb;
 use crate::proto::pdpb::Timestamp;
 use crate::proto::pdpb::{self};
@@ -45,6 +46,8 @@ pub trait RetryClientTrait {
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp>;
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
+
+    async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta>;
 }
 /// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
 pub struct RetryClient<Cl = Cluster> {
@@ -195,6 +198,12 @@ impl RetryClientTrait for RetryClient<Cluster> {
                 .update_safepoint(safepoint, self.timeout)
                 .await
                 .map(|resp| resp.new_safe_point == safepoint)
+        })
+    }
+
+    async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
+        retry_mut!(self, "load_keyspace", |cluster| async {
+            cluster.load_keyspace(keyspace, self.timeout).await
         })
     }
 }

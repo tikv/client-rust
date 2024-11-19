@@ -136,17 +136,11 @@ impl BoundRange {
     pub fn into_keys(self) -> (Key, Option<Key>) {
         let start = match self.from {
             Bound::Included(v) => v,
-            Bound::Excluded(mut v) => {
-                v.push_zero();
-                v
-            }
+            Bound::Excluded(v) => v.next_key(),
             Bound::Unbounded => Key::EMPTY,
         };
         let end = match self.to {
-            Bound::Included(mut v) => {
-                v.push_zero();
-                Some(v)
-            }
+            Bound::Included(v) => Some(v.next_key()),
             Bound::Excluded(v) => Some(v),
             Bound::Unbounded => None,
         };

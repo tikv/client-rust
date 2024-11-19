@@ -282,6 +282,7 @@ mod test {
     use super::RegionCache;
     use crate::common::Error;
     use crate::pd::RetryClientTrait;
+    use crate::proto::keyspacepb;
     use crate::proto::metapb::RegionEpoch;
     use crate::proto::metapb::{self};
     use crate::region::RegionId;
@@ -345,6 +346,10 @@ mod test {
 
         async fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> Result<bool> {
             todo!()
+        }
+
+        async fn load_keyspace(&self, _keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
+            unimplemented!()
         }
     }
 
@@ -570,10 +575,10 @@ mod test {
         });
         assert!(!is_valid_tikv_store(&store));
 
-        store.labels[1].value = "tiflash_compute".to_owned();
+        store.labels[1].value = "tiflash_compute".to_string();
         assert!(!is_valid_tikv_store(&store));
 
-        store.labels[1].value = "other".to_owned();
+        store.labels[1].value = "other".to_string();
         assert!(is_valid_tikv_store(&store));
     }
 }

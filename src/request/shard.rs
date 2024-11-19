@@ -14,6 +14,7 @@ use crate::request::ResolveLock;
 use crate::store::RegionStore;
 use crate::store::Request;
 use crate::Result;
+use std::fmt::Debug;
 
 macro_rules! impl_inner_shardable {
     () => {
@@ -33,7 +34,7 @@ macro_rules! impl_inner_shardable {
 }
 
 pub trait Shardable {
-    type Shard: Clone + Send + Sync;
+    type Shard: Debug + Clone + Send + Sync;
 
     fn shards(
         &self,
@@ -164,7 +165,7 @@ macro_rules! shardable_key {
                 mut shard: Self::Shard,
                 store: &$crate::store::RegionStore,
             ) -> $crate::Result<()> {
-                self.set_context(store.region_with_leader.context()?);
+                self.set_leader(&store.region_with_leader)?;
                 assert!(shard.len() == 1);
                 self.key = shard.pop().unwrap();
                 Ok(())
@@ -197,7 +198,7 @@ macro_rules! shardable_keys {
                 shard: Self::Shard,
                 store: &$crate::store::RegionStore,
             ) -> $crate::Result<()> {
-                self.set_context(store.region_with_leader.context()?);
+                self.set_leader(&store.region_with_leader)?;
                 self.keys = shard.into_iter().map(Into::into).collect();
                 Ok(())
             }
@@ -257,12 +258,12 @@ macro_rules! shardable_range {
                 shard: Self::Shard,
                 store: &$crate::store::RegionStore,
             ) -> $crate::Result<()> {
-                self.set_context(store.region_with_leader.context()?);
+                self.set_leader(&store.region_with_leader)?;
 
                 // In a reverse range request, the range is in the meaning of [end_key, start_key), i.e. end_key <= x < start_key.
                 // As a result, after obtaining start_key and end_key from PD, we need to swap their values when assigning them to the request.
-                self.start_key = shard.0.into();
-                self.end_key = shard.1.into();
+                self.start_key = shard.0;
+                self.end_key = shard.1;
                 if self.is_reverse() {
                     std::mem::swap(&mut self.start_key, &mut self.end_key);
                 }

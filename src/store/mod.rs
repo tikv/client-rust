@@ -8,7 +8,6 @@ use std::cmp::max;
 use std::cmp::min;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use derive_new::new;
 use futures::prelude::*;
 use futures::stream::BoxStream;
@@ -37,21 +36,6 @@ pub struct RegionStore {
 pub struct Store {
     pub client: Arc<dyn KvClient + Send + Sync>,
 }
-
-#[async_trait]
-pub trait KvConnectStore: KvConnect {
-    async fn connect_to_store(
-        &self,
-        region: RegionWithLeader,
-        address: String,
-    ) -> Result<RegionStore> {
-        log::info!("connect to tikv endpoint: {:?}", &address);
-        let client = self.connect(address.as_str()).await?;
-        Ok(RegionStore::new(region, Arc::new(client)))
-    }
-}
-
-impl KvConnectStore for TikvConnect {}
 
 /// Maps keys to a stream of stores. `key_data` must be sorted in increasing order
 pub fn store_stream_for_keys<K, KOut, PdC>(

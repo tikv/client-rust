@@ -1,7 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::iter;
-use std::marker::PhantomData;
 use std::sync::atomic;
 use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
@@ -16,19 +15,21 @@ use tokio::time::Duration;
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
-use crate::codec::ApiV1TxnCodec;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::kvrpcpb;
 use crate::proto::pdpb::Timestamp;
-use crate::request::codec::{Codec, EncodedRequest};
 use crate::request::Collect;
 use crate::request::CollectError;
 use crate::request::CollectSingle;
 use crate::request::CollectWithShard;
+use crate::request::EncodeKeyspace;
+use crate::request::KeyMode;
+use crate::request::Keyspace;
 use crate::request::Plan;
 use crate::request::PlanBuilder;
 use crate::request::RetryOptions;
+use crate::request::TruncateKeyspace;
 use crate::timestamp::TimestampExt;
 use crate::transaction::buffer::Buffer;
 use crate::transaction::lowering::*;
@@ -77,23 +78,24 @@ use crate::Value;
 /// txn.commit().await.unwrap();
 /// # });
 /// ```
-pub struct Transaction<Cod: Codec = ApiV1TxnCodec, PdC: PdClient<Codec = Cod> = PdRpcClient<Cod>> {
+pub struct Transaction<PdC: PdClient = PdRpcClient> {
     status: Arc<AtomicU8>,
     timestamp: Timestamp,
     buffer: Buffer,
     rpc: Arc<PdC>,
     options: TransactionOptions,
+    keyspace: Keyspace,
     is_heartbeat_started: bool,
     start_instant: Instant,
-    phantom: PhantomData<Cod>,
 }
 
-impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
+impl<PdC: PdClient> Transaction<PdC> {
     pub(crate) fn new(
         timestamp: Timestamp,
         rpc: Arc<PdC>,
         options: TransactionOptions,
-    ) -> Transaction<Cod, PdC> {
+        keyspace: Keyspace,
+    ) -> Transaction<PdC> {
         let status = if options.read_only {
             TransactionStatus::ReadOnly
         } else {
@@ -105,9 +107,9 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
             buffer: Buffer::new(options.is_pessimistic()),
             rpc,
             options,
+            keyspace,
             is_heartbeat_started: false,
             start_instant: std::time::Instant::now(),
-            phantom: PhantomData,
         }
     }
 
@@ -134,15 +136,15 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
-        let key = key.into();
+        let key = key.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         let retry_options = self.options.retry_options.clone();
+        let keyspace = self.keyspace;
 
         self.buffer
             .get_or_else(key, |key| async move {
                 let request = new_get_request(key, timestamp);
-                let encoded_req = EncodedRequest::new(request, rpc.get_codec());
-                let plan = PlanBuilder::new(rpc, encoded_req)
-                    .resolve_lock(retry_options.lock_backoff)
+                let plan = PlanBuilder::new(rpc, keyspace, request)
+                    .resolve_lock(retry_options.lock_backoff, keyspace)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
                     .merge(CollectSingle)
                     .post_process_default()
@@ -202,7 +204,8 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
             self.lock_keys(iter::once(key.clone())).await?;
             self.get(key).await
         } else {
-            let mut pairs = self.pessimistic_lock(iter::once(key.into()), true).await?;
+            let key = key.into().encode_keyspace(self.keyspace, KeyMode::Txn);
+            let mut pairs = self.pessimistic_lock(iter::once(key), true).await?;
             debug_assert!(pairs.len() <= 1);
             match pairs.pop() {
                 Some(pair) => Ok(Some(pair.1)),
@@ -266,14 +269,17 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
+        let keyspace = self.keyspace;
+        let keys = keys
+            .into_iter()
+            .map(move |k| k.into().encode_keyspace(keyspace, KeyMode::Txn));
         let retry_options = self.options.retry_options.clone();
 
         self.buffer
-            .batch_get_or_else(keys.into_iter().map(|k| k.into()), move |keys| async move {
+            .batch_get_or_else(keys, move |keys| async move {
                 let request = new_batch_get_request(keys, timestamp);
-                let encoded_req = EncodedRequest::new(request, rpc.get_codec());
-                let plan = PlanBuilder::new(rpc, encoded_req)
-                    .resolve_lock(retry_options.lock_backoff)
+                let plan = PlanBuilder::new(rpc, keyspace, request)
+                    .resolve_lock(retry_options.lock_backoff, keyspace)
                     .retry_multi_region(retry_options.region_backoff)
                     .merge(Collect)
                     .plan();
@@ -282,6 +288,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
                     .map(|r| r.into_iter().map(Into::into).collect())
             })
             .await
+            .map(move |pairs| pairs.map(move |pair| pair.truncate_keyspace(keyspace)))
     }
 
     /// Create a new 'batch get for update' request.
@@ -317,12 +324,20 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     ) -> Result<Vec<KvPair>> {
         debug!("invoking transactional batch_get_for_update request");
         self.check_allow_operation().await?;
-        let keys: Vec<Key> = keys.into_iter().map(|k| k.into()).collect();
         if !self.is_pessimistic() {
+            let keys: Vec<Key> = keys.into_iter().map(|k| k.into()).collect();
             self.lock_keys(keys.clone()).await?;
             Ok(self.batch_get(keys).await?.collect())
         } else {
-            self.pessimistic_lock(keys, true).await
+            let keyspace = self.keyspace;
+            let keys = keys
+                .into_iter()
+                .map(move |k| k.into().encode_keyspace(keyspace, KeyMode::Txn));
+            let pairs = self
+                .pessimistic_lock(keys, true)
+                .await?
+                .truncate_keyspace(keyspace);
+            Ok(pairs)
         }
     }
 
@@ -448,7 +463,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     pub async fn put(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
         debug!("invoking transactional put request");
         self.check_allow_operation().await?;
-        let key = key.into();
+        let key = key.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         if self.is_pessimistic() {
             self.pessimistic_lock(iter::once(key.clone()), false)
                 .await?;
@@ -479,7 +494,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     pub async fn insert(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
         debug!("invoking transactional insert request");
         self.check_allow_operation().await?;
-        let key = key.into();
+        let key = key.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         if self.buffer.get(&key).is_some() {
             return Err(Error::DuplicateKeyInsertion);
         }
@@ -514,7 +529,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     pub async fn delete(&mut self, key: impl Into<Key>) -> Result<()> {
         debug!("invoking transactional delete request");
         self.check_allow_operation().await?;
-        let key = key.into();
+        let key = key.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         if self.is_pessimistic() {
             self.pessimistic_lock(iter::once(key.clone()), false)
                 .await?;
@@ -530,23 +545,14 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use tikv_client::{Key, Config, TransactionClient, proto::kvrpcpb};
+    /// # use tikv_client::{Key, Config, TransactionClient, transaction::Mutation};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
     /// let mut txn = client.begin_optimistic().await.unwrap();
     /// let mutations = vec![
-    ///     kvrpcpb::Mutation {
-    ///         op: kvrpcpb::Op::Del.into(),
-    ///         key: b"k0".to_vec(),
-    ///         ..Default::default()
-    ///     },
-    ///     kvrpcpb::Mutation {
-    ///         op: kvrpcpb::Op::Put.into(),
-    ///         key: b"k1".to_vec(),
-    ///         value: b"v1".to_vec(),
-    ///         ..Default::default()
-    ///     },
+    ///     Mutation::Delete("k0".to_owned().into()),
+    ///     Mutation::Put("k1".to_owned().into(), b"v1".to_vec()),
     /// ];
     /// txn.batch_mutate(mutations).await.unwrap();
     /// txn.commit().await.unwrap();
@@ -554,13 +560,16 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     /// ```
     pub async fn batch_mutate(
         &mut self,
-        mutations: impl IntoIterator<Item = kvrpcpb::Mutation>,
+        mutations: impl IntoIterator<Item = Mutation>,
     ) -> Result<()> {
         debug!("invoking transactional batch mutate request");
         self.check_allow_operation().await?;
+        let mutations: Vec<Mutation> = mutations
+            .into_iter()
+            .map(|mutation| mutation.encode_keyspace(self.keyspace, KeyMode::Txn))
+            .collect();
         if self.is_pessimistic() {
-            let mutations: Vec<kvrpcpb::Mutation> = mutations.into_iter().collect();
-            self.pessimistic_lock(mutations.iter().map(|m| Key::from(m.key.clone())), false)
+            self.pessimistic_lock(mutations.iter().map(|m| m.key().clone()), false)
                 .await?;
             for m in mutations {
                 self.buffer.mutate(m);
@@ -602,15 +611,18 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     ) -> Result<()> {
         debug!("invoking transactional lock_keys request");
         self.check_allow_operation().await?;
+        let keyspace = self.keyspace;
+        let keys = keys
+            .into_iter()
+            .map(move |k| k.into().encode_keyspace(keyspace, KeyMode::Txn));
         match self.options.kind {
             TransactionKind::Optimistic => {
                 for key in keys {
-                    self.buffer.lock(key.into());
+                    self.buffer.lock(key);
                 }
             }
             TransactionKind::Pessimistic(_) => {
-                self.pessimistic_lock(keys.into_iter().map(|k| k.into()), false)
-                    .await?;
+                self.pessimistic_lock(keys, false).await?;
             }
         }
         Ok(())
@@ -660,6 +672,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
             self.timestamp.clone(),
             self.rpc.clone(),
             self.options.clone(),
+            self.keyspace,
             self.buffer.get_write_size() as u64,
             self.start_instant,
         )
@@ -712,6 +725,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
             self.timestamp.clone(),
             self.rpc.clone(),
             self.options.clone(),
+            self.keyspace,
             self.buffer.get_write_size() as u64,
             self.start_instant,
         )
@@ -745,10 +759,13 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
             primary_key,
             self.start_instant.elapsed().as_millis() as u64 + MAX_TTL,
         );
-        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
-        let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
-            .resolve_lock(self.options.retry_options.lock_backoff.clone())
+        let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
+            .resolve_lock(
+                self.options.retry_options.lock_backoff.clone(),
+                self.keyspace,
+            )
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
+            .extract_error()
             .merge(CollectSingle)
             .post_process_default()
             .plan();
@@ -766,19 +783,20 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         let retry_options = self.options.retry_options.clone();
+        let keyspace = self.keyspace;
+        let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
 
         self.buffer
             .scan_and_fetch(
-                range.into(),
+                range,
                 limit,
                 !key_only,
                 reverse,
                 move |new_range, new_limit| async move {
                     let request =
                         new_scan_request(new_range, timestamp, new_limit, key_only, reverse);
-                    let encoded_req = EncodedRequest::new(request, rpc.get_codec());
-                    let plan = PlanBuilder::new(rpc, encoded_req)
-                        .resolve_lock(retry_options.lock_backoff)
+                    let plan = PlanBuilder::new(rpc, keyspace, request)
+                        .resolve_lock(retry_options.lock_backoff, keyspace)
                         .retry_multi_region(retry_options.region_backoff)
                         .merge(Collect)
                         .plan();
@@ -788,6 +806,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
                 },
             )
             .await
+            .map(move |pairs| pairs.map(move |pair| pair.truncate_keyspace(keyspace)))
     }
 
     /// Pessimistically lock the keys, and optionally retrieve corresponding values.
@@ -832,9 +851,11 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
             for_update_ts.clone(),
             need_value,
         );
-        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
-        let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
-            .resolve_lock(self.options.retry_options.lock_backoff.clone())
+        let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
+            .resolve_lock(
+                self.options.retry_options.lock_backoff.clone(),
+                self.keyspace,
+            )
             .preserve_shard()
             .retry_multi_region_preserve_results(self.options.retry_options.region_backoff.clone())
             .merge(CollectWithShard)
@@ -887,9 +908,11 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
             start_version,
             for_update_ts,
         );
-        let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
-        let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
-            .resolve_lock(self.options.retry_options.lock_backoff.clone())
+        let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, req)
+            .resolve_lock(
+                self.options.retry_options.lock_backoff.clone(),
+                self.keyspace,
+            )
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .extract_error()
             .plan();
@@ -937,6 +960,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
             HeartbeatOption::FixedTime(heartbeat_interval) => heartbeat_interval,
         };
         let start_instant = self.start_instant;
+        let keyspace = self.keyspace;
 
         let heartbeat_task = async move {
             loop {
@@ -957,8 +981,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
                     primary_key.clone(),
                     start_instant.elapsed().as_millis() as u64 + MAX_TTL,
                 );
-                let encoded_req = EncodedRequest::new(request, rpc.get_codec());
-                let plan = PlanBuilder::new(rpc.clone(), encoded_req)
+                let plan = PlanBuilder::new(rpc.clone(), keyspace, request)
                     .retry_multi_region(region_backoff.clone())
                     .merge(CollectSingle)
                     .plan();
@@ -1005,7 +1028,7 @@ impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Transaction<Cod, PdC> {
     }
 }
 
-impl<Cod: Codec, PdC: PdClient<Codec = Cod>> Drop for Transaction<Cod, PdC> {
+impl<PdC: PdClient> Drop for Transaction<PdC> {
     fn drop(&mut self) {
         debug!("dropping transaction");
         if std::thread::panicking() {
@@ -1256,6 +1279,21 @@ impl HeartbeatOption {
     }
 }
 
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub enum Mutation {
+    Put(Key, Value),
+    Delete(Key),
+}
+
+impl Mutation {
+    pub fn key(&self) -> &Key {
+        match self {
+            Mutation::Put(key, _) => key,
+            Mutation::Delete(key) => key,
+        }
+    }
+}
+
 /// A struct wrapping the details of two-phase commit protocol (2PC).
 ///
 /// The two phases are `prewrite` and `commit`.
@@ -1271,6 +1309,7 @@ struct Committer<PdC: PdClient = PdRpcClient> {
     start_version: Timestamp,
     rpc: Arc<PdC>,
     options: TransactionOptions,
+    keyspace: Keyspace,
     #[new(default)]
     undetermined: bool,
     write_size: u64,
@@ -1348,9 +1387,11 @@ impl<PdC: PdClient> Committer<PdC> {
             .collect();
         // FIXME set max_commit_ts and min_commit_ts
 
-        let encoded_req = EncodedRequest::new(request, self.rpc.get_codec());
-        let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
-            .resolve_lock(self.options.retry_options.lock_backoff.clone())
+        let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
+            .resolve_lock(
+                self.options.retry_options.lock_backoff.clone(),
+                self.keyspace,
+            )
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .merge(CollectError)
             .extract_error()
@@ -1389,9 +1430,11 @@ impl<PdC: PdClient> Committer<PdC> {
             self.start_version.clone(),
             commit_version.clone(),
         );
-        let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
-        let plan = PlanBuilder::new(self.rpc.clone(), encoded_req)
-            .resolve_lock(self.options.retry_options.lock_backoff.clone())
+        let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, req)
+            .resolve_lock(
+                self.options.retry_options.lock_backoff.clone(),
+                self.keyspace,
+            )
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .extract_error()
             .plan();
@@ -1454,9 +1497,8 @@ impl<PdC: PdClient> Committer<PdC> {
                 .filter(|key| &primary_key != key);
             new_commit_request(keys, self.start_version, commit_version)
         };
-        let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
-        let plan = PlanBuilder::new(self.rpc, encoded_req)
-            .resolve_lock(self.options.retry_options.lock_backoff)
+        let plan = PlanBuilder::new(self.rpc, self.keyspace, req)
+            .resolve_lock(self.options.retry_options.lock_backoff, self.keyspace)
             .retry_multi_region(self.options.retry_options.region_backoff)
             .extract_error()
             .plan();
@@ -1476,9 +1518,8 @@ impl<PdC: PdClient> Committer<PdC> {
         match self.options.kind {
             TransactionKind::Optimistic => {
                 let req = new_batch_rollback_request(keys, self.start_version);
-                let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
-                let plan = PlanBuilder::new(self.rpc, encoded_req)
-                    .resolve_lock(self.options.retry_options.lock_backoff)
+                let plan = PlanBuilder::new(self.rpc, self.keyspace, req)
+                    .resolve_lock(self.options.retry_options.lock_backoff, self.keyspace)
                     .retry_multi_region(self.options.retry_options.region_backoff)
                     .extract_error()
                     .plan();
@@ -1486,9 +1527,8 @@ impl<PdC: PdClient> Committer<PdC> {
             }
             TransactionKind::Pessimistic(for_update_ts) => {
                 let req = new_pessimistic_rollback_request(keys, self.start_version, for_update_ts);
-                let encoded_req = EncodedRequest::new(req, self.rpc.get_codec());
-                let plan = PlanBuilder::new(self.rpc, encoded_req)
-                    .resolve_lock(self.options.retry_options.lock_backoff)
+                let plan = PlanBuilder::new(self.rpc, self.keyspace, req)
+                    .resolve_lock(self.options.retry_options.lock_backoff, self.keyspace)
                     .retry_multi_region(self.options.retry_options.region_backoff)
                     .extract_error()
                     .plan();
@@ -1565,12 +1605,16 @@ mod tests {
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb;
     use crate::proto::pdpb::Timestamp;
+    use crate::request::Keyspace;
     use crate::transaction::HeartbeatOption;
     use crate::Transaction;
     use crate::TransactionOptions;
 
+    #[rstest::rstest]
+    #[case(Keyspace::Disable)]
+    #[case(Keyspace::Enable { keyspace_id: 0 })]
     #[tokio::test]
-    async fn test_optimistic_heartbeat() -> Result<(), io::Error> {
+    async fn test_optimistic_heartbeat(#[case] keyspace: Keyspace) -> Result<(), io::Error> {
         let scenario = FailScenario::setup();
         fail::cfg("after-prewrite", "sleep(1500)").unwrap();
         let heartbeats = Arc::new(AtomicUsize::new(0));
@@ -1593,6 +1637,7 @@ mod tests {
             pd_client,
             TransactionOptions::new_optimistic()
                 .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_secs(1))),
+            keyspace,
         );
         heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
         let heartbeat_txn_handle = tokio::task::spawn_blocking(move || {
@@ -1605,8 +1650,11 @@ mod tests {
         Ok(())
     }
 
+    #[rstest::rstest]
+    #[case(Keyspace::Disable)]
+    #[case(Keyspace::Enable { keyspace_id: 0 })]
     #[tokio::test]
-    async fn test_pessimistic_heartbeat() -> Result<(), io::Error> {
+    async fn test_pessimistic_heartbeat(#[case] keyspace: Keyspace) -> Result<(), io::Error> {
         let heartbeats = Arc::new(AtomicUsize::new(0));
         let heartbeats_cloned = heartbeats.clone();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -1632,6 +1680,7 @@ mod tests {
             pd_client,
             TransactionOptions::new_pessimistic()
                 .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_secs(1))),
+            keyspace,
         );
         heartbeat_txn.put(key1.clone(), "foo").await.unwrap();
         assert_eq!(heartbeats.load(Ordering::SeqCst), 0);

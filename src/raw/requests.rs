@@ -1,22 +1,14 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::any::Any;
-use std::ops::Range;
-use std::sync::Arc;
-use std::time::Duration;
-
-use async_trait::async_trait;
-use futures::stream::BoxStream;
-use tonic::transport::Channel;
-
 use super::RawRpcRequest;
-use crate::collect_first;
+use crate::collect_single;
+use crate::kv::KvPairTTL;
 use crate::pd::PdClient;
 use crate::proto::kvrpcpb;
-use crate::proto::kvrpcpb::ApiVersion;
 use crate::proto::metapb;
 use crate::proto::tikvpb::tikv_client::TikvClient;
 use crate::range_request;
+use crate::region::RegionWithLeader;
 use crate::request::plan::ResponseWithShard;
 use crate::request::Collect;
 use crate::request::CollectSingle;
@@ -41,6 +33,13 @@ use crate::Key;
 use crate::KvPair;
 use crate::Result;
 use crate::Value;
+use async_trait::async_trait;
+use futures::stream::BoxStream;
+use std::any::Any;
+use std::ops::Range;
+use std::sync::Arc;
+use std::time::Duration;
+use tonic::transport::Channel;
 
 pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::RawGetRequest {
     let mut req = kvrpcpb::RawGetRequest::default();
@@ -55,7 +54,7 @@ impl KvRequest for kvrpcpb::RawGetRequest {
 }
 
 shardable_key!(kvrpcpb::RawGetRequest);
-collect_first!(kvrpcpb::RawGetResponse);
+collect_single!(kvrpcpb::RawGetResponse);
 
 impl SingleKey for kvrpcpb::RawGetRequest {
     fn key(&self) -> &Vec<u8> {
@@ -104,15 +103,54 @@ impl Merge<kvrpcpb::RawBatchGetResponse> for Collect {
     }
 }
 
+pub fn new_raw_get_key_ttl_request(
+    key: Vec<u8>,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawGetKeyTtlRequest {
+    let mut req = kvrpcpb::RawGetKeyTtlRequest::default();
+    req.key = key;
+    req.maybe_set_cf(cf);
+
+    req
+}
+
+impl KvRequest for kvrpcpb::RawGetKeyTtlRequest {
+    type Response = kvrpcpb::RawGetKeyTtlResponse;
+}
+
+shardable_key!(kvrpcpb::RawGetKeyTtlRequest);
+collect_single!(kvrpcpb::RawGetKeyTtlResponse);
+
+impl SingleKey for kvrpcpb::RawGetKeyTtlRequest {
+    fn key(&self) -> &Vec<u8> {
+        &self.key
+    }
+}
+
+impl Process<kvrpcpb::RawGetKeyTtlResponse> for DefaultProcessor {
+    type Out = Option<u64>;
+
+    fn process(&self, input: Result<kvrpcpb::RawGetKeyTtlResponse>) -> Result<Self::Out> {
+        let input = input?;
+        Ok(if input.not_found {
+            None
+        } else {
+            Some(input.ttl)
+        })
+    }
+}
+
 pub fn new_raw_put_request(
     key: Vec<u8>,
     value: Vec<u8>,
+    ttl: u64,
     cf: Option<ColumnFamily>,
     atomic: bool,
 ) -> kvrpcpb::RawPutRequest {
     let mut req = kvrpcpb::RawPutRequest::default();
     req.key = key;
     req.value = value;
+    req.ttl = ttl;
     req.maybe_set_cf(cf);
     req.for_cas = atomic;
 
@@ -124,7 +162,7 @@ impl KvRequest for kvrpcpb::RawPutRequest {
 }
 
 shardable_key!(kvrpcpb::RawPutRequest);
-collect_first!(kvrpcpb::RawPutResponse);
+collect_single!(kvrpcpb::RawPutResponse);
 impl SingleKey for kvrpcpb::RawPutRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -133,11 +171,13 @@ impl SingleKey for kvrpcpb::RawPutRequest {
 
 pub fn new_raw_batch_put_request(
     pairs: Vec<kvrpcpb::KvPair>,
+    ttls: Vec<u64>,
     cf: Option<ColumnFamily>,
     atomic: bool,
 ) -> kvrpcpb::RawBatchPutRequest {
     let mut req = kvrpcpb::RawBatchPutRequest::default();
     req.pairs = pairs;
+    req.ttls = ttls;
     req.maybe_set_cf(cf);
     req.for_cas = atomic;
 
@@ -149,23 +189,28 @@ impl KvRequest for kvrpcpb::RawBatchPutRequest {
 }
 
 impl Shardable for kvrpcpb::RawBatchPutRequest {
-    type Shard = Vec<kvrpcpb::KvPair>;
+    type Shard = Vec<(kvrpcpb::KvPair, u64)>;
 
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
-        let mut pairs = self.pairs.clone();
-        pairs.sort_by(|a, b| a.key.cmp(&b.key));
-        store_stream_for_keys(
-            pairs.into_iter().map(Into::<KvPair>::into),
-            pd_client.clone(),
-        )
+        let kvs = self.pairs.clone();
+        let ttls = self.ttls.clone();
+        let mut kv_ttl: Vec<KvPairTTL> = kvs
+            .into_iter()
+            .zip(ttls)
+            .map(|(kv, ttl)| KvPairTTL(kv, ttl))
+            .collect();
+        kv_ttl.sort_by(|a, b| a.0.key.cmp(&b.0.key));
+        store_stream_for_keys(kv_ttl.into_iter(), pd_client.clone())
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region_with_leader.context()?);
-        self.pairs = shard;
+        let (pairs, ttls) = shard.into_iter().unzip();
+        self.set_leader(&store.region_with_leader)?;
+        self.pairs = pairs;
+        self.ttls = ttls;
         Ok(())
     }
 }
@@ -188,7 +233,7 @@ impl KvRequest for kvrpcpb::RawDeleteRequest {
 }
 
 shardable_key!(kvrpcpb::RawDeleteRequest);
-collect_first!(kvrpcpb::RawDeleteResponse);
+collect_single!(kvrpcpb::RawDeleteResponse);
 impl SingleKey for kvrpcpb::RawDeleteRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -237,13 +282,20 @@ pub fn new_raw_scan_request(
     end_key: Vec<u8>,
     limit: u32,
     key_only: bool,
+    reverse: bool,
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawScanRequest {
     let mut req = kvrpcpb::RawScanRequest::default();
-    req.start_key = start_key;
-    req.end_key = end_key;
+    if !reverse {
+        req.start_key = start_key;
+        req.end_key = end_key;
+    } else {
+        req.start_key = end_key;
+        req.end_key = start_key;
+    }
     req.limit = limit;
     req.key_only = key_only;
+    req.reverse = reverse;
     req.maybe_set_cf(cf);
 
     req
@@ -253,7 +305,7 @@ impl KvRequest for kvrpcpb::RawScanRequest {
     type Response = kvrpcpb::RawScanResponse;
 }
 
-range_request!(kvrpcpb::RawScanRequest); // TODO: support reverse raw scan.
+range_request!(kvrpcpb::RawScanRequest);
 shardable_range!(kvrpcpb::RawScanRequest);
 
 impl Merge<kvrpcpb::RawScanResponse> for Collect {
@@ -297,7 +349,7 @@ impl Shardable for kvrpcpb::RawBatchScanRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_context(store.region_with_leader.context()?);
+        self.set_leader(&store.region_with_leader)?;
         self.ranges = shard;
         Ok(())
     }
@@ -336,7 +388,7 @@ impl KvRequest for kvrpcpb::RawCasRequest {
 }
 
 shardable_key!(kvrpcpb::RawCasRequest);
-collect_first!(kvrpcpb::RawCasResponse);
+collect_single!(kvrpcpb::RawCasResponse);
 impl SingleKey for kvrpcpb::RawCasRequest {
     fn key(&self) -> &Vec<u8> {
         &self.key
@@ -399,11 +451,11 @@ impl Request for RawCoprocessorRequest {
         self.inner.as_any()
     }
 
-    fn set_context(&mut self, context: kvrpcpb::Context) {
-        self.inner.set_context(context);
+    fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()> {
+        self.inner.set_leader(leader)
     }
 
-    fn set_api_version(&mut self, api_version: ApiVersion) {
+    fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {
         self.inner.set_api_version(api_version);
     }
 }
@@ -423,8 +475,8 @@ impl Shardable for RawCoprocessorRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.inner.context = Some(store.region_with_leader.context()?);
-        self.inner.ranges = shard.clone();
+        self.set_leader(&store.region_with_leader)?;
+        self.inner.ranges.clone_from(&shard);
         self.inner.data = (self.data_builder)(store.region_with_leader.region.clone(), shard);
         Ok(())
     }
@@ -435,7 +487,7 @@ impl
     Process<Vec<Result<ResponseWithShard<kvrpcpb::RawCoprocessorResponse, Vec<kvrpcpb::KeyRange>>>>>
     for DefaultProcessor
 {
-    type Out = Vec<(Vec<u8>, Vec<Range<Key>>)>;
+    type Out = Vec<(Vec<Range<Key>>, Vec<u8>)>;
 
     fn process(
         &self,
@@ -448,11 +500,11 @@ impl
             .map(|shard_resp| {
                 shard_resp.map(|ResponseWithShard(resp, ranges)| {
                     (
-                        resp.data,
                         ranges
                             .into_iter()
                             .map(|range| range.start_key.into()..range.end_key.into())
                             .collect(),
+                        resp.data,
                     )
                 })
             })
@@ -472,6 +524,7 @@ macro_rules! impl_raw_rpc_request {
 
 impl_raw_rpc_request!(RawGetRequest);
 impl_raw_rpc_request!(RawBatchGetRequest);
+impl_raw_rpc_request!(RawGetKeyTtlRequest);
 impl_raw_rpc_request!(RawPutRequest);
 impl_raw_rpc_request!(RawBatchPutRequest);
 impl_raw_rpc_request!(RawDeleteRequest);
@@ -482,22 +535,35 @@ impl_raw_rpc_request!(RawDeleteRangeRequest);
 impl_raw_rpc_request!(RawCasRequest);
 
 impl HasLocks for kvrpcpb::RawGetResponse {}
+
 impl HasLocks for kvrpcpb::RawBatchGetResponse {}
+
+impl HasLocks for kvrpcpb::RawGetKeyTtlResponse {}
+
 impl HasLocks for kvrpcpb::RawPutResponse {}
+
 impl HasLocks for kvrpcpb::RawBatchPutResponse {}
+
 impl HasLocks for kvrpcpb::RawDeleteResponse {}
+
 impl HasLocks for kvrpcpb::RawBatchDeleteResponse {}
+
 impl HasLocks for kvrpcpb::RawScanResponse {}
+
 impl HasLocks for kvrpcpb::RawBatchScanResponse {}
+
 impl HasLocks for kvrpcpb::RawDeleteRangeResponse {}
+
 impl HasLocks for kvrpcpb::RawCasResponse {}
+
 impl HasLocks for kvrpcpb::RawCoprocessorResponse {}
 
 #[cfg(test)]
 mod test {
     use std::any::Any;
-
-    use futures::executor;
+    use std::collections::HashMap;
+    use std::ops::Deref;
+    use std::sync::Mutex;
 
     use super::*;
     use crate::backoff::DEFAULT_REGION_BACKOFF;
@@ -505,13 +571,14 @@ mod test {
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb;
-    use crate::request::codec::EncodedRequest;
+    use crate::request::Keyspace;
     use crate::request::Plan;
-    use crate::Key;
 
-    #[test]
-    #[ignore]
-    fn test_raw_scan() {
+    #[rstest::rstest]
+    #[case(Keyspace::Disable)]
+    #[case(Keyspace::Enable { keyspace_id: 0 })]
+    #[tokio::test]
+    async fn test_raw_scan(#[case] keyspace: Keyspace) {
         let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |req: &dyn Any| {
                 let req: &kvrpcpb::RawScanRequest = req.downcast_ref().unwrap();
@@ -540,15 +607,68 @@ mod test {
             key_only: true,
             ..Default::default()
         };
-        let encoded_scan = EncodedRequest::new(scan, client.get_codec());
-        let plan = crate::request::PlanBuilder::new(client, encoded_scan)
-            .resolve_lock(OPTIMISTIC_BACKOFF)
+        let plan = crate::request::PlanBuilder::new(client, keyspace, scan)
+            .resolve_lock(OPTIMISTIC_BACKOFF, keyspace)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
-        let scan = executor::block_on(async { plan.execute().await }).unwrap();
+        let scan = plan.execute().await.unwrap();
 
-        assert_eq!(scan.len(), 10);
+        assert_eq!(scan.len(), 49);
         // FIXME test the keys returned.
+    }
+
+    #[tokio::test]
+    async fn test_raw_batch_put() -> Result<()> {
+        let region1_kvs = vec![KvPair(vec![9].into(), vec![12])];
+        let region1_ttls = vec![0];
+        let region2_kvs = vec![
+            KvPair(vec![11].into(), vec![12]),
+            KvPair("FFF".to_string().as_bytes().to_vec().into(), vec![12]),
+        ];
+        let region2_ttls = vec![0, 1];
+
+        let expected_map = HashMap::from([
+            (region1_kvs.clone(), region1_ttls.clone()),
+            (region2_kvs.clone(), region2_ttls.clone()),
+        ]);
+
+        let pairs: Vec<kvrpcpb::KvPair> = [region1_kvs, region2_kvs]
+            .concat()
+            .into_iter()
+            .map(|kv| kv.into())
+            .collect();
+        let ttls = [region1_ttls, region2_ttls].concat();
+        let cf = ColumnFamily::Default;
+
+        let actual_map: Arc<Mutex<HashMap<Vec<KvPair>, Vec<u64>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let fut_actual_map = actual_map.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let req: &kvrpcpb::RawBatchPutRequest = req.downcast_ref().unwrap();
+                let kv_pair = req
+                    .pairs
+                    .clone()
+                    .into_iter()
+                    .map(|p| p.into())
+                    .collect::<Vec<KvPair>>();
+                let ttls = req.ttls.clone();
+                fut_actual_map.lock().unwrap().insert(kv_pair, ttls);
+                let resp = kvrpcpb::RawBatchPutResponse::default();
+                Ok(Box::new(resp) as Box<dyn Any>)
+            },
+        )));
+
+        let batch_put_request =
+            new_raw_batch_put_request(pairs.clone(), ttls.clone(), Some(cf), false);
+        let keyspace = Keyspace::Enable { keyspace_id: 0 };
+        let plan = crate::request::PlanBuilder::new(client, keyspace, batch_put_request)
+            .resolve_lock(OPTIMISTIC_BACKOFF, keyspace)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .plan();
+        let _ = plan.execute().await;
+        assert_eq!(actual_map.lock().unwrap().deref(), &expected_map);
+        Ok(())
     }
 }

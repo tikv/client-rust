@@ -6,7 +6,6 @@ import "kvrpcpb.proto";
 import "gogoproto/gogo.proto";
 import "rustproto.proto";
 import "metapb.proto";
-import "span.proto";
 
 option (gogoproto.marshaler_all) = true;
 option (gogoproto.sizer_all) = true;
@@ -38,6 +37,10 @@ message Request {
     bool is_trace_enabled = 9;
     // paging_size is 0 when it's disabled, otherwise, it should be a positive number.
     uint64 paging_size = 10;
+    // tasks stores the batched coprocessor tasks sent to the same tikv store.
+    repeated StoreBatchTask tasks = 11;
+    uint64 connection_id = 12; // This is the session id between a client and tidb
+    string connection_alias = 13; // This is the session alias between a client and tidb
 }
 
 message Response {
@@ -57,13 +60,26 @@ message Response {
     bool is_cache_hit = 7;
     uint64 cache_last_version = 8;
     bool can_be_cached = 9;
-    repeated span.SpanSet spans = 10;
+
+    reserved 10;
+
+    // Contains the latest buckets version of the region.
+    // Clients should query PD to update buckets in cache if its is stale.
+    uint64 latest_buckets_version = 12;
+
+    // StoreBatchTaskResponse is the collection of batch task responses.
+    repeated StoreBatchTaskResponse batch_responses = 13;
 }
 
 message RegionInfo {
     uint64 region_id = 1;
     metapb.RegionEpoch region_epoch = 2;
     repeated KeyRange ranges = 3;
+}
+
+message TableRegions {
+    int64 physical_table_id = 1;
+    repeated RegionInfo regions = 2;
 }
 
 message BatchRequest {
@@ -74,6 +90,11 @@ message BatchRequest {
     uint64 start_ts = 5;
     // Any schema-ful storage to validate schema correctness if necessary.
     int64 schema_ver = 6;
+    // Used for partition table scan
+    repeated TableRegions table_regions = 7;
+    string log_id = 8;
+    uint64 connection_id = 9; // This is the session id between a client and tidb
+    string connection_alias = 10; // This is the session alias between a client and tidb
 }
 
 message BatchResponse {
@@ -81,4 +102,21 @@ message BatchResponse {
     string other_error = 2;
     kvrpcpb.ExecDetails exec_details = 3;
     repeated metapb.Region retry_regions = 4;
+}
+
+message StoreBatchTask {
+    uint64 region_id = 1;
+    metapb.RegionEpoch region_epoch = 2;
+    metapb.Peer peer = 3;
+    repeated KeyRange ranges = 4;
+    uint64 task_id = 5;
+}
+
+message StoreBatchTaskResponse {
+    bytes data = 1 [(gogoproto.customtype) = "github.com/pingcap/kvproto/pkg/sharedbytes.SharedBytes", (gogoproto.nullable) = false];
+    errorpb.Error region_error = 2;
+    kvrpcpb.LockInfo locked = 3;
+    string other_error = 4;
+    uint64 task_id = 5;
+    kvrpcpb.ExecDetailsV2 exec_details_v2 = 6;
 }

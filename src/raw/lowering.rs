@@ -28,21 +28,33 @@ pub fn new_raw_batch_get_request(
     requests::new_raw_batch_get_request(keys.map(Into::into).collect(), cf)
 }
 
+pub fn new_raw_get_key_ttl_request(
+    key: Key,
+    cf: Option<ColumnFamily>,
+) -> kvrpcpb::RawGetKeyTtlRequest {
+    requests::new_raw_get_key_ttl_request(key.into(), cf)
+}
+
 pub fn new_raw_put_request(
     key: Key,
     value: Value,
     cf: Option<ColumnFamily>,
+    ttl: u64,
     atomic: bool,
 ) -> kvrpcpb::RawPutRequest {
-    requests::new_raw_put_request(key.into(), value, cf, atomic)
+    requests::new_raw_put_request(key.into(), value, ttl, cf, atomic)
 }
 
 pub fn new_raw_batch_put_request(
     pairs: impl Iterator<Item = KvPair>,
+    ttls: impl Iterator<Item = u64>,
     cf: Option<ColumnFamily>,
     atomic: bool,
 ) -> kvrpcpb::RawBatchPutRequest {
-    requests::new_raw_batch_put_request(pairs.map(Into::into).collect(), cf, atomic)
+    let pairs = pairs.map(Into::into).collect::<Vec<_>>();
+    let ttls = ttls.take(pairs.len()).collect::<Vec<_>>();
+    assert_eq!(pairs.len(), ttls.len());
+    requests::new_raw_batch_put_request(pairs, ttls, cf, atomic)
 }
 
 pub fn new_raw_delete_request(
@@ -72,6 +84,7 @@ pub fn new_raw_scan_request(
     range: BoundRange,
     limit: u32,
     key_only: bool,
+    reverse: bool,
     cf: Option<ColumnFamily>,
 ) -> kvrpcpb::RawScanRequest {
     let (start_key, end_key) = range.into_keys();
@@ -80,6 +93,7 @@ pub fn new_raw_scan_request(
         end_key.unwrap_or_default().into(),
         limit,
         key_only,
+        reverse,
         cf,
     )
 }

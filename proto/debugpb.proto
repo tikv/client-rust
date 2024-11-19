@@ -73,6 +73,18 @@ service Debug {
 
     // Get all region IDs in the store
     rpc GetAllRegionsInStore(GetAllRegionsInStoreRequest) returns (GetAllRegionsInStoreResponse) {}
+
+    // Make this TiKV node return to the status on this node to certain ts.
+    rpc ResetToVersion(ResetToVersionRequest) returns (ResetToVersionResponse) {}
+
+    // Get range properties
+    rpc GetRangeProperties(GetRangePropertiesRequest) returns (GetRangePropertiesResponse) {}
+
+    // Flashback given key range to a specified version.
+    rpc FlashbackToVersion(FlashbackToVersionRequest) returns (FlashbackToVersionResponse) {}
+    
+    // GetRegionReadProgress returns the some useful info in RegionReadProgress
+    rpc GetRegionReadProgress(GetRegionReadProgressRequest) returns (GetRegionReadProgressResponse) {}
 }
 
 enum DB {
@@ -258,4 +270,72 @@ message GetAllRegionsInStoreRequest {
 
 message GetAllRegionsInStoreResponse {
     repeated uint64 regions = 1;
+}
+
+message ResetToVersionRequest {
+    uint64 ts = 1;
+}
+
+message ResetToVersionResponse {
+}
+
+message GetRangePropertiesRequest {
+    bytes start_key = 1;
+    bytes end_key = 2;
+}
+
+message GetRangePropertiesResponse {
+    message RangeProperty {
+        string key = 1;
+        string value = 2;
+    }
+
+    repeated RangeProperty properties = 1;
+}
+
+message FlashbackToVersionRequest {
+    kvrpcpb.Context context = 1;
+    uint64 version = 2;
+    uint64 region_id = 3;
+    bytes start_key = 4;
+    bytes end_key = 5;
+    uint64 start_ts = 6;
+    uint64 commit_ts = 7;
+}
+
+message FlashbackToVersionResponse {
+    string error = 1;
+}
+
+message GetRegionReadProgressRequest {
+    uint64 region_id = 1;
+    bool log_locks = 2; // when set to true, print a log of the locks with min start_ts in the resolver.
+    uint64 min_start_ts = 3; // only print locks whose start_ts >= min_start_ts. Can be used to find certain transaction.
+}
+
+message GetRegionReadProgressResponse {
+    // below are from region_read_progress module
+    uint64 safe_ts = 1;
+    uint64 applied_index = 2;
+    uint64 pending_front_applied_index = 3;
+    uint64 pending_front_ts = 4;
+    uint64 pending_back_applied_index = 5;
+    uint64 pending_back_ts = 6;
+    bool region_read_progress_paused = 7;
+    uint64 duration_to_last_update_safe_ts_ms = 8;
+    uint64 duration_to_last_consume_leader_ms = 9;
+    bool region_read_progress_exist = 10;
+    uint64 read_state_ts = 18;
+    uint64 read_state_apply_index = 19;
+    bool discard = 20;
+    
+    // below are from resolved-ts module
+    uint64 resolved_ts = 11;
+    uint64 resolver_tracked_index = 12;
+    bool resolver_exist = 13;
+    bool resolver_stopped = 14;
+    uint64 num_locks = 16;
+    uint64 num_transactions = 17;
+
+    string error = 15;
 }

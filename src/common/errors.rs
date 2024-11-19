@@ -50,6 +50,7 @@ pub enum Error {
     /// Wraps a `grpcio::Error`.
     #[error("gRPC error: {0}")]
     Grpc(#[from] tonic::transport::Error),
+    /// Wraps a `reqwest::Error`.
     /// Wraps a `grpcio::Error`.
     #[error("gRPC api error: {0}")]
     GrpcAPI(#[from] tonic::Status),
@@ -108,6 +109,8 @@ pub enum Error {
         inner: Box<Error>,
         success_keys: Vec<Vec<u8>>,
     },
+    #[error("Keyspace not found: {0}")]
+    KeyspaceNotFound(String),
 }
 
 impl From<crate::proto::errorpb::Error> for Error {
