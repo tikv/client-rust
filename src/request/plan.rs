@@ -17,6 +17,7 @@ use crate::pd::PdClient;
 use crate::proto::errorpb;
 use crate::proto::errorpb::EpochNotMatch;
 use crate::proto::kvrpcpb;
+use crate::region::RegionVerId;
 use crate::request::shard::HasNextBatch;
 use crate::request::NextBatch;
 use crate::request::Shardable;
@@ -115,13 +116,10 @@ where
         let shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
         let mut handles = Vec::new();
         for shard in shards {
-            let (shard, region_store) = shard?;
-            let mut clone = current_plan.clone();
-            clone.apply_shard(shard, &region_store)?;
             let handle = tokio::spawn(Self::single_shard_handler(
                 pd_client.clone(),
-                clone,
-                region_store,
+                current_plan.clone(),
+                shard,
                 backoff.clone(),
                 permits.clone(),
                 preserve_region_results,
@@ -152,12 +150,31 @@ where
     #[async_recursion]
     async fn single_shard_handler(
         pd_client: Arc<PdC>,
-        plan: P,
-        region_store: RegionStore,
+        mut plan: P,
+        shard: Result<(<P as Shardable>::Shard, RegionStore)>,
         mut backoff: Backoff,
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
     ) -> Result<<Self as Plan>::Result> {
+        let region_store = match shard.and_then(|(shard, region_store)| {
+            plan.apply_shard(shard, &region_store).map(|_| region_store)
+        }) {
+            Ok(region_store) => region_store,
+            Err(Error::LeaderNotFound { region }) => {
+                return Self::handle_other_error(
+                    pd_client,
+                    plan,
+                    region.clone(),
+                    backoff,
+                    permits,
+                    preserve_region_results,
+                    Error::LeaderNotFound { region },
+                )
+                .await
+            }
+            Err(err) => return Err(err),
+        };
+
         // limit concurrent requests
         let permit = permits.acquire().await.unwrap();
         let res = plan.execute().await;
@@ -166,10 +183,10 @@ where
         let mut resp = match res {
             Ok(resp) => resp,
             Err(e) if is_grpc_error(&e) => {
-                return Self::handle_grpc_error(
+                return Self::handle_other_error(
                     pd_client,
                     plan,
-                    region_store,
+                    region_store.region_with_leader.ver_id(),
                     backoff,
                     permits,
                     preserve_region_results,
@@ -303,18 +320,17 @@ where
         Ok(false)
     }
 
-    async fn handle_grpc_error(
+    async fn handle_other_error(
         pd_client: Arc<PdC>,
         plan: P,
-        region_store: RegionStore,
+        region: RegionVerId,
         mut backoff: Backoff,
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
         e: Error,
     ) -> Result<<Self as Plan>::Result> {
         debug!("handle grpc error: {:?}", e);
-        let ver_id = region_store.region_with_leader.ver_id();
-        pd_client.invalidate_region_cache(ver_id).await;
+        pd_client.invalidate_region_cache(region).await;
         match backoff.next_delay_duration() {
             Some(duration) => {
                 sleep(duration).await;

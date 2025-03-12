@@ -5,6 +5,7 @@ use std::result;
 use thiserror::Error;
 
 use crate::proto::kvrpcpb;
+use crate::region::RegionVerId;
 use crate::BoundRange;
 
 /// An error originating from the TiKV client or dependencies.
@@ -89,8 +90,8 @@ pub enum Error {
     #[error("Region {} is not found in the response", region_id)]
     RegionNotFoundInResponse { region_id: u64 },
     /// No leader is found for the given id.
-    #[error("Leader of region {} is not found", region_id)]
-    LeaderNotFound { region_id: u64 },
+    #[error("Leader of region {} is not found", region.id)]
+    LeaderNotFound { region: RegionVerId },
     /// Scan limit exceeds the maximum
     #[error("Limit {} exceeds max scan limit {}", limit, max_limit)]
     MaxScanLimitExceeded { limit: u32, max_limit: u32 },
