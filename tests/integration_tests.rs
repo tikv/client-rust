@@ -5,7 +5,6 @@
 //! Test names should begin with one of the following:
 //! 1. txn_
 //! 2. raw_
-//! 3. misc_
 //!
 //! We make use of the convention to control the order of tests in CI, to allow
 //! transactional and raw tests to coexist, since transactional requests have

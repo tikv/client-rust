@@ -55,7 +55,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case: ["integration-test-txn", "integration-test-raw", "integration-test-misc"]
+        case: ["integration-test-txn", "integration-test-raw"]
     env:
       CARGO_INCREMENTAL: 0
     runs-on: ubuntu-latest
