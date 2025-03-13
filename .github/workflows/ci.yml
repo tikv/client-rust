@@ -52,6 +52,10 @@ jobs:
 
   integration-test:
     name: integration test
+    strategy:
+      fail-fast: false
+      matrix:
+        case: ["integration-test-txn", "integration-test-raw", "integration-test-misc"]
     env:
       CARGO_INCREMENTAL: 0
     runs-on: ubuntu-latest
@@ -79,4 +83,4 @@ jobs:
       - name: Install latest nextest release
         uses: taiki-e/install-action@nextest
       - name: integration test
-        run: MULTI_REGION=1 make integration-test
+        run: MULTI_REGION=1 make ${{ matrix.case }}
