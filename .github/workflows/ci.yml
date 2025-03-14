@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - master
+      - cse
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -58,6 +59,7 @@ jobs:
         case: ["integration-test-txn", "integration-test-raw"]
     env:
       CARGO_INCREMENTAL: 0
+      TIKV_VERSION: v7.5.5
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -73,8 +75,8 @@ jobs:
       - name: start tiup playground
         run: |
           # use latest stable version
-          ~/.tiup/bin/tiup install tikv pd
-          ~/.tiup/bin/tiup playground --mode tikv-slim --kv 3 --without-monitor --kv.config config/tikv.toml --pd.config config/pd.toml &
+          ~/.tiup/bin/tiup install tikv:${{ env.TIKV_VERSION }} pd:${{ env.TIKV_VERSION }}
+          ~/.tiup/bin/tiup playground ${{ env.TIKV_VERSION }} --mode tikv-slim --kv 3 --without-monitor --kv.config config/tikv.toml --pd.config config/pd.toml &
           while :; do
             echo "waiting cluster to be ready"
             [[ "$(curl -I http://127.0.0.1:2379/pd/api/v1/regions 2>/dev/null | head -n 1 | cut -d$' ' -f2)" -ne "405" ]] || break
