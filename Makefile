@@ -1,6 +1,6 @@
 export RUSTFLAGS=-Dwarnings
 
-.PHONY: default check unit-test generate integration-tests integration-tests-txn integration-tests-raw test doc docker-pd docker-kv docker all
+.PHONY: default check unit-test generate integration-tests integration-tests-txn integration-tests-raw integration-test-specified test doc docker-pd docker-kv docker all
 
 export PD_ADDRS     ?= 127.0.0.1:2379
 export MULTI_REGION ?= 1
@@ -36,6 +36,8 @@ integration-test-txn: generate
 integration-test-raw: generate
 	$(RUN_INTEGRATION_TEST) raw_
 
+integration-test-specified: generate
+	$(RUN_INTEGRATION_TEST) txn_split_batch
 
 test: unit-test integration-test
 
