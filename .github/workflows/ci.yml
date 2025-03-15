@@ -76,7 +76,7 @@ jobs:
         run: |
           # use latest stable version
           ~/.tiup/bin/tiup install tikv:${{ env.TIKV_VERSION }} pd:${{ env.TIKV_VERSION }}
-          ~/.tiup/bin/tiup playground ${{ env.TIKV_VERSION }} --mode tikv-slim --kv 3 --without-monitor --kv.config config/tikv.toml --pd.config config/pd.toml &
+          ~/.tiup/bin/tiup playground ${{ env.TIKV_VERSION }} --mode tikv-slim --kv 3 --tag cluster --without-monitor --kv.config config/tikv.toml --pd.config config/pd.toml &
           while :; do
             echo "waiting cluster to be ready"
             [[ "$(curl -I http://127.0.0.1:2379/pd/api/v1/regions 2>/dev/null | head -n 1 | cut -d$' ' -f2)" -ne "405" ]] || break
@@ -84,5 +84,13 @@ jobs:
           done
       - name: Install latest nextest release
         uses: taiki-e/install-action@nextest
-      - name: integration test
+      - name: Integration test
         run: MULTI_REGION=1 make ${{ matrix.case }}
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v2
+        with:
+          name: cluster-logs
+          path: |
+            ~/.tiup/data/cluster/tikv*/*.log
+            ~/.tiup/data/cluster/pd*/*.log
