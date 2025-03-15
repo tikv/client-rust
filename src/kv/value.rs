@@ -11,5 +11,4 @@ const _PROPTEST_VALUE_MAX: usize = 1024 * 16; // 16 KB
 /// Since `Value` is just an alias for `Vec<u8>`, conversions to and from it are easy.
 ///
 /// Many functions which accept a `Value` accept an `Into<Value>`.
-
 pub type Value = Vec<u8>;
