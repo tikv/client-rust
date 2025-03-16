@@ -21,9 +21,7 @@ generate:
 check: generate
 	cargo check --all --all-targets --features "${ALL_FEATURES}"
 	cargo fmt -- --check
-	cargo clippy --all-targets --features "${ALL_FEATURES}" -- \
-		-D clippy::all \
-		-A clippy::doc_lazy_continuation
+	cargo clippy --all-targets --features "${ALL_FEATURES}" -- -D clippy::all
 
 unit-test: generate
 	cargo nextest run --all --no-default-features
