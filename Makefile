@@ -7,11 +7,11 @@ export MULTI_REGION ?= 1
 
 ALL_FEATURES := integration-tests
 
-INTEGRATION_TEST_ARGS := --features "integration-tests"
+INTEGRATION_TEST_ARGS := --features "integration-tests" --test-threads 1
 
 RUN_INTEGRATION_TEST := cargo nextest run \
 	--config-file $(shell pwd)/config/nextest.toml -P ci \
-	--all ${INTEGRATION_TEST_ARGS} --test-threads 1
+	--all ${INTEGRATION_TEST_ARGS}
 
 default: check
 
