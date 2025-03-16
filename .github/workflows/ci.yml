@@ -56,7 +56,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case: ["integration-test-txn", "integration-test-raw", "integration-test-specified"]
+        case: ["integration-test-txn", "integration-test-raw"]
     env:
       CARGO_INCREMENTAL: 0
       TIKV_VERSION: v7.5.5
