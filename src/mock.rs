@@ -228,6 +228,8 @@ impl PdClient for MockPdClient {
 
     async fn invalidate_region_cache(&self, _ver_id: crate::region::RegionVerId) {}
 
+    async fn invalidate_store_cache(&self, _store_id: crate::region::StoreId) {}
+
     fn get_codec(&self) -> &Self::Codec {
         &self.codec
     }

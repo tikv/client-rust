@@ -18,6 +18,7 @@ use crate::proto::errorpb;
 use crate::proto::errorpb::EpochNotMatch;
 use crate::proto::kvrpcpb;
 use crate::region::RegionVerId;
+use crate::region::StoreId;
 use crate::request::shard::HasNextBatch;
 use crate::request::NextBatch;
 use crate::request::Shardable;
@@ -165,6 +166,7 @@ where
                     pd_client,
                     plan,
                     region.clone(),
+                    None,
                     backoff,
                     permits,
                     preserve_region_results,
@@ -187,6 +189,7 @@ where
                     pd_client,
                     plan,
                     region_store.region_with_leader.ver_id(),
+                    region_store.region_with_leader.get_store_id().ok(),
                     backoff,
                     permits,
                     preserve_region_results,
@@ -234,6 +237,7 @@ where
         region_store: RegionStore,
     ) -> Result<bool> {
         let ver_id = region_store.region_with_leader.ver_id();
+        let store_id = region_store.region_with_leader.get_store_id();
         if let Some(not_leader) = e.not_leader {
             if let Some(leader) = not_leader.leader {
                 match pd_client
@@ -256,6 +260,9 @@ where
             }
         } else if e.store_not_match.is_some() {
             pd_client.invalidate_region_cache(ver_id).await;
+            if let Ok(store_id) = store_id {
+                pd_client.invalidate_store_cache(store_id).await;
+            }
             Ok(false)
         } else if e.epoch_not_match.is_some() {
             Self::on_region_epoch_not_match(
@@ -276,6 +283,9 @@ where
             // TODO: pass the logger around
             // info!("unknwon region error: {:?}", e);
             pd_client.invalidate_region_cache(ver_id).await;
+            if let Ok(store_id) = store_id {
+                pd_client.invalidate_store_cache(store_id).await;
+            }
             Ok(false)
         }
     }
@@ -320,10 +330,12 @@ where
         Ok(false)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn handle_other_error(
         pd_client: Arc<PdC>,
         plan: P,
         region: RegionVerId,
+        store: Option<StoreId>,
         mut backoff: Backoff,
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
@@ -331,6 +343,11 @@ where
     ) -> Result<<Self as Plan>::Result> {
         debug!("handle grpc error: {:?}", e);
         pd_client.invalidate_region_cache(region).await;
+        if is_grpc_error(&e) {
+            if let Some(store_id) = store {
+                pd_client.invalidate_store_cache(store_id).await;
+            }
+        }
         match backoff.next_delay_duration() {
             Some(duration) => {
                 sleep(duration).await;

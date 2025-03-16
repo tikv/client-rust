@@ -19,6 +19,7 @@ use crate::proto::metapb;
 use crate::region::RegionId;
 use crate::region::RegionVerId;
 use crate::region::RegionWithLeader;
+use crate::region::StoreId;
 use crate::region_cache::RegionCache;
 use crate::request::codec::{ApiV1TxnCodec, Codec};
 use crate::store::KvConnect;
@@ -208,6 +209,8 @@ pub trait PdClient: Send + Sync + 'static {
 
     async fn invalidate_region_cache(&self, ver_id: RegionVerId);
 
+    async fn invalidate_store_cache(&self, store_id: StoreId);
+
     /// Get the codec carried by `PdClient`.
     /// The purpose of carrying the codec is to avoid passing it on so many calling paths.
     fn get_codec(&self) -> &Self::Codec;
@@ -281,6 +284,10 @@ impl<Cod: Codec, KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClien
 
     async fn invalidate_region_cache(&self, ver_id: RegionVerId) {
         self.region_cache.invalidate_region_cache(ver_id).await
+    }
+
+    async fn invalidate_store_cache(&self, store_id: StoreId) {
+        self.region_cache.invalidate_store_cache(store_id).await
     }
 
     fn get_codec(&self) -> &Self::Codec {
