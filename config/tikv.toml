@@ -14,3 +14,6 @@ max-open-files = 10000
 
 [raftdb]
 max-open-files = 10000
+
+[storage]
+reserve-space = "0MiB"
