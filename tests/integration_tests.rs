@@ -191,16 +191,12 @@ async fn txn_split_batch() -> Result<()> {
     let mut txn = client.begin_optimistic().await?;
     let mut rng = thread_rng();
 
-    // testing with raft-entry-max-size = "256KiB"
+    // testing with raft-entry-max-size = "1MB"
     let keys_count: usize = 1000;
-    let val_len = 1024;
+    let val_len = 15000;
 
     let values: Vec<_> = (0..keys_count)
-        .map(|_| {
-            let mut buf = vec![0; val_len];
-            rng.fill(&mut buf[..]);
-            buf
-        })
+        .map(|_| (0..val_len).map(|_| rng.gen::<u8>()).collect::<Vec<_>>())
         .collect();
 
     for (i, value) in values.iter().enumerate() {
