@@ -2,6 +2,7 @@
 
 #![allow(clippy::large_enum_variant)]
 #![allow(clippy::enum_variant_names)]
+#![allow(clippy::doc_lazy_continuation)]
 
 pub use protos::*;
 

@@ -253,7 +253,7 @@ pub fn new_prewrite_request(
     req.start_version = start_version;
     req.lock_ttl = lock_ttl;
     // FIXME: Lite resolve lock is currently disabled
-    req.txn_size = std::u64::MAX;
+    req.txn_size = u64::MAX;
 
     req
 }
@@ -906,7 +906,6 @@ impl Merge<kvrpcpb::UnsafeDestroyRangeResponse> for Collect {
 }
 
 #[cfg(test)]
-#[cfg_attr(feature = "protobuf-codec", allow(clippy::useless_conversion))]
 mod tests {
     use crate::common::Error::PessimisticLockError;
     use crate::common::Error::ResolveLockError;

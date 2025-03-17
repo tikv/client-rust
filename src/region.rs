@@ -47,7 +47,7 @@ impl RegionWithLeader {
         self.leader
             .as_ref()
             .ok_or(Error::LeaderNotFound {
-                region_id: self.region.id,
+                region: self.ver_id(),
             })
             .map(|l| {
                 let mut ctx = kvrpcpb::Context::default();
@@ -89,7 +89,7 @@ impl RegionWithLeader {
             .as_ref()
             .cloned()
             .ok_or_else(|| Error::LeaderNotFound {
-                region_id: self.id(),
+                region: self.ver_id(),
             })
             .map(|s| s.store_id)
     }

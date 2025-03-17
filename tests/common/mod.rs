@@ -56,8 +56,8 @@ pub async fn init() -> Result<()> {
             .take(count as usize - 1)
             .map(|x| x.to_be_bytes().to_vec());
 
-        // about 43 regions with above keys.
-        ensure_region_split(keys_1.chain(keys_2), 40).await?;
+        // 10 regions is enough for most tests
+        ensure_region_split(keys_1.chain(keys_2), 10).await?;
     }
 
     clear_tikv().await;

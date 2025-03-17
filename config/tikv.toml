@@ -1,6 +1,5 @@
 [coprocessor]
-region-max-keys = 10
-region-split-keys = 7
+region-split-keys = 150
 batch-split-limit = 100
 
 [raftstore]
@@ -8,10 +7,13 @@ region-split-check-diff = "1B"
 pd-heartbeat-tick-interval = "2s"
 pd-store-heartbeat-tick-interval = "5s"
 split-region-check-tick-interval = "1s"
-raft-entry-max-size = "1MB"
+raft-entry-max-size = "256KiB"
 
 [rocksdb]
 max-open-files = 10000
 
 [raftdb]
 max-open-files = 10000
+
+[storage]
+reserve-space = "0MiB"
