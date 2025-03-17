@@ -52,7 +52,7 @@ clap = "2"
 env_logger = "0.10"
 fail = { version = "0.4", features = ["failpoints"] }
 proptest = "1"
-proptest-derive = "0.3"
+proptest-derive = "0.5.1"
 reqwest = { version = "0.11", features = ["json", "native-tls-vendored"] }
 rstest = "0.18.2"
 serde_json = "1"

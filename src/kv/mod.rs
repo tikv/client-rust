@@ -16,7 +16,7 @@ pub use value::Value;
 
 struct HexRepr<'a>(pub &'a [u8]);
 
-impl<'a> fmt::Display for HexRepr<'a> {
+impl fmt::Display for HexRepr<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for byte in self.0 {
             write!(f, "{byte:02X}")?;
