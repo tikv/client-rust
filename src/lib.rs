@@ -107,6 +107,7 @@ mod pd;
 mod proto;
 mod region;
 mod region_cache;
+#[cfg(feature = "prometheus")]
 mod stats;
 mod store;
 mod timestamp;
