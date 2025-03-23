@@ -35,7 +35,7 @@ jobs:
     name: unit test
     env:
       CARGO_INCREMENTAL: 0
-      NEXTEST_PROFILE: "CI"
+      NEXTEST_PROFILE: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,7 +59,7 @@ jobs:
         case: ["integration-test-txn", "integration-test-raw"]
     env:
       CARGO_INCREMENTAL: 0
-      NEXTEST_PROFILE: "CI"
+      NEXTEST_PROFILE: ci
       TIKV_VERSION: v8.5.1
     runs-on: ubuntu-latest
     steps:
