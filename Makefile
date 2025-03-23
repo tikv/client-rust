@@ -7,7 +7,7 @@ export MULTI_REGION ?= 1
 
 ALL_FEATURES := integration-tests
 
-NEXTEST_ARGS := --config-file $(shell pwd)/config/nextest.toml -P ci
+NEXTEST_ARGS := --config-file $(shell pwd)/config/nextest.toml
 
 INTEGRATION_TEST_ARGS := --features "integration-tests" --test-threads 1
 
