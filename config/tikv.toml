@@ -19,3 +19,4 @@ max-open-files = 10000
 [storage]
 api-version = 2
 enable-ttl = true
+reserve-space = "0MiB"
