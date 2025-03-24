@@ -1,13 +1,17 @@
 export RUSTFLAGS=-Dwarnings
 
-.PHONY: default check unit-test integration-tests test doc docker-pd docker-kv docker all
+.PHONY: default check unit-test generate integration-tests integration-tests-txn integration-tests-raw test doc docker-pd docker-kv docker all
 
 export PD_ADDRS     ?= 127.0.0.1:2379
 export MULTI_REGION ?= 1
 
 ALL_FEATURES := integration-tests
 
-INTEGRATION_TEST_ARGS := --features "integration-tests"
+NEXTEST_ARGS := --config-file $(shell pwd)/config/nextest.toml
+
+INTEGRATION_TEST_ARGS := --features "integration-tests" --test-threads 1
+
+RUN_INTEGRATION_TEST := cargo nextest run ${NEXTEST_ARGS} --all ${INTEGRATION_TEST_ARGS}
 
 default: check
 
@@ -20,12 +24,15 @@ check: generate
 	cargo clippy --all-targets --features "${ALL_FEATURES}" -- -D clippy::all
 
 unit-test: generate
-	cargo nextest run --all --no-default-features
+	cargo nextest run ${NEXTEST_ARGS} --all --no-default-features
 
-integration-test: generate
-	cargo test txn_ --all ${INTEGRATION_TEST_ARGS} -- --nocapture
-	cargo test raw_ --all ${INTEGRATION_TEST_ARGS} -- --nocapture
-	cargo test misc_ --all ${INTEGRATION_TEST_ARGS} -- --nocapture
+integration-test: integration-test-txn integration-test-raw
+
+integration-test-txn: generate
+	$(RUN_INTEGRATION_TEST) txn_
+
+integration-test-raw: generate
+	$(RUN_INTEGRATION_TEST) raw_
 
 test: unit-test integration-test
 
