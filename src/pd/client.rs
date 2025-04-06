@@ -20,6 +20,7 @@ use crate::proto::metapb;
 use crate::region::RegionId;
 use crate::region::RegionVerId;
 use crate::region::RegionWithLeader;
+use crate::region::StoreId;
 use crate::region_cache::RegionCache;
 use crate::store::KvConnect;
 use crate::store::RegionStore;
@@ -205,6 +206,8 @@ pub trait PdClient: Send + Sync + 'static {
     async fn update_leader(&self, ver_id: RegionVerId, leader: metapb::Peer) -> Result<()>;
 
     async fn invalidate_region_cache(&self, ver_id: RegionVerId);
+
+    async fn invalidate_store_cache(&self, store_id: StoreId);
 }
 
 /// This client converts requests for the logical TiKV cluster into requests
@@ -269,6 +272,10 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 
     async fn invalidate_region_cache(&self, ver_id: RegionVerId) {
         self.region_cache.invalidate_region_cache(ver_id).await
+    }
+
+    async fn invalidate_store_cache(&self, store_id: StoreId) {
+        self.region_cache.invalidate_store_cache(store_id).await
     }
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
