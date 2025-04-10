@@ -306,7 +306,13 @@ impl<Cod: Codec> PdRpcClient<Cod, TikvConnect, Cluster> {
     ) -> Result<PdRpcClient<Cod>> {
         PdRpcClient::new(
             config.clone(),
-            |security_mgr| TikvConnect::new(security_mgr, config.timeout),
+            |security_mgr| {
+                TikvConnect::new(
+                    security_mgr,
+                    config.timeout,
+                    config.grpc_max_decoding_message_size,
+                )
+            },
             |security_mgr| RetryClient::connect(pd_endpoints, security_mgr, config.timeout),
             enable_mvcc_codec,
             codec,
