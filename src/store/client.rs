@@ -25,6 +25,7 @@ pub trait KvConnect: Sized + Send + Sync + 'static {
 pub struct TikvConnect {
     security_mgr: Arc<SecurityManager>,
     timeout: Duration,
+    grpc_max_decoding_message_size: usize,
 }
 
 #[async_trait]
@@ -33,7 +34,10 @@ impl KvConnect for TikvConnect {
 
     async fn connect(&self, address: &str) -> Result<KvRpcClient> {
         self.security_mgr
-            .connect(address, TikvClient::new)
+            .connect(address, move |channel| {
+                TikvClient::new(channel)
+                    .max_decoding_message_size(self.grpc_max_decoding_message_size)
+            })
             .await
             .map(|c| KvRpcClient::new(c, self.timeout))
     }
