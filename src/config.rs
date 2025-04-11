@@ -19,9 +19,11 @@ pub struct Config {
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
     pub timeout: Duration,
+    pub grpc_max_decoding_message_size: usize,
 }
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+const DEFAULT_GRPC_MAX_DECODING_MESSAGE_SIZE: usize = 4 * 1024 * 1024; // 4MB
 
 impl Default for Config {
     fn default() -> Self {
@@ -30,6 +32,7 @@ impl Default for Config {
             cert_path: None,
             key_path: None,
             timeout: DEFAULT_REQUEST_TIMEOUT,
+            grpc_max_decoding_message_size: DEFAULT_GRPC_MAX_DECODING_MESSAGE_SIZE,
         }
     }
 }
@@ -81,6 +84,13 @@ impl Config {
     #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Set the maximum decoding message size for gRPC.
+    #[must_use]
+    pub fn with_grpc_max_decoding_message_size(mut self, size: usize) -> Self {
+        self.grpc_max_decoding_message_size = size;
         self
     }
 }
