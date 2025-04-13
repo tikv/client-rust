@@ -9,7 +9,8 @@ ALL_FEATURES := integration-tests
 
 NEXTEST_ARGS := --config-file $(shell pwd)/config/nextest.toml
 
-INTEGRATION_TEST_ARGS := --features "integration-tests" --test-threads 1
+#INTEGRATION_TEST_ARGS := --features "integration-tests" --test-threads 1
+INTEGRATION_TEST_ARGS := --features "integration-tests" --no-capture
 
 RUN_INTEGRATION_TEST := cargo nextest run ${NEXTEST_ARGS} --all ${INTEGRATION_TEST_ARGS}
 
@@ -29,7 +30,7 @@ unit-test: generate
 integration-test: integration-test-txn integration-test-raw
 
 integration-test-txn: generate
-	$(RUN_INTEGRATION_TEST) txn_
+	$(RUN_INTEGRATION_TEST) txn_split_batch
 
 integration-test-raw: generate
 	$(RUN_INTEGRATION_TEST) raw_

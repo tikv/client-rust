@@ -73,7 +73,7 @@ impl RegionWithLeader {
             .as_ref()
             .cloned()
             .ok_or_else(|| Error::LeaderNotFound {
-                region_id: self.id(),
+                region: self.ver_id(),
             })
             .map(|s| s.store_id)
     }

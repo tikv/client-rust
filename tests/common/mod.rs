@@ -46,6 +46,8 @@ pub async fn clear_tikv() {
 // To test with multiple regions, prewrite some data. Tests that hope to test
 // with multiple regions should use keys in the corresponding ranges.
 pub async fn init() -> Result<()> {
+    let _ = env_logger::try_init();
+
     if env::var(ENV_ENABLE_MULIT_REGION).is_ok() {
         // 1000 keys: 0..1000
         let keys_1 = std::iter::successors(Some(0u32), |x| Some(x + 1))
