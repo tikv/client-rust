@@ -9,7 +9,7 @@ use std::time::Instant;
 use derive_new::new;
 use fail::fail_point;
 use futures::prelude::*;
-use log::debug;
+use log::{debug, trace};
 use log::warn;
 use tokio::time::Duration;
 
@@ -132,7 +132,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
-        debug!("invoking transactional get request");
+        trace!("invoking transactional get request");
         self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
@@ -461,7 +461,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn put(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        debug!("invoking transactional put request");
+        trace!("invoking transactional put request");
         self.check_allow_operation().await?;
         let key = key.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         if self.is_pessimistic() {
