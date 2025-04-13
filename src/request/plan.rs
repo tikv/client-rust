@@ -116,6 +116,7 @@ where
         preserve_region_results: bool,
     ) -> Result<<Self as Plan>::Result> {
         let shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
+        debug!("single_plan_handler, shards: {}", shards.len());
         let mut handles = Vec::new();
         for shard in shards {
             let handle = tokio::spawn(Self::single_shard_handler(
@@ -158,11 +159,16 @@ where
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
     ) -> Result<<Self as Plan>::Result> {
+        debug!("single_shard_handler");
         let region_store = match shard.and_then(|(shard, region_store)| {
             plan.apply_shard(shard, &region_store).map(|_| region_store)
         }) {
             Ok(region_store) => region_store,
             Err(Error::LeaderNotFound { region }) => {
+                debug!(
+                    "single_shard_handler::sharding: leader not found: {:?}",
+                    region
+                );
                 return Self::handle_other_error(
                     pd_client,
                     plan,
@@ -173,9 +179,12 @@ where
                     preserve_region_results,
                     Error::LeaderNotFound { region },
                 )
-                .await
+                .await;
             }
-            Err(err) => return Err(err),
+            Err(err) => {
+                debug!("single_shard_handler::sharding, error: {:?}", err);
+                return Err(err);
+            }
         };
 
         // limit concurrent requests
@@ -186,6 +195,7 @@ where
         let mut resp = match res {
             Ok(resp) => resp,
             Err(e) if is_grpc_error(&e) => {
+                debug!("single_shard_handler:execute: grpc error: {:?}", e);
                 return Self::handle_other_error(
                     pd_client,
                     plan,
@@ -198,12 +208,17 @@ where
                 )
                 .await;
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                debug!("single_shard_handler:execute: error: {:?}", e);
+                return Err(e);
+            }
         };
 
         if let Some(e) = resp.key_errors() {
+            debug!("single_shard_handler:execute: key errors: {:?}", e);
             Ok(vec![Err(Error::MultipleKeyErrors(e))])
         } else if let Some(e) = resp.region_error() {
+            debug!("single_shard_handler:execute: region error: {:?}", e);
             match backoff.next_delay_duration() {
                 Some(duration) => {
                     let region_error_resolved =
@@ -239,7 +254,7 @@ where
         preserve_region_results: bool,
         e: Error,
     ) -> Result<<Self as Plan>::Result> {
-        debug!("handle grpc error: {:?}", e);
+        debug!("handle_other_error: {:?}", e);
         pd_client.invalidate_region_cache(region).await;
         if is_grpc_error(&e) {
             if let Some(store_id) = store {
@@ -272,6 +287,7 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
     e: errorpb::Error,
     region_store: RegionStore,
 ) -> Result<bool> {
+    debug!("handle_region_error: {:?}", e);
     let ver_id = region_store.region_with_leader.ver_id();
     let store_id = region_store.region_with_leader.get_store_id();
     if let Some(not_leader) = e.not_leader {

@@ -61,6 +61,7 @@ jobs:
       CARGO_INCREMENTAL: 0
       NEXTEST_PROFILE: ci
       TIKV_VERSION: v8.5.1
+      RUST_LOG: debug
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
