@@ -29,7 +29,7 @@ unit-test: generate
 integration-test: integration-test-txn integration-test-raw
 
 integration-test-txn: generate
-	$(RUN_INTEGRATION_TEST) txn_
+	$(RUN_INTEGRATION_TEST) txn_split_batch
 
 integration-test-raw: generate
 	$(RUN_INTEGRATION_TEST) raw_
