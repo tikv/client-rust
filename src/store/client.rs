@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use derive_new::new;
+use tonic::codec::CompressionEncoding;
 use tonic::transport::Channel;
 
 use super::Request;
@@ -37,6 +38,7 @@ impl KvConnect for TikvConnect {
             .connect(address, move |channel| {
                 TikvClient::new(channel)
                     .max_decoding_message_size(self.grpc_max_decoding_message_size)
+                    .accept_compressed(CompressionEncoding::Gzip)
             })
             .await
             .map(|c| KvRpcClient::new(c, self.timeout))
