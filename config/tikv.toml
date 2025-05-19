@@ -17,3 +17,6 @@ max-open-files = 10000
 
 [storage]
 reserve-space = "0MiB"
+
+[server]
+grpc-compression-type = "gzip"
