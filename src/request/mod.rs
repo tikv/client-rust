@@ -103,7 +103,7 @@ mod test {
     use crate::proto::pdpb::Timestamp;
     use crate::proto::tikvpb::tikv_client::TikvClient;
     use crate::region::RegionWithLeader;
-    use crate::store::store_stream_for_keys;
+    use crate::store::region_stream_for_keys;
     use crate::store::HasRegionError;
     use crate::transaction::lowering::new_commit_request;
     use crate::Error;
@@ -168,22 +168,20 @@ mod test {
                 pd_client: &std::sync::Arc<impl crate::pd::PdClient>,
             ) -> futures::stream::BoxStream<
                 'static,
-                crate::Result<(Self::Shard, crate::store::RegionStore)>,
+                crate::Result<(Self::Shard, crate::region::RegionWithLeader)>,
             > {
                 // Increases by 1 for each call.
                 self.test_invoking_count
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                store_stream_for_keys(
+                region_stream_for_keys(
                     Some(Key::from("mock_key".to_owned())).into_iter(),
                     pd_client.clone(),
                 )
             }
 
-            fn apply_shard(
-                &mut self,
-                _shard: Self::Shard,
-                _store: &crate::store::RegionStore,
-            ) -> crate::Result<()> {
+            fn apply_shard(&mut self, _shard: Self::Shard) {}
+
+            fn apply_store(&mut self, _store: &crate::store::RegionStore) -> crate::Result<()> {
                 Ok(())
             }
         }
