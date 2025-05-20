@@ -22,8 +22,8 @@ use crate::request::SingleKey;
 use crate::shardable_key;
 use crate::shardable_keys;
 use crate::shardable_range;
-use crate::store::store_stream_for_keys;
-use crate::store::store_stream_for_ranges;
+use crate::store::region_stream_for_keys;
+use crate::store::region_stream_for_ranges;
 use crate::store::RegionStore;
 use crate::store::Request;
 use crate::transaction::HasLocks;
@@ -194,7 +194,7 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
         let kvs = self.pairs.clone();
         let ttls = self.ttls.clone();
         let mut kv_ttl: Vec<KvPairTTL> = kvs
@@ -203,15 +203,17 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
             .map(|(kv, ttl)| KvPairTTL(kv, ttl))
             .collect();
         kv_ttl.sort_by(|a, b| a.0.key.cmp(&b.0.key));
-        store_stream_for_keys(kv_ttl.into_iter(), pd_client.clone())
+        region_stream_for_keys(kv_ttl.into_iter(), pd_client.clone())
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
+    fn apply_shard(&mut self, shard: Self::Shard) {
         let (pairs, ttls) = shard.into_iter().unzip();
-        self.set_leader(&store.region_with_leader)?;
         self.pairs = pairs;
         self.ttls = ttls;
-        Ok(())
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.region_with_leader)
     }
 }
 
@@ -344,14 +346,16 @@ impl Shardable for kvrpcpb::RawBatchScanRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
-        store_stream_for_ranges(self.ranges.clone(), pd_client.clone())
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
+        region_stream_for_ranges(self.ranges.clone(), pd_client.clone())
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_leader(&store.region_with_leader)?;
+    fn apply_shard(&mut self, shard: Self::Shard) {
         self.ranges = shard;
-        Ok(())
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.region_with_leader)
     }
 }
 
@@ -470,14 +474,20 @@ impl Shardable for RawCoprocessorRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
-        store_stream_for_ranges(self.inner.ranges.clone(), pd_client.clone())
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
+        region_stream_for_ranges(self.inner.ranges.clone(), pd_client.clone())
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
+    fn apply_shard(&mut self, shard: Self::Shard) {
+        self.inner.ranges = shard;
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
         self.set_leader(&store.region_with_leader)?;
-        self.inner.ranges.clone_from(&shard);
-        self.inner.data = (self.data_builder)(store.region_with_leader.region.clone(), shard);
+        self.inner.data = (self.data_builder)(
+            store.region_with_leader.region.clone(),
+            self.inner.ranges.clone(),
+        );
         Ok(())
     }
 }

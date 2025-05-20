@@ -17,8 +17,8 @@ use crate::pd::PdClient;
 use crate::proto::errorpb;
 use crate::proto::errorpb::EpochNotMatch;
 use crate::proto::kvrpcpb;
-use crate::region::RegionVerId;
 use crate::region::StoreId;
+use crate::region::{RegionVerId, RegionWithLeader};
 use crate::request::shard::HasNextBatch;
 use crate::request::NextBatch;
 use crate::request::Shardable;
@@ -119,10 +119,13 @@ where
         debug!("single_plan_handler, shards: {}", shards.len());
         let mut handles = Vec::new();
         for shard in shards {
+            let (shard, region) = shard?;
+            let mut clone = current_plan.clone();
+            clone.apply_shard(shard);
             let handle = tokio::spawn(Self::single_shard_handler(
                 pd_client.clone(),
-                current_plan.clone(),
-                shard,
+                clone,
+                region,
                 backoff.clone(),
                 permits.clone(),
                 preserve_region_results,
@@ -154,15 +157,20 @@ where
     async fn single_shard_handler(
         pd_client: Arc<PdC>,
         mut plan: P,
-        shard: Result<(<P as Shardable>::Shard, RegionStore)>,
+        region: RegionWithLeader,
         mut backoff: Backoff,
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
     ) -> Result<<Self as Plan>::Result> {
         debug!("single_shard_handler");
-        let region_store = match shard.and_then(|(shard, region_store)| {
-            plan.apply_shard(shard, &region_store).map(|_| region_store)
-        }) {
+        let region_store = match pd_client
+            .clone()
+            .map_region_to_store(region)
+            .await
+            .and_then(|region_store| {
+                plan.apply_store(&region_store)?;
+                Ok(region_store)
+            }) {
             Ok(region_store) => region_store,
             Err(Error::LeaderNotFound { region }) => {
                 debug!(
@@ -930,11 +938,13 @@ mod test {
         fn shards(
             &self,
             _: &Arc<impl crate::pd::PdClient>,
-        ) -> BoxStream<'static, crate::Result<(Self::Shard, crate::store::RegionStore)>> {
+        ) -> BoxStream<'static, crate::Result<(Self::Shard, RegionWithLeader)>> {
             Box::pin(stream::iter(1..=3).map(|_| Err(Error::Unimplemented))).boxed()
         }
 
-        fn apply_shard(&mut self, _: Self::Shard, _: &crate::store::RegionStore) -> Result<()> {
+        fn apply_shard(&mut self, _: Self::Shard) {}
+
+        fn apply_store(&mut self, _: &crate::store::RegionStore) -> Result<()> {
             Ok(())
         }
     }
