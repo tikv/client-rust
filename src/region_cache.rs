@@ -85,7 +85,8 @@ impl<C: RetryClientTrait> RegionCache<C> {
                 .get(&candidate_region_ver_id)
                 .unwrap();
 
-            if region.contains(key) {
+            // Region in cache maybe stale if the region has not been elected leader yet during start.
+            if region.contains(key) && region.leader.is_some() {
                 return Ok(region.clone());
             }
         }
@@ -102,7 +103,11 @@ impl<C: RetryClientTrait> RegionCache<C> {
             let ver_id = region_cache_guard.id_to_ver_id.get(&id);
             if let Some(ver_id) = ver_id {
                 let region = region_cache_guard.ver_id_to_region.get(ver_id).unwrap();
-                return Ok(region.clone());
+
+                // Region in cache maybe stale if the region has not been elected leader yet during start.
+                if region.leader.is_some() {
+                    return Ok(region.clone());
+                }
             }
 
             // check concurrent requests
@@ -497,11 +502,15 @@ mod test {
     async fn test_get_region_by_key() -> Result<()> {
         let retry_client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(retry_client.clone());
+        let leader = Some(metapb::Peer {
+            store_id: 1,
+            ..Default::default()
+        });
 
-        let region1 = region(1, vec![], vec![10]);
-        let region2 = region(2, vec![10], vec![20]);
+        let region1 = region_with_leader(1, vec![], vec![10], leader.clone());
+        let region2 = region_with_leader(2, vec![10], vec![20], leader.clone());
         let region3 = region(3, vec![30], vec![40]);
-        let region4 = region(4, vec![50], vec![]);
+        let region4 = region_with_leader(4, vec![50], vec![], leader.clone());
         cache.add_region(region1.clone()).await;
         cache.add_region(region2.clone()).await;
         cache.add_region(region3.clone()).await;
@@ -521,6 +530,8 @@ mod test {
         );
         assert!(cache.get_region_by_key(&vec![20].into()).await.is_err());
         assert!(cache.get_region_by_key(&vec![25].into()).await.is_err());
+        // region3 in cache has no leader, the cache is invalid.
+        assert!(cache.get_region_by_key(&vec![35].into()).await.is_err());
         assert_eq!(cache.get_region_by_key(&vec![60].into()).await?, region4);
         Ok(())
     }
@@ -554,6 +565,26 @@ mod test {
         });
         // We don't care about other fields here
 
+        region
+    }
+
+    fn region_with_leader(
+        id: RegionId,
+        start_key: Vec<u8>,
+        end_key: Vec<u8>,
+        leader: Option<metapb::Peer>,
+    ) -> RegionWithLeader {
+        let mut region = RegionWithLeader::default();
+        region.region.id = id;
+        region.region.start_key = start_key;
+        region.region.end_key = end_key;
+        region.region.region_epoch = Some(RegionEpoch {
+            conf_ver: 0,
+            version: 0,
+        });
+        // We don't care about other fields here
+
+        region.leader = leader;
         region
     }
 
