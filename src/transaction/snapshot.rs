@@ -1,7 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use derive_new::new;
-use log::debug;
+use log::{debug, trace};
 
 use crate::BoundRange;
 use crate::Key;
@@ -25,7 +25,7 @@ pub struct Snapshot {
 impl Snapshot {
     /// Get the value associated with the given key.
     pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
-        debug!("invoking get request on snapshot");
+        trace!("invoking get request on snapshot");
         self.transaction.get(key).await
     }
 

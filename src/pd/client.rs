@@ -20,6 +20,7 @@ use crate::proto::metapb;
 use crate::region::RegionId;
 use crate::region::RegionVerId;
 use crate::region::RegionWithLeader;
+use crate::region::StoreId;
 use crate::region_cache::RegionCache;
 use crate::store::KvConnect;
 use crate::store::RegionStore;
@@ -84,7 +85,7 @@ pub trait PdClient: Send + Sync + 'static {
     fn group_keys_by_region<K, K2>(
         self: Arc<Self>,
         keys: impl Iterator<Item = K> + Send + Sync + 'static,
-    ) -> BoxStream<'static, Result<(RegionWithLeader, Vec<K2>)>>
+    ) -> BoxStream<'static, Result<(Vec<K2>, RegionWithLeader)>>
     where
         K: AsRef<Key> + Into<K2> + Send + Sync + 'static,
         K2: Send + Sync + 'static,
@@ -102,7 +103,7 @@ pub trait PdClient: Send + Sync + 'static {
                         }
                         grouped.push(keys.next().unwrap().into());
                     }
-                    Ok(Some((keys, (region, grouped))))
+                    Ok(Some((keys, (grouped, region))))
                 } else {
                     Ok(None)
                 }
@@ -112,10 +113,10 @@ pub trait PdClient: Send + Sync + 'static {
     }
 
     /// Returns a Stream which iterates over the contexts for each region covered by range.
-    fn stores_for_range(
+    fn regions_for_range(
         self: Arc<Self>,
         range: BoundRange,
-    ) -> BoxStream<'static, Result<RegionStore>> {
+    ) -> BoxStream<'static, Result<RegionWithLeader>> {
         let (start_key, end_key) = range.into_keys();
         stream_fn(Some(start_key), move |start_key| {
             let end_key = end_key.clone();
@@ -128,15 +129,14 @@ pub trait PdClient: Send + Sync + 'static {
 
                 let region = this.region_for_key(&start_key).await?;
                 let region_end = region.end_key();
-                let store = this.map_region_to_store(region).await?;
                 if end_key
                     .map(|x| x <= region_end && !x.is_empty())
                     .unwrap_or(false)
                     || region_end.is_empty()
                 {
-                    return Ok(Some((None, store)));
+                    return Ok(Some((None, region)));
                 }
-                Ok(Some((Some(region_end), store)))
+                Ok(Some((Some(region_end), region)))
             }
         })
         .boxed()
@@ -146,7 +146,7 @@ pub trait PdClient: Send + Sync + 'static {
     fn group_ranges_by_region(
         self: Arc<Self>,
         mut ranges: Vec<kvrpcpb::KeyRange>,
-    ) -> BoxStream<'static, Result<(RegionWithLeader, Vec<kvrpcpb::KeyRange>)>> {
+    ) -> BoxStream<'static, Result<(Vec<kvrpcpb::KeyRange>, RegionWithLeader)>> {
         ranges.reverse();
         stream_fn(Some(ranges), move |ranges| {
             let this = self.clone();
@@ -166,7 +166,7 @@ pub trait PdClient: Send + Sync + 'static {
                     if !region_end.is_empty() && (end_key > region_end || end_key.is_empty()) {
                         grouped.push(make_key_range(start_key.into(), region_end.clone().into()));
                         ranges.push(make_key_range(region_end.into(), end_key.into()));
-                        return Ok(Some((Some(ranges), (region, grouped))));
+                        return Ok(Some((Some(ranges), (grouped, region))));
                     }
                     grouped.push(range);
 
@@ -181,11 +181,11 @@ pub trait PdClient: Send + Sync + 'static {
                             grouped
                                 .push(make_key_range(start_key.into(), region_end.clone().into()));
                             ranges.push(make_key_range(region_end.into(), end_key.into()));
-                            return Ok(Some((Some(ranges), (region, grouped))));
+                            return Ok(Some((Some(ranges), (grouped, region))));
                         }
                         grouped.push(range);
                     }
-                    Ok(Some((Some(ranges), (region, grouped))))
+                    Ok(Some((Some(ranges), (grouped, region))))
                 } else {
                     Ok(None)
                 }
@@ -205,6 +205,8 @@ pub trait PdClient: Send + Sync + 'static {
     async fn update_leader(&self, ver_id: RegionVerId, leader: metapb::Peer) -> Result<()>;
 
     async fn invalidate_region_cache(&self, ver_id: RegionVerId);
+
+    async fn invalidate_store_cache(&self, store_id: StoreId);
 }
 
 /// This client converts requests for the logical TiKV cluster into requests
@@ -269,6 +271,10 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 
     async fn invalidate_region_cache(&self, ver_id: RegionVerId) {
         self.region_cache.invalidate_region_cache(ver_id).await
+    }
+
+    async fn invalidate_store_cache(&self, store_id: StoreId) {
+        self.region_cache.invalidate_store_cache(store_id).await
     }
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
@@ -390,7 +396,7 @@ pub mod test {
         let stream = Arc::new(client).group_keys_by_region(tasks.into_iter());
         let mut stream = executor::block_on_stream(stream);
 
-        let result: Vec<Key> = stream.next().unwrap().unwrap().1;
+        let result: Vec<Key> = stream.next().unwrap().unwrap().0;
         assert_eq!(
             result,
             vec![
@@ -401,27 +407,27 @@ pub mod test {
             ]
         );
         assert_eq!(
-            stream.next().unwrap().unwrap().1,
+            stream.next().unwrap().unwrap().0,
             vec![vec![12].into(), vec![11, 4].into()]
         );
         assert!(stream.next().is_none());
     }
 
     #[test]
-    fn test_stores_for_range() {
+    fn test_regions_for_range() {
         let client = Arc::new(MockPdClient::default());
         let k1: Key = vec![1].into();
         let k2: Key = vec![5, 2].into();
         let k3: Key = vec![11, 4].into();
         let range1 = (k1, k2.clone()).into();
-        let mut stream = executor::block_on_stream(client.clone().stores_for_range(range1));
-        assert_eq!(stream.next().unwrap().unwrap().region_with_leader.id(), 1);
+        let mut stream = executor::block_on_stream(client.clone().regions_for_range(range1));
+        assert_eq!(stream.next().unwrap().unwrap().id(), 1);
         assert!(stream.next().is_none());
 
         let range2 = (k2, k3).into();
-        let mut stream = executor::block_on_stream(client.stores_for_range(range2));
-        assert_eq!(stream.next().unwrap().unwrap().region_with_leader.id(), 1);
-        assert_eq!(stream.next().unwrap().unwrap().region_with_leader.id(), 2);
+        let mut stream = executor::block_on_stream(client.regions_for_range(range2));
+        assert_eq!(stream.next().unwrap().unwrap().id(), 1);
+        assert_eq!(stream.next().unwrap().unwrap().id(), 2);
         assert!(stream.next().is_none());
     }
 
@@ -446,20 +452,20 @@ pub mod test {
         let ranges3 = stream.next().unwrap().unwrap();
         let ranges4 = stream.next().unwrap().unwrap();
 
-        assert_eq!(ranges1.0.id(), 1);
+        assert_eq!(ranges1.1.id(), 1);
         assert_eq!(
-            ranges1.1,
+            ranges1.0,
             vec![
                 make_key_range(k1.clone(), k2.clone()),
                 make_key_range(k1.clone(), k_split.clone()),
             ]
         );
-        assert_eq!(ranges2.0.id(), 2);
-        assert_eq!(ranges2.1, vec![make_key_range(k_split.clone(), k3.clone())]);
-        assert_eq!(ranges3.0.id(), 1);
-        assert_eq!(ranges3.1, vec![make_key_range(k2.clone(), k_split.clone())]);
-        assert_eq!(ranges4.0.id(), 2);
-        assert_eq!(ranges4.1, vec![make_key_range(k_split, k4.clone())]);
+        assert_eq!(ranges2.1.id(), 2);
+        assert_eq!(ranges2.0, vec![make_key_range(k_split.clone(), k3.clone())]);
+        assert_eq!(ranges3.1.id(), 1);
+        assert_eq!(ranges3.0, vec![make_key_range(k2.clone(), k_split.clone())]);
+        assert_eq!(ranges4.1.id(), 2);
+        assert_eq!(ranges4.0, vec![make_key_range(k_split, k4.clone())]);
         assert!(stream.next().is_none());
 
         let range1 = make_key_range(k1.clone(), k2.clone());
@@ -470,11 +476,11 @@ pub mod test {
         let ranges1 = stream.next().unwrap().unwrap();
         let ranges2 = stream.next().unwrap().unwrap();
         let ranges3 = stream.next().unwrap().unwrap();
-        assert_eq!(ranges1.0.id(), 1);
-        assert_eq!(ranges1.1, vec![make_key_range(k1, k2)]);
-        assert_eq!(ranges2.0.id(), 2);
-        assert_eq!(ranges2.1, vec![make_key_range(k3, k4)]);
-        assert_eq!(ranges3.0.id(), 3);
-        assert_eq!(ranges3.1, vec![make_key_range(k5, k6)]);
+        assert_eq!(ranges1.1.id(), 1);
+        assert_eq!(ranges1.0, vec![make_key_range(k1, k2)]);
+        assert_eq!(ranges2.1.id(), 2);
+        assert_eq!(ranges2.0, vec![make_key_range(k3, k4)]);
+        assert_eq!(ranges3.1.id(), 3);
+        assert_eq!(ranges3.0, vec![make_key_range(k5, k6)]);
     }
 }

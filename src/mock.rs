@@ -216,6 +216,8 @@ impl PdClient for MockPdClient {
 
     async fn invalidate_region_cache(&self, _ver_id: crate::region::RegionVerId) {}
 
+    async fn invalidate_store_cache(&self, _store_id: crate::region::StoreId) {}
+
     async fn load_keyspace(&self, _keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
         unimplemented!()
     }

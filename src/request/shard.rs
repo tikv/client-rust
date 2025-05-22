@@ -6,6 +6,7 @@ use futures::stream::BoxStream;
 
 use super::plan::PreserveShard;
 use crate::pd::PdClient;
+use crate::region::RegionWithLeader;
 use crate::request::plan::CleanupLocks;
 use crate::request::Dispatch;
 use crate::request::KvRequest;
@@ -23,12 +24,16 @@ macro_rules! impl_inner_shardable {
         fn shards(
             &self,
             pd_client: &Arc<impl PdClient>,
-        ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+        ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
             self.inner.shards(pd_client)
         }
 
-        fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-            self.inner.apply_shard(shard, store)
+        fn apply_shard(&mut self, shard: Self::Shard) {
+            self.inner.apply_shard(shard);
+        }
+
+        fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+            self.inner.apply_store(store)
         }
     };
 }
@@ -39,9 +44,11 @@ pub trait Shardable {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>>;
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>>;
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()>;
+    fn apply_shard(&mut self, shard: Self::Shard);
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()>;
 }
 
 pub trait Batchable {
@@ -88,13 +95,17 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
         self.request.shards(pd_client)
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
+    fn apply_shard(&mut self, shard: Self::Shard) {
+        self.request.apply_shard(shard);
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
         self.kv_client = Some(store.client.clone());
-        self.request.apply_shard(shard, store)
+        self.request.apply_store(store)
     }
 }
 
@@ -110,13 +121,17 @@ impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
         self.inner.shards(pd_client)
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
+    fn apply_shard(&mut self, shard: Self::Shard) {
         self.shard = Some(shard.clone());
-        self.inner.apply_shard(shard, store)
+        self.inner.apply_shard(shard)
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.inner.apply_store(store)
     }
 }
 
@@ -130,13 +145,17 @@ impl<P: Plan + Shardable, PdC: PdClient> Shardable for CleanupLocks<P, PdC> {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
         self.inner.shards(pd_client)
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
+    fn apply_shard(&mut self, shard: Self::Shard) {
+        self.inner.apply_shard(shard)
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
         self.store = Some(store.clone());
-        self.inner.apply_shard(shard, store)
+        self.inner.apply_store(store)
     }
 }
 
@@ -152,23 +171,21 @@ macro_rules! shardable_key {
                 pd_client: &std::sync::Arc<impl $crate::pd::PdClient>,
             ) -> futures::stream::BoxStream<
                 'static,
-                $crate::Result<(Self::Shard, $crate::store::RegionStore)>,
+                $crate::Result<(Self::Shard, $crate::region::RegionWithLeader)>,
             > {
-                $crate::store::store_stream_for_keys(
+                $crate::store::region_stream_for_keys(
                     std::iter::once(self.key.clone()),
                     pd_client.clone(),
                 )
             }
 
-            fn apply_shard(
-                &mut self,
-                mut shard: Self::Shard,
-                store: &$crate::store::RegionStore,
-            ) -> $crate::Result<()> {
-                self.set_leader(&store.region_with_leader)?;
+            fn apply_shard(&mut self, mut shard: Self::Shard) {
                 assert!(shard.len() == 1);
                 self.key = shard.pop().unwrap();
-                Ok(())
+            }
+
+            fn apply_store(&mut self, store: &$crate::store::RegionStore) -> $crate::Result<()> {
+                self.set_leader(&store.region_with_leader)
             }
         }
     };
@@ -186,21 +203,19 @@ macro_rules! shardable_keys {
                 pd_client: &std::sync::Arc<impl $crate::pd::PdClient>,
             ) -> futures::stream::BoxStream<
                 'static,
-                $crate::Result<(Self::Shard, $crate::store::RegionStore)>,
+                $crate::Result<(Self::Shard, $crate::region::RegionWithLeader)>,
             > {
                 let mut keys = self.keys.clone();
                 keys.sort();
-                $crate::store::store_stream_for_keys(keys.into_iter(), pd_client.clone())
+                $crate::store::region_stream_for_keys(keys.into_iter(), pd_client.clone())
             }
 
-            fn apply_shard(
-                &mut self,
-                shard: Self::Shard,
-                store: &$crate::store::RegionStore,
-            ) -> $crate::Result<()> {
-                self.set_leader(&store.region_with_leader)?;
+            fn apply_shard(&mut self, shard: Self::Shard) {
                 self.keys = shard.into_iter().map(Into::into).collect();
-                Ok(())
+            }
+
+            fn apply_store(&mut self, store: &$crate::store::RegionStore) -> $crate::Result<()> {
+                self.set_leader(&store.region_with_leader)
             }
         }
     };
@@ -242,7 +257,8 @@ macro_rules! shardable_range {
             fn shards(
                 &self,
                 pd_client: &Arc<impl $crate::pd::PdClient>,
-            ) -> BoxStream<'static, $crate::Result<(Self::Shard, $crate::store::RegionStore)>> {
+            ) -> BoxStream<'static, $crate::Result<(Self::Shard, $crate::region::RegionWithLeader)>>
+            {
                 let mut start_key = self.start_key.clone().into();
                 let mut end_key = self.end_key.clone().into();
                 // In a reverse range request, the range is in the meaning of [end_key, start_key), i.e. end_key <= x < start_key.
@@ -250,16 +266,10 @@ macro_rules! shardable_range {
                 if self.is_reverse() {
                     std::mem::swap(&mut start_key, &mut end_key);
                 }
-                $crate::store::store_stream_for_range((start_key, end_key), pd_client.clone())
+                $crate::store::region_stream_for_range((start_key, end_key), pd_client.clone())
             }
 
-            fn apply_shard(
-                &mut self,
-                shard: Self::Shard,
-                store: &$crate::store::RegionStore,
-            ) -> $crate::Result<()> {
-                self.set_leader(&store.region_with_leader)?;
-
+            fn apply_shard(&mut self, shard: Self::Shard) {
                 // In a reverse range request, the range is in the meaning of [end_key, start_key), i.e. end_key <= x < start_key.
                 // As a result, after obtaining start_key and end_key from PD, we need to swap their values when assigning them to the request.
                 self.start_key = shard.0;
@@ -267,7 +277,10 @@ macro_rules! shardable_range {
                 if self.is_reverse() {
                     std::mem::swap(&mut self.start_key, &mut self.end_key);
                 }
-                Ok(())
+            }
+
+            fn apply_store(&mut self, store: &$crate::store::RegionStore) -> $crate::Result<()> {
+                self.set_leader(&store.region_with_leader)
             }
         }
     };
