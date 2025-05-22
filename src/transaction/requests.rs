@@ -19,6 +19,7 @@ use crate::proto::kvrpcpb::TxnHeartBeatResponse;
 use crate::proto::kvrpcpb::TxnInfo;
 use crate::proto::kvrpcpb::{self};
 use crate::proto::pdpb::Timestamp;
+use crate::region::RegionWithLeader;
 use crate::request::Collect;
 use crate::request::CollectSingle;
 use crate::request::CollectWithShard;
@@ -37,10 +38,10 @@ use crate::reversible_range_request;
 use crate::shardable_key;
 use crate::shardable_keys;
 use crate::shardable_range;
-use crate::store::store_stream_for_range;
 use crate::store::RegionStore;
 use crate::store::Request;
-use crate::store::{store_stream_for_keys, Store};
+use crate::store::Store;
+use crate::store::{region_stream_for_keys, region_stream_for_range};
 use crate::timestamp::TimestampExt;
 use crate::transaction::requests::kvrpcpb::prewrite_request::PessimisticAction;
 use crate::transaction::HasLocks;
@@ -283,26 +284,24 @@ impl Shardable for kvrpcpb::PrewriteRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
         let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
 
-        store_stream_for_keys(mutations.into_iter(), pd_client.clone())
+        region_stream_for_keys(mutations.into_iter(), pd_client.clone())
             .flat_map(|result| match result {
-                Ok((mutations, store)) => stream::iter(kvrpcpb::PrewriteRequest::batches(
+                Ok((mutations, region)) => stream::iter(kvrpcpb::PrewriteRequest::batches(
                     mutations,
                     TXN_COMMIT_BATCH_SIZE,
                 ))
-                .map(move |batch| Ok((batch, store.clone())))
+                .map(move |batch| Ok((batch, region.clone())))
                 .boxed(),
                 Err(e) => stream::iter(Err(e)).boxed(),
             })
             .boxed()
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_leader(&store.region_with_leader)?;
-
+    fn apply_shard(&mut self, shard: Self::Shard) {
         // Only need to set secondary keys if we're sending the primary key.
         if self.use_async_commit && !self.mutations.iter().any(|m| m.key == self.primary_lock) {
             self.secondaries = vec![];
@@ -314,7 +313,10 @@ impl Shardable for kvrpcpb::PrewriteRequest {
         }
 
         self.mutations = shard;
-        Ok(())
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.region_with_leader)
     }
 }
 
@@ -351,15 +353,15 @@ impl Shardable for kvrpcpb::CommitRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
         let mut keys = self.keys.clone();
         keys.sort();
 
-        store_stream_for_keys(keys.into_iter(), pd_client.clone())
+        region_stream_for_keys(keys.into_iter(), pd_client.clone())
             .flat_map(|result| match result {
-                Ok((keys, store)) => {
+                Ok((keys, region)) => {
                     stream::iter(kvrpcpb::CommitRequest::batches(keys, TXN_COMMIT_BATCH_SIZE))
-                        .map(move |batch| Ok((batch, store.clone())))
+                        .map(move |batch| Ok((batch, region.clone())))
                         .boxed()
                 }
                 Err(e) => stream::iter(Err(e)).boxed(),
@@ -367,10 +369,12 @@ impl Shardable for kvrpcpb::CommitRequest {
             .boxed()
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_leader(&store.region_with_leader)?;
+    fn apply_shard(&mut self, shard: Self::Shard) {
         self.keys = shard.into_iter().map(Into::into).collect();
-        Ok(())
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.region_with_leader)
     }
 }
 
@@ -452,16 +456,18 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
         let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
-        store_stream_for_keys(mutations.into_iter(), pd_client.clone())
+        region_stream_for_keys(mutations.into_iter(), pd_client.clone())
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_leader(&store.region_with_leader)?;
+    fn apply_shard(&mut self, shard: Self::Shard) {
         self.mutations = shard;
-        Ok(())
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.region_with_leader)
     }
 }
 
@@ -552,17 +558,19 @@ impl Shardable for kvrpcpb::ScanLockRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
-        store_stream_for_range(
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
+        region_stream_for_range(
             (self.start_key.clone(), self.end_key.clone()),
             pd_client.clone(),
         )
     }
 
-    fn apply_shard(&mut self, shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_leader(&store.region_with_leader)?;
+    fn apply_shard(&mut self, shard: Self::Shard) {
         self.start_key = shard.0;
-        Ok(())
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.region_with_leader)
     }
 }
 
@@ -616,15 +624,17 @@ impl Shardable for kvrpcpb::TxnHeartBeatRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
-        crate::store::store_stream_for_keys(std::iter::once(self.key().clone()), pd_client.clone())
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
+        region_stream_for_keys(std::iter::once(self.key().clone()), pd_client.clone())
     }
 
-    fn apply_shard(&mut self, mut shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_leader(&store.region_with_leader)?;
+    fn apply_shard(&mut self, mut shard: Self::Shard) {
         assert!(shard.len() == 1);
         self.primary_lock = shard.pop().unwrap();
-        Ok(())
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.region_with_leader)
     }
 }
 
@@ -674,15 +684,17 @@ impl Shardable for kvrpcpb::CheckTxnStatusRequest {
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
-    ) -> BoxStream<'static, Result<(Self::Shard, RegionStore)>> {
-        crate::store::store_stream_for_keys(std::iter::once(self.key().clone()), pd_client.clone())
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
+        region_stream_for_keys(std::iter::once(self.key().clone()), pd_client.clone())
     }
 
-    fn apply_shard(&mut self, mut shard: Self::Shard, store: &RegionStore) -> Result<()> {
-        self.set_leader(&store.region_with_leader)?;
+    fn apply_shard(&mut self, mut shard: Self::Shard) {
         assert!(shard.len() == 1);
         self.primary_key = shard.pop().unwrap();
-        Ok(())
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.region_with_leader)
     }
 }
 

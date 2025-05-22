@@ -38,46 +38,37 @@ pub struct Store {
 }
 
 /// Maps keys to a stream of stores. `key_data` must be sorted in increasing order
-pub fn store_stream_for_keys<K, KOut, PdC>(
+pub fn region_stream_for_keys<K, KOut, PdC>(
     key_data: impl Iterator<Item = K> + Send + Sync + 'static,
     pd_client: Arc<PdC>,
-) -> BoxStream<'static, Result<(Vec<KOut>, RegionStore)>>
+) -> BoxStream<'static, Result<(Vec<KOut>, RegionWithLeader)>>
 where
     PdC: PdClient,
     K: AsRef<Key> + Into<KOut> + Send + Sync + 'static,
     KOut: Send + Sync + 'static,
 {
-    pd_client
-        .clone()
-        .group_keys_by_region(key_data)
-        .and_then(move |(region, key)| {
-            pd_client
-                .clone()
-                .map_region_to_store(region)
-                .map_ok(move |store| (key, store))
-        })
-        .boxed()
+    pd_client.clone().group_keys_by_region(key_data)
 }
 
 #[allow(clippy::type_complexity)]
-pub fn store_stream_for_range<PdC: PdClient>(
+pub fn region_stream_for_range<PdC: PdClient>(
     range: (Vec<u8>, Vec<u8>),
     pd_client: Arc<PdC>,
-) -> BoxStream<'static, Result<((Vec<u8>, Vec<u8>), RegionStore)>> {
+) -> BoxStream<'static, Result<((Vec<u8>, Vec<u8>), RegionWithLeader)>> {
     let bnd_range = if range.1.is_empty() {
         BoundRange::range_from(range.0.clone().into())
     } else {
         BoundRange::from(range.clone())
     };
     pd_client
-        .stores_for_range(bnd_range)
-        .map_ok(move |store| {
-            let region_range = store.region_with_leader.range();
+        .regions_for_range(bnd_range)
+        .map_ok(move |region| {
+            let region_range = region.range();
             let result_range = range_intersection(
                 region_range,
                 (range.0.clone().into(), range.1.clone().into()),
             );
-            ((result_range.0.into(), result_range.1.into()), store)
+            ((result_range.0.into(), result_range.1.into()), region)
         })
         .boxed()
 }
@@ -95,18 +86,9 @@ fn range_intersection(region_range: (Key, Key), range: (Key, Key)) -> (Key, Key)
     (max(lower, range.0), up)
 }
 
-pub fn store_stream_for_ranges<PdC: PdClient>(
+pub fn region_stream_for_ranges<PdC: PdClient>(
     ranges: Vec<kvrpcpb::KeyRange>,
     pd_client: Arc<PdC>,
-) -> BoxStream<'static, Result<(Vec<kvrpcpb::KeyRange>, RegionStore)>> {
-    pd_client
-        .clone()
-        .group_ranges_by_region(ranges)
-        .and_then(move |(region, range)| {
-            pd_client
-                .clone()
-                .map_region_to_store(region)
-                .map_ok(move |store| (range, store))
-        })
-        .boxed()
+) -> BoxStream<'static, Result<(Vec<kvrpcpb::KeyRange>, RegionWithLeader)>> {
+    pd_client.clone().group_ranges_by_region(ranges)
 }
