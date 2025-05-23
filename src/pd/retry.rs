@@ -20,6 +20,7 @@ use crate::proto::pdpb::{self};
 use crate::region::RegionId;
 use crate::region::RegionWithLeader;
 use crate::region::StoreId;
+#[cfg(feature = "prometheus")]
 use crate::stats::pd_stats;
 use crate::Error;
 use crate::Result;
@@ -75,12 +76,19 @@ impl<Cl> RetryClient<Cl> {
 
 macro_rules! retry_core {
     ($self: ident, $tag: literal, $call: expr) => {{
+        #[cfg(feature = "prometheus")]
         let stats = pd_stats($tag);
         let mut last_err = Ok(());
         for _ in 0..LEADER_CHANGE_RETRY {
             let res = $call;
 
+            #[cfg(feature = "prometheus")]
             match stats.done(res) {
+                Ok(r) => return Ok(r),
+                Err(e) => last_err = Err(e),
+            }
+            #[cfg(not(feature = "prometheus"))]
+            match res {
                 Ok(r) => return Ok(r),
                 Err(e) => last_err = Err(e),
             }
