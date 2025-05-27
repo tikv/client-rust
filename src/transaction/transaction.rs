@@ -1379,7 +1379,11 @@ impl<PdC: PdClient> Committer<PdC> {
 
     async fn commit_primary_with_retry(&mut self) -> Result<Timestamp> {
         loop {
-            match self.commit_primary().await {
+            let res = self.commit_primary().await;
+            if let Err(e) = &res {
+                info!("commit primary error: {:?}", e);
+            }
+            match res {
                 Ok(commit_version) => return Ok(commit_version),
                 Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
                     Some(Error::KeyError(key_err)) => {
