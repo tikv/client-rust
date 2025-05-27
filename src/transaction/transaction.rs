@@ -10,8 +10,8 @@ use std::time::Instant;
 use derive_new::new;
 use fail::fail_point;
 use futures::prelude::*;
-use log::debug;
 use log::warn;
+use log::{debug, info};
 use tokio::time::Duration;
 
 use crate::backoff::Backoff;
@@ -1260,7 +1260,7 @@ impl<PdC: PdClient> Committer<PdC> {
             // FIXME: min_commit_ts == 0 => fallback to normal 2PC
             min_commit_ts.unwrap()
         } else {
-            match self.commit_primary().await {
+            match self.commit_primary_with_retry().await {
                 Ok(commit_ts) => commit_ts,
                 Err(e) => {
                     return if self.undetermined {
@@ -1375,6 +1375,30 @@ impl<PdC: PdClient> Committer<PdC> {
             .await?;
 
         Ok(commit_version)
+    }
+
+    async fn commit_primary_with_retry(&mut self) -> Result<Timestamp> {
+        loop {
+            match self.commit_primary().await {
+                Ok(commit_version) => return Ok(commit_version),
+                Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
+                    Some(Error::KeyError(key_err)) => {
+                        if let Some(commit_ts_expired) = key_err.commit_ts_expired {
+                            info!(
+                                "commit primary meet commit_ts_expired error: {:?}",
+                                commit_ts_expired
+                            );
+                            continue;
+                        } else {
+                            return Err(Error::KeyError(key_err));
+                        }
+                    }
+                    Some(err) => return Err(err),
+                    None => unreachable!(),
+                },
+                Err(err) => return Err(err),
+            }
+        }
     }
 
     async fn commit_secondary(self, commit_version: Timestamp) -> Result<()> {
