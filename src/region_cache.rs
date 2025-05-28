@@ -117,7 +117,7 @@ impl<C: RetryClientTrait> RegionCache<C> {
                 return self.read_through_region_by_id(id).await;
             }
         }
-        Err(Error::StringError(format!(
+        Err(Error::OtherError(format!(
             "Concurrent PD requests failed for {MAX_RETRY_WAITING_CONCURRENT_REQUEST} times"
         )))
     }
@@ -315,7 +315,7 @@ mod test {
                 .filter(|(_, r)| r.contains(&key.clone().into()))
                 .map(|(_, r)| r.clone())
                 .next()
-                .ok_or_else(|| Error::StringError("MockRetryClient: region not found".to_owned()))
+                .ok_or_else(|| Error::OtherError("MockRetryClient: region not found".to_owned()))
         }
 
         async fn get_region_by_id(
@@ -330,7 +330,7 @@ mod test {
                 .filter(|(id, _)| id == &&region_id)
                 .map(|(_, r)| r.clone())
                 .next()
-                .ok_or_else(|| Error::StringError("MockRetryClient: region not found".to_owned()))
+                .ok_or_else(|| Error::OtherError("MockRetryClient: region not found".to_owned()))
         }
 
         async fn get_store(

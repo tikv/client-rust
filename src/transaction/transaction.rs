@@ -10,13 +10,16 @@ use std::time::Instant;
 use derive_new::new;
 use fail::fail_point;
 use futures::prelude::*;
+use log::debug;
+use log::error;
+use log::info;
 use log::warn;
-use log::{debug, info};
 use tokio::time::Duration;
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::codec::ApiV1TxnCodec;
+use crate::kv::HexRepr;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::kvrpcpb;
@@ -1246,7 +1249,7 @@ impl<PdC: PdClient> Committer<PdC> {
         let min_commit_ts = self.prewrite().await?;
 
         fail_point!("after-prewrite", |_| {
-            Err(Error::StringError(
+            Err(Error::OtherError(
                 "failpoint: after-prewrite return error".to_owned(),
             ))
         });
@@ -1387,11 +1390,25 @@ impl<PdC: PdClient> Committer<PdC> {
                 Ok(commit_version) => return Ok(commit_version),
                 Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
                     Some(Error::KeyError(key_err)) => {
-                        if let Some(commit_ts_expired) = key_err.commit_ts_expired {
-                            info!(
-                                "commit primary meet commit_ts_expired error: {:?}",
-                                commit_ts_expired
-                            );
+                        if let Some(expired) = key_err.commit_ts_expired {
+                            // Ref: https://github.com/tikv/client-go/blob/tidb-8.5/txnkv/transaction/commit.go
+                            info!("2PC commit_ts rejected by TiKV, retry with a newer commit_ts, start_ts: {}",
+                                self.start_version.version());
+
+                            let primary_key = self.primary_key.as_ref().unwrap();
+                            if primary_key != expired.key.as_ref() {
+                                error!("2PC commit_ts rejected by TiKV, but the key is not the primary key, start_ts: {}, key: {}, primary: {:?}",
+                                    self.start_version.version(), HexRepr(&expired.key), primary_key);
+                                return Err(Error::OtherError("2PC commitTS rejected by TiKV, but the key is not the primary key".to_string()));
+                            }
+
+                            // Do not retry for a txn which has a too large min_commit_ts.
+                            // 3600000 << 18 = 943718400000
+                            if expired.min_commit_ts - expired.attempted_commit_ts > 943718400000 {
+                                let msg = format!("2PC min_commit_ts is too large, we got min_commit_ts: {}, and attempted_commit_ts: {}",
+                                                     expired.min_commit_ts, expired.attempted_commit_ts);
+                                return Err(Error::OtherError(msg));
+                            }
                             continue;
                         } else {
                             return Err(Error::KeyError(key_err));
@@ -1422,7 +1439,7 @@ impl<PdC: PdClient> Committer<PdC> {
                     let percent = percent.unwrap().parse::<usize>().unwrap();
                     new_len = mutations_len * percent / 100;
                     if new_len == 0 {
-                        Err(Error::StringError(
+                        Err(Error::OtherError(
                             "failpoint: before-commit-secondary return error".to_owned(),
                         ))
                     } else {
