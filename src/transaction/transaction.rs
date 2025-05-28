@@ -1368,6 +1368,11 @@ impl<PdC: PdClient> Committer<PdC> {
             .plan();
         plan.execute()
             .inspect_err(|e| {
+                debug!(
+                    "commit primary error: {:?}, start_ts: {}",
+                    e,
+                    self.start_version.version()
+                );
                 // We don't know whether the transaction is committed or not if we fail to receive
                 // the response. Then, we mark the transaction as undetermined and propagate the
                 // error to the user.
@@ -1382,11 +1387,7 @@ impl<PdC: PdClient> Committer<PdC> {
 
     async fn commit_primary_with_retry(&mut self) -> Result<Timestamp> {
         loop {
-            let res = self.commit_primary().await;
-            if let Err(e) = &res {
-                info!("commit primary error: {:?}", e);
-            }
-            match res {
+            match self.commit_primary().await {
                 Ok(commit_version) => return Ok(commit_version),
                 Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
                     Some(Error::KeyError(key_err)) => {
@@ -1404,7 +1405,11 @@ impl<PdC: PdClient> Committer<PdC> {
 
                             // Do not retry for a txn which has a too large min_commit_ts.
                             // 3600000 << 18 = 943718400000
-                            if expired.min_commit_ts - expired.attempted_commit_ts > 943718400000 {
+                            if expired
+                                .min_commit_ts
+                                .saturating_sub(expired.attempted_commit_ts)
+                                > 943718400000
+                            {
                                 let msg = format!("2PC min_commit_ts is too large, we got min_commit_ts: {}, and attempted_commit_ts: {}",
                                                      expired.min_commit_ts, expired.attempted_commit_ts);
                                 return Err(Error::OtherError(msg));
