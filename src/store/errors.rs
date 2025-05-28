@@ -1,7 +1,5 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::fmt::Display;
-
 use crate::proto::kvrpcpb;
 use crate::Error;
 
@@ -162,11 +160,15 @@ impl HasKeyErrors for kvrpcpb::PessimisticRollbackResponse {
     }
 }
 
-impl<T: HasKeyErrors, E: Display> HasKeyErrors for Result<T, E> {
+impl<T: HasKeyErrors> HasKeyErrors for Result<T, Error> {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
         match self {
             Ok(x) => x.key_errors(),
-            Err(e) => Some(vec![Error::StringError(e.to_string())]),
+            Err(Error::MultipleKeyErrors(errs)) => Some(std::mem::take(errs)),
+            Err(e) => Some(vec![std::mem::replace(
+                e,
+                Error::OtherError("".to_string()), // placeholder, no use.
+            )]),
         }
     }
 }
