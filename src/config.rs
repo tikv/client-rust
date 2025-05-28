@@ -20,6 +20,8 @@ pub struct Config {
     pub key_path: Option<PathBuf>,
     pub timeout: Duration,
     pub keyspace: Option<String>,
+    pub max_decoding_message_size: Option<usize>,
+    pub max_encoding_message_size: Option<usize>,
 }
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -32,6 +34,8 @@ impl Default for Config {
             key_path: None,
             timeout: DEFAULT_REQUEST_TIMEOUT,
             keyspace: None,
+            max_decoding_message_size: None,
+            max_encoding_message_size: None,
         }
     }
 }
@@ -100,6 +104,36 @@ impl Config {
     #[must_use]
     pub fn with_keyspace(mut self, keyspace: &str) -> Self {
         self.keyspace = Some(keyspace.to_owned());
+        self
+    }
+
+    /// Set the maximum size of a decoded message.
+    ///
+    /// Default: `4MB`
+    ///
+    /// # Examples
+    /// ```rust
+    /// # use tikv_client::Config;
+    /// let config = Config::default().with_max_decoding_message_size(8 * 1024 * 1024); // 8MB
+    /// ```
+    #[must_use]
+    pub fn with_max_decoding_message_size(mut self, limit: usize) -> Self {
+        self.max_decoding_message_size = Some(limit);
+        self
+    }
+
+    /// Set the maximum size of an encoded message.
+    ///
+    /// Default: `usize::MAX`
+    ///
+    /// # Examples
+    /// ```rust
+    /// # use tikv_client::Config;
+    /// let config = Config::default().with_max_encoding_message_size(8 * 1024 * 1024); // 8MB
+    /// ```
+    #[must_use]
+    pub fn with_max_encoding_message_size(mut self, limit: usize) -> Self {
+        self.max_encoding_message_size = Some(limit);
         self
     }
 }
