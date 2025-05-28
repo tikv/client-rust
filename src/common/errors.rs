@@ -9,13 +9,9 @@ use crate::region::RegionVerId;
 use crate::BoundRange;
 
 /// An error originating from the TiKV client or dependencies.
-#[derive(Debug, Error, Default)]
+#[derive(Debug, Error)]
 #[allow(clippy::large_enum_variant)]
 pub enum Error {
-    /// Placeholder for no error (taken away).
-    #[default]
-    #[error("No error")]
-    NoError,
     /// Feature is not implemented.
     #[error("Unimplemented feature")]
     Unimplemented,

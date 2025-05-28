@@ -165,7 +165,10 @@ impl<T: HasKeyErrors> HasKeyErrors for Result<T, Error> {
         match self {
             Ok(x) => x.key_errors(),
             Err(Error::MultipleKeyErrors(errs)) => Some(std::mem::take(errs)),
-            Err(e) => Some(vec![std::mem::take(e)]),
+            Err(e) => Some(vec![std::mem::replace(
+                e,
+                Error::OtherError("".to_string()), // placeholder, no use.
+            )]),
         }
     }
 }
