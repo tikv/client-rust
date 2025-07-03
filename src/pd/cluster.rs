@@ -16,6 +16,7 @@ use tonic::Request;
 use super::timestamp::TimestampOracle;
 use crate::internal_err;
 use crate::proto::pdpb;
+use crate::Error;
 use crate::Result;
 use crate::SecurityManager;
 use crate::Timestamp;
@@ -46,7 +47,7 @@ impl Cluster {
         timeout: Duration,
     ) -> Result<pdpb::GetRegionResponse> {
         let mut req = pd_request!(self.id, pdpb::GetRegionRequest);
-        req.region_key = key.clone();
+        req.region_key = key;
         req.send(&mut self.client, timeout).await
     }
 
@@ -203,6 +204,16 @@ impl Connection {
             .get_members(pdpb::GetMembersRequest::default())
             .await?
             .into_inner();
+        if let Some(err) = resp
+            .header
+            .as_ref()
+            .and_then(|header| header.error.as_ref())
+        {
+            return Err(internal_err!("failed to get PD members, err {:?}", err));
+        }
+        if resp.leader.is_none() {
+            return Err(Error::PdNoLeader);
+        }
         Ok((client, resp))
     }
 
