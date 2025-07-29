@@ -62,6 +62,9 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
 
     async fn execute(&self) -> Result<Self::Result> {
         let stats = tikv_stats(self.request.label());
+        if self.request.label() == "kv_prewrite" || self.request.label() == "kv_commit" {
+            info!("req {}", self.request.to_str())
+        }
         let result = self
             .kv_client
             .as_ref()
@@ -70,8 +73,13 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             .await;
         let result = stats.done(result);
         result.map(|r| {
-            *r.downcast()
-                .expect("Downcast failed: request and response type mismatch")
+            let resp = *r
+                .downcast()
+                .expect("Downcast failed: request and response type mismatch");
+            if self.request.label() == "kv_prewrite" || self.request.label() == "kv_commit" {
+                info!("resp {:?}", resp);
+            }
+            resp
         })
     }
 }

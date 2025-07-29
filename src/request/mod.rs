@@ -42,7 +42,7 @@ mod shard;
 #[async_trait]
 pub trait KvRequest: Request + Sized + Clone + Sync + Send + 'static {
     /// The expected response to the request.
-    type Response: HasKeyErrors + HasLocks + Clone + Send + 'static;
+    type Response: HasKeyErrors + HasLocks + Clone + Send + std::fmt::Debug + 'static;
 
     // TODO: fn encode_request()
     // TODO: fn decode_response()
@@ -114,7 +114,7 @@ mod test {
 
     #[tokio::test]
     async fn test_region_retry() {
-        #[derive(Clone)]
+        #[derive(Clone, Debug)]
         struct MockRpcResponse;
 
         impl HasKeyErrors for MockRpcResponse {
