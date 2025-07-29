@@ -1,6 +1,7 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use async_recursion::async_recursion;
@@ -51,6 +52,12 @@ pub trait Plan: Sized + Clone + Sync + Send + 'static {
     async fn execute(&self) -> Result<Self::Result>;
 }
 
+static DISPATCH_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_dispatch_request_id() -> u64 {
+    DISPATCH_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+}
+
 /// The simplest plan which just dispatches a request to a specific kv server.
 #[derive(Clone)]
 pub struct Dispatch<Req: KvRequest> {
@@ -63,7 +70,39 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
     type Result = Req::Response;
 
     async fn execute(&self) -> Result<Self::Result> {
-        let stats = tikv_stats(self.request.label());
+        let request_id = next_dispatch_request_id();
+        let label = self.request.label();
+        let stats = tikv_stats(label);
+        if label == "kv_prewrite" {
+            if let Some(req) = self
+                .request
+                .as_any()
+                .downcast_ref::<kvrpcpb::PrewriteRequest>()
+            {
+                info!(
+                    "req_id={} kv_prewrite start_version={} lock_ttl={} primary_lock_len={} mutations={}",
+                    request_id,
+                    req.start_version,
+                    req.lock_ttl,
+                    req.primary_lock.len(),
+                    req.mutations.len(),
+                );
+            } else {
+                info!("req_id={} kv_prewrite <unknown request type>", request_id);
+            }
+        } else if label == "kv_commit" {
+            if let Some(req) = self.request.as_any().downcast_ref::<kvrpcpb::CommitRequest>() {
+                info!(
+                    "req_id={} kv_commit start_version={} commit_version={} keys={}",
+                    request_id,
+                    req.start_version,
+                    req.commit_version,
+                    req.keys.len(),
+                );
+            } else {
+                info!("req_id={} kv_commit <unknown request type>", request_id);
+            }
+        }
         let result = self
             .kv_client
             .as_ref()
@@ -72,6 +111,31 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             .await;
         let result = stats.done(result);
         result.map(|r| {
+            if label == "kv_prewrite" {
+                if let Some(resp) = r.as_ref().downcast_ref::<kvrpcpb::PrewriteResponse>() {
+                    info!(
+                        "req_id={} kv_prewrite_resp region_error={} errors={} min_commit_ts={} one_pc_commit_ts={}",
+                        request_id,
+                        resp.region_error.is_some(),
+                        resp.errors.len(),
+                        resp.min_commit_ts,
+                        resp.one_pc_commit_ts,
+                    );
+                } else {
+                    info!("req_id={} kv_prewrite_resp <unknown response type>", request_id);
+                }
+            } else if label == "kv_commit" {
+                if let Some(resp) = r.as_ref().downcast_ref::<kvrpcpb::CommitResponse>() {
+                    info!(
+                        "req_id={} kv_commit_resp region_error={} has_error={}",
+                        request_id,
+                        resp.region_error.is_some(),
+                        resp.error.is_some(),
+                    );
+                } else {
+                    info!("req_id={} kv_commit_resp <unknown response type>", request_id);
+                }
+            }
             *r.downcast()
                 .expect("Downcast failed: request and response type mismatch")
         })
