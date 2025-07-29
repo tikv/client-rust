@@ -25,6 +25,9 @@ pub trait Request: Any + Sync + Send + 'static {
     /// Should always use `set_context` other than modify the `self.context` directly.
     fn set_context(&mut self, context: kvrpcpb::Context);
     fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion);
+    fn to_str(&self) -> String {
+        "".to_string()
+    }
 }
 
 macro_rules! impl_request {
@@ -67,6 +70,10 @@ macro_rules! impl_request {
             fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {
                 let context = self.context.get_or_insert(kvrpcpb::Context::default());
                 context.api_version = api_version.into();
+            }
+
+            fn to_str(&self) -> String {
+                format!("{:?}", self)
             }
         }
     };
