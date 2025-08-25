@@ -48,6 +48,16 @@ pub trait Shardable {
 
     fn apply_shard(&mut self, shard: Self::Shard);
 
+    /// Implementation can skip unnecessary fields clone if fields will be overwritten by `apply_shard`.
+    fn clone_then_apply_shard(&self, shard: Self::Shard) -> Self
+    where
+        Self: Sized + Clone,
+    {
+        let mut cloned = self.clone();
+        cloned.apply_shard(shard);
+        cloned
+    }
+
     fn apply_store(&mut self, store: &RegionStore) -> Result<()>;
 }
 
@@ -101,6 +111,13 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
 
     fn apply_shard(&mut self, shard: Self::Shard) {
         self.request.apply_shard(shard);
+    }
+
+    fn clone_then_apply_shard(&self, shard: Self::Shard) -> Self
+    where
+        Self: Sized + Clone,
+    {
+        Dispatch{ request: self.request.clone_then_apply_shard(shard), kv_client: self.kv_client.clone() }
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {

@@ -130,7 +130,8 @@ mod test {
         impl HasLocks for MockRpcResponse {}
 
         #[derive(Clone)]
-        struct MockKvRequest {
+        #[derive(Default)]
+struct MockKvRequest {
             test_invoking_count: Arc<AtomicUsize>,
         }
 

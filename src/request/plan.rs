@@ -117,11 +117,10 @@ where
     ) -> Result<<Self as Plan>::Result> {
         let shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
         debug!("single_plan_handler, shards: {}", shards.len());
-        let mut handles = Vec::new();
+        let mut handles = Vec::with_capacity(shards.len());
         for shard in shards {
             let (shard, region) = shard?;
-            let mut clone = current_plan.clone();
-            clone.apply_shard(shard);
+            let clone = current_plan.clone_then_apply_shard(shard);
             let handle = tokio::spawn(Self::single_shard_handler(
                 pd_client.clone(),
                 clone,
