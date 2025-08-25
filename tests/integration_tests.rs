@@ -911,7 +911,9 @@ async fn raw_large_batch_put() -> Result<()> {
     }
     assert_eq!(got, pairs);
 
-    client.batch_delete(keys).await?;
+    client.batch_delete(keys.clone()).await?;
+    let res = client.batch_get(keys).await?;
+    assert!(res.is_empty());
 
     Ok(())
 }
