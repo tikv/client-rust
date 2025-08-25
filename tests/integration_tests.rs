@@ -903,6 +903,7 @@ async fn raw_large_batch_put() -> Result<()> {
         RawClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace()).await?;
 
     client.batch_put(pairs).await?;
+    Ok(())
 }
 
 /// Tests raw ttl API.
