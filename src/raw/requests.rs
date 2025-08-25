@@ -10,7 +10,6 @@ use crate::proto::tikvpb::tikv_client::TikvClient;
 use crate::range_request;
 use crate::region::RegionWithLeader;
 use crate::request::plan::ResponseWithShard;
-use crate::request::Collect;
 use crate::request::CollectSingle;
 use crate::request::DefaultProcessor;
 use crate::request::KvRequest;
@@ -19,6 +18,7 @@ use crate::request::Process;
 use crate::request::RangeRequest;
 use crate::request::Shardable;
 use crate::request::SingleKey;
+use crate::request::{Batchable, Collect};
 use crate::shardable_key;
 use crate::shardable_keys;
 use crate::shardable_range;
@@ -35,11 +35,14 @@ use crate::Result;
 use crate::Value;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use futures::{stream, StreamExt};
 use std::any::Any;
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 use tonic::transport::Channel;
+
+const RAW_KV_REQUEST_BATCH_SIZE: u64 = 16 * 1024; // 16 KB
 
 pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::RawGetRequest {
     let mut req = kvrpcpb::RawGetRequest::default();
@@ -188,6 +191,14 @@ impl KvRequest for kvrpcpb::RawBatchPutRequest {
     type Response = kvrpcpb::RawBatchPutResponse;
 }
 
+impl Batchable for kvrpcpb::RawBatchPutRequest {
+    type Item = (kvrpcpb::KvPair, u64);
+
+    fn item_size(item: &Self::Item) -> u64 {
+        (item.0.key.len() + item.0.value.len()) as u64
+    }
+}
+
 impl Shardable for kvrpcpb::RawBatchPutRequest {
     type Shard = Vec<(kvrpcpb::KvPair, u64)>;
 
@@ -204,12 +215,34 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
             .collect();
         kv_ttl.sort_by(|a, b| a.0.key.cmp(&b.0.key));
         region_stream_for_keys(kv_ttl.into_iter(), pd_client.clone())
+            .flat_map(|result| match result {
+                Ok((keys, region)) => stream::iter(kvrpcpb::RawBatchPutRequest::batches(
+                    keys,
+                    RAW_KV_REQUEST_BATCH_SIZE,
+                ))
+                .map(move |batch| Ok((batch, region.clone())))
+                .boxed(),
+                Err(e) => stream::iter(Err(e)).boxed(),
+            })
+            .boxed()
     }
 
     fn apply_shard(&mut self, shard: Self::Shard) {
         let (pairs, ttls) = shard.into_iter().unzip();
         self.pairs = pairs;
         self.ttls = ttls;
+    }
+
+    fn clone_then_apply_shard(&self, shard: Self::Shard) -> Self
+    where
+        Self: Sized + Clone,
+    {
+        let mut cloned = Self::default();
+        cloned.context = self.context.clone();
+        cloned.cf = self.cf.clone();
+        cloned.for_cas = self.for_cas;
+        cloned.apply_shard(shard);
+        cloned
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
@@ -257,7 +290,56 @@ impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
     type Response = kvrpcpb::RawBatchDeleteResponse;
 }
 
-shardable_keys!(kvrpcpb::RawBatchDeleteRequest);
+impl Batchable for kvrpcpb::RawBatchDeleteRequest {
+    type Item = Vec<u8>;
+
+    fn item_size(item: &Self::Item) -> u64 {
+        item.len() as u64
+    }
+}
+
+impl Shardable for kvrpcpb::RawBatchDeleteRequest {
+    type Shard = Vec<Vec<u8>>;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
+        let mut keys = self.keys.clone();
+        keys.sort();
+        region_stream_for_keys(keys.into_iter(), pd_client.clone())
+            .flat_map(|result| match result {
+                Ok((keys, region)) => stream::iter(kvrpcpb::RawBatchDeleteRequest::batches(
+                    keys,
+                    RAW_KV_REQUEST_BATCH_SIZE,
+                ))
+                .map(move |batch| Ok((batch, region.clone())))
+                .boxed(),
+                Err(e) => stream::iter(Err(e)).boxed(),
+            })
+            .boxed()
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard) {
+        self.keys = shard;
+    }
+
+    fn clone_then_apply_shard(&self, shard: Self::Shard) -> Self
+    where
+        Self: Sized + Clone,
+    {
+        let mut cloned = Self::default();
+        cloned.context = self.context.clone();
+        cloned.cf = self.cf.clone();
+        cloned.for_cas = self.for_cas;
+        cloned.apply_shard(shard);
+        cloned
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.region_with_leader)
+    }
+}
 
 pub fn new_raw_delete_range_request(
     start_key: Vec<u8>,

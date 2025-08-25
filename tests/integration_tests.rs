@@ -871,6 +871,53 @@ async fn raw_write_million() -> Result<()> {
     Ok(())
 }
 
+/// Tests raw batch put has a large payload.
+#[tokio::test]
+#[serial]
+async fn raw_large_batch_put() -> Result<()> {
+    const TARGET_SIZE_MB: usize = 100;
+    const KEY_SIZE: usize = 32;
+    const VALUE_SIZE: usize = 1024;
+
+    let pair_size = KEY_SIZE + VALUE_SIZE;
+    let target_size_bytes = TARGET_SIZE_MB * 1024 * 1024;
+    let num_pairs = target_size_bytes / pair_size;
+    let mut pairs = Vec::with_capacity(num_pairs);
+    for i in 0..num_pairs {
+        // Generate key: "bench_key_" + zero-padded number
+        let key = format!("bench_key_{:010}", i);
+
+        // Generate value: repeat pattern to reach VALUE_SIZE
+        let pattern = format!("value_{}", i % 1000);
+        let repeat_count = VALUE_SIZE.div_ceil(pattern.len());
+        let value = pattern.repeat(repeat_count);
+
+        pairs.push(KvPair::from((key, value)));
+    }
+
+    init().await?;
+    let client =
+        RawClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace()).await?;
+
+    client.batch_put(pairs.clone()).await?;
+
+    let keys = pairs.iter().map(|pair| pair.0.clone()).collect::<Vec<_>>();
+    // split into multiple batch_get to avoid response too large error
+    const BATCH_SIZE: usize = 1000;
+    let mut got = Vec::with_capacity(num_pairs);
+    for chunk in keys.chunks(BATCH_SIZE) {
+        let mut partial = client.batch_get(chunk.to_vec()).await?;
+        got.append(&mut partial);
+    }
+    assert_eq!(got, pairs);
+
+    client.batch_delete(keys.clone()).await?;
+    let res = client.batch_get(keys).await?;
+    assert!(res.is_empty());
+
+    Ok(())
+}
+
 /// Tests raw ttl API.
 #[tokio::test]
 #[serial]
