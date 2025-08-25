@@ -290,7 +290,56 @@ impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
     type Response = kvrpcpb::RawBatchDeleteResponse;
 }
 
-shardable_keys!(kvrpcpb::RawBatchDeleteRequest);
+impl Batchable for kvrpcpb::RawBatchDeleteRequest {
+    type Item = Vec<u8>;
+
+    fn item_size(item: &Self::Item) -> u64 {
+        item.len() as u64
+    }
+}
+
+impl Shardable for kvrpcpb::RawBatchDeleteRequest {
+    type Shard = Vec<Vec<u8>>;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
+        let mut keys = self.keys.clone();
+        keys.sort();
+        region_stream_for_keys(keys.into_iter(), pd_client.clone())
+            .flat_map(|result| match result {
+                Ok((keys, region)) => stream::iter(kvrpcpb::RawBatchDeleteRequest::batches(
+                    keys,
+                    RAW_KV_REQUEST_BATCH_SIZE,
+                ))
+                .map(move |batch| Ok((batch, region.clone())))
+                .boxed(),
+                Err(e) => stream::iter(Err(e)).boxed(),
+            })
+            .boxed()
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard) {
+        self.keys = shard;
+    }
+
+    fn clone_then_apply_shard(&self, shard: Self::Shard) -> Self
+    where
+        Self: Sized + Clone,
+    {
+        let mut cloned = Self::default();
+        cloned.context = self.context.clone();
+        cloned.cf = self.cf.clone();
+        cloned.for_cas = self.for_cas;
+        cloned.apply_shard(shard);
+        cloned
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.region_with_leader)
+    }
+}
 
 pub fn new_raw_delete_range_request(
     start_key: Vec<u8>,

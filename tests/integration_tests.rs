@@ -889,11 +889,8 @@ async fn raw_large_batch_put() -> Result<()> {
 
         // Generate value: repeat pattern to reach VALUE_SIZE
         let pattern = format!("value_{}", i % 1000);
-        let mut value = String::new();
-        while value.len() < VALUE_SIZE {
-            value.push_str(&pattern);
-        }
-        value.truncate(VALUE_SIZE);
+        let repeat_count = (VALUE_SIZE + pattern.len() - 1) / pattern.len();
+        let value = pattern.repeat(repeat_count);
 
         pairs.push(KvPair::from((key, value)));
     }
@@ -902,7 +899,20 @@ async fn raw_large_batch_put() -> Result<()> {
     let client =
         RawClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace()).await?;
 
-    client.batch_put(pairs).await?;
+    client.batch_put(pairs.clone()).await?;
+
+    let keys = pairs.iter().map(|pair| pair.0.clone()).collect::<Vec<_>>();
+    // split into multiple batch_get to avoid response too large error
+    const BATCH_SIZE: usize = 1000;
+    let mut got = Vec::with_capacity(num_pairs);
+    for chunk in keys.chunks(BATCH_SIZE) {
+        let mut partial = client.batch_get(chunk.to_vec()).await?;
+        got.append(&mut partial);
+    }
+    assert_eq!(got, pairs);
+
+    client.batch_delete(keys).await?;
+
     Ok(())
 }
 
