@@ -889,7 +889,7 @@ async fn raw_large_batch_put() -> Result<()> {
 
         // Generate value: repeat pattern to reach VALUE_SIZE
         let pattern = format!("value_{}", i % 1000);
-        let repeat_count = (VALUE_SIZE + pattern.len() - 1) / pattern.len();
+        let repeat_count = VALUE_SIZE.div_ceil(pattern.len());
         let value = pattern.repeat(repeat_count);
 
         pairs.push(KvPair::from((key, value)));
