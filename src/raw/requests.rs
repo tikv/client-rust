@@ -10,7 +10,6 @@ use crate::proto::tikvpb::tikv_client::TikvClient;
 use crate::range_request;
 use crate::region::RegionWithLeader;
 use crate::request::plan::ResponseWithShard;
-use crate::request::{Batchable, Collect};
 use crate::request::CollectSingle;
 use crate::request::DefaultProcessor;
 use crate::request::KvRequest;
@@ -19,6 +18,7 @@ use crate::request::Process;
 use crate::request::RangeRequest;
 use crate::request::Shardable;
 use crate::request::SingleKey;
+use crate::request::{Batchable, Collect};
 use crate::shardable_key;
 use crate::shardable_keys;
 use crate::shardable_range;
@@ -35,11 +35,11 @@ use crate::Result;
 use crate::Value;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use futures::{stream, StreamExt};
 use std::any::Any;
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
-use futures::{stream, StreamExt};
 use tonic::transport::Channel;
 
 const RAW_KV_REQUEST_BATCH_SIZE: u64 = 16 * 1024; // 16 KB
@@ -216,13 +216,14 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
         kv_ttl.sort_by(|a, b| a.0.key.cmp(&b.0.key));
         region_stream_for_keys(kv_ttl.into_iter(), pd_client.clone())
             .flat_map(|result| match result {
-            Ok((keys, region)) => {
-                stream::iter(kvrpcpb::RawBatchPutRequest::batches(keys, RAW_KV_REQUEST_BATCH_SIZE))
-                    .map(move |batch| Ok((batch, region.clone())))
-                    .boxed()
-            }
-            Err(e) => stream::iter(Err(e)).boxed(),
-        })
+                Ok((keys, region)) => stream::iter(kvrpcpb::RawBatchPutRequest::batches(
+                    keys,
+                    RAW_KV_REQUEST_BATCH_SIZE,
+                ))
+                .map(move |batch| Ok((batch, region.clone())))
+                .boxed(),
+                Err(e) => stream::iter(Err(e)).boxed(),
+            })
             .boxed()
     }
 

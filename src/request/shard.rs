@@ -117,7 +117,10 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
     where
         Self: Sized + Clone,
     {
-        Dispatch{ request: self.request.clone_then_apply_shard(shard), kv_client: self.kv_client.clone() }
+        Dispatch {
+            request: self.request.clone_then_apply_shard(shard),
+            kv_client: self.kv_client.clone(),
+        }
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
