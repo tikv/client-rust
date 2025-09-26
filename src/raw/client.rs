@@ -31,6 +31,7 @@ use crate::Key;
 use crate::KvPair;
 use crate::Result;
 use crate::Value;
+use crate::request::plan::is_grpc_error;
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 
@@ -834,6 +835,17 @@ impl<PdC: PdClient> Client<PdC> {
                         }
                     }
                     Ok((Some(r), region.end_key()))
+                }
+                Err(err) if is_grpc_error(&err) => {
+                    debug!("retryable_scan: grpc error: {:?}", err);
+                    plan::invalidate_cache(self.rpc.clone(), store.clone()).await;
+
+                    if let Some(duration) = scan_args.backoff.next_delay_duration() {
+                        sleep(duration).await;
+                        continue;
+                    } else {
+                        return Err(err);
+                    }
                 }
                 Err(err) => Err(err),
             };

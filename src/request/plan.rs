@@ -87,7 +87,7 @@ impl<Req: KvRequest + StoreRequest> StoreRequest for Dispatch<Req> {
 const MULTI_REGION_CONCURRENCY: usize = 16;
 const MULTI_STORES_CONCURRENCY: usize = 16;
 
-fn is_grpc_error(e: &Error) -> bool {
+pub(crate) fn is_grpc_error(e: &Error) -> bool {
     matches!(e, Error::GrpcAPI(_) | Error::Grpc(_))
 }
 
@@ -341,6 +341,18 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
             pd_client.invalidate_store_cache(store_id).await;
         }
         Ok(false)
+    }
+}
+
+pub(crate) async fn invalidate_cache<PdC: PdClient>(
+    pd_client: Arc<PdC>,
+    region_store: RegionStore,
+) {
+    let ver_id = region_store.region_with_leader.ver_id();
+    let store_id = region_store.region_with_leader.get_store_id();
+    pd_client.invalidate_region_cache(ver_id).await;
+    if let Ok(store_id) = store_id {
+        pd_client.invalidate_store_cache(store_id).await;
     }
 }
 
