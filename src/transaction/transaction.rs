@@ -31,6 +31,8 @@ use crate::request::PlanBuilder;
 use crate::request::RetryOptions;
 use crate::request::TruncateKeyspace;
 use crate::timestamp::TimestampExt;
+use prost_types::Timestamp as ProstTimestamp;
+
 use crate::transaction::buffer::Buffer;
 use crate::transaction::lowering::*;
 use crate::BoundRange;
@@ -132,7 +134,53 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
-        trace!("invoking transactional get request");
+        self.get_with_options(key, None, None, None).await
+    }
+
+    /// Create a new 'get' request with advanced options.
+    ///
+    /// This method allows you to specify request nature, arrival time, and delay tolerance
+    /// in addition to the standard get parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to get
+    /// * `request_nature` - Optional request nature (PREDICTED, ACTUAL, or None for UNSPECIFIED)
+    /// * `arrival_time` - Optional arrival timestamp
+    /// * `delay_tolerance_ms` - Optional delay tolerance in milliseconds
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// # use tikv_client::{Value, Config, TransactionClient, RequestNature};
+    /// # use prost_types::Timestamp;
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = TransactionClient::new(vec!["192.168.0.100", "192.168.0.101"]).await.unwrap();
+    /// let mut txn = client.begin_optimistic().await.unwrap();
+    /// let key = "TiKV".to_owned();
+    /// let arrival_time = Some(Timestamp {
+    ///     seconds: std::time::SystemTime::now()
+    ///         .duration_since(std::time::UNIX_EPOCH)
+    ///         .unwrap()
+    ///         .as_secs() as i64,
+    ///     nanos: 0,
+    /// });
+    /// let result: Option<Value> = txn.get_with_options(
+    ///     key,
+    ///     Some(RequestNature::Predicted),
+    ///     arrival_time,
+    ///     Some(1000),
+    /// ).await.unwrap();
+    /// # });
+    /// ```
+    pub async fn get_with_options(
+        &mut self,
+        key: impl Into<Key>,
+        request_nature: Option<kvrpcpb::RequestNature>,
+        arrival_time: Option<ProstTimestamp>,
+        delay_tolerance_ms: Option<u64>,
+    ) -> Result<Option<Value>> {
+        trace!("invoking transactional get request with options");
         self.check_allow_operation().await?;
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
@@ -142,7 +190,13 @@ impl<PdC: PdClient> Transaction<PdC> {
 
         self.buffer
             .get_or_else(key, |key| async move {
-                let request = new_get_request(key, timestamp);
+                let request = new_get_request_with_options(
+                    key,
+                    timestamp,
+                    request_nature,
+                    arrival_time,
+                    delay_tolerance_ms,
+                );
                 let plan = PlanBuilder::new(rpc, keyspace, request)
                     .resolve_lock(retry_options.lock_backoff, keyspace)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)

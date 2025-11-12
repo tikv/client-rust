@@ -1,5 +1,7 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
+use prost_types::Timestamp as ProstTimestamp;
+
 use std::cmp;
 use std::iter;
 use std::sync::Arc;
@@ -92,9 +94,30 @@ macro_rules! error_locks {
 }
 
 pub fn new_get_request(key: Vec<u8>, timestamp: u64) -> kvrpcpb::GetRequest {
+    new_get_request_with_options(key, timestamp, None, None, None)
+}
+
+pub fn new_get_request_with_options(
+    key: Vec<u8>,
+    timestamp: u64,
+    request_nature: Option<kvrpcpb::RequestNature>,
+    arrival_time: Option<ProstTimestamp>,
+    delay_tolerance_ms: Option<u64>,
+) -> kvrpcpb::GetRequest {
     let mut req = kvrpcpb::GetRequest::default();
     req.key = key;
     req.version = timestamp;
+    
+    if let Some(nature) = request_nature {
+        req.request_nature = nature as i32;
+    }
+    if let Some(time) = arrival_time {
+        req.arrival_time = Some(time);
+    }
+    if let Some(tolerance) = delay_tolerance_ms {
+        req.delay_tolerance_ms = tolerance;
+    }
+    
     req
 }
 

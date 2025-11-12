@@ -2,6 +2,8 @@
 
 use std::iter::Iterator;
 
+use prost_types::Timestamp as ProstTimestamp;
+
 use crate::proto::kvrpcpb;
 use crate::proto::pdpb::Timestamp;
 /// This module provides constructor functions for requests which take arguments as high-level
@@ -23,6 +25,22 @@ use crate::Key;
 
 pub fn new_get_request(key: Key, timestamp: Timestamp) -> kvrpcpb::GetRequest {
     requests::new_get_request(key.into(), timestamp.version())
+}
+
+pub fn new_get_request_with_options(
+    key: Key,
+    timestamp: Timestamp,
+    request_nature: Option<kvrpcpb::RequestNature>,
+    arrival_time: Option<ProstTimestamp>,
+    delay_tolerance_ms: Option<u64>,
+) -> kvrpcpb::GetRequest {
+    requests::new_get_request_with_options(
+        key.into(),
+        timestamp.version(),
+        request_nature,
+        arrival_time,
+        delay_tolerance_ms,
+    )
 }
 
 pub fn new_batch_get_request(

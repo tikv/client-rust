@@ -162,3 +162,5 @@ pub use crate::transaction::Snapshot;
 pub use crate::transaction::Transaction;
 #[doc(inline)]
 pub use crate::transaction::TransactionOptions;
+#[doc(inline)]
+pub use crate::proto::kvrpcpb::RequestNature;

@@ -10,6 +10,13 @@ pub struct GetRequest {
     pub key: ::prost::alloc::vec::Vec<u8>,
     #[prost(uint64, tag = "3")]
     pub version: u64,
+    #[prost(enumeration = "RequestNature", tag = "4")]
+    pub request_nature: i32,
+    #[prost(message, optional, tag = "5")]
+    pub arrival_time: ::core::option::Option<::prost_types::Timestamp>,
+    /// e.g. tolerance in milliseconds
+    #[prost(uint64, tag = "6")]
+    pub delay_tolerance_ms: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -827,6 +834,13 @@ pub struct RawPutRequest {
     pub ttl: u64,
     #[prost(bool, tag = "6")]
     pub for_cas: bool,
+    #[prost(enumeration = "RequestNature", tag = "7")]
+    pub request_nature: i32,
+    #[prost(message, optional, tag = "8")]
+    pub arrival_time: ::core::option::Option<::prost_types::Timestamp>,
+    /// e.g. tolerance in milliseconds
+    #[prost(uint64, tag = "9")]
+    pub delay_tolerance_ms: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -875,6 +889,13 @@ pub struct RawDeleteRequest {
     pub cf: ::prost::alloc::string::String,
     #[prost(bool, tag = "4")]
     pub for_cas: bool,
+    #[prost(enumeration = "RequestNature", tag = "5")]
+    pub request_nature: i32,
+    #[prost(message, optional, tag = "6")]
+    pub arrival_time: ::core::option::Option<::prost_types::Timestamp>,
+    /// e.g. tolerance in milliseconds
+    #[prost(uint64, tag = "7")]
+    pub delay_tolerance_ms: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2135,6 +2156,35 @@ impl PessimisticLockKeyResultType {
             "LockResultNormal" => Some(Self::LockResultNormal),
             "LockResultLockedWithConflict" => Some(Self::LockResultLockedWithConflict),
             "LockResultFailed" => Some(Self::LockResultFailed),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum RequestNature {
+    Unspecified = 0,
+    Predicted = 1,
+    Actual = 2,
+}
+impl RequestNature {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            RequestNature::Unspecified => "REQUEST_NATURE_UNSPECIFIED",
+            RequestNature::Predicted => "PREDICTED",
+            RequestNature::Actual => "ACTUAL",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "REQUEST_NATURE_UNSPECIFIED" => Some(Self::Unspecified),
+            "PREDICTED" => Some(Self::Predicted),
+            "ACTUAL" => Some(Self::Actual),
             _ => None,
         }
     }

@@ -1,5 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use prost_types::Timestamp;
+
 use super::RawRpcRequest;
 use crate::collect_single;
 use crate::kv::KvPairTTL;
@@ -150,12 +152,35 @@ pub fn new_raw_put_request(
     cf: Option<ColumnFamily>,
     atomic: bool,
 ) -> kvrpcpb::RawPutRequest {
+    new_raw_put_request_with_options(key, value, ttl, cf, atomic, None, None, None)
+}
+
+pub fn new_raw_put_request_with_options(
+    key: Vec<u8>,
+    value: Vec<u8>,
+    ttl: u64,
+    cf: Option<ColumnFamily>,
+    atomic: bool,
+    request_nature: Option<kvrpcpb::RequestNature>,
+    arrival_time: Option<Timestamp>,
+    delay_tolerance_ms: Option<u64>,
+) -> kvrpcpb::RawPutRequest {
     let mut req = kvrpcpb::RawPutRequest::default();
     req.key = key;
     req.value = value;
     req.ttl = ttl;
     req.maybe_set_cf(cf);
     req.for_cas = atomic;
+    
+    if let Some(nature) = request_nature {
+        req.request_nature = nature as i32;
+    }
+    if let Some(time) = arrival_time {
+        req.arrival_time = Some(time);
+    }
+    if let Some(tolerance) = delay_tolerance_ms {
+        req.delay_tolerance_ms = tolerance;
+    }
 
     req
 }
@@ -255,10 +280,31 @@ pub fn new_raw_delete_request(
     cf: Option<ColumnFamily>,
     atomic: bool,
 ) -> kvrpcpb::RawDeleteRequest {
+    new_raw_delete_request_with_options(key, cf, atomic, None, None, None)
+}
+
+pub fn new_raw_delete_request_with_options(
+    key: Vec<u8>,
+    cf: Option<ColumnFamily>,
+    atomic: bool,
+    request_nature: Option<kvrpcpb::RequestNature>,
+    arrival_time: Option<Timestamp>,
+    delay_tolerance_ms: Option<u64>,
+) -> kvrpcpb::RawDeleteRequest {
     let mut req = kvrpcpb::RawDeleteRequest::default();
     req.key = key;
     req.maybe_set_cf(cf);
     req.for_cas = atomic;
+    
+    if let Some(nature) = request_nature {
+        req.request_nature = nature as i32;
+    }
+    if let Some(time) = arrival_time {
+        req.arrival_time = Some(time);
+    }
+    if let Some(tolerance) = delay_tolerance_ms {
+        req.delay_tolerance_ms = tolerance;
+    }
 
     req
 }

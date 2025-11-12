@@ -2,10 +2,13 @@
 
 mod common;
 
+use prost_types::Timestamp;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tikv_client::BoundRange;
 use tikv_client::Config;
 use tikv_client::Key;
 use tikv_client::KvPair;
+use tikv_client::RequestNature;
 use tikv_client::TransactionClient as Client;
 use tikv_client::Value;
 
@@ -106,6 +109,51 @@ async fn main() {
     let key1: Key = b"key1".to_vec().into();
     let value1 = get(&txn, key1.clone()).await;
     println!("{:?}", (key1, value1));
+
+    // Example: Using get_with_options to get with advanced parameters
+    let mut txn_with_options = txn
+        .begin_optimistic()
+        .await
+        .expect("Could not begin a transaction");
+    
+    // Create an arrival time timestamp
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap();
+    let arrival_time = Some(Timestamp {
+        seconds: now.as_secs() as i64,
+        nanos: now.subsec_nanos() as i32,
+    });
+
+    // Get with all new parameters
+    let key_with_options: Key = b"key1".to_vec().into();
+    let value_with_options = txn_with_options
+        .get_with_options(
+            key_with_options.clone(),
+            Some(RequestNature::Predicted), // request_nature: PREDICTED, ACTUAL, or None
+            arrival_time,                    // arrival_time: Optional timestamp
+            Some(1000),                     // delay_tolerance_ms: Optional delay tolerance in ms
+        )
+        .await
+        .expect("Could not get value with options");
+    println!("Get key {key_with_options:?} with options (PREDICTED nature, arrival_time, delay_tolerance_ms=1000) returned: {value_with_options:?}");
+
+    // You can also use ACTUAL request nature
+    let actual_key: Key = b"key2".to_vec().into();
+    let actual_value = txn_with_options
+        .get_with_options(
+            actual_key.clone(),
+            Some(RequestNature::Actual),
+            None, // No arrival time
+            None, // No delay tolerance
+        )
+        .await
+        .expect("Could not get value with ACTUAL nature");
+    println!("Get key {actual_key:?} with ACTUAL request nature returned: {actual_value:?}");
+
+    txn_with_options.commit()
+        .await
+        .expect("Committing read-only transaction should not fail");
 
     // check key exists
     let key1: Key = b"key1".to_vec().into();

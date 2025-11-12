@@ -8,6 +8,8 @@ use std::iter::Iterator;
 use std::ops::Range;
 use std::sync::Arc;
 
+use prost_types::Timestamp;
+
 use crate::proto::kvrpcpb;
 use crate::proto::metapb;
 use crate::raw::requests;
@@ -45,6 +47,28 @@ pub fn new_raw_put_request(
     requests::new_raw_put_request(key.into(), value, ttl, cf, atomic)
 }
 
+pub fn new_raw_put_request_with_options(
+    key: Key,
+    value: Value,
+    cf: Option<ColumnFamily>,
+    ttl: u64,
+    atomic: bool,
+    request_nature: Option<kvrpcpb::RequestNature>,
+    arrival_time: Option<Timestamp>,
+    delay_tolerance_ms: Option<u64>,
+) -> kvrpcpb::RawPutRequest {
+    requests::new_raw_put_request_with_options(
+        key.into(),
+        value,
+        ttl,
+        cf,
+        atomic,
+        request_nature,
+        arrival_time,
+        delay_tolerance_ms,
+    )
+}
+
 pub fn new_raw_batch_put_request(
     pairs: impl Iterator<Item = KvPair>,
     ttls: impl Iterator<Item = u64>,
@@ -63,6 +87,24 @@ pub fn new_raw_delete_request(
     atomic: bool,
 ) -> kvrpcpb::RawDeleteRequest {
     requests::new_raw_delete_request(key.into(), cf, atomic)
+}
+
+pub fn new_raw_delete_request_with_options(
+    key: Key,
+    cf: Option<ColumnFamily>,
+    atomic: bool,
+    request_nature: Option<kvrpcpb::RequestNature>,
+    arrival_time: Option<Timestamp>,
+    delay_tolerance_ms: Option<u64>,
+) -> kvrpcpb::RawDeleteRequest {
+    requests::new_raw_delete_request_with_options(
+        key.into(),
+        cf,
+        atomic,
+        request_nature,
+        arrival_time,
+        delay_tolerance_ms,
+    )
 }
 
 pub fn new_raw_batch_delete_request(

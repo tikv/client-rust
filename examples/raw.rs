@@ -4,6 +4,8 @@
 
 mod common;
 
+use prost_types::Timestamp;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tikv_client::Config;
 use tikv_client::IntoOwnedRange;
 use tikv_client::Key;
@@ -11,6 +13,7 @@ use tikv_client::KvPair;
 use tikv_client::RawClient as Client;
 use tikv_client::Result;
 use tikv_client::Value;
+use tikv_client::RequestNature;
 
 use crate::common::parse_args;
 
@@ -47,6 +50,53 @@ async fn main() -> Result<()> {
     client.put(KEY.to_owned(), VALUE.to_owned()).await.unwrap(); // Returns a `tikv_client::Error` on failure.
     println!("Put key {KEY:?}, value {VALUE:?}.");
 
+    // Example: Using put_with_options to set advanced parameters
+    // This allows you to specify request nature, arrival time, and delay tolerance
+    let advanced_key = "advanced_key";
+    let advanced_value = "advanced_value";
+    
+    // Create an arrival time timestamp
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap();
+    let arrival_time = Some(Timestamp {
+        seconds: now.as_secs() as i64,
+        nanos: now.subsec_nanos() as i32,
+    });
+
+    // Put with all new parameters
+    client
+        .put_with_options(
+            advanced_key.to_owned(),
+            advanced_value.to_owned(),
+            0,                              // ttl_secs (0 = no expiration)
+            Some(RequestNature::Predicted), // request_nature: PREDICTED, ACTUAL, or None
+            arrival_time,                   // arrival_time: Optional timestamp
+            Some(1000),                     // delay_tolerance_ms: Optional delay tolerance in ms
+        )
+        .await
+        .unwrap();
+    println!("Put key {advanced_key:?} with options (PREDICTED nature, arrival_time, delay_tolerance_ms=1000).");
+
+    // You can also use ACTUAL request nature
+    client
+        .put_with_options(
+            "actual_key".to_owned(),
+            "actual_value".to_owned(),
+            0,
+            Some(RequestNature::Actual),
+            None, // No arrival time
+            None, // No delay tolerance
+        )
+        .await
+        .unwrap();
+    println!("Put key 'actual_key' with ACTUAL request nature.");
+
+    // Verify the values were stored
+    let advanced_value_result: Option<Value> = client.get(advanced_key.to_owned()).await.unwrap();
+    assert_eq!(advanced_value_result, Some(Value::from(advanced_value.to_owned())));
+    println!("Verified advanced_key value: {advanced_value_result:?}");
+
     // Unlike a standard Rust HashMap all calls take owned values. This is because under the hood
     // protobufs must take ownership of the data. If we only took a borrow we'd need to internally
     // clone it. This is against Rust API guidelines, so you must manage this yourself.
@@ -67,6 +117,58 @@ async fn main() -> Result<()> {
         .await
         .expect("Could not delete value");
     println!("Key: `{KEY}` deleted");
+
+    // Example: Using delete_with_options to delete with advanced parameters
+    // First, let's put a key to delete
+    let delete_key = "delete_with_options_key";
+    client
+        .put(delete_key.to_owned(), "value_to_delete".to_owned())
+        .await
+        .unwrap();
+    println!("Put key {delete_key:?} for deletion example.");
+
+    // Create an arrival time timestamp
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap();
+    let arrival_time = Some(Timestamp {
+        seconds: now.as_secs() as i64,
+        nanos: now.subsec_nanos() as i32,
+    });
+
+    // Delete with all new parameters
+    client
+        .delete_with_options(
+            delete_key.to_owned(),
+            Some(RequestNature::Predicted), // request_nature: PREDICTED, ACTUAL, or None
+            arrival_time,                    // arrival_time: Optional timestamp
+            Some(1000),                     // delay_tolerance_ms: Optional delay tolerance in ms
+        )
+        .await
+        .unwrap();
+    println!("Deleted key {delete_key:?} with options (PREDICTED nature, arrival_time, delay_tolerance_ms=1000).");
+
+    // You can also use ACTUAL request nature
+    let actual_delete_key = "actual_delete_key";
+    client
+        .put(actual_delete_key.to_owned(), "value".to_owned())
+        .await
+        .unwrap();
+    client
+        .delete_with_options(
+            actual_delete_key.to_owned(),
+            Some(RequestNature::Actual),
+            None, // No arrival time
+            None, // No delay tolerance
+        )
+        .await
+        .unwrap();
+    println!("Deleted key 'actual_delete_key' with ACTUAL request nature.");
+
+    // Verify the keys were deleted
+    let deleted_value: Option<Value> = client.get(delete_key.to_owned()).await.unwrap();
+    assert!(deleted_value.is_none());
+    println!("Verified {delete_key:?} was deleted.");
 
     // Here we check if the key has been deleted from the key-value store.
     let value: Option<Value> = client

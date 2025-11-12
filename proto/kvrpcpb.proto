@@ -8,6 +8,7 @@ import "rustproto.proto";
 import "deadlock.proto";
 import "tracepb.proto";
 import "resource_manager.proto";
+import "google/protobuf/timestamp.proto";
 
 option (gogoproto.marshaler_all) = true;
 option (gogoproto.sizer_all) = true;
@@ -27,6 +28,9 @@ message GetRequest {
     Context context = 1;
     bytes key = 2;
     uint64 version = 3;
+    RequestNature request_nature = 4;
+    google.protobuf.Timestamp arrival_time = 5;
+    uint64 delay_tolerance_ms = 6;  // e.g. tolerance in milliseconds
 }
 
 message GetResponse {
@@ -581,6 +585,12 @@ message RawBatchGetResponse {
     repeated KvPair pairs = 2;
 }
 
+enum RequestNature {
+    REQUEST_NATURE_UNSPECIFIED = 0;
+    PREDICTED = 1;
+    ACTUAL = 2;
+}
+
 message RawPutRequest {
     Context context = 1;
     bytes key = 2;
@@ -588,6 +598,9 @@ message RawPutRequest {
     string cf = 4;
     uint64 ttl = 5;
     bool for_cas = 6;
+    RequestNature request_nature = 7;
+    google.protobuf.Timestamp arrival_time = 8;
+    uint64 delay_tolerance_ms = 9;  // e.g. tolerance in milliseconds
 }
 
 message RawPutResponse {
@@ -618,6 +631,9 @@ message RawDeleteRequest {
     bytes key = 2;
     string cf = 3;
     bool for_cas = 4;
+    RequestNature request_nature = 5;
+    google.protobuf.Timestamp arrival_time = 6;
+    uint64 delay_tolerance_ms = 7;  // e.g. tolerance in milliseconds
 }
 
 message RawDeleteResponse {

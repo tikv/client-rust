@@ -14,6 +14,8 @@ use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::kvrpcpb::{RawScanRequest, RawScanResponse};
 use crate::proto::metapb;
+use prost_types::Timestamp;
+
 use crate::raw::lowering::*;
 use crate::request::CollectSingle;
 use crate::request::EncodeKeyspace;
@@ -348,6 +350,77 @@ impl<PdC: PdClient> Client<PdC> {
         Ok(())
     }
 
+    /// Create a new 'put' request with advanced options.
+    ///
+    /// This method allows you to specify request nature, arrival time, and delay tolerance
+    /// in addition to the standard put parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to set
+    /// * `value` - The value to set
+    /// * `ttl_secs` - Time-to-live in seconds (0 means no expiration)
+    /// * `request_nature` - Optional request nature (PREDICTED, ACTUAL, or None for UNSPECIFIED)
+    /// * `arrival_time` - Optional arrival timestamp
+    /// * `delay_tolerance_ms` - Optional delay tolerance in milliseconds
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Value, Config, RawClient, RequestNature};
+    /// # use prost_types::Timestamp;
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let key = "TiKV".to_owned();
+    /// let val = "TiKV".to_owned();
+    /// let arrival_time = Some(Timestamp {
+    ///     seconds: std::time::SystemTime::now()
+    ///         .duration_since(std::time::UNIX_EPOCH)
+    ///         .unwrap()
+    ///         .as_secs() as i64,
+    ///     nanos: 0,
+    /// });
+    /// let req = client.put_with_options(
+    ///     key,
+    ///     val,
+    ///     0,
+    ///     Some(RequestNature::Predicted),
+    ///     arrival_time,
+    ///     Some(1000),
+    /// );
+    /// let result: () = req.await.unwrap();
+    /// # });
+    /// ```
+    pub async fn put_with_options(
+        &self,
+        key: impl Into<Key>,
+        value: impl Into<Value>,
+        ttl_secs: u64,
+        request_nature: Option<crate::proto::kvrpcpb::RequestNature>,
+        arrival_time: Option<Timestamp>,
+        delay_tolerance_ms: Option<u64>,
+    ) -> Result<()> {
+        debug!("invoking raw put request with options");
+        let key = key.into().encode_keyspace(self.keyspace, KeyMode::Raw);
+        let request = crate::raw::lowering::new_raw_put_request_with_options(
+            key,
+            value.into(),
+            self.cf.clone(),
+            ttl_secs,
+            self.atomic,
+            request_nature,
+            arrival_time,
+            delay_tolerance_ms,
+        );
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
+            .retry_multi_region(self.backoff.clone())
+            .merge(CollectSingle)
+            .extract_error()
+            .plan();
+        plan.execute().await?;
+        Ok(())
+    }
+
     /// Create a new 'batch put' request.
     ///
     /// Once resolved this request will result in the setting of the values associated with the given keys.
@@ -412,6 +485,68 @@ impl<PdC: PdClient> Client<PdC> {
         debug!("invoking raw delete request");
         let key = key.into().encode_keyspace(self.keyspace, KeyMode::Raw);
         let request = new_raw_delete_request(key, self.cf.clone(), self.atomic);
+        let plan = crate::request::PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
+            .retry_multi_region(self.backoff.clone())
+            .merge(CollectSingle)
+            .extract_error()
+            .plan();
+        plan.execute().await?;
+        Ok(())
+    }
+
+    /// Create a new 'delete' request with advanced options.
+    ///
+    /// This method allows you to specify request nature, arrival time, and delay tolerance
+    /// in addition to the standard delete parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to delete
+    /// * `request_nature` - Optional request nature (PREDICTED, ACTUAL, or None for UNSPECIFIED)
+    /// * `arrival_time` - Optional arrival timestamp
+    /// * `delay_tolerance_ms` - Optional delay tolerance in milliseconds
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// # use tikv_client::{Key, Config, RawClient, RequestNature};
+    /// # use prost_types::Timestamp;
+    /// # use futures::prelude::*;
+    /// # futures::executor::block_on(async {
+    /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
+    /// let key = "TiKV".to_owned();
+    /// let arrival_time = Some(Timestamp {
+    ///     seconds: std::time::SystemTime::now()
+    ///         .duration_since(std::time::UNIX_EPOCH)
+    ///         .unwrap()
+    ///         .as_secs() as i64,
+    ///     nanos: 0,
+    /// });
+    /// let req = client.delete_with_options(
+    ///     key,
+    ///     Some(RequestNature::Predicted),
+    ///     arrival_time,
+    ///     Some(1000),
+    /// );
+    /// let result: () = req.await.unwrap();
+    /// # });
+    /// ```
+    pub async fn delete_with_options(
+        &self,
+        key: impl Into<Key>,
+        request_nature: Option<crate::proto::kvrpcpb::RequestNature>,
+        arrival_time: Option<Timestamp>,
+        delay_tolerance_ms: Option<u64>,
+    ) -> Result<()> {
+        debug!("invoking raw delete request with options");
+        let key = key.into().encode_keyspace(self.keyspace, KeyMode::Raw);
+        let request = crate::raw::lowering::new_raw_delete_request_with_options(
+            key,
+            self.cf.clone(),
+            self.atomic,
+            request_nature,
+            arrival_time,
+            delay_tolerance_ms,
+        );
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
             .retry_multi_region(self.backoff.clone())
             .merge(CollectSingle)

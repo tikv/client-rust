@@ -36,6 +36,7 @@ log = "0.4"
 pin-project = "1"
 prometheus = { version = "0.13", default-features = false }
 prost = "0.12"
+prost-types = "0.12"
 rand = "0.8"
 regex = "1"
 semver = "1.0"
