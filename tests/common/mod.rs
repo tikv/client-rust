@@ -42,7 +42,7 @@ pub async fn clear_tikv() {
             .await
             .unwrap();
     txn_client.unsafe_destroy_range(..).await.unwrap();
-    // Cleanup any late-persisted locks from prior test case that can appear after destroy.
+    // Cleanup any late-arriving locks from prior test case that can appear after destroy.
     cleanup_all_locks(&txn_client).await;
 }
 
