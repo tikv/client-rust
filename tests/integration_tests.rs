@@ -932,7 +932,11 @@ async fn raw_ttl() -> Result<()> {
     assert_eq!(client.get_key_ttl_secs(key1.clone()).await?, None);
     client.put_with_ttl(key1.clone(), val.clone(), 10).await?;
     assert_eq!(client.get(key1.clone()).await?, Some(val.clone()));
-    assert_eq!(client.get_key_ttl_secs(key1.clone()).await?, Some(10));
+    let ttl = client.get_key_ttl_secs(key1.clone()).await?;
+    assert!(
+        matches!(ttl, Some(v) if v > 5 && v <= 10),
+        "unexpected ttl for key1 after put_with_ttl: {ttl:?}"
+    );
     client
         .batch_put_with_ttl(
             vec![(key1.clone(), val.clone()), (key2.clone(), val.clone())],
@@ -941,8 +945,16 @@ async fn raw_ttl() -> Result<()> {
         .await?;
     assert_eq!(client.get(key1.clone()).await?, Some(val.clone()));
     assert_eq!(client.get(key2.clone()).await?, Some(val.clone()));
-    assert_eq!(client.get_key_ttl_secs(key1.clone()).await?, Some(20));
-    assert_eq!(client.get_key_ttl_secs(key2.clone()).await?, Some(20));
+    let ttl1 = client.get_key_ttl_secs(key1.clone()).await?;
+    assert!(
+        matches!(ttl1, Some(v) if v > 15 && v <= 20),
+        "unexpected ttl for key1 after batch_put_with_ttl: {ttl1:?}"
+    );
+    let ttl2 = client.get_key_ttl_secs(key2.clone()).await?;
+    assert!(
+        matches!(ttl2, Some(v) if v > 15 && v <= 20),
+        "unexpected ttl for key2 after batch_put_with_ttl: {ttl2:?}"
+    );
 
     Ok(())
 }
