@@ -319,7 +319,11 @@ impl Connection {
 
         // Then try to connect the PD cluster leader.
         if let Some(resp) = resp {
-            let leader = resp.leader.as_ref().unwrap();
+            let leader = resp
+                .leader
+                .as_ref()
+                .ok_or_else(|| internal_err!("no leader found in GetMembersResponse"))?;
+
             for ep in &leader.client_urls {
                 if let Ok((client, keyspace_client, members)) =
                     self.try_connect(ep.as_str(), cluster_id, timeout).await
