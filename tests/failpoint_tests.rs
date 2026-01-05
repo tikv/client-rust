@@ -4,7 +4,6 @@ mod common;
 
 use std::collections::HashSet;
 use std::iter::FromIterator;
-use std::thread;
 use std::time::Duration;
 
 use common::*;
@@ -186,8 +185,10 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
         )
         .await?;
         let keys = write_data(&client, true, false).await?;
-        thread::sleep(Duration::from_secs(1)); // Wait for async commit to complete.
-        assert_eq!(count_locks(&client).await?, keys.len() * percent / 100);
+        // Wait for async commit to complete.
+        let expected = keys.len() * percent / 100;
+        let remaining = wait_for_locks_count(&client, expected).await?;
+        assert_eq!(remaining, expected);
 
         let safepoint = client.current_timestamp().await?;
         let options = ResolveLocksOptions {
@@ -261,11 +262,12 @@ async fn txn_cleanup_range_async_commit_locks() -> Result<()> {
         async_commit_only: true,
         ..Default::default()
     };
-    let res = client
-        .cleanup_locks(start_key..end_key, &safepoint, options)
+    client
+        .cleanup_locks(start_key.clone()..end_key.clone(), &safepoint, options)
         .await?;
-
-    assert_eq!(res.resolved_locks, keys.len() - 3);
+    // `cleanup_locks` will resolve primary locks as well. So just check the remaining locks in the range.
+    let remaining = wait_for_locks_count_in_range(&client, &start_key, &end_key, 0).await?;
+    assert_eq!(remaining, 0);
 
     // cleanup all locks to avoid affecting following cases.
     let options = ResolveLocksOptions {
@@ -373,11 +375,43 @@ async fn must_rollbacked(client: &TransactionClient, keys: HashSet<Vec<u8>>) {
 }
 
 async fn count_locks(client: &TransactionClient) -> Result<usize> {
+    count_locks_in_range(client, b"", b"").await
+}
+
+async fn count_locks_in_range(
+    client: &TransactionClient,
+    start_key: &[u8],
+    end_key: &[u8],
+) -> Result<usize> {
     let ts = client.current_timestamp().await.unwrap();
-    let locks = client.scan_locks(&ts, .., 1024).await?;
+    let locks = client.scan_locks(&ts, .., 65536).await?;
     // De-duplicated as `scan_locks` will return duplicated locks due to retry on region changes.
-    let locks_set: HashSet<Vec<u8>> = HashSet::from_iter(locks.into_iter().map(|l| l.key));
+    let locks_set: HashSet<Vec<u8>> =
+        HashSet::from_iter(locks.into_iter().map(|l| l.key).filter(|key| {
+            let key = key.as_slice();
+            key >= start_key && (end_key.is_empty() || key < end_key)
+        }));
     Ok(locks_set.len())
+}
+
+async fn wait_for_locks_count(client: &TransactionClient, expected: usize) -> Result<usize> {
+    wait_for_locks_count_in_range(client, b"", b"", expected).await
+}
+
+async fn wait_for_locks_count_in_range(
+    client: &TransactionClient,
+    start_key: &[u8],
+    end_key: &[u8],
+    expected: usize,
+) -> Result<usize> {
+    for _ in 0..30 {
+        let remaining = count_locks_in_range(client, start_key, end_key).await?;
+        if remaining == expected {
+            return Ok(expected);
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+    count_locks_in_range(client, start_key, end_key).await
 }
 
 // Note: too many transactions or keys will make CI unstable due to timeout.
