@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use std::convert::TryInto;
 use std::env;
 use std::time::Duration;
+use tikv_client::transaction::ResolveLocksOptions;
 use tikv_client::Config;
 use tikv_client::Key;
 use tikv_client::RawClient;
@@ -41,6 +42,8 @@ pub async fn clear_tikv() {
             .await
             .unwrap();
     txn_client.unsafe_destroy_range(..).await.unwrap();
+    // Cleanup any late-persisted locks from prior test case that can appear after destroy.
+    cleanup_all_locks(&txn_client).await;
 }
 
 // To test with multiple regions, prewrite some data. Tests that hope to test
@@ -108,6 +111,30 @@ async fn ensure_region_split(
     }
 
     Ok(())
+}
+
+async fn cleanup_all_locks(client: &TransactionClient) {
+    let options = ResolveLocksOptions {
+        async_commit_only: false,
+        ..Default::default()
+    };
+    for _ in 0..30 {
+        let safepoint = client.current_timestamp().await.unwrap();
+        client.cleanup_locks(.., &safepoint, options).await.unwrap();
+        let ts = client.current_timestamp().await.unwrap();
+        let locks = client.scan_locks(&ts, .., 1024).await.unwrap();
+        if locks.is_empty() {
+            return;
+        }
+        sleep(Duration::from_millis(500)).await;
+    }
+    let ts = client.current_timestamp().await.unwrap();
+    let locks = client.scan_locks(&ts, .., 1024).await.unwrap();
+    assert!(
+        locks.is_empty(),
+        "clear_tikv left {} locks behind",
+        locks.len()
+    );
 }
 
 pub fn pd_addrs() -> Vec<String> {
