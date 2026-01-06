@@ -284,6 +284,48 @@ async fn txn_cleanup_range_async_commit_locks() -> Result<()> {
 
 #[tokio::test]
 #[serial]
+async fn txn_resolve_locks() -> Result<()> {
+    init().await?;
+    let scenario = FailScenario::setup();
+
+    fail::cfg("after-prewrite", "return").unwrap();
+    defer! {{
+        fail::cfg("after-prewrite", "off").unwrap();
+    }}
+
+    let client = TransactionClient::new(pd_addrs()).await?;
+    let key = b"resolve-locks-key".to_vec();
+    let keys = HashSet::from_iter(vec![key.clone()]);
+    let mut txn = client
+        .begin_with_options(
+            TransactionOptions::new_optimistic()
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(CheckLevel::Warn),
+        )
+        .await?;
+    txn.put(key.clone(), b"value".to_vec()).await?;
+    assert!(txn.commit().await.is_err());
+
+    let safepoint = client.current_timestamp().await?;
+    let locks = client.scan_locks(&safepoint, vec![].., 1024).await?;
+    assert!(locks.iter().any(|lock| lock.key == key));
+
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+    let start_version = client.current_timestamp().await?;
+    let live_locks = client
+        .resolve_locks(locks, start_version, OPTIMISTIC_BACKOFF)
+        .await?;
+    assert!(live_locks.is_empty());
+    assert_eq!(count_locks(&client).await?, 0);
+    must_rollbacked(&client, keys).await;
+
+    scenario.teardown();
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
 async fn txn_cleanup_2pc_locks() -> Result<()> {
     init().await?;
     let scenario = FailScenario::setup();
