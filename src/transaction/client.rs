@@ -9,6 +9,7 @@ use crate::backoff::{DEFAULT_REGION_BACKOFF, DEFAULT_STORE_BACKOFF};
 use crate::config::Config;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
+use crate::proto::kvrpcpb;
 use crate::proto::pdpb::Timestamp;
 use crate::request::codec::{ApiV1TxnCodec, ApiV2TxnCodec, Codec, EncodedRequest};
 use crate::request::plan::CleanupLocksResult;
@@ -17,6 +18,7 @@ use crate::timestamp::TimestampExt;
 use crate::transaction::lock::ResolveLocksOptions;
 use crate::transaction::lowering::new_scan_lock_request;
 use crate::transaction::lowering::new_unsafe_destroy_range_request;
+use crate::transaction::resolve_locks;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::Snapshot;
 use crate::transaction::Transaction;
@@ -306,6 +308,37 @@ impl<Cod: Codec> Client<Cod> {
             .merge(crate::request::Collect)
             .plan();
         plan.execute().await
+    }
+
+    /// Resolves the given locks and returns any that remain live.
+    ///
+    /// This method retries until either all locks are resolved or the provided
+    /// `backoff` is exhausted. The `timestamp` is used as the caller start
+    /// timestamp when checking transaction status.
+    pub async fn resolve_locks(
+        &self,
+        locks: Vec<kvrpcpb::LockInfo>,
+        timestamp: Timestamp,
+        mut backoff: Backoff,
+    ) -> Result<Vec<kvrpcpb::LockInfo>> {
+        let mut live_locks = locks;
+        loop {
+            live_locks = resolve_locks(live_locks, timestamp.clone(), self.pd.clone()).await?;
+            if live_locks.is_empty() {
+                return Ok(live_locks);
+            }
+
+            if backoff.is_none() {
+                return Ok(live_locks);
+            }
+
+            match backoff.next_delay_duration() {
+                None => return Ok(live_locks),
+                Some(delay_duration) => {
+                    tokio::time::sleep(delay_duration).await;
+                }
+            }
+        }
     }
 
     /// Cleans up all keys in a range and quickly reclaim disk space.
