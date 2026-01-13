@@ -297,9 +297,7 @@ impl Client {
         plan.execute().await
     }
 
-    // For test.
     // Note: `batch_size` must be >= expected number of locks.
-    #[cfg(feature = "integration-tests")]
     pub async fn scan_locks(
         &self,
         safepoint: &Timestamp,
