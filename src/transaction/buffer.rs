@@ -130,11 +130,14 @@ impl Buffer {
 
         // fetch from TiKV
         // fetch more entries because some of them may be deleted.
-        let redundant_limit = limit
-            + mutation_range
+        let deleted_count = u32::try_from(
+            mutation_range
                 .clone()
                 .filter(|(_, m)| matches!(m, BufferEntry::Del))
-                .count() as u32;
+                .count(),
+        )
+        .unwrap_or(u32::MAX);
+        let redundant_limit = limit.saturating_add(deleted_count);
 
         let mut results = f(range, redundant_limit)
             .await?
@@ -511,6 +514,25 @@ mod tests {
             r3.unwrap().collect::<Vec<_>>(),
             vec![KvPair(k1, v1), KvPair(k2, v2)]
         );
+    }
+
+    #[test]
+    fn scan_and_fetch_redundant_limit_does_not_overflow() {
+        let mut buffer = Buffer::new(false);
+        buffer.delete(b"key1".to_vec().into());
+
+        let range: BoundRange = (..).into();
+        let res =
+            block_on(
+                buffer.scan_and_fetch(range, u32::MAX, false, false, |_, redundant_limit| {
+                    assert_eq!(redundant_limit, u32::MAX);
+                    ready(Ok(Vec::<KvPair>::new()))
+                }),
+            )
+            .unwrap()
+            .collect::<Vec<_>>();
+
+        assert!(res.is_empty());
     }
 
     // Check that multiple writes to the same key combine in the correct way.
