@@ -582,6 +582,8 @@ pub fn lock_until_expired_ms(lock_version: u64, ttl: u64, current: Timestamp) ->
 mod tests {
     use std::any::Any;
 
+    use fail::FailScenario;
+
     use super::*;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
@@ -589,8 +591,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_lock_with_retry() {
+        let _scenario = FailScenario::setup();
+
+        const MAX_REGION_ERROR_RETRIES: u32 = 10;
+        let backoff = Backoff::no_jitter_backoff(0, 0, MAX_REGION_ERROR_RETRIES);
+
         // Test resolve lock within retry limit
-        fail::cfg("region-error", "9*return").unwrap();
+        fail::cfg(
+            "region-error",
+            &format!("{}*return", MAX_REGION_ERROR_RETRIES),
+        )
+        .unwrap();
 
         let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |_: &dyn Any| {
@@ -608,15 +619,19 @@ mod tests {
         let key = vec![1];
         let region1 = MockPdClient::region1();
         let resolved_region =
-            resolve_lock_with_retry(&key, 1, 2, false, client.clone(), OPTIMISTIC_BACKOFF)
+            resolve_lock_with_retry(&key, 1, 2, false, client.clone(), backoff.clone())
                 .await
                 .unwrap();
         assert_eq!(region1.ver_id(), resolved_region);
 
         // Test resolve lock over retry limit
-        fail::cfg("region-error", "10*return").unwrap();
+        fail::cfg(
+            "region-error",
+            &format!("{}*return", MAX_REGION_ERROR_RETRIES + 1),
+        )
+        .unwrap();
         let key = vec![100];
-        resolve_lock_with_retry(&key, 3, 4, false, client, OPTIMISTIC_BACKOFF)
+        resolve_lock_with_retry(&key, 3, 4, false, client, backoff)
             .await
             .expect_err("should return error");
     }
