@@ -1,12 +1,16 @@
 use crate::{
     request::plan::CleanupLocksResult,
-    transaction::{client::Client, ResolveLocksOptions},
-    BoundRange, Config, Result, Snapshot, Timestamp, Transaction, TransactionOptions,
+    transaction::{
+        client::Client, sync_snapshot::SyncSnapshot, sync_transaction::SyncTransaction,
+        ResolveLocksOptions,
+    },
+    BoundRange, Config, Result, Timestamp, TransactionOptions,
 };
-use futures::executor::block_on;
+use std::sync::Arc;
 
 pub struct SyncTransactionClient {
     client: Client,
+    runtime: Arc<tokio::runtime::Runtime>,
 }
 
 impl SyncTransactionClient {
@@ -15,32 +19,40 @@ impl SyncTransactionClient {
     }
 
     pub fn new_with_config<S: Into<String>>(pd_endpoints: Vec<S>, config: Config) -> Result<Self> {
-        let client = block_on(Client::new_with_config(pd_endpoints, config))?;
-        Ok(Self { client })
+        let runtime =
+            Arc::new(tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime"));
+        let client = runtime.block_on(Client::new_with_config(pd_endpoints, config))?;
+        Ok(Self { client, runtime })
     }
 
-    pub fn begin_optimistic(&self) -> Result<Transaction> {
-        block_on(self.client.begin_optimistic())
+    pub fn begin_optimistic(&self) -> Result<SyncTransaction> {
+        let inner = self.runtime.block_on(self.client.begin_optimistic())?;
+        Ok(SyncTransaction::new(inner, Arc::clone(&self.runtime)))
     }
 
-    pub fn begin_pessimistic(&self) -> Result<Transaction> {
-        block_on(self.client.begin_pessimistic())
+    pub fn begin_pessimistic(&self) -> Result<SyncTransaction> {
+        let inner = self.runtime.block_on(self.client.begin_pessimistic())?;
+        Ok(SyncTransaction::new(inner, Arc::clone(&self.runtime)))
     }
 
-    pub fn begin_with_options(&self, options: TransactionOptions) -> Result<Transaction> {
-        block_on(self.client.begin_with_options(options))
+    pub fn begin_with_options(&self, options: TransactionOptions) -> Result<SyncTransaction> {
+        let inner = self
+            .runtime
+            .block_on(self.client.begin_with_options(options))?;
+        Ok(SyncTransaction::new(inner, Arc::clone(&self.runtime)))
     }
 
-    pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> Snapshot {
-        self.client.snapshot(timestamp, options)
+    pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> SyncSnapshot {
+        let inner = self.client.snapshot(timestamp, options);
+        SyncSnapshot::new(inner, Arc::clone(&self.runtime))
     }
 
     pub fn current_timestamp(&self) -> Result<Timestamp> {
-        block_on(self.client.current_timestamp())
+        self.runtime.block_on(self.client.current_timestamp())
     }
 
     pub fn gc(&self, safepoint: Timestamp) -> Result<bool> {
-        block_on(self.client.gc(safepoint))
+        self.runtime.block_on(self.client.gc(safepoint))
     }
 
     pub fn cleanup_locks(
@@ -49,11 +61,24 @@ impl SyncTransactionClient {
         safepoint: &Timestamp,
         options: ResolveLocksOptions,
     ) -> Result<CleanupLocksResult> {
-        block_on(self.client.cleanup_locks(range, safepoint, options))
+        self.runtime
+            .block_on(self.client.cleanup_locks(range, safepoint, options))
     }
 
     pub fn unsafe_destroy_range(&self, range: impl Into<BoundRange>) -> Result<()> {
-        block_on(self.client.unsafe_destroy_range(range))
+        self.runtime
+            .block_on(self.client.unsafe_destroy_range(range))
+    }
+
+    #[cfg(feature = "integration-tests")]
+    pub fn scan_locks(
+        &self,
+        safepoint: &Timestamp,
+        range: impl Into<BoundRange>,
+        batch_size: u32,
+    ) -> Result<Vec<crate::proto::kvrpcpb::LockInfo>> {
+        self.runtime
+            .block_on(self.client.scan_locks(safepoint, range, batch_size))
     }
 }
 
@@ -61,6 +86,7 @@ impl Clone for SyncTransactionClient {
     fn clone(&self) -> Self {
         Self {
             client: self.client.clone(),
+            runtime: Arc::clone(&self.runtime),
         }
     }
 }

@@ -159,6 +159,10 @@ pub use crate::transaction::Client as TransactionClient;
 #[doc(inline)]
 pub use crate::transaction::Snapshot;
 #[doc(inline)]
+pub use crate::transaction::SyncSnapshot;
+#[doc(inline)]
+pub use crate::transaction::SyncTransaction;
+#[doc(inline)]
 pub use crate::transaction::SyncTransactionClient;
 #[doc(inline)]
 pub use crate::transaction::Transaction;

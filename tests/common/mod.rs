@@ -74,6 +74,12 @@ pub async fn init() -> Result<()> {
     Ok(())
 }
 
+pub fn init_sync() -> Result<()> {
+    tokio::runtime::Runtime::new()
+        .expect("Failed to create Tokio runtime")
+        .block_on(init())
+}
+
 async fn ensure_region_split(
     keys: impl IntoIterator<Item = impl Into<Key>>,
     region_count: u32,
