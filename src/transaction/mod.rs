@@ -12,6 +12,7 @@ pub use client::Client;
 pub(crate) use lock::resolve_locks;
 pub(crate) use lock::HasLocks;
 pub use snapshot::Snapshot;
+pub use sync_client::SyncTransactionClient;
 pub use transaction::CheckLevel;
 #[doc(hidden)]
 pub use transaction::HeartbeatOption;
@@ -28,5 +29,6 @@ pub use lock::LockResolver;
 pub use lock::ResolveLocksContext;
 pub use lock::ResolveLocksOptions;
 mod snapshot;
+mod sync_client;
 #[allow(clippy::module_inception)]
 mod transaction;
