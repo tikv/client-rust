@@ -15,7 +15,16 @@ pub const KEYSPACE_PREFIX_LEN: usize = 4;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Keyspace {
     Disable,
-    Enable { keyspace_id: u32 },
+    Enable {
+        keyspace_id: u32,
+    },
+    /// Use API V2 without adding or removing the API V2 keyspace/key-mode prefix.
+    ///
+    /// This mode is intended for **server-side embedding** use cases (e.g. embedding this client in
+    /// `tikv-server`) where keys are already in API V2 "logical key bytes" form and must be passed
+    /// through unchanged.
+    #[cfg(feature = "apiv2-no-prefix")]
+    ApiV2NoPrefix,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -29,6 +38,8 @@ impl Keyspace {
         match self {
             Keyspace::Disable => kvrpcpb::ApiVersion::V1,
             Keyspace::Enable { .. } => kvrpcpb::ApiVersion::V2,
+            #[cfg(feature = "apiv2-no-prefix")]
+            Keyspace::ApiV2NoPrefix => kvrpcpb::ApiVersion::V2,
         }
     }
 }
@@ -43,12 +54,10 @@ pub trait TruncateKeyspace {
 
 impl EncodeKeyspace for Key {
     fn encode_keyspace(mut self, keyspace: Keyspace, key_mode: KeyMode) -> Self {
-        let prefix = match keyspace {
-            Keyspace::Disable => {
-                return self;
-            }
-            Keyspace::Enable { keyspace_id } => keyspace_prefix(keyspace_id, key_mode),
+        let Keyspace::Enable { keyspace_id } = keyspace else {
+            return self;
         };
+        let prefix = keyspace_prefix(keyspace_id, key_mode);
 
         prepend_bytes(&mut self.0, &prefix);
 
@@ -68,11 +77,9 @@ impl EncodeKeyspace for BoundRange {
         self.from = match self.from {
             Bound::Included(key) => Bound::Included(key.encode_keyspace(keyspace, key_mode)),
             Bound::Excluded(key) => Bound::Excluded(key.encode_keyspace(keyspace, key_mode)),
-            Bound::Unbounded => {
-                let key = Key::from(vec![]);
-                Bound::Included(key.encode_keyspace(keyspace, key_mode))
-            }
+            Bound::Unbounded => Bound::Included(Key::EMPTY.encode_keyspace(keyspace, key_mode)),
         };
+
         self.to = match self.to {
             Bound::Included(key) if !key.is_empty() => {
                 Bound::Included(key.encode_keyspace(keyspace, key_mode))
@@ -80,16 +87,15 @@ impl EncodeKeyspace for BoundRange {
             Bound::Excluded(key) if !key.is_empty() => {
                 Bound::Excluded(key.encode_keyspace(keyspace, key_mode))
             }
-            _ => {
-                let key = Key::from(vec![]);
-                let keyspace = match keyspace {
-                    Keyspace::Disable => Keyspace::Disable,
-                    Keyspace::Enable { keyspace_id } => Keyspace::Enable {
+            _ => match keyspace {
+                Keyspace::Enable { keyspace_id } => Bound::Excluded(Key::EMPTY.encode_keyspace(
+                    Keyspace::Enable {
                         keyspace_id: keyspace_id + 1,
                     },
-                };
-                Bound::Excluded(key.encode_keyspace(keyspace, key_mode))
-            }
+                    key_mode,
+                )),
+                _ => Bound::Excluded(Key::EMPTY),
+            },
         };
         self
     }
@@ -106,7 +112,7 @@ impl EncodeKeyspace for Mutation {
 
 impl TruncateKeyspace for Key {
     fn truncate_keyspace(mut self, keyspace: Keyspace) -> Self {
-        if let Keyspace::Disable = keyspace {
+        if !matches!(keyspace, Keyspace::Enable { .. }) {
             return self;
         }
 
@@ -133,6 +139,9 @@ impl TruncateKeyspace for Range<Key> {
 
 impl TruncateKeyspace for Vec<Range<Key>> {
     fn truncate_keyspace(mut self, keyspace: Keyspace) -> Self {
+        if !matches!(keyspace, Keyspace::Enable { .. }) {
+            return self;
+        }
         for range in &mut self {
             take_mut::take(range, |range| range.truncate_keyspace(keyspace));
         }
@@ -142,6 +151,9 @@ impl TruncateKeyspace for Vec<Range<Key>> {
 
 impl TruncateKeyspace for Vec<KvPair> {
     fn truncate_keyspace(mut self, keyspace: Keyspace) -> Self {
+        if !matches!(keyspace, Keyspace::Enable { .. }) {
+            return self;
+        }
         for pair in &mut self {
             take_mut::take(pair, |pair| pair.truncate_keyspace(keyspace));
         }
@@ -151,6 +163,9 @@ impl TruncateKeyspace for Vec<KvPair> {
 
 impl TruncateKeyspace for Vec<crate::proto::kvrpcpb::LockInfo> {
     fn truncate_keyspace(mut self, keyspace: Keyspace) -> Self {
+        if !matches!(keyspace, Keyspace::Enable { .. }) {
+            return self;
+        }
         for lock in &mut self {
             take_mut::take(&mut lock.key, |key| {
                 Key::from(key).truncate_keyspace(keyspace).into()
@@ -276,5 +291,67 @@ mod tests {
         };
         let expected_key = Key::from(vec![0xBE, 0xEF]);
         assert_eq!(key.truncate_keyspace(keyspace), expected_key);
+    }
+
+    #[cfg(feature = "apiv2-no-prefix")]
+    #[test]
+    fn test_apiv2_no_prefix_api_version() {
+        assert_eq!(
+            Keyspace::ApiV2NoPrefix.api_version(),
+            kvrpcpb::ApiVersion::V2
+        );
+    }
+
+    #[cfg(feature = "apiv2-no-prefix")]
+    #[test]
+    fn test_apiv2_no_prefix_encode_is_noop() {
+        let keyspace = Keyspace::ApiV2NoPrefix;
+        let key_mode = KeyMode::Txn;
+
+        let key = Key::from(vec![b'x', 0, 0, 0, b'k']);
+        assert_eq!(key.clone().encode_keyspace(keyspace, key_mode), key);
+
+        let pair = KvPair(Key::from(vec![b'x', 0, 0, 0, b'k']), vec![b'v']);
+        assert_eq!(pair.clone().encode_keyspace(keyspace, key_mode), pair);
+
+        let bound: BoundRange =
+            (Key::from(vec![b'x', 0, 0, 0, b'a'])..Key::from(vec![b'x', 0, 0, 0, b'b'])).into();
+        assert_eq!(bound.clone().encode_keyspace(keyspace, key_mode), bound);
+
+        let mutation = Mutation::Put(Key::from(vec![b'x', 0, 0, 0, b'k']), vec![1, 2, 3]);
+        assert_eq!(
+            mutation.clone().encode_keyspace(keyspace, key_mode),
+            mutation
+        );
+    }
+
+    #[cfg(feature = "apiv2-no-prefix")]
+    #[test]
+    fn test_apiv2_no_prefix_truncate_is_noop() {
+        let keyspace = Keyspace::ApiV2NoPrefix;
+
+        let key = Key::from(vec![b'x', 0, 0, 0, b'k']);
+        assert_eq!(key.clone().truncate_keyspace(keyspace), key);
+
+        let pair = KvPair(Key::from(vec![b'x', 0, 0, 0, b'k']), vec![b'v']);
+        assert_eq!(pair.clone().truncate_keyspace(keyspace), pair);
+
+        let range = Range {
+            start: Key::from(vec![b'x', 0, 0, 0, b'a']),
+            end: Key::from(vec![b'x', 0, 0, 0, b'b']),
+        };
+        assert_eq!(range.clone().truncate_keyspace(keyspace), range);
+
+        let pairs = vec![pair];
+        assert_eq!(pairs.clone().truncate_keyspace(keyspace), pairs);
+
+        let lock = crate::proto::kvrpcpb::LockInfo {
+            key: vec![b'x', 0, 0, 0, b'k'],
+            primary_lock: vec![b'x', 0, 0, 0, b'p'],
+            secondaries: vec![vec![b'x', 0, 0, 0, b's']],
+            ..Default::default()
+        };
+        let locks = vec![lock];
+        assert_eq!(locks.clone().truncate_keyspace(keyspace), locks);
     }
 }

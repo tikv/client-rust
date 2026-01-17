@@ -7,6 +7,7 @@ use log::info;
 
 use crate::backoff::{DEFAULT_REGION_BACKOFF, DEFAULT_STORE_BACKOFF};
 use crate::config::Config;
+use crate::config::Keyspace as ConfigKeyspace;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::pdpb::Timestamp;
@@ -110,13 +111,15 @@ impl Client {
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?);
         let keyspace = match config.keyspace {
-            Some(keyspace) => {
-                let keyspace = pd.load_keyspace(&keyspace).await?;
+            ConfigKeyspace::Disable => Keyspace::Disable,
+            ConfigKeyspace::Enable { name } => {
+                let keyspace = pd.load_keyspace(&name).await?;
                 Keyspace::Enable {
                     keyspace_id: keyspace.id,
                 }
             }
-            None => Keyspace::Disable,
+            #[cfg(feature = "apiv2-no-prefix")]
+            ConfigKeyspace::ApiV2NoPrefix => Keyspace::ApiV2NoPrefix,
         };
         Ok(Client { pd, keyspace })
     }

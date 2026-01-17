@@ -10,6 +10,7 @@ use tokio::time::sleep;
 use crate::backoff::{DEFAULT_REGION_BACKOFF, DEFAULT_STORE_BACKOFF};
 use crate::common::Error;
 use crate::config::Config;
+use crate::config::Keyspace as ConfigKeyspace;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::kvrpcpb::{RawScanRequest, RawScanResponse};
@@ -107,18 +108,25 @@ impl Client<PdRpcClient> {
         pd_endpoints: Vec<S>,
         config: Config,
     ) -> Result<Self> {
-        let enable_codec = config.keyspace.is_some();
+        let enable_codec = match &config.keyspace {
+            ConfigKeyspace::Disable => false,
+            ConfigKeyspace::Enable { .. } => true,
+            #[cfg(feature = "apiv2-no-prefix")]
+            ConfigKeyspace::ApiV2NoPrefix => true,
+        };
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let rpc =
             Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), enable_codec).await?);
         let keyspace = match config.keyspace {
-            Some(keyspace) => {
-                let keyspace = rpc.load_keyspace(&keyspace).await?;
+            ConfigKeyspace::Disable => Keyspace::Disable,
+            ConfigKeyspace::Enable { name } => {
+                let keyspace = rpc.load_keyspace(&name).await?;
                 Keyspace::Enable {
                     keyspace_id: keyspace.id,
                 }
             }
-            None => Keyspace::Disable,
+            #[cfg(feature = "apiv2-no-prefix")]
+            ConfigKeyspace::ApiV2NoPrefix => Keyspace::ApiV2NoPrefix,
         };
         Ok(Client {
             rpc,
