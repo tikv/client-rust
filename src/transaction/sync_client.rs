@@ -131,7 +131,18 @@ impl SyncTransactionClient {
         Ok(SyncTransaction::new(inner, Arc::clone(&self.runtime)))
     }
 
-    /// Create a new [`SyncSnapshot`] at the given [`Timestamp`].
+    /// Create a new read-only [`SyncSnapshot`] at the given [`Timestamp`].
+    ///
+    /// A snapshot is a read-only transaction that reads data as if the snapshot was taken at the
+    /// specified timestamp. It can read operations that happened before the timestamp, but ignores
+    /// operations after the timestamp.
+    ///
+    /// Use snapshots when you need:
+    /// - Consistent reads across multiple operations without starting a full transaction
+    /// - Point-in-time reads at a specific timestamp
+    /// - Read-only access without the overhead of transaction tracking
+    ///
+    /// Unlike transactions, snapshots cannot perform write operations (put, delete, etc.).
     ///
     /// This is a synchronous version of [`TransactionClient::snapshot`](crate::TransactionClient::snapshot).
     ///
@@ -141,7 +152,10 @@ impl SyncTransactionClient {
     /// # use tikv_client::{SyncTransactionClient, TransactionOptions};
     /// let client = SyncTransactionClient::new(vec!["192.168.0.100"]).unwrap();
     /// let timestamp = client.current_timestamp().unwrap();
-    /// let snapshot = client.snapshot(timestamp, TransactionOptions::default());
+    /// let mut snapshot = client.snapshot(timestamp, TransactionOptions::default());
+    /// 
+    /// // Read data as it existed at the snapshot timestamp
+    /// let value = snapshot.get("key".to_owned()).unwrap();
     /// ```
     pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> SyncSnapshot {
         let inner = self.client.snapshot(timestamp, options);
