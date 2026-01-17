@@ -22,7 +22,7 @@ impl SyncTransactionClient {
     /// Synchronous version of `TransactionClient::new_with_config`.
     pub fn new_with_config<S: Into<String>>(pd_endpoints: Vec<S>, config: Config) -> Result<Self> {
         let runtime =
-            Arc::new(tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime"));
+            Arc::new(tokio::runtime::Runtime::new()?);
         let client = runtime.block_on(Client::new_with_config(pd_endpoints, config))?;
         Ok(Self { client, runtime })
     }
