@@ -153,7 +153,7 @@ impl SyncTransactionClient {
     /// let client = SyncTransactionClient::new(vec!["192.168.0.100"]).unwrap();
     /// let timestamp = client.current_timestamp().unwrap();
     /// let mut snapshot = client.snapshot(timestamp, TransactionOptions::default());
-    /// 
+    ///
     /// // Read data as it existed at the snapshot timestamp
     /// let value = snapshot.get("key".to_owned()).unwrap();
     /// ```
