@@ -58,8 +58,11 @@ impl SyncTransactionClient {
     /// .unwrap();
     /// ```
     pub fn new_with_config<S: Into<String>>(pd_endpoints: Vec<S>, config: Config) -> Result<Self> {
-        let runtime =
-            Arc::new(tokio::runtime::Runtime::new()?);
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?,
+        );
         let client = runtime.block_on(Client::new_with_config(pd_endpoints, config))?;
         Ok(Self { client, runtime })
     }
