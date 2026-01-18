@@ -125,8 +125,6 @@ pub use common::Error;
 pub use common::Result;
 #[doc(inline)]
 pub use config::Config;
-#[doc(inline)]
-pub use config::Keyspace;
 
 #[doc(inline)]
 pub use crate::backoff::Backoff;
