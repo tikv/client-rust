@@ -75,7 +75,11 @@ pub async fn init() -> Result<()> {
 }
 
 pub fn init_sync() -> Result<()> {
-    tokio::runtime::Runtime::new()?.block_on(init())
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.block_on(init())
+    } else {
+        tokio::runtime::Runtime::new()?.block_on(init())
+    }
 }
 
 async fn ensure_region_split(

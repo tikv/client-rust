@@ -271,11 +271,11 @@ fn sync_txn_scan() -> Result<()> {
     let results: Vec<_> = txn
         .scan("key1".to_owned().."key4".to_owned(), 10)?
         .collect();
-    
+
     assert_eq!(results.len(), 3); // key1, key2, key3 (key4 is exclusive)
     assert_eq!(results[0].0, Key::from("key1".to_owned()));
     assert_eq!(results[0].1, Value::from("value1".to_owned()));
-    
+
     txn.rollback()?;
     Ok(())
 }
@@ -298,12 +298,12 @@ fn sync_txn_scan_keys() -> Result<()> {
     let keys: Vec<_> = txn
         .scan_keys("scan_k1".to_owned()..="scan_k3".to_owned(), 10)?
         .collect();
-    
+
     assert_eq!(keys.len(), 3);
     assert_eq!(keys[0], Key::from("scan_k1".to_owned()));
     assert_eq!(keys[1], Key::from("scan_k2".to_owned()));
     assert_eq!(keys[2], Key::from("scan_k3".to_owned()));
-    
+
     txn.rollback()?;
     Ok(())
 }
@@ -326,13 +326,13 @@ fn sync_txn_scan_reverse() -> Result<()> {
     let results: Vec<_> = txn
         .scan_reverse("rev1".to_owned()..="rev3".to_owned(), 10)?
         .collect();
-    
+
     assert_eq!(results.len(), 3);
     // Reverse order: rev3, rev2, rev1
     assert_eq!(results[0].0, Key::from("rev3".to_owned()));
     assert_eq!(results[1].0, Key::from("rev2".to_owned()));
     assert_eq!(results[2].0, Key::from("rev1".to_owned()));
-    
+
     txn.rollback()?;
     Ok(())
 }
@@ -355,13 +355,13 @@ fn sync_txn_scan_keys_reverse() -> Result<()> {
     let keys: Vec<_> = txn
         .scan_keys_reverse("revkey1".to_owned()..="revkey3".to_owned(), 10)?
         .collect();
-    
+
     assert_eq!(keys.len(), 3);
     // Reverse order
     assert_eq!(keys[0], Key::from("revkey3".to_owned()));
     assert_eq!(keys[1], Key::from("revkey2".to_owned()));
     assert_eq!(keys[2], Key::from("revkey1".to_owned()));
-    
+
     txn.rollback()?;
     Ok(())
 }
@@ -384,9 +384,9 @@ fn sync_txn_scan_with_limit() -> Result<()> {
     let results: Vec<_> = txn
         .scan("limit_key00".to_owned().., 5)? // Limit to 5 results
         .collect();
-    
+
     assert_eq!(results.len(), 5); // Should only get 5 results
-    
+
     txn.rollback()?;
     Ok(())
 }
