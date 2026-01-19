@@ -58,21 +58,24 @@ pub async fn resolve_locks(
     let ts = pd_client.clone().get_timestamp().await?;
     let caller_start_ts = timestamp.version();
     let current_ts = ts.version();
-    let (expired_locks, live_locks) =
-        locks
-            .into_iter()
-            .partition::<Vec<kvrpcpb::LockInfo>, _>(|lock| {
-                ts.physical - Timestamp::from_version(lock.lock_version).physical
-                    >= lock.lock_ttl as i64
-            });
 
-    let mut live_locks = live_locks;
+    let mut live_locks = Vec::new();
     let mut lock_resolver = LockResolver::new(ResolveLocksContext::default());
 
     // records the commit version of each primary lock (representing the status of the transaction)
     let mut commit_versions: HashMap<u64, u64> = HashMap::new();
     let mut clean_regions: HashMap<u64, HashSet<RegionVerId>> = HashMap::new();
-    for lock in expired_locks {
+    // We must check txn status for *all* locks, not only TTL-expired ones.
+    //
+    // TTL only indicates whether a lock is *possibly* orphaned; it does not mean the transaction
+    // is still running. A transaction may already be committed/rolled back while its locks are
+    // still visible (e.g. cleanup/resolve hasn't finished, retries after region errors, etc.).
+    // If we only resolve TTL-expired locks, we can unnecessarily sleep/backoff until TTL even
+    // though `CheckTxnStatus` would already report `Committed`/`RolledBack`.
+    //
+    // This matches the client-go `LockResolver.ResolveLocksWithOpts` flow: query txn status for
+    // each encountered lock, then resolve immediately when the status is final.
+    for lock in locks {
         let region_ver_id = pd_client
             .region_for_key(&lock.key.clone().into())
             .await?
@@ -111,7 +114,10 @@ pub async fn resolve_locks(
                         commit_versions.insert(lock.lock_version, 0);
                         Some(0)
                     }
-                    TransactionStatusKind::Locked(..) => None,
+                    TransactionStatusKind::Locked(_, lock_info) => {
+                        live_locks.push(lock_info.clone());
+                        None
+                    }
                 }
             }
         };
@@ -130,8 +136,6 @@ pub async fn resolve_locks(
                 .entry(lock.lock_version)
                 .or_default()
                 .insert(cleaned_region);
-        } else {
-            live_locks.push(lock);
         }
     }
     Ok(live_locks)
@@ -570,6 +574,8 @@ pub fn lock_until_expired_ms(lock_version: u64, ttl: u64, current: Timestamp) ->
 #[cfg(test)]
 mod tests {
     use std::any::Any;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
 
     use serial_test::serial;
 
@@ -613,5 +619,47 @@ mod tests {
         resolve_lock_with_retry(&key, 3, 4, false, client, keyspace)
             .await
             .expect_err("should return error");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_resolve_locks_resolves_committed_even_if_ttl_not_expired() {
+        let check_txn_status_count = Arc::new(AtomicUsize::new(0));
+        let resolve_lock_count = Arc::new(AtomicUsize::new(0));
+
+        let check_txn_status_count_captured = check_txn_status_count.clone();
+        let resolve_lock_count_captured = resolve_lock_count.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if req.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    check_txn_status_count_captured.fetch_add(1, Ordering::SeqCst);
+                    let resp = kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        action: kvrpcpb::Action::NoAction as i32,
+                        ..Default::default()
+                    };
+                    return Ok(Box::new(resp) as Box<dyn Any>);
+                }
+                if req.is::<kvrpcpb::ResolveLockRequest>() {
+                    resolve_lock_count_captured.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+
+        let mut lock = kvrpcpb::LockInfo::default();
+        lock.key = vec![1];
+        lock.primary_lock = vec![1];
+        lock.lock_version = 1;
+        lock.lock_ttl = 100; // not expired under MockPdClient's Timestamp::default()
+
+        let live_locks = resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable)
+            .await
+            .unwrap();
+
+        assert!(live_locks.is_empty());
+        assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 1);
+        assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 1);
     }
 }
