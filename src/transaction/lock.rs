@@ -46,9 +46,8 @@ fn format_key_for_log(key: &[u8]) -> String {
 ///
 /// If a key has a lock, the latest status of the key is unknown. We need to "resolve" the lock,
 /// which means the key is finally either committed or rolled back, before we read the value of
-/// the key. We first use `CleanupRequest` to let the status of the primary lock converge and get
-/// its status (committed or rolled back). Then, we use the status of its primary lock to determine
-/// the status of the other keys in the same transaction.
+/// the key. We first use `CheckTxnStatus` to get the transaction's final status (committed or
+/// rolled back), then use `ResolveLock` to resolve the remaining locks in the transaction.
 pub async fn resolve_locks(
     locks: Vec<kvrpcpb::LockInfo>,
     timestamp: Timestamp,

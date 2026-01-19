@@ -214,35 +214,6 @@ impl KvRequest for kvrpcpb::ResolveLockRequest {
     type Response = kvrpcpb::ResolveLockResponse;
 }
 
-#[allow(dead_code)]
-pub fn new_cleanup_request(key: Vec<u8>, start_version: u64) -> kvrpcpb::CleanupRequest {
-    let mut req = kvrpcpb::CleanupRequest::default();
-    req.key = key;
-    req.start_version = start_version;
-
-    req
-}
-
-impl KvRequest for kvrpcpb::CleanupRequest {
-    type Response = kvrpcpb::CleanupResponse;
-}
-
-shardable_key!(kvrpcpb::CleanupRequest);
-collect_single!(kvrpcpb::CleanupResponse);
-impl SingleKey for kvrpcpb::CleanupRequest {
-    fn key(&self) -> &Vec<u8> {
-        &self.key
-    }
-}
-
-impl Process<kvrpcpb::CleanupResponse> for DefaultProcessor {
-    type Out = u64;
-
-    fn process(&self, input: Result<kvrpcpb::CleanupResponse>) -> Result<Self::Out> {
-        Ok(input?.commit_version)
-    }
-}
-
 pub fn new_prewrite_request(
     mutations: Vec<kvrpcpb::Mutation>,
     primary_lock: Vec<u8>,
@@ -855,8 +826,6 @@ error_locks!(kvrpcpb::BatchRollbackResponse);
 error_locks!(kvrpcpb::TxnHeartBeatResponse);
 error_locks!(kvrpcpb::CheckTxnStatusResponse);
 error_locks!(kvrpcpb::CheckSecondaryLocksResponse);
-
-impl HasLocks for kvrpcpb::CleanupResponse {}
 
 impl HasLocks for kvrpcpb::ScanLockResponse {
     fn take_locks(&mut self) -> Vec<LockInfo> {
