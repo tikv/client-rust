@@ -274,6 +274,9 @@ message TxnHeartBeatRequest {
     uint64 start_version = 3;
     // The new TTL the sender would like.
     uint64 advise_lock_ttl = 4;
+
+    // Reserved for file based transaction.
+    bool is_txn_file = 100;
 }
 
 message TxnHeartBeatResponse {
@@ -375,6 +378,9 @@ message CommitRequest {
     repeated bytes keys = 3;
     // Timestamp for the end of the transaction. Must be greater than `start_version`.
     uint64 commit_version = 4;
+
+    // Reserved for file based transaction.
+    bool is_txn_file = 100;
 }
 
 message CommitResponse {
@@ -443,6 +449,9 @@ message BatchRollbackRequest {
     uint64 start_version = 2;
     // The keys to rollback.
     repeated bytes keys = 3;
+
+    // Reserved for file based transaction.
+    bool is_txn_file = 100;
 }
 
 message BatchRollbackResponse {

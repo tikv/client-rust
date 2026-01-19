@@ -366,6 +366,9 @@ pub struct TxnHeartBeatRequest {
     /// The new TTL the sender would like.
     #[prost(uint64, tag = "4")]
     pub advise_lock_ttl: u64,
+    /// Reserved for file based transaction.
+    #[prost(bool, tag = "100")]
+    pub is_txn_file: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -503,6 +506,9 @@ pub struct CommitRequest {
     /// Timestamp for the end of the transaction. Must be greater than `start_version`.
     #[prost(uint64, tag = "4")]
     pub commit_version: u64,
+    /// Reserved for file based transaction.
+    #[prost(bool, tag = "100")]
+    pub is_txn_file: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -603,6 +609,9 @@ pub struct BatchRollbackRequest {
     /// The keys to rollback.
     #[prost(bytes = "vec", repeated, tag = "3")]
     pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    /// Reserved for file based transaction.
+    #[prost(bool, tag = "100")]
+    pub is_txn_file: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
