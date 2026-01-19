@@ -60,7 +60,7 @@ jobs:
     env:
       CARGO_INCREMENTAL: 0
       NEXTEST_PROFILE: ci
-      TIKV_VERSION: v8.5.1
+      TIKV_VERSION: v8.5.5
       RUST_LOG: info
     runs-on: ubuntu-latest
     steps:

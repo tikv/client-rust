@@ -112,8 +112,8 @@ impl Client<PdRpcClient> {
         let rpc =
             Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), enable_codec).await?);
         let keyspace = match config.keyspace {
-            Some(keyspace) => {
-                let keyspace = rpc.load_keyspace(&keyspace).await?;
+            Some(name) => {
+                let keyspace = rpc.load_keyspace(&name).await?;
                 Keyspace::Enable {
                     keyspace_id: keyspace.id,
                 }
