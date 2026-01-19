@@ -675,6 +675,7 @@ pub fn new_check_txn_status_request(
     req.rollback_if_not_exist = rollback_if_not_exist;
     req.force_sync_commit = force_sync_commit;
     req.resolving_pessimistic_lock = resolving_pessimistic_lock;
+    req.verify_is_primary = true;
     req.is_txn_file = is_txn_file;
     req
 }

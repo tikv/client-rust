@@ -37,6 +37,11 @@ use crate::Result;
 
 const RESOLVE_LOCK_RETRY_LIMIT: usize = 10;
 
+fn format_key_for_log(key: &[u8]) -> String {
+    let prefix_len = key.len().min(16);
+    format!("len={}, prefix={:?}", key.len(), &key[..prefix_len])
+}
+
 /// _Resolves_ the given locks. Returns locks still live. When there is no live locks, all the given locks are resolved.
 ///
 /// If a key has a lock, the latest status of the key is unknown. We need to "resolve" the lock,
@@ -70,7 +75,7 @@ pub async fn resolve_locks(
     let mut clean_regions: HashMap<u64, HashSet<RegionVerId>> = HashMap::new();
     for lock in expired_locks {
         let region_ver_id = pd_client
-            .region_for_key(&lock.primary_lock.clone().into())
+            .region_for_key(&lock.key.clone().into())
             .await?
             .ver_id();
         // skip if the region is cleaned
@@ -143,7 +148,6 @@ async fn resolve_lock_with_retry(
 ) -> Result<RegionVerId> {
     debug!("resolving locks with retry");
     // FIXME: Add backoff
-    let timestamp = Timestamp::from_version(start_version);
     let mut error = None;
     for i in 0..RESOLVE_LOCK_RETRY_LIMIT {
         debug!("resolving locks: attempt {}", (i + 1));
@@ -154,7 +158,6 @@ async fn resolve_lock_with_retry(
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
             .single_region_with_store(store)
             .await?
-            .resolve_lock(timestamp.clone(), Backoff::no_backoff(), keyspace)
             .extract_error()
             .plan();
         match plan.execute().await {
@@ -168,6 +171,18 @@ async fn resolve_lock_with_retry(
                     e @ Some(Error::RegionError(_)) => {
                         error = e;
                         continue;
+                    }
+                    Some(Error::KeyError(key_err)) => {
+                        // Keyspace is not truncated here because we need full key info for logging.
+                        error!(
+                            "resolve_lock error, unexpected resolve err: {:?}, lock: {{key: {}, start_version: {}, commit_version: {}, is_txn_file: {}}}",
+                            key_err,
+                            format_key_for_log(key),
+                            start_version,
+                            commit_version,
+                            is_txn_file,
+                        );
+                        return Err(Error::KeyError(key_err));
                     }
                     Some(e) => return Err(e),
                     None => unreachable!(),
