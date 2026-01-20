@@ -290,7 +290,13 @@ impl PdRpcClient<TikvConnect, Cluster> {
     ) -> Result<PdRpcClient> {
         PdRpcClient::new(
             config.clone(),
-            |security_mgr| TikvConnect::new(security_mgr, config.timeout),
+            |security_mgr| {
+                TikvConnect::new(
+                    security_mgr,
+                    config.timeout,
+                    config.grpc_max_decoding_message_size,
+                )
+            },
             |security_mgr| RetryClient::connect(pd_endpoints, security_mgr, config.timeout),
             enable_codec,
         )
