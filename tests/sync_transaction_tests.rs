@@ -22,7 +22,7 @@ fn sync_client() -> Result<SyncTransactionClient> {
 
 #[test]
 #[serial]
-fn sync_txn_get_timestamp() -> Result<()> {
+fn txn_sync_get_timestamp() -> Result<()> {
     const COUNT: usize = 1 << 8;
     let client = sync_client()?;
 
@@ -40,7 +40,7 @@ fn sync_txn_get_timestamp() -> Result<()> {
 
 #[test]
 #[serial]
-fn sync_txn_crud() -> Result<()> {
+fn txn_sync_crud() -> Result<()> {
     init_sync()?;
 
     let client = sync_client()?;
@@ -97,7 +97,7 @@ fn sync_txn_crud() -> Result<()> {
 
 #[test]
 #[serial]
-fn sync_txn_begin_pessimistic() -> Result<()> {
+fn txn_sync_begin_pessimistic() -> Result<()> {
     init_sync()?;
 
     let client = sync_client()?;
@@ -124,7 +124,7 @@ fn sync_txn_begin_pessimistic() -> Result<()> {
 
 #[test]
 #[serial]
-fn sync_txn_snapshot() -> Result<()> {
+fn txn_sync_snapshot() -> Result<()> {
     init_sync()?;
 
     let client = sync_client()?;
@@ -168,7 +168,7 @@ fn sync_txn_snapshot() -> Result<()> {
 
 #[test]
 #[serial]
-fn sync_txn_begin_with_options() -> Result<()> {
+fn txn_sync_begin_with_options() -> Result<()> {
     init_sync()?;
 
     let client = sync_client()?;
@@ -191,7 +191,7 @@ fn sync_txn_begin_with_options() -> Result<()> {
 
 #[test]
 #[serial]
-fn sync_txn_rollback() -> Result<()> {
+fn txn_sync_rollback() -> Result<()> {
     init_sync()?;
 
     let client = sync_client()?;
@@ -221,7 +221,7 @@ fn sync_txn_rollback() -> Result<()> {
 
 #[test]
 #[serial]
-fn sync_txn_clone_client() -> Result<()> {
+fn txn_sync_clone_client() -> Result<()> {
     init_sync()?;
 
     let client1 = sync_client()?;
@@ -254,7 +254,7 @@ fn sync_txn_clone_client() -> Result<()> {
 
 #[test]
 #[serial]
-fn sync_txn_scan() -> Result<()> {
+fn txn_sync_scan() -> Result<()> {
     init_sync()?;
     let client = sync_client()?;
 
@@ -282,7 +282,7 @@ fn sync_txn_scan() -> Result<()> {
 
 #[test]
 #[serial]
-fn sync_txn_scan_keys() -> Result<()> {
+fn txn_sync_scan_keys() -> Result<()> {
     init_sync()?;
     let client = sync_client()?;
 
@@ -310,7 +310,7 @@ fn sync_txn_scan_keys() -> Result<()> {
 
 #[test]
 #[serial]
-fn sync_txn_scan_reverse() -> Result<()> {
+fn txn_sync_scan_reverse() -> Result<()> {
     init_sync()?;
     let client = sync_client()?;
 
@@ -339,7 +339,7 @@ fn sync_txn_scan_reverse() -> Result<()> {
 
 #[test]
 #[serial]
-fn sync_txn_scan_keys_reverse() -> Result<()> {
+fn txn_sync_scan_keys_reverse() -> Result<()> {
     init_sync()?;
     let client = sync_client()?;
 
@@ -368,7 +368,7 @@ fn sync_txn_scan_keys_reverse() -> Result<()> {
 
 #[test]
 #[serial]
-fn sync_txn_scan_with_limit() -> Result<()> {
+fn txn_sync_scan_with_limit() -> Result<()> {
     init_sync()?;
     let client = sync_client()?;
 
