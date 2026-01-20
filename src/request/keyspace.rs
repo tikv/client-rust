@@ -12,7 +12,8 @@ pub const RAW_KEY_PREFIX: u8 = b'r';
 pub const TXN_KEY_PREFIX: u8 = b'x';
 pub const KEYSPACE_PREFIX_LEN: usize = 4;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Keyspace {
     Disable,
     Enable {
@@ -23,7 +24,6 @@ pub enum Keyspace {
     /// This mode is intended for **server-side embedding** use cases (e.g. embedding this client in
     /// `tikv-server`) where keys are already in API V2 "logical key bytes" form and must be passed
     /// through unchanged.
-    #[cfg(feature = "apiv2-no-prefix")]
     ApiV2NoPrefix,
 }
 
@@ -38,7 +38,6 @@ impl Keyspace {
         match self {
             Keyspace::Disable => kvrpcpb::ApiVersion::V1,
             Keyspace::Enable { .. } => kvrpcpb::ApiVersion::V2,
-            #[cfg(feature = "apiv2-no-prefix")]
             Keyspace::ApiV2NoPrefix => kvrpcpb::ApiVersion::V2,
         }
     }
@@ -293,7 +292,6 @@ mod tests {
         assert_eq!(key.truncate_keyspace(keyspace), expected_key);
     }
 
-    #[cfg(feature = "apiv2-no-prefix")]
     #[test]
     fn test_apiv2_no_prefix_api_version() {
         assert_eq!(
@@ -302,7 +300,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "apiv2-no-prefix")]
     #[test]
     fn test_apiv2_no_prefix_encode_is_noop() {
         let keyspace = Keyspace::ApiV2NoPrefix;
@@ -325,7 +322,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "apiv2-no-prefix")]
     #[test]
     fn test_apiv2_no_prefix_truncate_is_noop() {
         let keyspace = Keyspace::ApiV2NoPrefix;

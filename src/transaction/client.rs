@@ -125,7 +125,6 @@ impl Client {
     /// keyspace/key-mode prefix, with a custom configuration.
     ///
     /// This is intended for **server-side embedding** use cases. `config.keyspace` must be unset.
-    #[cfg(feature = "apiv2-no-prefix")]
     pub async fn new_with_config_api_v2_no_prefix<S: Into<String>>(
         pd_endpoints: Vec<S>,
         config: Config,
