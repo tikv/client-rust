@@ -22,41 +22,14 @@ pub struct SyncTransactionClient {
 impl SyncTransactionClient {
     /// Create a synchronous transactional [`SyncTransactionClient`] and connect to the TiKV cluster.
     ///
-    /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for
-    /// PD must be provided, not the TiKV nodes. It's important to include more than one PD endpoint
-    /// (include all endpoints, if possible), this helps avoid having a single point of failure.
-    ///
-    /// This is a synchronous version of [`TransactionClient::new`](crate::TransactionClient::new).
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use tikv_client::SyncTransactionClient;
-    /// let client = SyncTransactionClient::new(vec!["192.168.0.100"]).unwrap();
-    /// ```
+    /// See usage example in the documentation of [`TransactionClient::new`](crate::TransactionClient::new).
     pub fn new<S: Into<String>>(pd_endpoints: Vec<S>) -> Result<Self> {
         Self::new_with_config(pd_endpoints, Config::default())
     }
 
     /// Create a synchronous transactional [`SyncTransactionClient`] with a custom configuration.
     ///
-    /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for
-    /// PD must be provided, not the TiKV nodes. It's important to include more than one PD endpoint
-    /// (include all endpoints, if possible), this helps avoid having a single point of failure.
-    ///
-    /// This is a synchronous version of [`TransactionClient::new_with_config`](crate::TransactionClient::new_with_config).
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use tikv_client::{Config, SyncTransactionClient};
-    /// # use std::time::Duration;
-    /// let client = SyncTransactionClient::new_with_config(
-    ///     vec!["192.168.0.100"],
-    ///     Config::default().with_timeout(Duration::from_secs(60)),
-    /// )
-    /// .unwrap();
-    /// ```
+    /// See usage example in the documentation of [`TransactionClient::new_with_config`](crate::TransactionClient::new_with_config).
     pub fn new_with_config<S: Into<String>>(pd_endpoints: Vec<S>, config: Config) -> Result<Self> {
         let runtime = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
@@ -72,41 +45,15 @@ impl SyncTransactionClient {
     /// Use the transaction to issue requests like [`get`](SyncTransaction::get) or
     /// [`put`](SyncTransaction::put).
     ///
-    /// Write operations do not lock data in TiKV, thus the commit request may fail due to a write
-    /// conflict.
-    ///
     /// This is a synchronous version of [`TransactionClient::begin_optimistic`](crate::TransactionClient::begin_optimistic).
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use tikv_client::SyncTransactionClient;
-    /// let client = SyncTransactionClient::new(vec!["192.168.0.100"]).unwrap();
-    /// let mut transaction = client.begin_optimistic().unwrap();
-    /// // ... Issue some commands.
-    /// transaction.commit().unwrap();
-    /// ```
     pub fn begin_optimistic(&self) -> Result<SyncTransaction> {
         let inner = self.runtime.block_on(self.client.begin_optimistic())?;
         Ok(SyncTransaction::new(inner, Arc::clone(&self.runtime)))
     }
 
     /// Creates a new pessimistic [`SyncTransaction`].
-    ///
-    /// Write operations will lock the data until committed, thus commit requests should not suffer
-    /// from write conflicts.
-    ///
+    /// 
     /// This is a synchronous version of [`TransactionClient::begin_pessimistic`](crate::TransactionClient::begin_pessimistic).
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use tikv_client::SyncTransactionClient;
-    /// let client = SyncTransactionClient::new(vec!["192.168.0.100"]).unwrap();
-    /// let mut transaction = client.begin_pessimistic().unwrap();
-    /// // ... Issue some commands.
-    /// transaction.commit().unwrap();
-    /// ```
     pub fn begin_pessimistic(&self) -> Result<SyncTransaction> {
         let inner = self.runtime.block_on(self.client.begin_pessimistic())?;
         Ok(SyncTransaction::new(inner, Arc::clone(&self.runtime)))
@@ -115,18 +62,6 @@ impl SyncTransactionClient {
     /// Create a new customized [`SyncTransaction`].
     ///
     /// This is a synchronous version of [`TransactionClient::begin_with_options`](crate::TransactionClient::begin_with_options).
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use tikv_client::{SyncTransactionClient, TransactionOptions};
-    /// let client = SyncTransactionClient::new(vec!["192.168.0.100"]).unwrap();
-    /// let mut transaction = client
-    ///     .begin_with_options(TransactionOptions::default().use_async_commit())
-    ///     .unwrap();
-    /// // ... Issue some commands.
-    /// transaction.commit().unwrap();
-    /// ```
     pub fn begin_with_options(&self, options: TransactionOptions) -> Result<SyncTransaction> {
         let inner = self
             .runtime
@@ -135,31 +70,8 @@ impl SyncTransactionClient {
     }
 
     /// Create a new read-only [`SyncSnapshot`] at the given [`Timestamp`].
-    ///
-    /// A snapshot is a read-only transaction that reads data as if the snapshot was taken at the
-    /// specified timestamp. It can read operations that happened before the timestamp, but ignores
-    /// operations after the timestamp.
-    ///
-    /// Use snapshots when you need:
-    /// - Consistent reads across multiple operations without starting a full transaction
-    /// - Point-in-time reads at a specific timestamp
-    /// - Read-only access without the overhead of transaction tracking
-    ///
-    /// Unlike transactions, snapshots cannot perform write operations (put, delete, etc.).
-    ///
+    /// 
     /// This is a synchronous version of [`TransactionClient::snapshot`](crate::TransactionClient::snapshot).
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use tikv_client::{SyncTransactionClient, TransactionOptions};
-    /// let client = SyncTransactionClient::new(vec!["192.168.0.100"]).unwrap();
-    /// let timestamp = client.current_timestamp().unwrap();
-    /// let mut snapshot = client.snapshot(timestamp, TransactionOptions::default());
-    ///
-    /// // Read data as it existed at the snapshot timestamp
-    /// let value = snapshot.get("key".to_owned()).unwrap();
-    /// ```
     pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> SyncSnapshot {
         let inner = self.client.snapshot(timestamp, options);
         SyncSnapshot::new(inner, Arc::clone(&self.runtime))
@@ -168,32 +80,11 @@ impl SyncTransactionClient {
     /// Retrieve the current [`Timestamp`].
     ///
     /// This is a synchronous version of [`TransactionClient::current_timestamp`](crate::TransactionClient::current_timestamp).
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use tikv_client::SyncTransactionClient;
-    /// let client = SyncTransactionClient::new(vec!["192.168.0.100"]).unwrap();
-    /// let timestamp = client.current_timestamp().unwrap();
-    /// ```
     pub fn current_timestamp(&self) -> Result<Timestamp> {
         self.runtime.block_on(self.client.current_timestamp())
     }
 
     /// Request garbage collection (GC) of the TiKV cluster.
-    ///
-    /// GC deletes MVCC records whose timestamp is lower than the given `safepoint`. We must guarantee
-    /// that all transactions started before this timestamp had committed. We can keep an active
-    /// transaction list in application to decide which is the minimal start timestamp of them.
-    ///
-    /// For each key, the last mutation record (unless it's a deletion) before `safepoint` is retained.
-    ///
-    /// GC is performed by:
-    /// 1. resolving all locks with timestamp <= `safepoint`
-    /// 2. updating PD's known safepoint
-    ///
-    /// This is a simplified version of [GC in TiDB](https://docs.pingcap.com/tidb/stable/garbage-collection-overview).
-    /// We skip the second step "delete ranges" which is an optimization for TiDB.
     ///
     /// This is a synchronous version of [`TransactionClient::gc`](crate::TransactionClient::gc).
     pub fn gc(&self, safepoint: Timestamp) -> Result<bool> {
