@@ -190,6 +190,41 @@ async fn txn_pessimistic() -> Result<()> {
     Ok(())
 }
 
+/// Tests raw batch put has a large payload.
+#[tokio::test]
+#[serial]
+async fn raw_large_batch_put() -> Result<()> {
+    const TARGET_SIZE_MB: usize = 100;
+    const KEY_SIZE: usize = 32;
+    const VALUE_SIZE: usize = 1024;
+
+    let pair_size = KEY_SIZE + VALUE_SIZE;
+    let target_size_bytes = TARGET_SIZE_MB * 1024 * 1024;
+    let num_pairs = target_size_bytes / pair_size;
+    let mut pairs = Vec::with_capacity(num_pairs);
+    for i in 0..num_pairs {
+        // Generate key: "bench_key_" + zero-padded number
+        let key = format!("bench_key_{:010}", i);
+
+        // Generate value: repeat pattern to reach VALUE_SIZE
+        let pattern = format!("value_{}", i % 1000);
+        let mut value = String::new();
+        while value.len() < VALUE_SIZE {
+            value.push_str(&pattern);
+        }
+        value.truncate(VALUE_SIZE);
+
+        pairs.push(KvPair::from((key, value)));
+    }
+
+    init().await?;
+    let client =
+        RawClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace()).await?;
+
+    client.batch_put(pairs).await?;
+    Ok(())
+}
+
 #[tokio::test]
 #[serial]
 async fn txn_split_batch() -> Result<()> {
