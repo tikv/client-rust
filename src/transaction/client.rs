@@ -328,9 +328,13 @@ impl Client {
     ) -> Result<Vec<kvrpcpb::LockInfo>> {
         let mut live_locks = locks;
         loop {
-            live_locks =
-                resolve_locks(live_locks, timestamp.clone(), self.pd.clone(), self.keyspace)
-                    .await?;
+            live_locks = resolve_locks(
+                live_locks,
+                timestamp.clone(),
+                self.pd.clone(),
+                self.keyspace,
+            )
+            .await?;
             if live_locks.is_empty() {
                 return Ok(live_locks);
             }

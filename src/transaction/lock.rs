@@ -159,23 +159,24 @@ async fn resolve_lock_with_retry(
         let ver_id = store.region_with_leader.ver_id();
         let request =
             requests::new_resolve_lock_request(start_version, commit_version, is_txn_file);
-        let plan_builder = match crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
-            .single_region_with_store(store.clone())
-            .await
-        {
-            Ok(plan_builder) => plan_builder,
-            Err(Error::LeaderNotFound { region }) => {
-                pd_client.invalidate_region_cache(region.clone()).await;
-                match backoff.next_delay_duration() {
-                    Some(duration) => {
-                        sleep(duration).await;
-                        continue;
+        let plan_builder =
+            match crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
+                .single_region_with_store(store.clone())
+                .await
+            {
+                Ok(plan_builder) => plan_builder,
+                Err(Error::LeaderNotFound { region }) => {
+                    pd_client.invalidate_region_cache(region.clone()).await;
+                    match backoff.next_delay_duration() {
+                        Some(duration) => {
+                            sleep(duration).await;
+                            continue;
+                        }
+                        None => return Err(Error::LeaderNotFound { region }),
                     }
-                    None => return Err(Error::LeaderNotFound { region }),
                 }
-            }
-            Err(err) => return Err(err),
-        };
+                Err(err) => return Err(err),
+            };
         let plan = plan_builder.extract_error().plan();
         match plan.execute().await {
             Ok(_) => {
