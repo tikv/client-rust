@@ -52,7 +52,7 @@ impl SyncTransactionClient {
     }
 
     /// Creates a new pessimistic [`SyncTransaction`].
-    /// 
+    ///
     /// This is a synchronous version of [`TransactionClient::begin_pessimistic`](crate::TransactionClient::begin_pessimistic).
     pub fn begin_pessimistic(&self) -> Result<SyncTransaction> {
         let inner = self.runtime.block_on(self.client.begin_pessimistic())?;
@@ -70,7 +70,7 @@ impl SyncTransactionClient {
     }
 
     /// Create a new read-only [`SyncSnapshot`] at the given [`Timestamp`].
-    /// 
+    ///
     /// This is a synchronous version of [`TransactionClient::snapshot`](crate::TransactionClient::snapshot).
     pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> SyncSnapshot {
         let inner = self.client.snapshot(timestamp, options);
