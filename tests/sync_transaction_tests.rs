@@ -8,6 +8,7 @@ mod common;
 use common::*;
 use serial_test::serial;
 use std::collections::HashMap;
+use tikv_client::transaction::Mutation;
 use tikv_client::Config;
 use tikv_client::Key;
 use tikv_client::Result;
@@ -388,5 +389,284 @@ fn txn_sync_scan_with_limit() -> Result<()> {
     assert_eq!(results.len(), 5); // Should only get 5 results
 
     txn.rollback()?;
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn txn_sync_insert() -> Result<()> {
+    init_sync()?;
+    let client = sync_client()?;
+
+    // Test insert on non-existent key
+    let mut txn = client.begin_optimistic()?;
+    txn.insert("insert_key".to_owned(), "value".to_owned())?;
+    txn.commit()?;
+
+    // Verify insert succeeded
+    let mut txn = client.begin_optimistic()?;
+    assert_eq!(
+        txn.get("insert_key".to_owned())?,
+        Some("value".to_owned().into())
+    );
+    txn.rollback()?;
+
+    // Test insert on existing key should fail at commit
+    let mut txn = client.begin_optimistic()?;
+    txn.insert("insert_key".to_owned(), "new_value".to_owned())?; // This succeeds
+    let result = txn.commit(); // But commit should fail
+    assert!(result.is_err());
+
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn txn_sync_batch_mutate() -> Result<()> {
+    init_sync()?;
+    let client = sync_client()?;
+
+    // Setup: Write initial data
+    let mut txn = client.begin_optimistic()?;
+    txn.put("mutate_key1".to_owned(), "initial1".to_owned())?;
+    txn.put("mutate_key2".to_owned(), "initial2".to_owned())?;
+    txn.put("mutate_key3".to_owned(), "initial3".to_owned())?;
+    txn.commit()?;
+
+    // Test batch_mutate with mix of puts and deletes
+    let mut txn = client.begin_optimistic()?;
+    let mutations = vec![
+        Mutation::Put(
+            Key::from("mutate_key1".to_owned()),
+            Value::from("updated1".to_owned()),
+        ),
+        Mutation::Delete(Key::from("mutate_key2".to_owned())),
+        Mutation::Put(
+            Key::from("mutate_key4".to_owned()),
+            Value::from("new4".to_owned()),
+        ),
+    ];
+    txn.batch_mutate(mutations)?;
+    txn.commit()?;
+
+    // Verify mutations applied correctly
+    let mut txn = client.begin_optimistic()?;
+    assert_eq!(
+        txn.get("mutate_key1".to_owned())?,
+        Some("updated1".to_owned().into())
+    );
+    assert!(txn.get("mutate_key2".to_owned())?.is_none()); // Deleted
+    assert_eq!(
+        txn.get("mutate_key3".to_owned())?,
+        Some("initial3".to_owned().into())
+    ); // Unchanged
+    assert_eq!(
+        txn.get("mutate_key4".to_owned())?,
+        Some("new4".to_owned().into())
+    ); // New key
+    txn.rollback()?;
+
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn txn_sync_lock_keys() -> Result<()> {
+    init_sync()?;
+    let client = sync_client()?;
+
+    // Setup: Write initial data
+    let mut txn = client.begin_optimistic()?;
+    txn.put("lock_key1".to_owned(), "value1".to_owned())?;
+    txn.put("lock_key2".to_owned(), "value2".to_owned())?;
+    txn.commit()?;
+
+    // Test lock_keys - should lock keys without modifying them
+    let mut txn = client.begin_pessimistic()?;
+    txn.lock_keys(vec!["lock_key1".to_owned(), "lock_key2".to_owned()])?;
+
+    // Should still be able to read the values
+    assert_eq!(
+        txn.get("lock_key1".to_owned())?,
+        Some("value1".to_owned().into())
+    );
+    assert_eq!(
+        txn.get("lock_key2".to_owned())?,
+        Some("value2".to_owned().into())
+    );
+
+    txn.commit()?;
+
+    // Verify values unchanged
+    let mut txn = client.begin_optimistic()?;
+    assert_eq!(
+        txn.get("lock_key1".to_owned())?,
+        Some("value1".to_owned().into())
+    );
+    txn.rollback()?;
+
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn txn_sync_get_for_update() -> Result<()> {
+    init_sync()?;
+    let client = sync_client()?;
+
+    // Setup: Write initial data
+    let mut txn = client.begin_optimistic()?;
+    txn.put("gfu_key".to_owned(), "initial".to_owned())?;
+    txn.commit()?;
+
+    // Test get_for_update - gets value and locks the key
+    let mut txn = client.begin_pessimistic()?;
+    let value = txn.get_for_update("gfu_key".to_owned())?;
+    assert_eq!(value, Some("initial".to_owned().into()));
+
+    // Update the value after locking
+    txn.put("gfu_key".to_owned(), "updated".to_owned())?;
+    txn.commit()?;
+
+    // Verify update succeeded
+    let mut txn = client.begin_optimistic()?;
+    assert_eq!(
+        txn.get("gfu_key".to_owned())?,
+        Some("updated".to_owned().into())
+    );
+    txn.rollback()?;
+
+    // Test get_for_update on non-existent key
+    let mut txn = client.begin_pessimistic()?;
+    let value = txn.get_for_update("nonexistent_gfu".to_owned())?;
+    assert!(value.is_none());
+    txn.rollback()?;
+
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn txn_sync_batch_get_for_update() -> Result<()> {
+    init_sync()?;
+    let client = sync_client()?;
+
+    // Setup: Write initial data
+    let mut txn = client.begin_optimistic()?;
+    txn.put("bgfu_key1".to_owned(), "value1".to_owned())?;
+    txn.put("bgfu_key2".to_owned(), "value2".to_owned())?;
+    txn.put("bgfu_key3".to_owned(), "value3".to_owned())?;
+    txn.commit()?;
+
+    // Test batch_get_for_update
+    let mut txn = client.begin_pessimistic()?;
+    let results = txn.batch_get_for_update(vec![
+        "bgfu_key1".to_owned(),
+        "bgfu_key2".to_owned(),
+        "bgfu_key3".to_owned(),
+        "nonexistent".to_owned(), // Non-existent key
+    ])?;
+
+    // Should only return existing keys
+    assert_eq!(results.len(), 3);
+    let result_map: HashMap<Key, Value> = results.into_iter().map(|kv| (kv.0, kv.1)).collect();
+
+    assert_eq!(
+        result_map.get(&Key::from("bgfu_key1".to_owned())),
+        Some(&Value::from("value1".to_owned()))
+    );
+    assert_eq!(
+        result_map.get(&Key::from("bgfu_key2".to_owned())),
+        Some(&Value::from("value2".to_owned()))
+    );
+    assert_eq!(
+        result_map.get(&Key::from("bgfu_key3".to_owned())),
+        Some(&Value::from("value3".to_owned()))
+    );
+
+    // Modify values after locking
+    txn.put("bgfu_key1".to_owned(), "updated1".to_owned())?;
+    txn.commit()?;
+
+    // Verify update succeeded
+    let mut txn = client.begin_optimistic()?;
+    assert_eq!(
+        txn.get("bgfu_key1".to_owned())?,
+        Some("updated1".to_owned().into())
+    );
+    txn.rollback()?;
+
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn txn_sync_key_exists() -> Result<()> {
+    init_sync()?;
+    let client = sync_client()?;
+
+    // Setup: Write some data
+    let mut txn = client.begin_optimistic()?;
+    txn.put("exists_key".to_owned(), "value".to_owned())?;
+    txn.commit()?;
+
+    // Test key_exists on existing key
+    let mut txn = client.begin_optimistic()?;
+    assert!(txn.key_exists("exists_key".to_owned())?);
+
+    // Test key_exists on non-existent key
+    assert!(!txn.key_exists("nonexistent_key".to_owned())?);
+
+    txn.rollback()?;
+
+    // Test key_exists with buffered operations
+    let mut txn = client.begin_optimistic()?;
+    txn.put("buffered_key".to_owned(), "value".to_owned())?;
+
+    // Should see the buffered key as existing
+    assert!(txn.key_exists("buffered_key".to_owned())?);
+
+    // Test with buffered delete
+    txn.delete("exists_key".to_owned())?;
+    assert!(!txn.key_exists("exists_key".to_owned())?);
+
+    txn.rollback()?;
+
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn txn_sync_send_heart_beat() -> Result<()> {
+    init_sync()?;
+    let client = sync_client()?;
+
+    // Start a pessimistic transaction (heart beat is typically used with long-running transactions)
+    let mut txn = client.begin_pessimistic()?;
+
+    // Put some data
+    txn.put("heartbeat_key".to_owned(), "value".to_owned())?;
+
+    // Send heart beat to keep transaction alive
+    let ttl = txn.send_heart_beat()?;
+
+    // TTL should be a positive value (in milliseconds)
+    assert!(ttl > 0);
+
+    // Can send multiple heart beats
+    let ttl2 = txn.send_heart_beat()?;
+    assert!(ttl2 > 0);
+
+    // Commit the transaction
+    txn.commit()?;
+
+    // Verify data was written
+    let mut txn = client.begin_optimistic()?;
+    assert_eq!(
+        txn.get("heartbeat_key".to_owned())?,
+        Some("value".to_owned().into())
+    );
+    txn.rollback()?;
+
     Ok(())
 }
