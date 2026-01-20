@@ -293,7 +293,9 @@ async fn txn_resolve_locks() -> Result<()> {
         fail::cfg("after-prewrite", "off").unwrap();
     }}
 
-    let client = TransactionClient::new(pd_addrs()).await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
     let key = b"resolve-locks-key".to_vec();
     let keys = HashSet::from_iter(vec![key.clone()]);
     let mut txn = client
@@ -379,7 +381,7 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
         )
         .await?;
         let keys = write_data(&client, false, false).await?;
-        assert_eq!(count_locks(&client).await?, 0);
+        assert_eq!(wait_for_locks_count(&client, 0).await?, 0);
 
         let safepoint = client.current_timestamp().await?;
         let options = ResolveLocksOptions {

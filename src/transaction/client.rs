@@ -27,6 +27,7 @@ use crate::transaction::Transaction;
 use crate::transaction::TransactionOptions;
 use crate::Backoff;
 use crate::BoundRange;
+use crate::Key;
 use crate::Result;
 
 // FIXME: cargo-culted value
@@ -328,13 +329,43 @@ impl Client {
     ) -> Result<Vec<kvrpcpb::LockInfo>> {
         let mut live_locks = locks;
         loop {
-            live_locks = resolve_locks(
-                live_locks,
+            let mut encoded_locks = live_locks;
+            if matches!(self.keyspace, Keyspace::Enable { .. }) {
+                encoded_locks = encoded_locks
+                    .into_iter()
+                    .map(|mut lock| {
+                        lock.key = Key::from(lock.key)
+                            .encode_keyspace(self.keyspace, KeyMode::Txn)
+                            .into();
+                        lock.primary_lock = Key::from(lock.primary_lock)
+                            .encode_keyspace(self.keyspace, KeyMode::Txn)
+                            .into();
+                        for secondary in &mut lock.secondaries {
+                            take_mut::take(secondary, |secondary| {
+                                Key::from(secondary)
+                                    .encode_keyspace(self.keyspace, KeyMode::Txn)
+                                    .into()
+                            });
+                        }
+                        lock
+                    })
+                    .collect();
+            }
+
+            let mut resolved_locks = resolve_locks(
+                encoded_locks,
                 timestamp.clone(),
                 self.pd.clone(),
                 self.keyspace,
             )
             .await?;
+
+            if matches!(self.keyspace, Keyspace::Enable { .. }) {
+                use crate::request::TruncateKeyspace;
+                resolved_locks = resolved_locks.truncate_keyspace(self.keyspace);
+            }
+
+            live_locks = resolved_locks;
             if live_locks.is_empty() {
                 return Ok(live_locks);
             }
