@@ -337,7 +337,8 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
         )
         .await?;
         let keys = write_data(&client, false, false).await?;
-        assert_eq!(count_locks(&client).await?, 0);
+        let remaining = wait_for_locks_count(&client, 0).await?;
+        assert_eq!(remaining, 0);
 
         let safepoint = client.current_timestamp().await?;
         let options = ResolveLocksOptions {
