@@ -74,12 +74,18 @@ pub async fn init() -> Result<()> {
     Ok(())
 }
 
+/// Initialize the test environment synchronously.
+///
+/// This function creates its own tokio runtime and must be called from
+/// synchronous code only (e.g., at the start of a `#[test]` function).
+/// 
+/// **Do not call this from inside an async function or tokio runtime** - 
+/// it will panic. If you're already in an async context, use `init()` directly.
 pub fn init_sync() -> Result<()> {
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        handle.block_on(init())
-    } else {
-        tokio::runtime::Runtime::new()?.block_on(init())
-    }
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(init())
 }
 
 async fn ensure_region_split(
