@@ -20,3 +20,6 @@ max-open-files = 10000
 api-version = 2
 enable-ttl = true
 reserve-space = "0MiB"
+
+[server]
+grpc-compression-type = "gzip"
