@@ -134,6 +134,9 @@ pub struct PrewriteRequest {
     pub for_update_ts_constraints: ::prost::alloc::vec::Vec<
         prewrite_request::ForUpdateTsConstraint,
     >,
+    /// Reserved for file based transaction.
+    #[prost(uint64, repeated, tag = "100")]
+    pub txn_file_chunks: ::prost::alloc::vec::Vec<u64>,
 }
 /// Nested message and enum types in `PrewriteRequest`.
 pub mod prewrite_request {
@@ -363,6 +366,9 @@ pub struct TxnHeartBeatRequest {
     /// The new TTL the sender would like.
     #[prost(uint64, tag = "4")]
     pub advise_lock_ttl: u64,
+    /// Reserved for file based transaction.
+    #[prost(bool, tag = "100")]
+    pub is_txn_file: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -422,6 +428,9 @@ pub struct CheckTxnStatusRequest {
     /// For new versions, this field should always be set to true.
     #[prost(bool, tag = "9")]
     pub verify_is_primary: bool,
+    /// Reserved for file based transaction.
+    #[prost(bool, tag = "100")]
+    pub is_txn_file: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -497,6 +506,9 @@ pub struct CommitRequest {
     /// Timestamp for the end of the transaction. Must be greater than `start_version`.
     #[prost(uint64, tag = "4")]
     pub commit_version: u64,
+    /// Reserved for file based transaction.
+    #[prost(bool, tag = "100")]
+    pub is_txn_file: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -597,6 +609,9 @@ pub struct BatchRollbackRequest {
     /// The keys to rollback.
     #[prost(bytes = "vec", repeated, tag = "3")]
     pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    /// Reserved for file based transaction.
+    #[prost(bool, tag = "100")]
+    pub is_txn_file: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -661,6 +676,9 @@ pub struct ResolveLockRequest {
     /// Only resolve specified keys.
     #[prost(bytes = "vec", repeated, tag = "5")]
     pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    /// Reserved for file based transaction.
+    #[prost(bool, tag = "100")]
+    pub is_txn_file: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1308,6 +1326,9 @@ pub struct LockInfo {
     /// It can be used to help the client decide whether to try resolving the lock.
     #[prost(uint64, tag = "11")]
     pub duration_to_last_update_ms: u64,
+    /// Reserved for file based transaction.
+    #[prost(bool, tag = "100")]
+    pub is_txn_file: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1781,6 +1802,9 @@ pub struct TxnInfo {
     pub txn: u64,
     #[prost(uint64, tag = "2")]
     pub status: u64,
+    /// Reserved for file based transaction.
+    #[prost(bool, tag = "100")]
+    pub is_txn_file: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

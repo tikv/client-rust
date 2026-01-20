@@ -89,7 +89,6 @@ impl_request!(GetRequest, kv_get, "kv_get");
 impl_request!(ScanRequest, kv_scan, "kv_scan");
 impl_request!(PrewriteRequest, kv_prewrite, "kv_prewrite");
 impl_request!(CommitRequest, kv_commit, "kv_commit");
-impl_request!(CleanupRequest, kv_cleanup, "kv_cleanup");
 impl_request!(BatchGetRequest, kv_batch_get, "kv_batch_get");
 impl_request!(BatchRollbackRequest, kv_batch_rollback, "kv_batch_rollback");
 impl_request!(

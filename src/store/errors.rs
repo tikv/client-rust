@@ -43,7 +43,6 @@ has_region_error!(kvrpcpb::PessimisticLockResponse);
 has_region_error!(kvrpcpb::ImportResponse);
 has_region_error!(kvrpcpb::BatchRollbackResponse);
 has_region_error!(kvrpcpb::PessimisticRollbackResponse);
-has_region_error!(kvrpcpb::CleanupResponse);
 has_region_error!(kvrpcpb::BatchGetResponse);
 has_region_error!(kvrpcpb::ScanLockResponse);
 has_region_error!(kvrpcpb::ResolveLockResponse);
@@ -79,7 +78,6 @@ macro_rules! has_key_error {
 has_key_error!(kvrpcpb::GetResponse);
 has_key_error!(kvrpcpb::CommitResponse);
 has_key_error!(kvrpcpb::BatchRollbackResponse);
-has_key_error!(kvrpcpb::CleanupResponse);
 has_key_error!(kvrpcpb::ScanLockResponse);
 has_key_error!(kvrpcpb::ResolveLockResponse);
 has_key_error!(kvrpcpb::GcResponse);
