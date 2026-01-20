@@ -11,9 +11,14 @@ use serde_derive::Serialize;
 ///
 /// See also [`TransactionOptions`](crate::TransactionOptions) which provides more ways to configure
 /// requests.
+///
+/// This struct is marked `#[non_exhaustive]` to allow adding new configuration options in the
+/// future without breaking downstream code. Construct it via [`Config::default`] and then use the
+/// `with_*` methods (or field assignment) to customize it.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub struct Config {
     pub ca_path: Option<PathBuf>,
     pub cert_path: Option<PathBuf>,
