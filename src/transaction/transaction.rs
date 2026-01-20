@@ -142,9 +142,9 @@ impl<PdC: PdClient> Transaction<PdC> {
 
         self.buffer
             .get_or_else(key, |key| async move {
-                let request = new_get_request(key, timestamp);
+                let request = new_get_request(key, timestamp.clone());
                 let plan = PlanBuilder::new(rpc, keyspace, request)
-                    .resolve_lock(retry_options.lock_backoff, keyspace)
+                    .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
                     .merge(CollectSingle)
                     .post_process_default()
@@ -277,9 +277,9 @@ impl<PdC: PdClient> Transaction<PdC> {
 
         self.buffer
             .batch_get_or_else(keys, move |keys| async move {
-                let request = new_batch_get_request(keys, timestamp);
+                let request = new_batch_get_request(keys, timestamp.clone());
                 let plan = PlanBuilder::new(rpc, keyspace, request)
-                    .resolve_lock(retry_options.lock_backoff, keyspace)
+                    .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
                     .retry_multi_region(retry_options.region_backoff)
                     .merge(Collect)
                     .plan();
@@ -761,6 +761,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         );
         let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
             .resolve_lock(
+                self.timestamp.clone(),
                 self.options.retry_options.lock_backoff.clone(),
                 self.keyspace,
             )
@@ -793,10 +794,15 @@ impl<PdC: PdClient> Transaction<PdC> {
                 !key_only,
                 reverse,
                 move |new_range, new_limit| async move {
-                    let request =
-                        new_scan_request(new_range, timestamp, new_limit, key_only, reverse);
+                    let request = new_scan_request(
+                        new_range,
+                        timestamp.clone(),
+                        new_limit,
+                        key_only,
+                        reverse,
+                    );
                     let plan = PlanBuilder::new(rpc, keyspace, request)
-                        .resolve_lock(retry_options.lock_backoff, keyspace)
+                        .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
                         .retry_multi_region(retry_options.region_backoff)
                         .merge(Collect)
                         .plan();
@@ -853,6 +859,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         );
         let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
             .resolve_lock(
+                self.timestamp.clone(),
                 self.options.retry_options.lock_backoff.clone(),
                 self.keyspace,
             )
@@ -905,11 +912,12 @@ impl<PdC: PdClient> Transaction<PdC> {
 
         let req = new_pessimistic_rollback_request(
             keys.clone().into_iter(),
-            start_version,
+            start_version.clone(),
             for_update_ts,
         );
         let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, req)
             .resolve_lock(
+                start_version,
                 self.options.retry_options.lock_backoff.clone(),
                 self.keyspace,
             )
@@ -1337,6 +1345,7 @@ impl<PdC: PdClient> Committer<PdC> {
 
         let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
             .resolve_lock(
+                self.start_version.clone(),
                 self.options.retry_options.lock_backoff.clone(),
                 self.keyspace,
             )
@@ -1380,6 +1389,7 @@ impl<PdC: PdClient> Committer<PdC> {
         );
         let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, req)
             .resolve_lock(
+                self.start_version.clone(),
                 self.options.retry_options.lock_backoff.clone(),
                 self.keyspace,
             )
@@ -1402,6 +1412,7 @@ impl<PdC: PdClient> Committer<PdC> {
 
     async fn commit_secondary(self, commit_version: Timestamp) -> Result<()> {
         debug!("committing secondary");
+        let start_version = self.start_version.clone();
         let mutations_len = self.mutations.len();
         let primary_only = mutations_len == 1;
         #[cfg(not(feature = "integration-tests"))]
@@ -1435,7 +1446,7 @@ impl<PdC: PdClient> Committer<PdC> {
 
         let req = if self.options.async_commit {
             let keys = mutations.map(|m| m.key.into());
-            new_commit_request(keys, self.start_version, commit_version)
+            new_commit_request(keys, start_version.clone(), commit_version)
         } else if primary_only {
             return Ok(());
         } else {
@@ -1443,10 +1454,14 @@ impl<PdC: PdClient> Committer<PdC> {
             let keys = mutations
                 .map(|m| m.key.into())
                 .filter(|key| &primary_key != key);
-            new_commit_request(keys, self.start_version, commit_version)
+            new_commit_request(keys, start_version.clone(), commit_version)
         };
         let plan = PlanBuilder::new(self.rpc, self.keyspace, req)
-            .resolve_lock(self.options.retry_options.lock_backoff, self.keyspace)
+            .resolve_lock(
+                start_version,
+                self.options.retry_options.lock_backoff,
+                self.keyspace,
+            )
             .retry_multi_region(self.options.retry_options.region_backoff)
             .extract_error()
             .plan();
@@ -1463,20 +1478,30 @@ impl<PdC: PdClient> Committer<PdC> {
             .mutations
             .into_iter()
             .map(|mutation| mutation.key.into());
+        let start_version = self.start_version.clone();
         match self.options.kind {
             TransactionKind::Optimistic => {
-                let req = new_batch_rollback_request(keys, self.start_version);
+                let req = new_batch_rollback_request(keys, start_version.clone());
                 let plan = PlanBuilder::new(self.rpc, self.keyspace, req)
-                    .resolve_lock(self.options.retry_options.lock_backoff, self.keyspace)
+                    .resolve_lock(
+                        start_version.clone(),
+                        self.options.retry_options.lock_backoff,
+                        self.keyspace,
+                    )
                     .retry_multi_region(self.options.retry_options.region_backoff)
                     .extract_error()
                     .plan();
                 plan.execute().await?;
             }
             TransactionKind::Pessimistic(for_update_ts) => {
-                let req = new_pessimistic_rollback_request(keys, self.start_version, for_update_ts);
+                let req =
+                    new_pessimistic_rollback_request(keys, start_version.clone(), for_update_ts);
                 let plan = PlanBuilder::new(self.rpc, self.keyspace, req)
-                    .resolve_lock(self.options.retry_options.lock_backoff, self.keyspace)
+                    .resolve_lock(
+                        start_version.clone(),
+                        self.options.retry_options.lock_backoff,
+                        self.keyspace,
+                    )
                     .retry_multi_region(self.options.retry_options.region_backoff)
                     .extract_error()
                     .plan();

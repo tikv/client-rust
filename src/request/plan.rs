@@ -17,6 +17,7 @@ use crate::pd::PdClient;
 use crate::proto::errorpb;
 use crate::proto::errorpb::EpochNotMatch;
 use crate::proto::kvrpcpb;
+use crate::proto::pdpb::Timestamp;
 use crate::region::StoreId;
 use crate::region::{RegionVerId, RegionWithLeader};
 use crate::request::shard::HasNextBatch;
@@ -597,6 +598,7 @@ pub struct DefaultProcessor;
 
 pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub inner: P,
+    pub timestamp: Timestamp,
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
     pub keyspace: Keyspace,
@@ -606,6 +608,7 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
     fn clone(&self) -> Self {
         ResolveLock {
             inner: self.inner.clone(),
+            timestamp: self.timestamp.clone(),
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
             keyspace: self.keyspace,
@@ -634,7 +637,13 @@ where
             }
 
             let pd_client = self.pd_client.clone();
-            let live_locks = resolve_locks(locks, pd_client.clone(), self.keyspace).await?;
+            let live_locks = resolve_locks(
+                locks,
+                self.timestamp.clone(),
+                pd_client.clone(),
+                self.keyspace,
+            )
+            .await?;
             if live_locks.is_empty() {
                 result = self.inner.execute().await?;
             } else {
@@ -953,6 +962,7 @@ mod test {
         let plan = RetryableMultiRegion {
             inner: ResolveLock {
                 inner: ErrPlan,
+                timestamp: Timestamp::default(),
                 backoff: Backoff::no_backoff(),
                 pd_client: Arc::new(MockPdClient::default()),
                 keyspace: Keyspace::Disable,
