@@ -183,6 +183,32 @@ impl TruncateKeyspace for Vec<crate::proto::kvrpcpb::LockInfo> {
     }
 }
 
+impl EncodeKeyspace for Vec<crate::proto::kvrpcpb::LockInfo> {
+    fn encode_keyspace(mut self, keyspace: Keyspace, key_mode: KeyMode) -> Self {
+        if !matches!(keyspace, Keyspace::Enable { .. }) {
+            return self;
+        }
+        for lock in &mut self {
+            take_mut::take(&mut lock.key, |key| {
+                Key::from(key).encode_keyspace(keyspace, key_mode).into()
+            });
+            take_mut::take(&mut lock.primary_lock, |primary| {
+                Key::from(primary)
+                    .encode_keyspace(keyspace, key_mode)
+                    .into()
+            });
+            for secondary in lock.secondaries.iter_mut() {
+                take_mut::take(secondary, |secondary| {
+                    Key::from(secondary)
+                        .encode_keyspace(keyspace, key_mode)
+                        .into()
+                });
+            }
+        }
+        self
+    }
+}
+
 fn keyspace_prefix(keyspace_id: u32, key_mode: KeyMode) -> [u8; KEYSPACE_PREFIX_LEN] {
     let mut prefix = keyspace_id.to_be_bytes();
     prefix[0] = match key_mode {
@@ -274,6 +300,43 @@ mod tests {
             mutation.encode_keyspace(keyspace, key_mode),
             expected_mutation
         );
+    }
+
+    #[test]
+    fn test_encode_keyspace_lock_infos() {
+        let keyspace = Keyspace::Enable { keyspace_id: 1 };
+
+        let lock = crate::proto::kvrpcpb::LockInfo {
+            key: vec![b'k', b'1'],
+            primary_lock: vec![b'p', b'1'],
+            secondaries: vec![vec![b's', b'1'], vec![b's', b'2']],
+            ..Default::default()
+        };
+
+        let locks = vec![lock].encode_keyspace(keyspace, KeyMode::Txn);
+        assert_eq!(locks.len(), 1);
+        assert_eq!(locks[0].key, vec![b'x', 0, 0, 1, b'k', b'1']);
+        assert_eq!(locks[0].primary_lock, vec![b'x', 0, 0, 1, b'p', b'1']);
+        assert_eq!(
+            locks[0].secondaries,
+            vec![
+                vec![b'x', 0, 0, 1, b's', b'1'],
+                vec![b'x', 0, 0, 1, b's', b'2']
+            ]
+        );
+    }
+
+    #[test]
+    fn test_encode_keyspace_lock_infos_noop_when_disabled() {
+        let lock = crate::proto::kvrpcpb::LockInfo {
+            key: vec![b'k', b'1'],
+            primary_lock: vec![b'p', b'1'],
+            secondaries: vec![vec![b's', b'1']],
+            ..Default::default()
+        };
+
+        let locks = vec![lock.clone()].encode_keyspace(Keyspace::Disable, KeyMode::Txn);
+        assert_eq!(locks, vec![lock]);
     }
 
     #[test]
