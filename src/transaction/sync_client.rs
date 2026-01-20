@@ -59,7 +59,7 @@ impl SyncTransactionClient {
     /// ```
     pub fn new_with_config<S: Into<String>>(pd_endpoints: Vec<S>, config: Config) -> Result<Self> {
         let runtime = Arc::new(
-            tokio::runtime::Builder::new_current_thread()
+            tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()?,
         );
