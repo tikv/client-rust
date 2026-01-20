@@ -191,11 +191,12 @@ impl Merge<kvrpcpb::ScanResponse> for Collect {
 pub fn new_resolve_lock_request(
     start_version: u64,
     commit_version: u64,
+    is_txn_file: bool,
 ) -> kvrpcpb::ResolveLockRequest {
     let mut req = kvrpcpb::ResolveLockRequest::default();
     req.start_version = start_version;
     req.commit_version = commit_version;
-
+    req.is_txn_file = is_txn_file;
     req
 }
 
@@ -211,34 +212,6 @@ pub fn new_batch_resolve_lock_request(txn_infos: Vec<TxnInfo>) -> kvrpcpb::Resol
 // handled (in the upper level).
 impl KvRequest for kvrpcpb::ResolveLockRequest {
     type Response = kvrpcpb::ResolveLockResponse;
-}
-
-pub fn new_cleanup_request(key: Vec<u8>, start_version: u64) -> kvrpcpb::CleanupRequest {
-    let mut req = kvrpcpb::CleanupRequest::default();
-    req.key = key;
-    req.start_version = start_version;
-
-    req
-}
-
-impl KvRequest for kvrpcpb::CleanupRequest {
-    type Response = kvrpcpb::CleanupResponse;
-}
-
-shardable_key!(kvrpcpb::CleanupRequest);
-collect_single!(kvrpcpb::CleanupResponse);
-impl SingleKey for kvrpcpb::CleanupRequest {
-    fn key(&self) -> &Vec<u8> {
-        &self.key
-    }
-}
-
-impl Process<kvrpcpb::CleanupResponse> for DefaultProcessor {
-    type Out = u64;
-
-    fn process(&self, input: Result<kvrpcpb::CleanupResponse>) -> Result<Self::Out> {
-        Ok(input?.commit_version)
-    }
 }
 
 pub fn new_prewrite_request(
@@ -654,6 +627,7 @@ impl Process<kvrpcpb::TxnHeartBeatResponse> for DefaultProcessor {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn new_check_txn_status_request(
     primary_key: Vec<u8>,
     lock_ts: u64,
@@ -662,6 +636,7 @@ pub fn new_check_txn_status_request(
     rollback_if_not_exist: bool,
     force_sync_commit: bool,
     resolving_pessimistic_lock: bool,
+    is_txn_file: bool,
 ) -> kvrpcpb::CheckTxnStatusRequest {
     let mut req = kvrpcpb::CheckTxnStatusRequest::default();
     req.primary_key = primary_key;
@@ -671,6 +646,8 @@ pub fn new_check_txn_status_request(
     req.rollback_if_not_exist = rollback_if_not_exist;
     req.force_sync_commit = force_sync_commit;
     req.resolving_pessimistic_lock = resolving_pessimistic_lock;
+    req.verify_is_primary = true;
+    req.is_txn_file = is_txn_file;
     req
 }
 
@@ -849,8 +826,6 @@ error_locks!(kvrpcpb::BatchRollbackResponse);
 error_locks!(kvrpcpb::TxnHeartBeatResponse);
 error_locks!(kvrpcpb::CheckTxnStatusResponse);
 error_locks!(kvrpcpb::CheckSecondaryLocksResponse);
-
-impl HasLocks for kvrpcpb::CleanupResponse {}
 
 impl HasLocks for kvrpcpb::ScanLockResponse {
     fn take_locks(&mut self) -> Vec<LockInfo> {

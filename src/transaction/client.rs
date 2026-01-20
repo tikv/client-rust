@@ -110,8 +110,8 @@ impl Client {
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?);
         let keyspace = match config.keyspace {
-            Some(keyspace) => {
-                let keyspace = pd.load_keyspace(&keyspace).await?;
+            Some(name) => {
+                let keyspace = pd.load_keyspace(&name).await?;
                 Keyspace::Enable {
                     keyspace_id: keyspace.id,
                 }
@@ -119,6 +119,30 @@ impl Client {
             None => Keyspace::Disable,
         };
         Ok(Client { pd, keyspace })
+    }
+
+    /// Create a transactional [`Client`] that uses API V2 without adding or removing any API V2
+    /// keyspace/key-mode prefix, with a custom configuration.
+    ///
+    /// This is intended for **server-side embedding** use cases. `config.keyspace` must be unset.
+    #[cfg(feature = "apiv2-no-prefix")]
+    pub async fn new_with_config_api_v2_no_prefix<S: Into<String>>(
+        pd_endpoints: Vec<S>,
+        config: Config,
+    ) -> Result<Client> {
+        if config.keyspace.is_some() {
+            return Err(crate::Error::StringError(
+                "config.keyspace must be unset when using api-v2-no-prefix mode".to_owned(),
+            ));
+        }
+
+        debug!("creating new transactional client (api-v2-no-prefix)");
+        let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
+        let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?);
+        Ok(Client {
+            pd,
+            keyspace: Keyspace::ApiV2NoPrefix,
+        })
     }
 
     /// Creates a new optimistic [`Transaction`].

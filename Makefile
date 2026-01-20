@@ -5,11 +5,11 @@ export RUSTFLAGS=-Dwarnings
 export PD_ADDRS     ?= 127.0.0.1:2379
 export MULTI_REGION ?= 1
 
-ALL_FEATURES := integration-tests
+ALL_FEATURES := integration-tests apiv2-no-prefix
 
 NEXTEST_ARGS := --config-file $(shell pwd)/config/nextest.toml
 
-INTEGRATION_TEST_ARGS := --features "integration-tests" --test-threads 1
+INTEGRATION_TEST_ARGS := --features "integration-tests apiv2-no-prefix" --test-threads 1
 
 RUN_INTEGRATION_TEST := cargo nextest run ${NEXTEST_ARGS} --all ${INTEGRATION_TEST_ARGS}
 

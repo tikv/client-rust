@@ -112,6 +112,8 @@ pub enum Error {
     },
     #[error("Keyspace not found: {0}")]
     KeyspaceNotFound(String),
+    #[error("Transaction not found error: {:?}", _0)]
+    TxnNotFound(kvrpcpb::TxnNotFound),
 }
 
 impl From<crate::proto::errorpb::Error> for Error {

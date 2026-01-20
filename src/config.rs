@@ -11,18 +11,25 @@ use serde_derive::Serialize;
 ///
 /// See also [`TransactionOptions`](crate::TransactionOptions) which provides more ways to configure
 /// requests.
+///
+/// This struct is marked `#[non_exhaustive]` to allow adding new configuration options in the
+/// future without breaking downstream code. Construct it via [`Config::default`] and then use the
+/// `with_*` methods (or field assignment) to customize it.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub struct Config {
     pub ca_path: Option<PathBuf>,
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
     pub timeout: Duration,
+    pub grpc_max_decoding_message_size: usize,
     pub keyspace: Option<String>,
 }
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+const DEFAULT_GRPC_MAX_DECODING_MESSAGE_SIZE: usize = 4 * 1024 * 1024; // 4MB
 
 impl Default for Config {
     fn default() -> Self {
@@ -31,6 +38,7 @@ impl Default for Config {
             cert_path: None,
             key_path: None,
             timeout: DEFAULT_REQUEST_TIMEOUT,
+            grpc_max_decoding_message_size: DEFAULT_GRPC_MAX_DECODING_MESSAGE_SIZE,
             keyspace: None,
         }
     }
@@ -83,6 +91,13 @@ impl Config {
     #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Set the maximum decoding message size for gRPC.
+    #[must_use]
+    pub fn with_grpc_max_decoding_message_size(mut self, size: usize) -> Self {
+        self.grpc_max_decoding_message_size = size;
         self
     }
 

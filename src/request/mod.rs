@@ -197,7 +197,6 @@ mod test {
         )));
 
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, request)
-            .resolve_lock(Backoff::no_jitter_backoff(1, 1, 3), Keyspace::Disable)
             .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
             .extract_error()
             .plan();
@@ -224,14 +223,12 @@ mod test {
         // does not extract error
         let plan =
             crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, req.clone())
-                .resolve_lock(OPTIMISTIC_BACKOFF, Keyspace::Disable)
                 .retry_multi_region(OPTIMISTIC_BACKOFF)
                 .plan();
         assert!(plan.execute().await.is_ok());
 
         // extract error
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, req)
-            .resolve_lock(OPTIMISTIC_BACKOFF, Keyspace::Disable)
             .retry_multi_region(OPTIMISTIC_BACKOFF)
             .extract_error()
             .plan();
