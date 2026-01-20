@@ -1271,7 +1271,7 @@ impl<PdC: PdClient> Committer<PdC> {
         let min_commit_ts = self.prewrite().await?;
 
         fail_point!("after-prewrite", |_| {
-            Err(Error::OtherError(
+            Err(Error::StringError(
                 "failpoint: after-prewrite return error".to_owned(),
             ))
         });
@@ -1420,7 +1420,7 @@ impl<PdC: PdClient> Committer<PdC> {
                             if primary_key != expired.key.as_ref() {
                                 error!("2PC commit_ts rejected by TiKV, but the key is not the primary key, start_ts: {}, key: {}, primary: {:?}",
                                     self.start_version.version(), HexRepr(&expired.key), primary_key);
-                                return Err(Error::OtherError("2PC commitTS rejected by TiKV, but the key is not the primary key".to_string()));
+                                return Err(Error::StringError("2PC commitTS rejected by TiKV, but the key is not the primary key".to_string()));
                             }
 
                             // Do not retry for a txn which has a too large min_commit_ts.
@@ -1432,7 +1432,7 @@ impl<PdC: PdClient> Committer<PdC> {
                             {
                                 let msg = format!("2PC min_commit_ts is too large, we got min_commit_ts: {}, and attempted_commit_ts: {}",
                                                      expired.min_commit_ts, expired.attempted_commit_ts);
-                                return Err(Error::OtherError(msg));
+                                return Err(Error::StringError(msg));
                             }
                             continue;
                         } else {
@@ -1464,7 +1464,7 @@ impl<PdC: PdClient> Committer<PdC> {
                     let percent = percent.unwrap().parse::<usize>().unwrap();
                     new_len = mutations_len * percent / 100;
                     if new_len == 0 {
-                        Err(Error::OtherError(
+                        Err(Error::StringError(
                             "failpoint: before-commit-secondary return error".to_owned(),
                         ))
                     } else {

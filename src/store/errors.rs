@@ -169,7 +169,7 @@ impl<T: HasKeyErrors> HasKeyErrors for Result<T, Error> {
             Err(Error::MultipleKeyErrors(errs)) => Some(std::mem::take(errs)),
             Err(e) => Some(vec![std::mem::replace(
                 e,
-                Error::OtherError("".to_string()), // placeholder, no use.
+                Error::StringError("".to_string()), // placeholder, no use.
             )]),
         }
     }

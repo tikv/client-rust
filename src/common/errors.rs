@@ -104,7 +104,7 @@ pub enum Error {
     #[error("{}", message)]
     InternalError { message: String },
     #[error("{0}")]
-    OtherError(String),
+    StringError(String),
     #[error("PessimisticLock error: {:?}", inner)]
     PessimisticLockError {
         inner: Box<Error>,
