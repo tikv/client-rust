@@ -88,7 +88,7 @@ impl<Req: KvRequest + StoreRequest> StoreRequest for Dispatch<Req> {
 const MULTI_REGION_CONCURRENCY: usize = 16;
 const MULTI_STORES_CONCURRENCY: usize = 16;
 
-fn is_grpc_error(e: &Error) -> bool {
+pub(crate) fn is_grpc_error(e: &Error) -> bool {
     matches!(e, Error::GrpcAPI(_) | Error::Grpc(_))
 }
 
@@ -295,7 +295,6 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
     e: errorpb::Error,
     region_store: RegionStore,
 ) -> Result<bool> {
-    debug!("handle_region_error: {:?}", e);
     let ver_id = region_store.region_with_leader.ver_id();
     let store_id = region_store.region_with_leader.get_store_id();
     if let Some(not_leader) = e.not_leader {
