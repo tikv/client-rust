@@ -299,60 +299,103 @@ mod tests {
             mutation.encode_keyspace(keyspace, key_mode),
             expected_mutation
         );
-    }
 
-    #[test]
-    fn test_encode_keyspace_lock_infos() {
-        let keyspace = Keyspace::Enable { keyspace_id: 1 };
-
+        let key_mode = KeyMode::Txn;
         let lock = crate::proto::kvrpcpb::LockInfo {
             key: vec![b'k', b'1'],
             primary_lock: vec![b'p', b'1'],
             secondaries: vec![vec![b's', b'1'], vec![b's', b'2']],
             ..Default::default()
         };
-
-        let locks = vec![lock].encode_keyspace(keyspace, KeyMode::Txn);
+        let locks = vec![lock].encode_keyspace(keyspace, key_mode);
         assert_eq!(locks.len(), 1);
-        assert_eq!(locks[0].key, vec![b'x', 0, 0, 1, b'k', b'1']);
-        assert_eq!(locks[0].primary_lock, vec![b'x', 0, 0, 1, b'p', b'1']);
+        assert_eq!(locks[0].key, vec![b'x', 0, 0xDE, 0xAD, b'k', b'1']);
+        assert_eq!(locks[0].primary_lock, vec![b'x', 0, 0xDE, 0xAD, b'p', b'1']);
         assert_eq!(
             locks[0].secondaries,
             vec![
-                vec![b'x', 0, 0, 1, b's', b'1'],
-                vec![b'x', 0, 0, 1, b's', b'2']
+                vec![b'x', 0, 0xDE, 0xAD, b's', b'1'],
+                vec![b'x', 0, 0xDE, 0xAD, b's', b'2']
             ]
         );
     }
 
     #[test]
-    fn test_encode_keyspace_lock_infos_noop_when_disabled() {
-        let lock = crate::proto::kvrpcpb::LockInfo {
-            key: vec![b'k', b'1'],
-            primary_lock: vec![b'p', b'1'],
-            secondaries: vec![vec![b's', b'1']],
-            ..Default::default()
-        };
-
-        let locks = vec![lock.clone()].encode_keyspace(Keyspace::Disable, KeyMode::Txn);
-        assert_eq!(locks, vec![lock]);
-    }
-
-    #[test]
     fn test_truncate_version() {
-        let key = Key::from(vec![b'r', 0, 0xDE, 0xAD, 0xBE, 0xEF]);
         let keyspace = Keyspace::Enable {
             keyspace_id: 0xDEAD,
         };
+
+        let key = Key::from(vec![b'r', 0, 0xDE, 0xAD, 0xBE, 0xEF]);
         let expected_key = Key::from(vec![0xBE, 0xEF]);
         assert_eq!(key.truncate_keyspace(keyspace), expected_key);
 
         let key = Key::from(vec![b'x', 0, 0xDE, 0xAD, 0xBE, 0xEF]);
-        let keyspace = Keyspace::Enable {
-            keyspace_id: 0xDEAD,
-        };
         let expected_key = Key::from(vec![0xBE, 0xEF]);
         assert_eq!(key.truncate_keyspace(keyspace), expected_key);
+
+        let pair = KvPair(Key::from(vec![b'x', 0, 0xDE, 0xAD, b'k']), vec![b'v']);
+        let expected_pair = KvPair(Key::from(vec![b'k']), vec![b'v']);
+        assert_eq!(pair.truncate_keyspace(keyspace), expected_pair);
+
+        let range = Range {
+            start: Key::from(vec![b'x', 0, 0xDE, 0xAD, b'a']),
+            end: Key::from(vec![b'x', 0, 0xDE, 0xAD, b'b']),
+        };
+        let expected_range = Range {
+            start: Key::from(vec![b'a']),
+            end: Key::from(vec![b'b']),
+        };
+        assert_eq!(range.truncate_keyspace(keyspace), expected_range);
+
+        let ranges = vec![
+            Range {
+                start: Key::from(vec![b'x', 0, 0xDE, 0xAD, b'a']),
+                end: Key::from(vec![b'x', 0, 0xDE, 0xAD, b'b']),
+            },
+            Range {
+                start: Key::from(vec![b'x', 0, 0xDE, 0xAD, b'c']),
+                end: Key::from(vec![b'x', 0, 0xDE, 0xAD, b'd']),
+            },
+        ];
+        let expected_ranges = vec![
+            Range {
+                start: Key::from(vec![b'a']),
+                end: Key::from(vec![b'b']),
+            },
+            Range {
+                start: Key::from(vec![b'c']),
+                end: Key::from(vec![b'd']),
+            },
+        ];
+        assert_eq!(ranges.truncate_keyspace(keyspace), expected_ranges);
+
+        let pairs = vec![
+            KvPair(Key::from(vec![b'x', 0, 0xDE, 0xAD, b'k']), vec![b'v']),
+            KvPair(
+                Key::from(vec![b'x', 0, 0xDE, 0xAD, b'k', b'2']),
+                vec![b'v', b'2'],
+            ),
+        ];
+        let expected_pairs = vec![
+            KvPair(Key::from(vec![b'k']), vec![b'v']),
+            KvPair(Key::from(vec![b'k', b'2']), vec![b'v', b'2']),
+        ];
+        assert_eq!(pairs.truncate_keyspace(keyspace), expected_pairs);
+
+        let lock = crate::proto::kvrpcpb::LockInfo {
+            key: vec![b'x', 0, 0xDE, 0xAD, b'k'],
+            primary_lock: vec![b'x', 0, 0xDE, 0xAD, b'p'],
+            secondaries: vec![vec![b'x', 0, 0xDE, 0xAD, b's']],
+            ..Default::default()
+        };
+        let expected_lock = crate::proto::kvrpcpb::LockInfo {
+            key: vec![b'k'],
+            primary_lock: vec![b'p'],
+            secondaries: vec![vec![b's']],
+            ..Default::default()
+        };
+        assert_eq!(vec![lock].truncate_keyspace(keyspace), vec![expected_lock]);
     }
 
     #[test]
@@ -382,6 +425,27 @@ mod tests {
         assert_eq!(
             mutation.clone().encode_keyspace(keyspace, key_mode),
             mutation
+        );
+
+        let lock = crate::proto::kvrpcpb::LockInfo {
+            key: vec![b'x', 0, 0, 0, b'k'],
+            primary_lock: vec![b'x', 0, 0, 0, b'p'],
+            secondaries: vec![vec![b'x', 0, 0, 0, b's']],
+            ..Default::default()
+        };
+        let locks = vec![lock];
+        assert_eq!(locks.clone().encode_keyspace(keyspace, key_mode), locks);
+
+        let lock = crate::proto::kvrpcpb::LockInfo {
+            key: vec![b'k', b'1'],
+            primary_lock: vec![b'p', b'1'],
+            secondaries: vec![vec![b's', b'1']],
+            ..Default::default()
+        };
+        let locks = vec![lock.clone()];
+        assert_eq!(
+            locks.clone().encode_keyspace(Keyspace::Disable, key_mode),
+            locks
         );
     }
 
