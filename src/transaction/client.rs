@@ -9,6 +9,7 @@ use crate::backoff::{DEFAULT_REGION_BACKOFF, DEFAULT_STORE_BACKOFF};
 use crate::config::Config;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
+use crate::proto::kvrpcpb;
 use crate::proto::pdpb::Timestamp;
 use crate::request::plan::CleanupLocksResult;
 use crate::request::EncodeKeyspace;
@@ -19,6 +20,7 @@ use crate::timestamp::TimestampExt;
 use crate::transaction::lock::ResolveLocksOptions;
 use crate::transaction::lowering::new_scan_lock_request;
 use crate::transaction::lowering::new_unsafe_destroy_range_request;
+use crate::transaction::resolve_locks;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::Snapshot;
 use crate::transaction::Transaction;
@@ -294,9 +296,7 @@ impl Client {
         plan.execute().await
     }
 
-    // For test.
     // Note: `batch_size` must be >= expected number of locks.
-    #[cfg(feature = "integration-tests")]
     pub async fn scan_locks(
         &self,
         safepoint: &Timestamp,
@@ -312,6 +312,42 @@ impl Client {
             .merge(crate::request::Collect)
             .plan();
         Ok(plan.execute().await?.truncate_keyspace(self.keyspace))
+    }
+
+    /// Resolves the given locks and returns any that remain live.
+    ///
+    /// This method retries until either all locks are resolved or the provided
+    /// `backoff` is exhausted. The `timestamp` is used as the caller start
+    /// timestamp when checking transaction status.
+    pub async fn resolve_locks(
+        &self,
+        locks: Vec<kvrpcpb::LockInfo>,
+        timestamp: Timestamp,
+        mut backoff: Backoff,
+    ) -> Result<Vec<kvrpcpb::LockInfo>> {
+        use crate::request::TruncateKeyspace;
+
+        let mut live_locks = locks;
+        loop {
+            let resolved_locks = resolve_locks(
+                live_locks.encode_keyspace(self.keyspace, KeyMode::Txn),
+                timestamp.clone(),
+                self.pd.clone(),
+                self.keyspace,
+            )
+            .await?;
+            live_locks = resolved_locks.truncate_keyspace(self.keyspace);
+            if live_locks.is_empty() {
+                return Ok(live_locks);
+            }
+
+            match backoff.next_delay_duration() {
+                None => return Ok(live_locks),
+                Some(delay_duration) => {
+                    tokio::time::sleep(delay_duration).await;
+                }
+            }
+        }
     }
 
     /// Cleans up all keys in a range and quickly reclaim disk space.
