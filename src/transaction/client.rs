@@ -341,10 +341,6 @@ impl Client {
                 return Ok(live_locks);
             }
 
-            if backoff.is_none() {
-                return Ok(live_locks);
-            }
-
             match backoff.next_delay_duration() {
                 None => return Ok(live_locks),
                 Some(delay_duration) => {

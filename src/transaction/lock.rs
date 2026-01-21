@@ -41,6 +41,7 @@ fn format_key_for_log(key: &[u8]) -> String {
     let prefix_len = key.len().min(16);
     format!("len={}, prefix={:?}", key.len(), &key[..prefix_len])
 }
+
 /// _Resolves_ the given locks. Returns locks still live. When there is no live locks, all the given locks are resolved.
 ///
 /// If a key has a lock, the latest status of the key is unknown. We need to "resolve" the lock,

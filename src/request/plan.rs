@@ -295,6 +295,7 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
     e: errorpb::Error,
     region_store: RegionStore,
 ) -> Result<bool> {
+    debug!("handle_region_error: {:?}", e);
     let ver_id = region_store.region_with_leader.ver_id();
     let store_id = region_store.region_with_leader.get_store_id();
     if let Some(not_leader) = e.not_leader {
