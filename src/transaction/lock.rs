@@ -216,6 +216,7 @@ async fn resolve_lock_with_retry(
             }
             Err(e) if is_grpc_error(&e) => match backoff.next_delay_duration() {
                 Some(duration) => {
+                    pd_client.invalidate_region_cache(ver_id.clone()).await;
                     if let Ok(store_id) = store.region_with_leader.get_store_id() {
                         pd_client.invalidate_store_cache(store_id).await;
                     }
