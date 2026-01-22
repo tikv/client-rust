@@ -9,7 +9,6 @@ use crate::backoff::{DEFAULT_REGION_BACKOFF, DEFAULT_STORE_BACKOFF};
 use crate::config::Config;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
-use crate::proto::kvrpcpb;
 use crate::proto::pdpb::Timestamp;
 use crate::request::plan::CleanupLocksResult;
 use crate::request::EncodeKeyspace;
@@ -28,6 +27,13 @@ use crate::transaction::TransactionOptions;
 use crate::Backoff;
 use crate::BoundRange;
 use crate::Result;
+
+/// Protobuf-generated lock information returned by TiKV.
+///
+/// This type is generated from TiKV's protobuf definitions and may change in a
+/// future release even if the wire format is compatible.
+#[doc(inline)]
+pub use crate::proto::kvrpcpb::LockInfo as ProtoLockInfo;
 
 // FIXME: cargo-culted value
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
@@ -302,7 +308,7 @@ impl Client {
         safepoint: &Timestamp,
         range: impl Into<BoundRange>,
         batch_size: u32,
-    ) -> Result<Vec<crate::proto::kvrpcpb::LockInfo>> {
+    ) -> Result<Vec<ProtoLockInfo>> {
         use crate::request::TruncateKeyspace;
 
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
@@ -321,10 +327,10 @@ impl Client {
     /// timestamp when checking transaction status.
     pub async fn resolve_locks(
         &self,
-        locks: Vec<kvrpcpb::LockInfo>,
+        locks: Vec<ProtoLockInfo>,
         timestamp: Timestamp,
         mut backoff: Backoff,
-    ) -> Result<Vec<kvrpcpb::LockInfo>> {
+    ) -> Result<Vec<ProtoLockInfo>> {
         use crate::request::TruncateKeyspace;
 
         let mut live_locks = locks;

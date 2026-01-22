@@ -8,6 +8,20 @@ use crate::proto::kvrpcpb;
 use crate::region::RegionVerId;
 use crate::BoundRange;
 
+/// Protobuf-generated region-level error returned by TiKV.
+///
+/// This type is generated from TiKV's protobuf definitions and may change in a
+/// future release even if the wire format is compatible.
+#[doc(inline)]
+pub use crate::proto::errorpb::Error as ProtoRegionError;
+
+/// Protobuf-generated per-key error returned by TiKV.
+///
+/// This type is generated from TiKV's protobuf definitions and may change in a
+/// future release even if the wire format is compatible.
+#[doc(inline)]
+pub use crate::proto::kvrpcpb::KeyError as ProtoKeyError;
+
 /// An error originating from the TiKV client or dependencies.
 #[derive(Debug, Error)]
 #[allow(clippy::large_enum_variant)]
@@ -63,13 +77,13 @@ pub enum Error {
     Canceled(#[from] futures::channel::oneshot::Canceled),
     /// Errors caused by changes of region information
     #[error("Region error: {0:?}")]
-    RegionError(Box<crate::proto::errorpb::Error>),
+    RegionError(Box<ProtoRegionError>),
     /// Whether the transaction is committed or not is undetermined
     #[error("Whether the transaction is committed or not is undetermined")]
     UndeterminedError(Box<Error>),
-    /// Wraps `crate::proto::kvrpcpb::KeyError`
+    /// Wraps a per-key error returned by TiKV.
     #[error("{0:?}")]
-    KeyError(Box<crate::proto::kvrpcpb::KeyError>),
+    KeyError(Box<ProtoKeyError>),
     /// Multiple errors generated from the ExtractError plan.
     #[error("Multiple errors: {0:?}")]
     ExtractedErrors(Vec<Error>),
@@ -116,14 +130,14 @@ pub enum Error {
     TxnNotFound(kvrpcpb::TxnNotFound),
 }
 
-impl From<crate::proto::errorpb::Error> for Error {
-    fn from(e: crate::proto::errorpb::Error) -> Error {
+impl From<ProtoRegionError> for Error {
+    fn from(e: ProtoRegionError) -> Error {
         Error::RegionError(Box::new(e))
     }
 }
 
-impl From<crate::proto::kvrpcpb::KeyError> for Error {
-    fn from(e: crate::proto::kvrpcpb::KeyError) -> Error {
+impl From<ProtoKeyError> for Error {
+    fn from(e: ProtoKeyError) -> Error {
         Error::KeyError(Box::new(e))
     }
 }
