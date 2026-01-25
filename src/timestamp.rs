@@ -22,10 +22,6 @@ pub trait TimestampExt: Sized {
     fn from_version(version: u64) -> Self;
     /// Convert u64 to an optional timestamp, where `0` represents no timestamp.
     fn try_from_version(version: u64) -> Option<Self>;
-    /// Return the maximum timestamp.
-    fn max() -> Self {
-        Self::from_version(u64::MAX)
-    }
 }
 
 impl TimestampExt for Timestamp {
