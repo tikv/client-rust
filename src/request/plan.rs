@@ -91,7 +91,11 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 info!("req_id={} kv_prewrite <unknown request type>", request_id);
             }
         } else if label == "kv_commit" {
-            if let Some(req) = self.request.as_any().downcast_ref::<kvrpcpb::CommitRequest>() {
+            if let Some(req) = self
+                .request
+                .as_any()
+                .downcast_ref::<kvrpcpb::CommitRequest>()
+            {
                 info!(
                     "req_id={} kv_commit start_version={} commit_version={} keys={}",
                     request_id,
