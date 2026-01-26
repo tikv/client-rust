@@ -873,14 +873,21 @@ impl<PdC: PdClient> Client<PdC> {
             if reverse {
                 let region_start = region.start_key();
                 if !region_start.is_empty() && *region_lookup_key == region_start {
-                    // Find the previous region by looking up a key just before this boundary.
-                    // Truncating the last byte gives a lexicographically smaller key.
-                    let mut prev_key: Vec<u8> = region_start.into();
-                    prev_key.pop();
-                    if !prev_key.is_empty() {
-                        region = self.rpc.clone().region_for_key(&prev_key.into()).await?;
-                    }
-                    // If prev_key is empty, we're at the start of the keyspace
+                    // Find the previous region by computing the key immediately before
+                    // this boundary. Decrement the last byte with borrow propagation.
+                    let prev_key = {
+                        let mut key: Vec<u8> = region_start.into();
+                        while let Some(last) = key.last_mut() {
+                            if *last > 0 {
+                                *last -= 1;
+                                break;
+                            }
+                            key.pop(); // byte was 0, borrow from previous
+                        }
+                        key
+                    };
+                    // Always look up - empty prev_key correctly returns the first region
+                    region = self.rpc.clone().region_for_key(&prev_key.into()).await?;
                 }
             }
             let store = self.rpc.clone().store_for_id(region.id()).await?;
