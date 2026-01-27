@@ -764,11 +764,19 @@ impl<PdC: PdClient> Client<PdC> {
         let mut current_limit = limit;
         let (start_key, end_key) = range.clone().into_keys();
 
+        // Reverse scan requires a bounded upper range to know where to start.
+        // Locating the last region is not implemented.
+        if reverse && end_key.is_none() {
+            return Err(Error::InternalError {
+                message: "reverse scan requires an upper bound (end_key)".to_string(),
+            });
+        }
+
         // For forward scan: current_key tracks the lower bound, moving forward
         // For reverse scan: current_key tracks the upper bound, moving backward
         let mut current_key: Key = if reverse {
-            // Start from the upper bound for reverse scan
-            end_key.clone().unwrap_or_default()
+            // Safe to unwrap: we validated end_key.is_some() above
+            end_key.clone().unwrap()
         } else {
             start_key.clone()
         };
@@ -828,6 +836,10 @@ impl<PdC: PdClient> Client<PdC> {
                 if next_key.is_empty() || end_key.clone().is_some_and(|ek| ek <= next_key) {
                     break;
                 }
+                // Safety: if next_key <= current_key, we've made no progress
+                if next_key <= current_key {
+                    break;
+                }
                 current_key = next_key;
             }
         }
@@ -856,12 +868,8 @@ impl<PdC: PdClient> Client<PdC> {
             // When reverse=true, new_raw_scan_request swaps the keys so that TiKV receives
             // end_key as its start_key. We must select the region containing that key.
             let region_lookup_key: &Key = if reverse {
-                match &end_key {
-                    Some(ek) if !ek.is_empty() => ek,
-                    // If no upper bound, fall back to start_key (though this case
-                    // is documented as unsupported for reverse scan)
-                    _ => &start_key,
-                }
+                // For reverse scan, end_key is guaranteed to be Some (validated in scan_inner)
+                end_key.as_ref().unwrap()
             } else {
                 &start_key
             };
