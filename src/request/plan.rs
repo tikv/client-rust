@@ -345,6 +345,18 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
     }
 }
 
+pub(crate) async fn invalidate_cache<PdC: PdClient>(
+    pd_client: Arc<PdC>,
+    region_store: RegionStore,
+) {
+    let ver_id = region_store.region_with_leader.ver_id();
+    let store_id = region_store.region_with_leader.get_store_id();
+    pd_client.invalidate_region_cache(ver_id).await;
+    if let Ok(store_id) = store_id {
+        pd_client.invalidate_store_cache(store_id).await;
+    }
+}
+
 // Returns
 // 1. Ok(true): error has been resolved, retry immediately
 // 2. Ok(false): backoff, and then retry
