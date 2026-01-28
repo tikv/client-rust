@@ -16,7 +16,7 @@ use std::sync::Arc;
 /// runtime and returns `Error::NestedRuntimeError` if one is found, allowing callers
 /// to detect and handle incorrect use of the synchronous client from within an
 /// existing async runtime instead of risking deadlocks or unexpected blocking.
-/// 
+///
 /// Note: checks only for Tokio runtimes, not other async runtimes.
 ///
 /// # Error Handling
