@@ -51,15 +51,13 @@ fn test_sync_client_new_inside_async_context() {
             Config::default().with_default_keyspace(),
         );
 
-        // Should return an error, not panic
-        assert!(result.is_err());
-
         // Verify the error type is correct
-        match result.unwrap_err() {
-            tikv_client::Error::NestedRuntimeError(_) => {
+        match result {
+            Err(tikv_client::Error::NestedRuntimeError(_)) => {
                 // Expected case - test passes
             }
-            other => panic!("Expected NestedRuntimeError, got: {:?}", other),
+            Err(other) => panic!("Expected NestedRuntimeError, got: {:?}", other),
+            Ok(_) => panic!("Expected error but got Ok"),
         }
     });
 }
