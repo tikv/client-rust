@@ -33,7 +33,7 @@ impl SyncSnapshot {
         self.runtime.block_on(self.inner.batch_get(keys))
     }
 
-    /// Scan a range, return at most `limit` key-value pairs that lying in the range.
+    /// Scan a range, return at most `limit` key-value pairs that lie in the range.
     pub fn scan(
         &mut self,
         range: impl Into<BoundRange>,
@@ -42,7 +42,7 @@ impl SyncSnapshot {
         self.runtime.block_on(self.inner.scan(range, limit))
     }
 
-    /// Scan a range, return at most `limit` keys that lying in the range.
+    /// Scan a range, return at most `limit` keys that lie in the range.
     pub fn scan_keys(
         &mut self,
         range: impl Into<BoundRange>,

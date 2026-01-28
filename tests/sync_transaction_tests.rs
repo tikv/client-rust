@@ -23,6 +23,91 @@ fn sync_client() -> Result<SyncTransactionClient> {
 
 #[test]
 #[serial]
+fn test_sync_client_outside_async_context() -> Result<()> {
+    // This test verifies that SyncTransactionClient works correctly when called
+    // from a synchronous context (no Tokio runtime active)
+    let client = sync_client()?;
+
+    // Should be able to call methods without error
+    let _timestamp = client.current_timestamp()?;
+    let mut txn = client.begin_optimistic()?;
+
+    // Must rollback or commit the transaction to avoid panic on drop
+    txn.rollback()?;
+
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn test_sync_client_new_inside_async_context() {
+    // This test verifies that creating a SyncTransactionClient inside an async
+    // context returns an error instead of panicking
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    runtime.block_on(async {
+        let result = SyncTransactionClient::new_with_config(
+            pd_addrs(),
+            Config::default().with_default_keyspace(),
+        );
+
+        // Should return an error, not panic
+        assert!(result.is_err());
+
+        // Verify the error type is correct
+        match result.unwrap_err() {
+            tikv_client::Error::NestedRuntimeError(_) => {
+                // Expected case - test passes
+            }
+            other => panic!("Expected NestedRuntimeError, got: {:?}", other),
+        }
+    });
+}
+
+#[test]
+#[serial]
+fn test_sync_client_methods_inside_async_context() -> Result<()> {
+    // This test verifies that calling SyncTransactionClient methods inside an
+    // async context returns an error instead of panicking.
+    // The client is created outside the async context, but methods are called inside.
+
+    let client = sync_client()?;
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    runtime.block_on(async {
+        // All of these should return errors when called inside an async context
+        let timestamp_result = client.current_timestamp();
+        assert!(
+            timestamp_result.is_err(),
+            "current_timestamp should fail in async context"
+        );
+
+        let begin_result = client.begin_optimistic();
+        assert!(
+            begin_result.is_err(),
+            "begin_optimistic should fail in async context"
+        );
+
+        let pessimistic_result = client.begin_pessimistic();
+        assert!(
+            pessimistic_result.is_err(),
+            "begin_pessimistic should fail in async context"
+        );
+
+        // Verify the error type is correct
+        match timestamp_result {
+            Err(tikv_client::Error::NestedRuntimeError(_)) => {
+                // Expected case - test passes
+            }
+            other => panic!("Expected NestedRuntimeError, got: {:?}", other),
+        }
+    });
+
+    Ok(())
+}
+
+#[test]
+#[serial]
 fn txn_sync_get_timestamp() -> Result<()> {
     const COUNT: usize = 1 << 8;
     let client = sync_client()?;
@@ -163,6 +248,285 @@ fn txn_sync_snapshot() -> Result<()> {
         Some("updated".to_owned().into())
     );
     txn.rollback()?;
+
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn txn_sync_snapshot_batch_get() -> Result<()> {
+    init_sync()?;
+
+    let client = sync_client()?;
+
+    // Write test data
+    let mut txn = client.begin_optimistic()?;
+    txn.put("snap_batch_k1".to_owned(), "v1".to_owned())?;
+    txn.put("snap_batch_k2".to_owned(), "v2".to_owned())?;
+    txn.put("snap_batch_k3".to_owned(), "v3".to_owned())?;
+    txn.commit()?;
+
+    // Get snapshot
+    let ts = client.current_timestamp()?;
+    let mut snapshot = client.snapshot(ts, TransactionOptions::new_optimistic());
+
+    // Test batch_get
+    let keys = vec![
+        "snap_batch_k1".to_owned(),
+        "snap_batch_k2".to_owned(),
+        "snap_batch_k3".to_owned(),
+        "snap_batch_k_nonexistent".to_owned(),
+    ];
+    let results: Vec<_> = snapshot.batch_get(keys)?.collect();
+
+    assert_eq!(results.len(), 3);
+
+    // Convert results to HashMap for order-agnostic verification
+    let result_map: HashMap<Key, Value> = results
+        .iter()
+        .map(|kv| (kv.0.clone(), kv.1.clone()))
+        .collect();
+
+    // Verify all keys and values (order-agnostic)
+    assert_eq!(
+        result_map.get(&Key::from("snap_batch_k1".to_owned())),
+        Some(&Value::from("v1".to_owned())),
+        "snap_batch_k1 should have value v1"
+    );
+    assert_eq!(
+        result_map.get(&Key::from("snap_batch_k2".to_owned())),
+        Some(&Value::from("v2".to_owned())),
+        "snap_batch_k2 should have value v2"
+    );
+    assert_eq!(
+        result_map.get(&Key::from("snap_batch_k3".to_owned())),
+        Some(&Value::from("v3".to_owned())),
+        "snap_batch_k3 should have value v3"
+    );
+
+    // Verify non-existent key is not in results
+    assert!(
+        !result_map.contains_key(&Key::from("snap_batch_k_nonexistent".to_owned())),
+        "Non-existent key should not be in results"
+    );
+
+    // Test edge case: empty key list
+    let empty_results: Vec<_> = snapshot.batch_get(Vec::<String>::new())?.collect();
+    assert_eq!(
+        empty_results.len(),
+        0,
+        "Empty key list should return no results"
+    );
+
+    // Test edge case: all non-existent keys
+    let nonexistent_keys = vec![
+        "snap_batch_k_fake1".to_owned(),
+        "snap_batch_k_fake2".to_owned(),
+        "snap_batch_k_fake3".to_owned(),
+    ];
+    let nonexistent_results: Vec<_> = snapshot.batch_get(nonexistent_keys)?.collect();
+    assert_eq!(
+        nonexistent_results.len(),
+        0,
+        "All non-existent keys should return no results"
+    );
+
+    // Test edge case: duplicate keys
+    // Ensure that providing duplicate keys yields one result per unique key.
+    let duplicate_keys = vec![
+        "snap_batch_k1".to_owned(),
+        "snap_batch_k2".to_owned(),
+        "snap_batch_k1".to_owned(), // Duplicate
+        "snap_batch_k3".to_owned(),
+        "snap_batch_k2".to_owned(), // Duplicate
+    ];
+    let duplicate_results: Vec<_> = snapshot.batch_get(duplicate_keys)?.collect();
+
+    // Verify API behavior: duplicate keys in the input result in unique keys in the output
+    let dup_result_map: HashMap<Key, Value> = duplicate_results
+        .iter()
+        .map(|kv| (kv.0.clone(), kv.1.clone()))
+        .collect();
+    assert_eq!(
+        dup_result_map.len(),
+        3,
+        "API returns unique results: duplicate keys in input are deduplicated in output"
+    );
+    assert!(
+        dup_result_map.contains_key(&Key::from("snap_batch_k1".to_owned())),
+        "snap_batch_k1 should be present"
+    );
+    assert!(
+        dup_result_map.contains_key(&Key::from("snap_batch_k2".to_owned())),
+        "snap_batch_k2 should be present"
+    );
+    assert!(
+        dup_result_map.contains_key(&Key::from("snap_batch_k3".to_owned())),
+        "snap_batch_k3 should be present"
+    );
+
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn txn_sync_snapshot_scan() -> Result<()> {
+    init_sync()?;
+
+    let client = sync_client()?;
+
+    // Write test data
+    let mut txn = client.begin_optimistic()?;
+    txn.put("snap_scan_1".to_owned(), "value1".to_owned())?;
+    txn.put("snap_scan_2".to_owned(), "value2".to_owned())?;
+    txn.put("snap_scan_3".to_owned(), "value3".to_owned())?;
+    txn.put("snap_scan_4".to_owned(), "value4".to_owned())?;
+    txn.commit()?;
+
+    // Get snapshot
+    let ts = client.current_timestamp()?;
+    let mut snapshot = client.snapshot(ts, TransactionOptions::new_optimistic());
+
+    // Test scan
+    let results: Vec<_> = snapshot
+        .scan("snap_scan_1".to_owned().."snap_scan_4".to_owned(), 10)?
+        .collect();
+
+    // snap_scan_1, snap_scan_2, snap_scan_3 (snap_scan_4 is exclusive)
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0].0, Key::from("snap_scan_1".to_owned()));
+    assert_eq!(results[0].1, Value::from("value1".to_owned()));
+    assert_eq!(results[1].0, Key::from("snap_scan_2".to_owned()));
+    assert_eq!(results[1].1, Value::from("value2".to_owned()));
+    assert_eq!(results[2].0, Key::from("snap_scan_3".to_owned()));
+    assert_eq!(results[2].1, Value::from("value3".to_owned()));
+
+    // Test scan with limit
+    let results: Vec<_> = snapshot
+        .scan("snap_scan_1".to_owned()..="snap_scan_4".to_owned(), 2)?
+        .collect();
+
+    assert_eq!(results.len(), 2); // Limited to 2
+
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn txn_sync_snapshot_scan_keys() -> Result<()> {
+    init_sync()?;
+
+    let client = sync_client()?;
+
+    // Write test data
+    let mut txn = client.begin_optimistic()?;
+    txn.put("snap_keys_1".to_owned(), "v1".to_owned())?;
+    txn.put("snap_keys_2".to_owned(), "v2".to_owned())?;
+    txn.put("snap_keys_3".to_owned(), "v3".to_owned())?;
+    txn.commit()?;
+
+    // Get snapshot
+    let ts = client.current_timestamp()?;
+    let mut snapshot = client.snapshot(ts, TransactionOptions::new_optimistic());
+
+    // Test scan_keys (only keys, no values)
+    let keys: Vec<_> = snapshot
+        .scan_keys("snap_keys_1".to_owned()..="snap_keys_3".to_owned(), 10)?
+        .collect();
+
+    assert_eq!(keys.len(), 3);
+    assert_eq!(keys[0], Key::from("snap_keys_1".to_owned()));
+    assert_eq!(keys[1], Key::from("snap_keys_2".to_owned()));
+    assert_eq!(keys[2], Key::from("snap_keys_3".to_owned()));
+
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn txn_sync_snapshot_scan_reverse() -> Result<()> {
+    init_sync()?;
+
+    let client = sync_client()?;
+
+    // Write test data
+    let mut txn = client.begin_optimistic()?;
+    txn.put("snap_rev_1".to_owned(), "value1".to_owned())?;
+    txn.put("snap_rev_2".to_owned(), "value2".to_owned())?;
+    txn.put("snap_rev_3".to_owned(), "value3".to_owned())?;
+    txn.put("snap_rev_4".to_owned(), "value4".to_owned())?;
+    txn.commit()?;
+
+    // Get snapshot
+    let ts = client.current_timestamp()?;
+    let mut snapshot = client.snapshot(ts, TransactionOptions::new_optimistic());
+
+    // Test scan_reverse (reverse order)
+    let results: Vec<_> = snapshot
+        .scan_reverse("snap_rev_1".to_owned()..="snap_rev_4".to_owned(), 10)?
+        .collect();
+
+    assert_eq!(results.len(), 4);
+    // Should be in reverse order
+    assert_eq!(results[0].0, Key::from("snap_rev_4".to_owned()));
+    assert_eq!(results[1].0, Key::from("snap_rev_3".to_owned()));
+    assert_eq!(results[2].0, Key::from("snap_rev_2".to_owned()));
+    assert_eq!(results[3].0, Key::from("snap_rev_1".to_owned()));
+
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn txn_sync_snapshot_scan_keys_reverse() -> Result<()> {
+    init_sync()?;
+
+    let client = sync_client()?;
+
+    // Write test data
+    let mut txn = client.begin_optimistic()?;
+    txn.put("snap_krev_a".to_owned(), "v1".to_owned())?;
+    txn.put("snap_krev_b".to_owned(), "v2".to_owned())?;
+    txn.put("snap_krev_c".to_owned(), "v3".to_owned())?;
+    txn.commit()?;
+
+    // Get snapshot
+    let ts = client.current_timestamp()?;
+    let mut snapshot = client.snapshot(ts, TransactionOptions::new_optimistic());
+
+    // Test scan_keys_reverse (keys only, in reverse order)
+    let keys: Vec<_> = snapshot
+        .scan_keys_reverse("snap_krev_a".to_owned()..="snap_krev_c".to_owned(), 10)?
+        .collect();
+
+    assert_eq!(keys.len(), 3);
+    // Should be in reverse order
+    assert_eq!(keys[0], Key::from("snap_krev_c".to_owned()));
+    assert_eq!(keys[1], Key::from("snap_krev_b".to_owned()));
+    assert_eq!(keys[2], Key::from("snap_krev_a".to_owned()));
+
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn txn_sync_snapshot_key_exists() -> Result<()> {
+    init_sync()?;
+
+    let client = sync_client()?;
+
+    // Write test data
+    let mut txn = client.begin_optimistic()?;
+    txn.put("snap_exists_key".to_owned(), "value".to_owned())?;
+    txn.commit()?;
+
+    // Get snapshot
+    let ts = client.current_timestamp()?;
+    let mut snapshot = client.snapshot(ts, TransactionOptions::new_optimistic());
+
+    // Test key_exists
+    assert!(snapshot.key_exists("snap_exists_key".to_owned())?);
+    assert!(!snapshot.key_exists("snap_nonexistent_key".to_owned())?);
 
     Ok(())
 }
