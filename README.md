@@ -17,7 +17,7 @@ The TiKV client is a Rust library (crate). To use this crate in your project, ad
 
 ```toml
 [dependencies]
-tikv-client = "0.3"
+tikv-client = "0.4"
 ```
 
 ### Prerequisites
