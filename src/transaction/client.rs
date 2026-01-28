@@ -19,6 +19,7 @@ use crate::timestamp::TimestampExt;
 use crate::transaction::lock::ResolveLocksOptions;
 use crate::transaction::lowering::new_scan_lock_request;
 use crate::transaction::lowering::new_unsafe_destroy_range_request;
+use crate::transaction::resolve_locks;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::Snapshot;
 use crate::transaction::Transaction;
@@ -26,6 +27,13 @@ use crate::transaction::TransactionOptions;
 use crate::Backoff;
 use crate::BoundRange;
 use crate::Result;
+
+/// Protobuf-generated lock information returned by TiKV.
+///
+/// This type is generated from TiKV's protobuf definitions and may change in a
+/// future release even if the wire format is compatible.
+#[doc(inline)]
+pub use crate::proto::kvrpcpb::LockInfo as ProtoLockInfo;
 
 // FIXME: cargo-culted value
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
@@ -125,7 +133,6 @@ impl Client {
     /// keyspace/key-mode prefix, with a custom configuration.
     ///
     /// This is intended for **server-side embedding** use cases. `config.keyspace` must be unset.
-    #[cfg(feature = "apiv2-no-prefix")]
     pub async fn new_with_config_api_v2_no_prefix<S: Into<String>>(
         pd_endpoints: Vec<S>,
         config: Config,
@@ -295,15 +302,13 @@ impl Client {
         plan.execute().await
     }
 
-    // For test.
     // Note: `batch_size` must be >= expected number of locks.
-    #[cfg(feature = "integration-tests")]
     pub async fn scan_locks(
         &self,
         safepoint: &Timestamp,
         range: impl Into<BoundRange>,
         batch_size: u32,
-    ) -> Result<Vec<crate::proto::kvrpcpb::LockInfo>> {
+    ) -> Result<Vec<ProtoLockInfo>> {
         use crate::request::TruncateKeyspace;
 
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
@@ -313,6 +318,42 @@ impl Client {
             .merge(crate::request::Collect)
             .plan();
         Ok(plan.execute().await?.truncate_keyspace(self.keyspace))
+    }
+
+    /// Resolves the given locks and returns any that remain live.
+    ///
+    /// This method retries until either all locks are resolved or the provided
+    /// `backoff` is exhausted. The `timestamp` is used as the caller start
+    /// timestamp when checking transaction status.
+    pub async fn resolve_locks(
+        &self,
+        locks: Vec<ProtoLockInfo>,
+        timestamp: Timestamp,
+        mut backoff: Backoff,
+    ) -> Result<Vec<ProtoLockInfo>> {
+        use crate::request::TruncateKeyspace;
+
+        let mut live_locks = locks;
+        loop {
+            let resolved_locks = resolve_locks(
+                live_locks.encode_keyspace(self.keyspace, KeyMode::Txn),
+                timestamp.clone(),
+                self.pd.clone(),
+                self.keyspace,
+            )
+            .await?;
+            live_locks = resolved_locks.truncate_keyspace(self.keyspace);
+            if live_locks.is_empty() {
+                return Ok(live_locks);
+            }
+
+            match backoff.next_delay_duration() {
+                None => return Ok(live_locks),
+                Some(delay_duration) => {
+                    tokio::time::sleep(delay_duration).await;
+                }
+            }
+        }
     }
 
     /// Cleans up all keys in a range and quickly reclaim disk space.

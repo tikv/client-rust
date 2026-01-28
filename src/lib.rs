@@ -122,6 +122,10 @@ pub use common::security::SecurityManager;
 #[doc(inline)]
 pub use common::Error;
 #[doc(inline)]
+pub use common::ProtoKeyError;
+#[doc(inline)]
+pub use common::ProtoRegionError;
+#[doc(inline)]
 pub use common::Result;
 #[doc(inline)]
 pub use config::Config;
@@ -156,6 +160,8 @@ pub use crate::transaction::lowering as transaction_lowering;
 pub use crate::transaction::CheckLevel;
 #[doc(inline)]
 pub use crate::transaction::Client as TransactionClient;
+#[doc(inline)]
+pub use crate::transaction::ProtoLockInfo;
 #[doc(inline)]
 pub use crate::transaction::Snapshot;
 #[doc(inline)]

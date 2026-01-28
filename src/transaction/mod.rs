@@ -9,6 +9,7 @@
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 
 pub use client::Client;
+pub use client::ProtoLockInfo;
 pub(crate) use lock::resolve_locks;
 pub(crate) use lock::HasLocks;
 pub use snapshot::Snapshot;
