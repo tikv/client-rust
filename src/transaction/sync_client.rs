@@ -25,7 +25,7 @@ use std::sync::Arc;
 /// - Use the async [`TransactionClient`](crate::TransactionClient) instead of `SyncTransactionClient`
 /// - Move the `SyncTransactionClient` creation and usage outside of the async context
 /// - Consider restructuring the code to avoid mixing sync and async execution contexts
-fn check_nested_runtime() -> Result<()> {
+pub(crate) fn check_nested_runtime() -> Result<()> {
     if tokio::runtime::Handle::try_current().is_ok() {
         return Err(Error::NestedRuntimeError(
             "Nested Tokio runtime detected: cannot use SyncTransactionClient from within an async context. \
@@ -52,7 +52,7 @@ fn check_nested_runtime() -> Result<()> {
 ///   thread when this function is called.
 /// - `Err(e)` for any other [`Error`] produced either by the future itself or by
 ///   `runtime.block_on`.
-fn safe_block_on<F, T>(runtime: &tokio::runtime::Runtime, future: F) -> Result<T>
+pub(crate) fn safe_block_on<F, T>(runtime: &tokio::runtime::Runtime, future: F) -> Result<T>
 where
     F: std::future::Future<Output = Result<T>>,
 {

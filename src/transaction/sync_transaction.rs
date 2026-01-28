@@ -1,3 +1,4 @@
+use crate::transaction::sync_client::safe_block_on;
 use crate::{
     transaction::Mutation, BoundRange, Key, KvPair, Result, Timestamp, Transaction, Value,
 };
@@ -19,17 +20,17 @@ impl SyncTransaction {
 
     /// Get the value associated with the given key.
     pub fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
-        self.runtime.block_on(self.inner.get(key))
+        safe_block_on(&self.runtime, self.inner.get(key))
     }
 
     /// Get the value associated with the given key, and lock the key.
     pub fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
-        self.runtime.block_on(self.inner.get_for_update(key))
+        safe_block_on(&self.runtime, self.inner.get_for_update(key))
     }
 
     /// Check if the given key exists.
     pub fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
-        self.runtime.block_on(self.inner.key_exists(key))
+        safe_block_on(&self.runtime, self.inner.key_exists(key))
     }
 
     /// Get the values associated with the given keys.
@@ -37,7 +38,7 @@ impl SyncTransaction {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.runtime.block_on(self.inner.batch_get(keys))
+        safe_block_on(&self.runtime, self.inner.batch_get(keys))
     }
 
     /// Get the values associated with the given keys, and lock the keys.
@@ -45,7 +46,7 @@ impl SyncTransaction {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
-        self.runtime.block_on(self.inner.batch_get_for_update(keys))
+        safe_block_on(&self.runtime, self.inner.batch_get_for_update(keys))
     }
 
     /// Scan a range and return the key-value pairs.
@@ -54,7 +55,7 @@ impl SyncTransaction {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.runtime.block_on(self.inner.scan(range, limit))
+        safe_block_on(&self.runtime, self.inner.scan(range, limit))
     }
 
     /// Scan a range and return only the keys.
@@ -63,7 +64,7 @@ impl SyncTransaction {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
-        self.runtime.block_on(self.inner.scan_keys(range, limit))
+        safe_block_on(&self.runtime, self.inner.scan_keys(range, limit))
     }
 
     /// Scan a range in reverse order.
@@ -72,7 +73,7 @@ impl SyncTransaction {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.runtime.block_on(self.inner.scan_reverse(range, limit))
+        safe_block_on(&self.runtime, self.inner.scan_reverse(range, limit))
     }
 
     /// Scan keys in a range in reverse order.
@@ -81,47 +82,46 @@ impl SyncTransaction {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
-        self.runtime
-            .block_on(self.inner.scan_keys_reverse(range, limit))
+        safe_block_on(&self.runtime, self.inner.scan_keys_reverse(range, limit))
     }
 
     /// Set the value associated with the given key.
     pub fn put(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        self.runtime.block_on(self.inner.put(key, value))
+        safe_block_on(&self.runtime, self.inner.put(key, value))
     }
 
     /// Insert the key-value pair. Returns an error if the key already exists.
     pub fn insert(&mut self, key: impl Into<Key>, value: impl Into<Value>) -> Result<()> {
-        self.runtime.block_on(self.inner.insert(key, value))
+        safe_block_on(&self.runtime, self.inner.insert(key, value))
     }
 
     /// Delete the given key.
     pub fn delete(&mut self, key: impl Into<Key>) -> Result<()> {
-        self.runtime.block_on(self.inner.delete(key))
+        safe_block_on(&self.runtime, self.inner.delete(key))
     }
 
     /// Apply multiple mutations atomically.
     pub fn batch_mutate(&mut self, mutations: impl IntoIterator<Item = Mutation>) -> Result<()> {
-        self.runtime.block_on(self.inner.batch_mutate(mutations))
+        safe_block_on(&self.runtime, self.inner.batch_mutate(mutations))
     }
 
     /// Lock the given keys without associating any values.
     pub fn lock_keys(&mut self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
-        self.runtime.block_on(self.inner.lock_keys(keys))
+        safe_block_on(&self.runtime, self.inner.lock_keys(keys))
     }
 
     /// Commit the transaction.
     pub fn commit(&mut self) -> Result<Option<Timestamp>> {
-        self.runtime.block_on(self.inner.commit())
+        safe_block_on(&self.runtime, self.inner.commit())
     }
 
     /// Rollback the transaction.
     pub fn rollback(&mut self) -> Result<()> {
-        self.runtime.block_on(self.inner.rollback())
+        safe_block_on(&self.runtime, self.inner.rollback())
     }
 
     /// Send a heart beat message to keep the transaction alive.
     pub fn send_heart_beat(&mut self) -> Result<u64> {
-        self.runtime.block_on(self.inner.send_heart_beat())
+        safe_block_on(&self.runtime, self.inner.send_heart_beat())
     }
 }

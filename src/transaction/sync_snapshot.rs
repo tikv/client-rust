@@ -1,3 +1,4 @@
+use crate::transaction::sync_client::safe_block_on;
 use crate::{BoundRange, Key, KvPair, Result, Snapshot, Value};
 use std::sync::Arc;
 
@@ -17,12 +18,12 @@ impl SyncSnapshot {
 
     /// Get the value associated with the given key.
     pub fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
-        self.runtime.block_on(self.inner.get(key))
+        safe_block_on(&self.runtime, self.inner.get(key))
     }
 
     /// Check whether the key exists.
     pub fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
-        self.runtime.block_on(self.inner.key_exists(key))
+        safe_block_on(&self.runtime, self.inner.key_exists(key))
     }
 
     /// Get the values associated with the given keys.
@@ -30,7 +31,7 @@ impl SyncSnapshot {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.runtime.block_on(self.inner.batch_get(keys))
+        safe_block_on(&self.runtime, self.inner.batch_get(keys))
     }
 
     /// Scan a range, return at most `limit` key-value pairs that lie in the range.
@@ -39,7 +40,7 @@ impl SyncSnapshot {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.runtime.block_on(self.inner.scan(range, limit))
+        safe_block_on(&self.runtime, self.inner.scan(range, limit))
     }
 
     /// Scan a range, return at most `limit` keys that lie in the range.
@@ -48,7 +49,7 @@ impl SyncSnapshot {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
-        self.runtime.block_on(self.inner.scan_keys(range, limit))
+        safe_block_on(&self.runtime, self.inner.scan_keys(range, limit))
     }
 
     /// Similar to scan, but in the reverse direction.
@@ -57,7 +58,7 @@ impl SyncSnapshot {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        self.runtime.block_on(self.inner.scan_reverse(range, limit))
+        safe_block_on(&self.runtime, self.inner.scan_reverse(range, limit))
     }
 
     /// Similar to scan_keys, but in the reverse direction.
@@ -66,7 +67,6 @@ impl SyncSnapshot {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
-        self.runtime
-            .block_on(self.inner.scan_keys_reverse(range, limit))
+        safe_block_on(&self.runtime, self.inner.scan_keys_reverse(range, limit))
     }
 }
