@@ -10,7 +10,7 @@ edition = "2021"
 
 [features]
 default = ["prometheus"]
-prometheus = ["prometheus/push", "prometheus/process"]
+prometheus = ["dep:prometheus", "prometheus/push", "prometheus/process"]
 # Enable integration tests with a running TiKV and PD instance.
 # Use $PD_ADDRS, comma separated, to set the addresses the tests use.
 integration-tests = []
@@ -34,7 +34,7 @@ futures = { version = "0.3" }
 lazy_static = "1"
 log = "0.4"
 pin-project = "1"
-prometheus = { version = "0.13", default-features = false }
+prometheus = { version = "0.13", default-features = false, optional = true }
 prost = "0.12"
 rand = "0.8"
 regex = "1"

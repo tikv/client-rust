@@ -24,6 +24,7 @@ use crate::request::shard::HasNextBatch;
 use crate::request::NextBatch;
 use crate::request::Shardable;
 use crate::request::{KvRequest, StoreRequest};
+#[cfg(feature = "prometheus")]
 use crate::stats::tikv_stats;
 use crate::store::HasRegionError;
 use crate::store::HasRegionErrors;
@@ -63,6 +64,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
     type Result = Req::Response;
 
     async fn execute(&self) -> Result<Self::Result> {
+        #[cfg(feature = "prometheus")]
         let stats = tikv_stats(self.request.label());
         let result = self
             .kv_client
@@ -70,6 +72,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             .expect("Unreachable: kv_client has not been initialised in Dispatch")
             .dispatch(&self.request)
             .await;
+        #[cfg(feature = "prometheus")]
         let result = stats.done(result);
         result.map(|r| {
             *r.downcast()
