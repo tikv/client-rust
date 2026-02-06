@@ -104,7 +104,8 @@ async fn run_tso(
     // let send_requests = rpc_sender.send_all(&mut request_stream);
     let mut responses = pd_client.tso(request_stream).await?.into_inner();
 
-    while let Some(Ok(resp)) = responses.next().await {
+    while let Some(resp) = responses.next().await {
+        let resp = resp?;
         let should_wake_sender = {
             let mut pending_requests = pending_requests.lock().await;
             let was_full = pending_requests.len() >= MAX_PENDING_COUNT;
