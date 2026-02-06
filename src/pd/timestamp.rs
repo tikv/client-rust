@@ -31,6 +31,7 @@ use tonic::transport::Channel;
 use crate::internal_err;
 use crate::proto::pdpb::pd_client::PdClient;
 use crate::proto::pdpb::*;
+use crate::stats::observe_tso_batch;
 use crate::Result;
 
 /// It is an empirical value.
@@ -98,13 +99,17 @@ async fn run_tso(
     let mut responses = pd_client.tso(request_stream).await?.into_inner();
 
     while let Some(Ok(resp)) = responses.next().await {
-        {
+        let should_wake_sender = {
             let mut pending_requests = pending_requests.lock().await;
+            let was_full = pending_requests.len() >= MAX_PENDING_COUNT;
             allocate_timestamps(&resp, &mut pending_requests)?;
-        }
+            was_full && pending_requests.len() < MAX_PENDING_COUNT
+        };
 
-        // Wake up the sending future blocked by too many pending requests or locked.
-        sending_future_waker.wake();
+        // Only wake sender when a previously full queue gains capacity.
+        if should_wake_sender {
+            sending_future_waker.wake();
+        }
     }
     // TODO: distinguish between unexpected stream termination and expected end of test
     info!("TSO stream terminated");
@@ -137,7 +142,6 @@ impl Stream for TsoRequestStream {
         {
             pending_requests
         } else {
-            this.self_waker.register(cx.waker());
             return Poll::Pending;
         };
         let mut requests = Vec::new();
@@ -153,6 +157,7 @@ impl Stream for TsoRequestStream {
         }
 
         if !requests.is_empty() {
+            observe_tso_batch(requests.len());
             let req = TsoRequest {
                 header: Some(RequestHeader {
                     cluster_id: *this.cluster_id,
@@ -170,9 +175,11 @@ impl Stream for TsoRequestStream {
 
             Poll::Ready(Some(req))
         } else {
-            // Set the waker to the context, then the stream can be waked up after the pending queue
-            // is no longer full.
-            this.self_waker.register(cx.waker());
+            // Register self waker only when blocked by a full pending queue.
+            // When queue is not full, poll_recv above has already registered the receiver waker.
+            if pending_requests.len() >= MAX_PENDING_COUNT {
+                this.self_waker.register(cx.waker());
+            }
             Poll::Pending
         }
     }
