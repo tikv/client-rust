@@ -11,6 +11,10 @@ Rust toolchain: 1.84.1
 Quantify the latency impact of reducing TSO stream wake/registration churn in
 `src/pd/timestamp.rs`.
 
+These numbers are a point-in-time snapshot from this branch. Re-run the
+benchmark after meaningful changes to either `src/pd/timestamp.rs` or
+`benches/tso_waker_policy.rs`.
+
 ## Method
 
 Benchmark framework:
@@ -33,6 +37,10 @@ Criterion configuration in benchmark:
 The benchmark compares old vs new policies in two isolated hot paths:
 - `response/*`: wake policy when processing responses
 - `register/*`: self-waker registration policy in no-request branch
+
+Note: the old/new response benchmarks intentionally do asymmetric work
+(always wake vs transition-only wake), so the speedup reflects the amortized
+benefit of skipping redundant wake calls under this simulation pattern.
 
 ## Results (Absolute Latency)
 

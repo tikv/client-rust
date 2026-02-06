@@ -7,7 +7,9 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use futures::task::AtomicWaker;
 
 const MAX_PENDING_COUNT: usize = 1 << 16;
+// Every `FULL_EVERY` iterations, the synthetic queue is reset to "full".
 const FULL_EVERY: u64 = 1024;
+// Within each `FULL_EVERY` window, keep queue full for `FULL_WINDOW` iterations.
 const FULL_WINDOW: u64 = 16;
 
 struct NoopWake;
@@ -30,6 +32,7 @@ fn response_policy_old(iterations: u64) -> Duration {
         }
         black_box(pending_len >= MAX_PENDING_COUNT);
         pending_len = pending_len.saturating_sub(1);
+        // Old behavior: wake unconditionally for every response batch.
         atomic_waker.wake();
     }
     start.elapsed()
@@ -49,6 +52,7 @@ fn response_policy_new(iterations: u64) -> Duration {
         let was_full = pending_len >= MAX_PENDING_COUNT;
         pending_len = pending_len.saturating_sub(1);
         let should_wake = was_full && pending_len < MAX_PENDING_COUNT;
+        // New behavior: wake only for full -> non-full transition.
         if black_box(should_wake) {
             atomic_waker.wake();
         }

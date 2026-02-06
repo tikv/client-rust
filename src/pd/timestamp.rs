@@ -22,6 +22,7 @@ use futures::task::Context;
 use futures::task::Poll;
 use log::debug;
 use log::info;
+use log::warn;
 use pin_project::pin_project;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -58,8 +59,13 @@ impl TimestampOracle {
         let pd_client = pd_client.clone();
         let (request_tx, request_rx) = mpsc::channel(MAX_BATCH_SIZE);
 
-        // Start a background thread to handle TSO requests and responses
-        tokio::spawn(run_tso(cluster_id, pd_client, request_rx));
+        // Start a background task to handle TSO requests and responses.
+        // If it exits with an error, log it explicitly so root cause is preserved.
+        tokio::spawn(async move {
+            if let Err(err) = run_tso(cluster_id, pd_client, request_rx).await {
+                warn!("TSO background task exited with error: {:?}", err);
+            }
+        });
 
         Ok(TimestampOracle { request_tx })
     }
