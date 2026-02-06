@@ -68,7 +68,7 @@ pub enum Error {
     /// Wraps a `reqwest::Error`.
     /// Wraps a `grpcio::Error`.
     #[error("gRPC api error: {0}")]
-    GrpcAPI(#[from] tonic::Status),
+    GrpcAPI(Box<tonic::Status>),
     /// Wraps a `grpcio::Error`.
     #[error("url error: {0}")]
     Url(#[from] tonic::codegen::http::uri::InvalidUri),
@@ -139,6 +139,12 @@ impl From<ProtoRegionError> for Error {
 impl From<ProtoKeyError> for Error {
     fn from(e: ProtoKeyError) -> Error {
         Error::KeyError(Box::new(e))
+    }
+}
+
+impl From<tonic::Status> for Error {
+    fn from(status: tonic::Status) -> Error {
+        Error::GrpcAPI(Box::new(status))
     }
 }
 

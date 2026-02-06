@@ -42,7 +42,7 @@ macro_rules! impl_request {
                     .$fun(req)
                     .await
                     .map(|r| Box::new(r.into_inner()) as Box<dyn Any>)
-                    .map_err(Error::GrpcAPI)
+                    .map_err(Error::from)
             }
 
             fn label(&self) -> &'static str {
