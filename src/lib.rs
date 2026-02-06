@@ -91,6 +91,9 @@
 //! ```
 
 #![allow(clippy::field_reassign_with_default)]
+// Rust 1.93's clippy::all flags this existing public Result surface as `result_large_err`;
+// prior toolchain (1.84.1) did not fail CI on these signatures.
+#![allow(clippy::result_large_err)]
 
 pub mod backoff;
 #[doc(hidden)]

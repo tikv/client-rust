@@ -241,9 +241,8 @@ pub fn new_pessimistic_prewrite_request(
     let len = mutations.len();
     let mut req = new_prewrite_request(mutations, primary_lock, start_version, lock_ttl);
     req.for_update_ts = for_update_ts;
-    req.pessimistic_actions = iter::repeat(PessimisticAction::DoPessimisticCheck.into())
-        .take(len)
-        .collect();
+    req.pessimistic_actions =
+        iter::repeat_n(PessimisticAction::DoPessimisticCheck.into(), len).collect();
     req
 }
 
@@ -343,7 +342,7 @@ impl Shardable for kvrpcpb::CommitRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard) {
-        self.keys = shard.into_iter().map(Into::into).collect();
+        self.keys = shard;
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
@@ -570,7 +569,7 @@ impl Merge<kvrpcpb::ScanLockResponse> for Collect {
     fn merge(&self, input: Vec<Result<kvrpcpb::ScanLockResponse>>) -> Result<Self::Out> {
         input
             .into_iter()
-            .flat_map_ok(|mut resp| resp.take_locks().into_iter().map(Into::into))
+            .flat_map_ok(|mut resp| resp.take_locks().into_iter())
             .collect()
     }
 }

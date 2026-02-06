@@ -18,6 +18,8 @@ const KEY: &str = "TiKV";
 const VALUE: &str = "Rust";
 
 #[tokio::main]
+// Rust 1.93's clippy::all now flags the crate's existing Result alias in examples.
+#[allow(clippy::result_large_err)]
 async fn main() -> Result<()> {
     env_logger::init();
 
