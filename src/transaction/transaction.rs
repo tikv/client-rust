@@ -283,9 +283,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     .retry_multi_region(retry_options.region_backoff)
                     .merge(Collect)
                     .plan();
-                plan.execute()
-                    .await
-                    .map(|r| r.into_iter().map(Into::into).collect())
+                plan.execute().await.map(|r| r.into_iter().collect())
             })
             .await
             .map(move |pairs| pairs.map(move |pair| pair.truncate_keyspace(keyspace)))
@@ -806,9 +804,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                         .retry_multi_region(retry_options.region_backoff)
                         .merge(Collect)
                         .plan();
-                    plan.execute()
-                        .await
-                        .map(|r| r.into_iter().map(Into::into).collect())
+                    plan.execute().await.map(|r| r.into_iter().collect())
                 },
             )
             .await
