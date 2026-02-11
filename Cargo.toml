@@ -64,3 +64,4 @@ tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
 name = "failpoint_tests"
 path = "tests/failpoint_tests.rs"
 required-features = ["fail/failpoints"]
+
