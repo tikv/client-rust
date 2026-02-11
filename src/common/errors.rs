@@ -68,7 +68,7 @@ pub enum Error {
     /// Wraps a `reqwest::Error`.
     /// Wraps a `grpcio::Error`.
     #[error("gRPC api error: {0}")]
-    GrpcAPI(#[from] tonic::Status),
+    GrpcAPI(tonic::Status),
     /// Wraps a `grpcio::Error`.
     #[error("url error: {0}")]
     Url(#[from] tonic::codegen::http::uri::InvalidUri),
@@ -142,6 +142,12 @@ impl From<ProtoKeyError> for Error {
     }
 }
 
+impl From<tonic::Status> for Error {
+    fn from(status: tonic::Status) -> Error {
+        Error::GrpcAPI(status)
+    }
+}
+
 /// A result holding an [`Error`](enum@Error).
 pub type Result<T> = result::Result<T, Error>;
 
@@ -156,4 +162,63 @@ macro_rules! internal_err {
     ($f:tt, $($arg:expr),+) => ({
         internal_err!(format!($f, $($arg),+))
     });
+}
+
+#[cfg(test)]
+mod test {
+    use tonic::Code;
+
+    use super::Error;
+    use super::ProtoKeyError;
+    use super::ProtoRegionError;
+
+    #[test]
+    fn from_tonic_status_produces_grpc_api_error() {
+        let status = tonic::Status::new(Code::Unavailable, "network unavailable");
+        let error: Error = status.clone().into();
+
+        let Error::GrpcAPI(actual_status) = error else {
+            panic!("expected Error::GrpcAPI");
+        };
+        assert_eq!(actual_status.code(), status.code());
+        assert_eq!(actual_status.message(), status.message());
+    }
+
+    #[test]
+    fn grpc_api_variant_accepts_tonic_status_payload() {
+        let error = Error::GrpcAPI(tonic::Status::new(Code::DeadlineExceeded, "timeout"));
+        let Error::GrpcAPI(status) = error else {
+            panic!("expected Error::GrpcAPI");
+        };
+        assert_eq!(status.code(), Code::DeadlineExceeded);
+        assert_eq!(status.message(), "timeout");
+    }
+
+    #[test]
+    fn from_proto_region_error_wraps_region_error() {
+        let region_error = ProtoRegionError {
+            message: "region stale".to_owned(),
+            ..Default::default()
+        };
+        let error: Error = region_error.clone().into();
+
+        let Error::RegionError(actual_region_error) = error else {
+            panic!("expected Error::RegionError");
+        };
+        assert_eq!(actual_region_error.message, region_error.message);
+    }
+
+    #[test]
+    fn from_proto_key_error_wraps_key_error() {
+        let key_error = ProtoKeyError {
+            retryable: "retry later".to_owned(),
+            ..Default::default()
+        };
+        let error: Error = key_error.clone().into();
+
+        let Error::KeyError(actual_key_error) = error else {
+            panic!("expected Error::KeyError");
+        };
+        assert_eq!(actual_key_error.retryable, key_error.retryable);
+    }
 }

@@ -184,7 +184,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
             cluster
                 .get_all_stores(self.timeout)
                 .await
-                .map(|resp| resp.stores.into_iter().map(Into::into).collect())
+                .map(|resp| resp.stores)
         })
     }
 
