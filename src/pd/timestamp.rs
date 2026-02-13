@@ -106,8 +106,26 @@ async fn run_tso(
     };
 
     // let send_requests = rpc_sender.send_all(&mut request_stream);
-    let mut responses = pd_client.tso(request_stream).await?.into_inner();
+    let responses = pd_client.tso(request_stream).await?.into_inner();
 
+    handle_tso_responses(
+        responses,
+        pending_requests,
+        sending_future_waker,
+        sender_waiting_on_lock,
+    )
+    .await
+}
+
+async fn handle_tso_responses<S>(
+    mut responses: S,
+    pending_requests: Arc<Mutex<VecDeque<RequestGroup>>>,
+    sending_future_waker: Arc<AtomicWaker>,
+    sender_waiting_on_lock: Arc<AtomicBool>,
+) -> Result<()>
+where
+    S: Stream<Item = std::result::Result<TsoResponse, tonic::Status>> + Unpin,
+{
     while let Some(resp) = responses.next().await {
         let resp = resp?;
         let should_wake_sender = {
@@ -283,6 +301,7 @@ mod tests {
     use std::sync::Arc;
 
     use futures::executor::block_on;
+    use futures::stream;
     use futures::task::noop_waker_ref;
     use futures::task::waker;
     use futures::task::ArcWake;
@@ -580,5 +599,65 @@ mod tests {
         // was not registered (queue is not full).
         self_waker.wake();
         assert_eq!(wake_counter.wakes.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn handle_tso_responses_returns_err_on_response_stream_error() {
+        let pending_requests = Arc::new(Mutex::new(VecDeque::new()));
+        let self_waker = Arc::new(AtomicWaker::new());
+        let sender_waiting_on_lock = Arc::new(AtomicBool::new(false));
+        let responses = stream::iter(vec![Err::<TsoResponse, tonic::Status>(
+            tonic::Status::internal("tso stream failed"),
+        )]);
+
+        let err = block_on(handle_tso_responses(
+            responses,
+            pending_requests,
+            self_waker,
+            sender_waiting_on_lock,
+        ))
+        .unwrap_err();
+        assert!(format!("{err:?}").contains("tso stream failed"));
+    }
+
+    #[test]
+    fn handle_tso_responses_errors_on_termination_with_pending_requests_and_drops_waiters() {
+        let pending_requests = Arc::new(Mutex::new(VecDeque::new()));
+        let (tx, rx) = oneshot::channel();
+        block_on(async {
+            pending_requests.lock().await.push_back(RequestGroup {
+                tso_request: test_tso_request(1),
+                requests: vec![tx],
+            });
+        });
+        let self_waker = Arc::new(AtomicWaker::new());
+        let sender_waiting_on_lock = Arc::new(AtomicBool::new(false));
+        let responses = stream::empty::<std::result::Result<TsoResponse, tonic::Status>>();
+
+        let err = block_on(handle_tso_responses(
+            responses,
+            pending_requests,
+            self_waker,
+            sender_waiting_on_lock,
+        ))
+        .unwrap_err();
+        assert!(format!("{err:?}").contains("1 pending requests"));
+        assert!(block_on(rx).is_err());
+    }
+
+    #[test]
+    fn handle_tso_responses_returns_ok_when_stream_ends_with_no_pending_requests() {
+        let pending_requests = Arc::new(Mutex::new(VecDeque::new()));
+        let self_waker = Arc::new(AtomicWaker::new());
+        let sender_waiting_on_lock = Arc::new(AtomicBool::new(false));
+        let responses = stream::empty::<std::result::Result<TsoResponse, tonic::Status>>();
+
+        block_on(handle_tso_responses(
+            responses,
+            pending_requests,
+            self_waker,
+            sender_waiting_on_lock,
+        ))
+        .unwrap();
     }
 }
