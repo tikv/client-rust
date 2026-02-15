@@ -27,11 +27,7 @@ use std::sync::Arc;
 /// - Consider restructuring the code to avoid mixing sync and async execution contexts
 pub(crate) fn check_nested_runtime() -> Result<()> {
     if tokio::runtime::Handle::try_current().is_ok() {
-        return Err(Error::NestedRuntimeError(
-            "Nested Tokio runtime detected: cannot use SyncTransactionClient from within an async context. \
-             Use the async TransactionClient instead, or create and use SyncTransactionClient outside of any Tokio runtime."
-                .to_string(),
-        ));
+        return Err(Error::NestedRuntimeError(String::new()));
     }
     Ok(())
 }

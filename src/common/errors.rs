@@ -130,8 +130,8 @@ pub enum Error {
     TxnNotFound(kvrpcpb::TxnNotFound),
     /// Attempted to create or use the sync client (including calling its methods) from within a Tokio async runtime context
     #[error(
-        "Cannot use SyncTransactionClient from within a Tokio async runtime context: {0}. \
-Use TransactionClient instead or move SyncTransactionClient usage outside the async context."
+        "Nested Tokio runtime detected: cannot use SyncTransactionClient from within an async context. \
+Use the async TransactionClient instead, or create and use SyncTransactionClient outside of any Tokio runtime.{0}"
     )]
     NestedRuntimeError(String),
 }
