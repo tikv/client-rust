@@ -12,10 +12,10 @@
 //! server and allocates timestamps for the requests.
 
 use std::collections::VecDeque;
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use futures::pin_mut;
 use futures::prelude::*;
 use futures::task::AtomicWaker;
 use futures::task::Context;
@@ -57,10 +57,12 @@ impl TimestampOracle {
     pub(crate) fn new(cluster_id: u64, pd_client: &PdClient<Channel>) -> Result<TimestampOracle> {
         let pd_client = pd_client.clone();
         let (request_tx, request_rx) = mpsc::channel(MAX_BATCH_SIZE);
+        let runtime_handle = tokio::runtime::Handle::try_current()
+            .map_err(|_| internal_err!("TimestampOracle::new requires a running Tokio runtime"))?;
 
         // Start a background task to handle TSO requests and responses.
         // If it exits with an error, log it explicitly so root cause is preserved.
-        tokio::spawn(async move {
+        runtime_handle.spawn(async move {
             if let Err(err) = run_tso(cluster_id, pd_client, request_rx).await {
                 warn!("TSO background task exited with error: {:?}", err);
             }
@@ -97,6 +99,7 @@ async fn run_tso(
         cluster_id,
         request_rx,
         pending_requests: pending_requests.clone(),
+        pending_requests_lock: None,
         self_waker: sending_future_waker.clone(),
     };
 
@@ -143,12 +146,16 @@ struct RequestGroup {
     requests: Vec<TimestampRequest>,
 }
 
+type PendingRequestsLockFuture =
+    Pin<Box<dyn Future<Output = tokio::sync::OwnedMutexGuard<VecDeque<RequestGroup>>> + Send>>;
+
 #[pin_project]
 struct TsoRequestStream {
     cluster_id: u64,
     #[pin]
     request_rx: mpsc::Receiver<oneshot::Sender<Timestamp>>,
     pending_requests: Arc<Mutex<VecDeque<RequestGroup>>>,
+    pending_requests_lock: Option<PendingRequestsLockFuture>,
     self_waker: Arc<AtomicWaker>,
 }
 
@@ -158,13 +165,20 @@ impl Stream for TsoRequestStream {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
 
-        let pending_requests = this.pending_requests.lock();
-        pin_mut!(pending_requests);
-        let mut pending_requests = if let Poll::Ready(pending_requests) = pending_requests.poll(cx)
-        {
-            pending_requests
-        } else {
-            return Poll::Pending;
+        if this.pending_requests_lock.is_none() {
+            *this.pending_requests_lock =
+                Some(Box::pin(this.pending_requests.clone().lock_owned()));
+        }
+        let lock_future = this
+            .pending_requests_lock
+            .as_mut()
+            .expect("lock future exists");
+        let mut pending_requests = match lock_future.as_mut().poll(cx) {
+            Poll::Ready(guard) => {
+                *this.pending_requests_lock = None;
+                guard
+            }
+            Poll::Pending => return Poll::Pending,
         };
         let mut requests = Vec::new();
 
@@ -308,6 +322,7 @@ mod tests {
             cluster_id: 1,
             request_rx,
             pending_requests: pending_requests.clone(),
+            pending_requests_lock: None,
             self_waker: self_waker.clone(),
         };
         (stream, request_tx, pending_requests, self_waker)
@@ -481,6 +496,7 @@ mod tests {
 
         // Releasing the lock should wake the pending mutex waiter.
         drop(lock_guard);
+        assert_eq!(wake_counter.wakes.load(Ordering::SeqCst), 1);
 
         let polled = stream.as_mut().poll_next(&mut cx);
         assert!(matches!(polled, Poll::Ready(Some(_))));
