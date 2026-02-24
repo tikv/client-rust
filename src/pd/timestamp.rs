@@ -13,10 +13,9 @@
 
 use std::collections::VecDeque;
 use std::pin::Pin;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use futures::pin_mut;
 use futures::prelude::*;
 use futures::task::AtomicWaker;
 use futures::task::Context;
@@ -93,35 +92,24 @@ async fn run_tso(
     // more requests from the bounded channel. This waker is used to wake up the sending future
     // if the queue containing pending requests is no longer full.
     let sending_future_waker = Arc::new(AtomicWaker::new());
-    // This flag indicates the sender stream could not acquire `pending_requests` lock in poll
-    // and needs an explicit wake from the response path.
-    let sender_waiting_on_lock = Arc::new(AtomicBool::new(false));
 
     let request_stream = TsoRequestStream {
         cluster_id,
         request_rx,
         pending_requests: pending_requests.clone(),
         self_waker: sending_future_waker.clone(),
-        sender_waiting_on_lock: sender_waiting_on_lock.clone(),
     };
 
     // let send_requests = rpc_sender.send_all(&mut request_stream);
     let responses = pd_client.tso(request_stream).await?.into_inner();
 
-    handle_tso_responses(
-        responses,
-        pending_requests,
-        sending_future_waker,
-        sender_waiting_on_lock,
-    )
-    .await
+    handle_tso_responses(responses, pending_requests, sending_future_waker).await
 }
 
 async fn handle_tso_responses<S>(
     mut responses: S,
     pending_requests: Arc<Mutex<VecDeque<RequestGroup>>>,
     sending_future_waker: Arc<AtomicWaker>,
-    sender_waiting_on_lock: Arc<AtomicBool>,
 ) -> Result<()>
 where
     S: Stream<Item = std::result::Result<TsoResponse, tonic::Status>> + Unpin,
@@ -134,12 +122,8 @@ where
             allocate_timestamps(&resp, &mut pending_requests)?;
             was_full && pending_requests.len() < MAX_PENDING_COUNT
         };
-        let sender_blocked_by_lock = sender_waiting_on_lock.swap(false, Ordering::SeqCst);
-
-        // Wake sender when:
-        // 1. a previously full queue gains capacity, or
-        // 2. sender was blocked on `pending_requests` mutex contention.
-        if should_wake_sender || sender_blocked_by_lock {
+        // Wake sender only when a previously full queue gains capacity.
+        if should_wake_sender {
             sending_future_waker.wake();
         }
     }
@@ -166,7 +150,6 @@ struct TsoRequestStream {
     request_rx: mpsc::Receiver<oneshot::Sender<Timestamp>>,
     pending_requests: Arc<Mutex<VecDeque<RequestGroup>>>,
     self_waker: Arc<AtomicWaker>,
-    sender_waiting_on_lock: Arc<AtomicBool>,
 }
 
 impl Stream for TsoRequestStream {
@@ -175,22 +158,13 @@ impl Stream for TsoRequestStream {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
 
-        let mut pending_requests = if let Ok(pending_requests) = this.pending_requests.try_lock() {
-            this.sender_waiting_on_lock.store(false, Ordering::SeqCst);
+        let pending_requests = this.pending_requests.lock();
+        pin_mut!(pending_requests);
+        let mut pending_requests = if let Poll::Ready(pending_requests) = pending_requests.poll(cx)
+        {
             pending_requests
         } else {
-            let pending_requests = register_sender_wait_for_pending_lock(
-                cx,
-                this.self_waker.as_ref(),
-                this.sender_waiting_on_lock.as_ref(),
-                || this.pending_requests.try_lock().ok(),
-            );
-
-            if let Some(pending_requests) = pending_requests {
-                pending_requests
-            } else {
-                return Poll::Pending;
-            }
+            return Poll::Pending;
         };
         let mut requests = Vec::new();
 
@@ -230,29 +204,6 @@ impl Stream for TsoRequestStream {
             }
             Poll::Pending
         }
-    }
-}
-
-fn register_sender_wait_for_pending_lock<F, G>(
-    cx: &mut Context<'_>,
-    self_waker: &AtomicWaker,
-    sender_waiting_on_lock: &AtomicBool,
-    mut try_lock_after_register: F,
-) -> Option<G>
-where
-    F: FnMut() -> Option<G>,
-{
-    // Register first so a wake from the response path targets the current task.
-    self_waker.register(cx.waker());
-    sender_waiting_on_lock.store(true, Ordering::SeqCst);
-
-    // Retry once after advertising waiting to close the race where the response path
-    // already checked/cleared the flag before this store and therefore will not wake.
-    if let Some(guard) = try_lock_after_register() {
-        sender_waiting_on_lock.store(false, Ordering::SeqCst);
-        Some(guard)
-    } else {
-        None
     }
 }
 
@@ -298,6 +249,7 @@ fn allocate_timestamps(
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
     use std::sync::Arc;
 
     use futures::executor::block_on;
@@ -346,28 +298,64 @@ mod tests {
         mpsc::Sender<TimestampRequest>,
         Arc<Mutex<VecDeque<RequestGroup>>>,
         Arc<AtomicWaker>,
-        Arc<AtomicBool>,
     );
 
     fn new_test_stream() -> TestStreamContext {
         let (request_tx, request_rx) = mpsc::channel(MAX_BATCH_SIZE);
         let pending_requests = Arc::new(Mutex::new(VecDeque::new()));
         let self_waker = Arc::new(AtomicWaker::new());
-        let sender_waiting_on_lock = Arc::new(AtomicBool::new(false));
         let stream = TsoRequestStream {
             cluster_id: 1,
             request_rx,
             pending_requests: pending_requests.clone(),
             self_waker: self_waker.clone(),
-            sender_waiting_on_lock: sender_waiting_on_lock.clone(),
         };
-        (
-            stream,
-            request_tx,
-            pending_requests,
-            self_waker,
-            sender_waiting_on_lock,
-        )
+        (stream, request_tx, pending_requests, self_waker)
+    }
+
+    fn wake_counter_context() -> (Arc<WakeCounter>, std::task::Waker) {
+        let wake_counter = Arc::new(WakeCounter {
+            wakes: AtomicUsize::new(0),
+        });
+        let test_waker = waker(wake_counter.clone());
+        (wake_counter, test_waker)
+    }
+
+    fn full_pending_requests_with_one_timestamp_request() -> (
+        Arc<Mutex<VecDeque<RequestGroup>>>,
+        oneshot::Receiver<Timestamp>,
+    ) {
+        let pending_requests = Arc::new(Mutex::new(VecDeque::new()));
+        let (tx, rx) = oneshot::channel();
+        block_on(async {
+            let mut guard = pending_requests.lock().await;
+            guard.push_back(RequestGroup {
+                tso_request: test_tso_request(1),
+                requests: vec![tx],
+            });
+            for _ in 1..MAX_PENDING_COUNT {
+                guard.push_back(RequestGroup {
+                    tso_request: test_tso_request(0),
+                    requests: Vec::new(),
+                });
+            }
+        });
+        (pending_requests, rx)
+    }
+
+    fn single_pending_request() -> (
+        Arc<Mutex<VecDeque<RequestGroup>>>,
+        oneshot::Receiver<Timestamp>,
+    ) {
+        let pending_requests = Arc::new(Mutex::new(VecDeque::new()));
+        let (tx, rx) = oneshot::channel();
+        block_on(async {
+            pending_requests.lock().await.push_back(RequestGroup {
+                tso_request: test_tso_request(1),
+                requests: vec![tx],
+            });
+        });
+        (pending_requests, rx)
     }
 
     #[test]
@@ -434,8 +422,7 @@ mod tests {
 
     #[test]
     fn poll_next_emits_request_and_enqueues_request_group() {
-        let (stream, request_tx, pending_requests, _self_waker, sender_waiting_on_lock) =
-            new_test_stream();
+        let (stream, request_tx, pending_requests, _self_waker) = new_test_stream();
         let (tx, _rx) = oneshot::channel();
         request_tx.try_send(tx).unwrap();
 
@@ -448,15 +435,13 @@ mod tests {
         };
 
         assert_eq!(req.count, 1);
-        assert!(!sender_waiting_on_lock.load(Ordering::SeqCst));
         let queued = block_on(async { pending_requests.lock().await.len() });
         assert_eq!(queued, 1);
     }
 
     #[test]
     fn poll_next_registers_self_waker_when_pending_queue_is_full() {
-        let (stream, _request_tx, pending_requests, self_waker, _sender_waiting_on_lock) =
-            new_test_stream();
+        let (stream, _request_tx, pending_requests, self_waker) = new_test_stream();
         block_on(async {
             let mut guard = pending_requests.lock().await;
             for _ in 0..MAX_PENDING_COUNT {
@@ -467,10 +452,7 @@ mod tests {
             }
         });
 
-        let wake_counter = Arc::new(WakeCounter {
-            wakes: AtomicUsize::new(0),
-        });
-        let test_waker = waker(wake_counter.clone());
+        let (wake_counter, test_waker) = wake_counter_context();
         let mut cx = Context::from_waker(&test_waker);
         let mut stream = Box::pin(stream);
 
@@ -483,111 +465,32 @@ mod tests {
     }
 
     #[test]
-    fn poll_next_marks_waiting_flag_when_lock_is_contended_and_response_wakes() {
-        let (stream, _request_tx, pending_requests, self_waker, sender_waiting_on_lock) =
-            new_test_stream();
+    fn poll_next_waits_on_mutex_when_lock_is_contended() {
+        let (stream, request_tx, pending_requests, _self_waker) = new_test_stream();
         let lock_guard = block_on(pending_requests.lock());
-
-        let wake_counter = Arc::new(WakeCounter {
-            wakes: AtomicUsize::new(0),
-        });
-        let test_waker = waker(wake_counter.clone());
-        let mut cx = Context::from_waker(&test_waker);
-        let mut stream = Box::pin(stream);
-
-        let polled = stream.as_mut().poll_next(&mut cx);
-        assert!(matches!(polled, Poll::Pending));
-        assert!(sender_waiting_on_lock.load(Ordering::SeqCst));
-
-        // Simulate response path: swap flag and wake.
-        drop(lock_guard);
-        if sender_waiting_on_lock.swap(false, Ordering::SeqCst) {
-            self_waker.wake();
-        }
-        assert!(wake_counter.wakes.load(Ordering::SeqCst) >= 1);
-    }
-
-    #[test]
-    fn register_sender_wait_sets_waiting_flag_and_registers_waker_on_retry_failure() {
-        let self_waker = AtomicWaker::new();
-        let sender_waiting_on_lock = AtomicBool::new(false);
-        let wake_counter = Arc::new(WakeCounter {
-            wakes: AtomicUsize::new(0),
-        });
-        let test_waker = waker(wake_counter.clone());
-        let mut cx = Context::from_waker(&test_waker);
-
-        let reacquired = register_sender_wait_for_pending_lock(
-            &mut cx,
-            &self_waker,
-            &sender_waiting_on_lock,
-            || None::<()>,
-        );
-        assert!(reacquired.is_none());
-        assert!(sender_waiting_on_lock.load(Ordering::SeqCst));
-
-        self_waker.wake();
-        assert_eq!(wake_counter.wakes.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn register_sender_wait_retries_once_and_clears_waiting_flag_when_lock_reacquires() {
-        let self_waker = AtomicWaker::new();
-        let sender_waiting_on_lock = AtomicBool::new(false);
-        let mut retry_count = 0;
-        let wake_counter = Arc::new(WakeCounter {
-            wakes: AtomicUsize::new(0),
-        });
-        let test_waker = waker(wake_counter.clone());
-        let mut cx = Context::from_waker(&test_waker);
-
-        // Simulates the lost-wake interleaving: initial lock contention, then lock
-        // becomes available before any response-side wake.
-        let reacquired = register_sender_wait_for_pending_lock(
-            &mut cx,
-            &self_waker,
-            &sender_waiting_on_lock,
-            || {
-                retry_count += 1;
-                Some(())
-            },
-        );
-        assert_eq!(retry_count, 1);
-        assert!(reacquired.is_some());
-        assert!(!sender_waiting_on_lock.load(Ordering::SeqCst));
-        assert_eq!(wake_counter.wakes.load(Ordering::SeqCst), 0);
-    }
-
-    /// After acquiring the lock, the waiting flag must be cleared.
-    #[test]
-    fn poll_next_clears_waiting_flag_on_lock_acquire() {
-        let (stream, request_tx, _pending_requests, _self_waker, sender_waiting_on_lock) =
-            new_test_stream();
-        // Pre-set the flag as if a previous poll was contended.
-        sender_waiting_on_lock.store(true, Ordering::SeqCst);
-
         let (tx, _rx) = oneshot::channel();
         request_tx.try_send(tx).unwrap();
 
+        let (wake_counter, test_waker) = wake_counter_context();
+        let mut cx = Context::from_waker(&test_waker);
         let mut stream = Box::pin(stream);
-        let mut cx = Context::from_waker(noop_waker_ref());
+
+        let polled = stream.as_mut().poll_next(&mut cx);
+        assert!(matches!(polled, Poll::Pending));
+        assert_eq!(wake_counter.wakes.load(Ordering::SeqCst), 0);
+
+        // Releasing the lock should wake the pending mutex waiter.
+        drop(lock_guard);
+
         let polled = stream.as_mut().poll_next(&mut cx);
         assert!(matches!(polled, Poll::Ready(Some(_))));
-        // Flag must be cleared after successful lock acquisition.
-        assert!(!sender_waiting_on_lock.load(Ordering::SeqCst));
     }
 
-    /// When queue is not full and no requests available, poll_next should not
-    /// register the self_waker (the channel waker handles this case).
     #[test]
     fn poll_next_does_not_register_self_waker_when_queue_not_full() {
-        let (stream, _request_tx, _pending_requests, self_waker, _sender_waiting_on_lock) =
-            new_test_stream();
+        let (stream, _request_tx, _pending_requests, self_waker) = new_test_stream();
 
-        let wake_counter = Arc::new(WakeCounter {
-            wakes: AtomicUsize::new(0),
-        });
-        let test_waker = waker(wake_counter.clone());
+        let (wake_counter, test_waker) = wake_counter_context();
         let mut cx = Context::from_waker(&test_waker);
         let mut stream = Box::pin(stream);
 
@@ -602,10 +505,104 @@ mod tests {
     }
 
     #[test]
+    fn handle_tso_responses_wakes_sender_when_queue_transitions_from_full() {
+        let (pending_requests, rx) = full_pending_requests_with_one_timestamp_request();
+        let sending_future_waker = Arc::new(AtomicWaker::new());
+        let (wake_counter, test_waker) = wake_counter_context();
+        sending_future_waker.register(&test_waker);
+
+        let responses = stream::iter(vec![Ok::<TsoResponse, tonic::Status>(test_tso_response(
+            1, 500,
+        ))]);
+
+        let err = block_on(handle_tso_responses(
+            responses,
+            pending_requests.clone(),
+            sending_future_waker,
+        ))
+        .unwrap_err();
+        assert!(format!("{err:?}").contains("65535 pending requests"));
+
+        assert_eq!(wake_counter.wakes.load(Ordering::SeqCst), 1);
+        assert_eq!(block_on(rx).unwrap().logical, 500);
+        assert_eq!(
+            block_on(async { pending_requests.lock().await.len() }),
+            MAX_PENDING_COUNT - 1
+        );
+    }
+
+    #[test]
+    fn handle_tso_responses_does_not_wake_sender_when_queue_was_not_full() {
+        let (pending_requests, rx) = single_pending_request();
+        let sending_future_waker = Arc::new(AtomicWaker::new());
+        let (wake_counter, test_waker) = wake_counter_context();
+        sending_future_waker.register(&test_waker);
+
+        let responses = stream::iter(vec![Ok::<TsoResponse, tonic::Status>(test_tso_response(
+            1, 42,
+        ))]);
+
+        block_on(handle_tso_responses(
+            responses,
+            pending_requests.clone(),
+            sending_future_waker,
+        ))
+        .unwrap();
+
+        assert_eq!(wake_counter.wakes.load(Ordering::SeqCst), 0);
+        assert_eq!(block_on(rx).unwrap().logical, 42);
+        assert_eq!(block_on(async { pending_requests.lock().await.len() }), 0);
+    }
+
+    #[test]
+    fn handle_tso_responses_wakes_sender_once_for_each_full_to_non_full_transition() {
+        let pending_requests = Arc::new(Mutex::new(VecDeque::new()));
+        let (tx1, rx1) = oneshot::channel();
+        let (tx2, rx2) = oneshot::channel();
+        block_on(async {
+            let mut guard = pending_requests.lock().await;
+            guard.push_back(RequestGroup {
+                tso_request: test_tso_request(1),
+                requests: vec![tx1],
+            });
+            guard.push_back(RequestGroup {
+                tso_request: test_tso_request(1),
+                requests: vec![tx2],
+            });
+            for _ in 2..MAX_PENDING_COUNT {
+                guard.push_back(RequestGroup {
+                    tso_request: test_tso_request(0),
+                    requests: Vec::new(),
+                });
+            }
+        });
+
+        let sending_future_waker = Arc::new(AtomicWaker::new());
+        let (wake_counter, test_waker) = wake_counter_context();
+        sending_future_waker.register(&test_waker);
+
+        let responses = stream::iter(vec![
+            Ok::<TsoResponse, tonic::Status>(test_tso_response(1, 101)),
+            Ok::<TsoResponse, tonic::Status>(test_tso_response(1, 102)),
+        ]);
+
+        let err = block_on(handle_tso_responses(
+            responses,
+            pending_requests,
+            sending_future_waker,
+        ))
+        .unwrap_err();
+        assert!(format!("{err:?}").contains("65534 pending requests"));
+
+        assert_eq!(wake_counter.wakes.load(Ordering::SeqCst), 1);
+        assert_eq!(block_on(rx1).unwrap().logical, 101);
+        assert_eq!(block_on(rx2).unwrap().logical, 102);
+    }
+
+    #[test]
     fn handle_tso_responses_returns_err_on_response_stream_error() {
         let pending_requests = Arc::new(Mutex::new(VecDeque::new()));
         let self_waker = Arc::new(AtomicWaker::new());
-        let sender_waiting_on_lock = Arc::new(AtomicBool::new(false));
         let responses = stream::iter(vec![Err::<TsoResponse, tonic::Status>(
             tonic::Status::internal("tso stream failed"),
         )]);
@@ -614,7 +611,6 @@ mod tests {
             responses,
             pending_requests,
             self_waker,
-            sender_waiting_on_lock,
         ))
         .unwrap_err();
         assert!(format!("{err:?}").contains("tso stream failed"));
@@ -631,14 +627,12 @@ mod tests {
             });
         });
         let self_waker = Arc::new(AtomicWaker::new());
-        let sender_waiting_on_lock = Arc::new(AtomicBool::new(false));
         let responses = stream::empty::<std::result::Result<TsoResponse, tonic::Status>>();
 
         let err = block_on(handle_tso_responses(
             responses,
             pending_requests,
             self_waker,
-            sender_waiting_on_lock,
         ))
         .unwrap_err();
         assert!(format!("{err:?}").contains("1 pending requests"));
@@ -649,14 +643,12 @@ mod tests {
     fn handle_tso_responses_returns_ok_when_stream_ends_with_no_pending_requests() {
         let pending_requests = Arc::new(Mutex::new(VecDeque::new()));
         let self_waker = Arc::new(AtomicWaker::new());
-        let sender_waiting_on_lock = Arc::new(AtomicBool::new(false));
         let responses = stream::empty::<std::result::Result<TsoResponse, tonic::Status>>();
 
         block_on(handle_tso_responses(
             responses,
             pending_requests,
             self_waker,
-            sender_waiting_on_lock,
         ))
         .unwrap();
     }
