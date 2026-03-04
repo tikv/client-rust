@@ -128,6 +128,12 @@ pub enum Error {
     KeyspaceNotFound(String),
     #[error("Transaction not found error: {:?}", _0)]
     TxnNotFound(kvrpcpb::TxnNotFound),
+    /// Attempted to create or use the sync client (including calling its methods) from within a Tokio async runtime context
+    #[error(
+        "Nested Tokio runtime detected: cannot use SyncTransactionClient from within an async context. \
+Use the async TransactionClient instead, or create and use SyncTransactionClient outside of any Tokio runtime.{0}"
+    )]
+    NestedRuntimeError(String),
 }
 
 impl From<ProtoRegionError> for Error {
