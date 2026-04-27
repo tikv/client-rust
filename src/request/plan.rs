@@ -5,9 +5,10 @@ use std::sync::Arc;
 
 use async_recursion::async_recursion;
 use async_trait::async_trait;
-use futures::future::try_join_all;
+use tokio::task::JoinSet;
 use futures::prelude::*;
 use log::debug;
+use log::error;
 use log::info;
 use log::warn;
 use tokio::sync::Semaphore;
@@ -118,12 +119,13 @@ where
         preserve_region_results: bool,
     ) -> Result<<Self as Plan>::Result> {
         let shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
-        debug!("single_plan_handler, shards: {}", shards.len());
-        let mut handles = Vec::with_capacity(shards.len());
+        let shards_len = shards.len();
+        debug!("single_plan_handler, shards: {}", shards_len);
+        let mut join_set = JoinSet::new();
         for shard in shards {
             let (shard, region) = shard?;
             let clone = current_plan.clone_then_apply_shard(shard);
-            let handle = tokio::spawn(Self::single_shard_handler(
+            join_set.spawn(Self::single_shard_handler(
                 pd_client.clone(),
                 clone,
                 region,
@@ -131,10 +133,19 @@ where
                 permits.clone(),
                 preserve_region_results,
             ));
-            handles.push(handle);
         }
 
-        let results = try_join_all(handles).await?;
+        let mut results = Vec::with_capacity(shards_len);
+        while let Some(join_result) = join_set.join_next().await {
+            match join_result {
+                Ok(val) => results.push(val),
+                Err(e) => {
+                    error!("failed to join task: {}", e);
+                    return Err(Error::JoinError(e));
+                }
+            }
+        }
+
         if preserve_region_results {
             Ok(results
                 .into_iter()
@@ -459,18 +470,28 @@ where
     async fn execute(&self) -> Result<Self::Result> {
         let concurrency_permits = Arc::new(Semaphore::new(MULTI_STORES_CONCURRENCY));
         let stores = self.pd_client.clone().all_stores().await?;
-        let mut handles = Vec::with_capacity(stores.len());
+        let stores_len = stores.len();
+        let mut join_set = JoinSet::new();
         for store in stores {
             let mut clone = self.inner.clone();
             clone.apply_store(&store);
-            let handle = tokio::spawn(Self::single_store_handler(
+            join_set.spawn(Self::single_store_handler(
                 clone,
                 self.backoff.clone(),
                 concurrency_permits.clone(),
             ));
-            handles.push(handle);
         }
-        let results = try_join_all(handles).await?;
+
+        let mut results = Vec::with_capacity(stores_len);
+        while let Some(join_result) = join_set.join_next().await {
+            match join_result {
+                Ok(val) => results.push(val),
+                Err(e) => {
+                    error!("failed to join task: {}", e);
+                    return Err(Error::JoinError(e));
+                }
+            }
+        }
         Ok(results.into_iter().collect::<Vec<_>>())
     }
 }
