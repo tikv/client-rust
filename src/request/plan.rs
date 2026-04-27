@@ -94,6 +94,35 @@ pub(crate) fn is_grpc_error(e: &Error) -> bool {
     matches!(e, Error::GrpcAPI(_) | Error::Grpc(_))
 }
 
+async fn collect_join_set_results<T>(
+    mut join_set: JoinSet<(usize, T)>,
+    task_count: usize,
+    handler_name: &str,
+) -> Result<Vec<T>>
+where
+    T: Send + 'static,
+{
+    let mut results = (0..task_count).map(|_| None).collect::<Vec<_>>();
+    while let Some(join_result) = join_set.join_next().await {
+        match join_result {
+            Ok((idx, val)) => results[idx] = Some(val),
+            Err(e) => {
+                error!(
+                    "{}: failed to join task ({} tasks): {}",
+                    handler_name, task_count, e
+                );
+                join_set.shutdown().await;
+                return Err(Error::JoinError(e));
+            }
+        }
+    }
+
+    Ok(results
+        .into_iter()
+        .map(|result| result.expect("all spawned tasks should return a result"))
+        .collect())
+}
+
 pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
     pub(super) inner: P,
     pub pd_client: Arc<PdC>,
@@ -122,29 +151,35 @@ where
         let shards_len = shards.len();
         debug!("single_plan_handler, shards: {}", shards_len);
         let mut join_set = JoinSet::new();
-        for shard in shards {
-            let (shard, region) = shard?;
+        for (idx, shard) in shards.into_iter().enumerate() {
+            let (shard, region) = match shard {
+                Ok(shard) => shard,
+                Err(e) => {
+                    join_set.shutdown().await;
+                    return Err(e);
+                }
+            };
             let clone = current_plan.clone_then_apply_shard(shard);
-            join_set.spawn(Self::single_shard_handler(
-                pd_client.clone(),
-                clone,
-                region,
-                backoff.clone(),
-                permits.clone(),
-                preserve_region_results,
-            ));
+            let pd_client = pd_client.clone();
+            let backoff = backoff.clone();
+            let permits = permits.clone();
+            join_set.spawn(async move {
+                (
+                    idx,
+                    Self::single_shard_handler(
+                        pd_client,
+                        clone,
+                        region,
+                        backoff,
+                        permits,
+                        preserve_region_results,
+                    )
+                    .await,
+                )
+            });
         }
 
-        let mut results = Vec::with_capacity(shards_len);
-        while let Some(join_result) = join_set.join_next().await {
-            match join_result {
-                Ok(val) => results.push(val),
-                Err(e) => {
-                    error!("failed to join task: {}", e);
-                    return Err(Error::JoinError(e));
-                }
-            }
-        }
+        let results = collect_join_set_results(join_set, shards_len, "single_plan_handler").await?;
 
         if preserve_region_results {
             Ok(results
@@ -472,27 +507,22 @@ where
         let stores = self.pd_client.clone().all_stores().await?;
         let stores_len = stores.len();
         let mut join_set = JoinSet::new();
-        for store in stores {
+        for (idx, store) in stores.into_iter().enumerate() {
             let mut clone = self.inner.clone();
             clone.apply_store(&store);
-            join_set.spawn(Self::single_store_handler(
-                clone,
-                self.backoff.clone(),
-                concurrency_permits.clone(),
-            ));
+            let backoff = self.backoff.clone();
+            let concurrency_permits = concurrency_permits.clone();
+            join_set.spawn(async move {
+                (
+                    idx,
+                    Self::single_store_handler(clone, backoff, concurrency_permits).await,
+                )
+            });
         }
 
-        let mut results = Vec::with_capacity(stores_len);
-        while let Some(join_result) = join_set.join_next().await {
-            match join_result {
-                Ok(val) => results.push(val),
-                Err(e) => {
-                    error!("failed to join task: {}", e);
-                    return Err(Error::JoinError(e));
-                }
-            }
-        }
-        Ok(results.into_iter().collect::<Vec<_>>())
+        let results =
+            collect_join_set_results(join_set, stores_len, "single_store_handler").await?;
+        Ok(results)
     }
 }
 
@@ -952,6 +982,8 @@ impl<Resp: HasRegionError, Shard> HasRegionError for ResponseWithShard<Resp, Sha
 
 #[cfg(test)]
 mod test {
+    use std::time::Duration;
+
     use futures::stream::BoxStream;
     use futures::stream::{self};
 
@@ -1003,5 +1035,22 @@ mod test {
             preserve_region_results: false,
         };
         assert!(plan.execute().await.is_err())
+    }
+
+    #[tokio::test]
+    async fn test_join_set_results_keep_spawn_order() {
+        let mut join_set = JoinSet::new();
+        for (idx, delay_ms) in [(0, 30), (1, 10), (2, 20)] {
+            join_set.spawn(async move {
+                sleep(Duration::from_millis(delay_ms)).await;
+                (idx, idx)
+            });
+        }
+
+        let results = collect_join_set_results(join_set, 3, "test_handler")
+            .await
+            .unwrap();
+
+        assert_eq!(results, vec![0, 1, 2]);
     }
 }
