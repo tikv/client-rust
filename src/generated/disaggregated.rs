@@ -111,7 +111,7 @@ pub struct DisaggTaskMeta {
     /// the exectuor id
     #[prost(string, tag = "6")]
     pub executor_id: ::prost::alloc::string::String,
-    /// keyspace id of the request
+    /// V1/V2 compatibility keyspace id of the request. V3 should use keyspace_identity.
     #[prost(uint32, tag = "7")]
     pub keyspace_id: u32,
     /// API version of the request
@@ -123,6 +123,9 @@ pub struct DisaggTaskMeta {
     /// This is the session alias between a client and tidb
     #[prost(string, tag = "11")]
     pub connection_alias: ::prost::alloc::string::String,
+    /// V3 keyspace identity of the request.
+    #[prost(message, optional, tag = "12")]
+    pub keyspace_identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

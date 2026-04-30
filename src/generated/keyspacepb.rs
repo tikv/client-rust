@@ -2,6 +2,7 @@
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KeyspaceMeta {
+    /// V1/V2 compatibility keyspace id. V3 should read identity instead.
     #[prost(uint32, tag = "1")]
     pub id: u32,
     #[prost(string, tag = "2")]
@@ -17,6 +18,9 @@ pub struct KeyspaceMeta {
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
+    /// Canonical V3 keyspace identity.
+    #[prost(message, optional, tag = "8")]
+    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -25,6 +29,10 @@ pub struct LoadKeyspaceRequest {
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
     #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
+    /// Optional namespace for namespace-scoped name lookup in V3.
+    /// If unset, V3 name-only lookup should use LookupKeyspace and may return multiple keyspaces.
+    #[prost(uint32, tag = "3")]
+    pub namespace_id: u32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -33,6 +41,39 @@ pub struct LoadKeyspaceResponse {
     pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
     #[prost(message, optional, tag = "2")]
     pub keyspace: ::core::option::Option<KeyspaceMeta>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LookupKeyspaceRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    /// Optional namespace for namespace-scoped lookup. If unset, lookup by name is global and may return multiple keyspaces.
+    #[prost(uint32, tag = "3")]
+    pub namespace_id: u32,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LookupKeyspaceResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
+    #[prost(message, repeated, tag = "2")]
+    pub keyspaces: ::prost::alloc::vec::Vec<KeyspaceMeta>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AllocateNamespaceRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AllocateNamespaceResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
+    #[prost(uint32, tag = "2")]
+    pub namespace_id: u32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -53,10 +94,14 @@ pub struct WatchKeyspacesResponse {
 pub struct UpdateKeyspaceStateRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    /// V1/V2 compatibility keyspace id. V3 should use identity.
     #[prost(uint32, tag = "2")]
     pub id: u32,
     #[prost(enumeration = "KeyspaceState", tag = "3")]
     pub state: i32,
+    /// V3 keyspace identity.
+    #[prost(message, optional, tag = "4")]
+    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -71,10 +116,17 @@ pub struct UpdateKeyspaceStateResponse {
 pub struct GetAllKeyspacesRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    /// V1/V2 compatibility pagination cursor. V3 should use namespace_id and start_identity.
     #[prost(uint32, tag = "2")]
     pub start_id: u32,
     #[prost(uint32, tag = "3")]
     pub limit: u32,
+    /// V3 namespace-limited pagination. Must be non-zero in V3.
+    #[prost(uint32, tag = "4")]
+    pub namespace_id: u32,
+    /// V3 pagination cursor within namespace_id.
+    #[prost(message, optional, tag = "5")]
+    pub start_identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -225,6 +277,56 @@ pub mod keyspace_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("keyspacepb.Keyspace", "LoadKeyspace"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn lookup_keyspace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::LookupKeyspaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::LookupKeyspaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Keyspace/LookupKeyspace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Keyspace", "LookupKeyspace"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn allocate_namespace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AllocateNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AllocateNamespaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Keyspace/AllocateNamespace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Keyspace", "AllocateNamespace"));
             self.inner.unary(req, path, codec).await
         }
         /// WatchKeyspaces first return all current keyspaces' metadata as its first response.

@@ -24,6 +24,7 @@ use crate::request::plan::handle_region_error;
 use crate::request::plan::is_grpc_error;
 use crate::request::Collect;
 use crate::request::CollectSingle;
+use crate::request::KeyMode;
 use crate::request::Keyspace;
 use crate::request::Plan;
 use crate::store::RegionStore;
@@ -42,6 +43,11 @@ fn format_key_for_log(key: &[u8]) -> String {
     format!("len={}, prefix={:?}", key.len(), &key[..prefix_len])
 }
 
+fn encode_lock_route_key(keyspace: Keyspace, key: &[u8]) -> crate::Key {
+    let user_key = crate::Key::from(key.to_vec());
+    keyspace.encode_route_key(&user_key, KeyMode::Txn)
+}
+
 /// _Resolves_ the given locks. Returns locks still live. When there is no live locks, all the given locks are resolved.
 ///
 /// If a key has a lock, the latest status of the key is unknown. We need to "resolve" the lock,
@@ -55,7 +61,10 @@ pub async fn resolve_locks(
     keyspace: Keyspace,
 ) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
     debug!("resolving locks");
-    let ts = pd_client.clone().get_timestamp().await?;
+    let ts = pd_client
+        .clone()
+        .get_timestamp_with_identity(keyspace.v3_identity())
+        .await?;
     let caller_start_ts = timestamp.version();
     let current_ts = ts.version();
 
@@ -76,10 +85,8 @@ pub async fn resolve_locks(
     // This matches the client-go `LockResolver.ResolveLocksWithOpts` flow: query txn status for
     // each encountered lock, then resolve immediately when the status is final.
     for lock in locks {
-        let region_ver_id = pd_client
-            .region_for_key(&lock.key.clone().into())
-            .await?
-            .ver_id();
+        let route_key = encode_lock_route_key(keyspace, &lock.key);
+        let region_ver_id = pd_client.region_for_key(&route_key).await?.ver_id();
         // skip if the region is cleaned
         if clean_regions
             .get(&lock.lock_version)
@@ -156,7 +163,8 @@ async fn resolve_lock_with_retry(
     loop {
         attempt += 1;
         debug!("resolving locks: attempt {}", attempt);
-        let store = pd_client.clone().store_for_key(key.into()).await?;
+        let route_key = encode_lock_route_key(keyspace, key);
+        let store = pd_client.clone().store_for_key(&route_key).await?;
         let ver_id = store.region_with_leader.ver_id();
         let request =
             requests::new_resolve_lock_request(start_version, commit_version, is_txn_file);
@@ -480,7 +488,10 @@ impl LockResolver {
             Err(err) => return Err(err),
         };
 
-        let current = pd_client.clone().get_timestamp().await?;
+        let current = pd_client
+            .clone()
+            .get_timestamp_with_identity(keyspace.v3_identity())
+            .await?;
         status.check_ttl(current);
         let res = Arc::new(status);
         if res.is_cacheable() {
@@ -563,7 +574,10 @@ impl LockResolver {
             {
                 Ok(status) => return Ok(status),
                 Err(Error::TxnNotFound(txn_not_found)) => {
-                    let current = pd_client.clone().get_timestamp().await?;
+                    let current = pd_client
+                        .clone()
+                        .get_timestamp_with_identity(keyspace.v3_identity())
+                        .await?;
                     if lock_until_expired_ms(lock.lock_version, lock.lock_ttl, current) <= 0 {
                         warn!(
                             "lock txn not found, lock has expired, lock {:?}, caller_start_ts {}, current_ts {}",
@@ -621,6 +635,7 @@ mod tests {
     #[rstest::rstest]
     #[case(Keyspace::Disable)]
     #[case(Keyspace::Enable { keyspace_id: 0 })]
+    #[case(Keyspace::api_v3(1, 7).unwrap())]
     #[tokio::test]
     #[serial]
     async fn test_resolve_lock_with_retry(#[case] keyspace: Keyspace) {
@@ -650,12 +665,16 @@ mod tests {
         )));
 
         let key = vec![1];
-        let region1 = MockPdClient::region1();
+        let expected_region = if matches!(keyspace, Keyspace::ApiV3 { .. }) {
+            MockPdClient::region2()
+        } else {
+            MockPdClient::region1()
+        };
         let resolved_region =
             resolve_lock_with_retry(&key, 1, 2, false, client.clone(), keyspace, backoff.clone())
                 .await
                 .unwrap();
-        assert_eq!(region1.ver_id(), resolved_region);
+        assert_eq!(expected_region.ver_id(), resolved_region);
 
         // Test resolve lock over retry limit
         fail::cfg(

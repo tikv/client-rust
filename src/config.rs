@@ -6,6 +6,14 @@ use std::time::Duration;
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
 
+/// A V3 keyspace identity.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub struct KeyspaceIdentity {
+    pub namespace_id: u32,
+    pub keyspace_id: u32,
+}
+
 /// The configuration for either a [`RawClient`](crate::RawClient) or a
 /// [`TransactionClient`](crate::TransactionClient).
 ///
@@ -26,6 +34,8 @@ pub struct Config {
     pub timeout: Duration,
     pub grpc_max_decoding_message_size: usize,
     pub keyspace: Option<String>,
+    pub keyspace_identity: Option<KeyspaceIdentity>,
+    pub keyspace_namespace_id: Option<u32>,
 }
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -40,6 +50,8 @@ impl Default for Config {
             timeout: DEFAULT_REQUEST_TIMEOUT,
             grpc_max_decoding_message_size: DEFAULT_GRPC_MAX_DECODING_MESSAGE_SIZE,
             keyspace: None,
+            keyspace_identity: None,
+            keyspace_namespace_id: None,
         }
     }
 }
@@ -115,6 +127,30 @@ impl Config {
     #[must_use]
     pub fn with_keyspace(mut self, keyspace: &str) -> Self {
         self.keyspace = Some(keyspace.to_owned());
+        self.keyspace_identity = None;
+        self
+    }
+
+    /// Set namespace-scoped API V3 keyspace-name lookup for the client.
+    #[must_use]
+    pub fn with_keyspace_namespace_id(mut self, namespace_id: u32) -> Self {
+        self.keyspace_identity = None;
+        self.keyspace_namespace_id = Some(namespace_id);
+        self
+    }
+
+    /// Set the API V3 keyspace identity for the client.
+    ///
+    /// API V3 has no default keyspace. Both namespace id and keyspace id must be non-zero, and
+    /// keyspace id must be less than `2^24`.
+    #[must_use]
+    pub fn with_keyspace_identity(mut self, namespace_id: u32, keyspace_id: u32) -> Self {
+        self.keyspace = None;
+        self.keyspace_namespace_id = None;
+        self.keyspace_identity = Some(KeyspaceIdentity {
+            namespace_id,
+            keyspace_id,
+        });
         self
     }
 }

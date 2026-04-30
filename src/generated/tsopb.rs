@@ -8,12 +8,22 @@ pub struct RequestHeader {
     /// sender_id is the ID of the sender server.
     #[prost(uint64, tag = "2")]
     pub sender_id: u64,
-    /// keyspace_id is the unique id of the tenant/keyspace.
+    /// keyspace_id is the unique id of the tenant/keyspace in V1/V2.
+    /// V3 should use identity and must not read this legacy field as the full identity.
     #[prost(uint32, tag = "3")]
     pub keyspace_id: u32,
     /// keyspace_group_id is the unique id of the keyspace group to which the tenant/keyspace belongs.
     #[prost(uint32, tag = "4")]
     pub keyspace_group_id: u32,
+    /// callee_id is the ID of the server which the client expects to receive the request.
+    /// such as tso-0, tso-1, pd-0, pd-1 etc.
+    /// This field is used to check if the request is sent to the expected server.
+    /// If it is not matched, the server will return an error.
+    #[prost(string, tag = "5")]
+    pub callee_id: ::prost::alloc::string::String,
+    /// V3 keyspace identity of the request.
+    #[prost(message, optional, tag = "6")]
+    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -23,12 +33,16 @@ pub struct ResponseHeader {
     pub cluster_id: u64,
     #[prost(message, optional, tag = "2")]
     pub error: ::core::option::Option<Error>,
-    /// keyspace_id is the unique id of the tenant/keyspace as the response receiver.
+    /// keyspace_id is the unique id of the tenant/keyspace as the response receiver in V1/V2.
+    /// V3 should use identity and must not read this legacy field as the full identity.
     #[prost(uint32, tag = "3")]
     pub keyspace_id: u32,
     /// keyspace_group_id is the unique id of the keyspace group to which the tenant/keyspace belongs.
     #[prost(uint32, tag = "4")]
     pub keyspace_group_id: u32,
+    /// V3 keyspace identity served by this response.
+    #[prost(message, optional, tag = "5")]
+    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -97,14 +111,20 @@ pub struct KeyspaceGroup {
     pub split_state: ::core::option::Option<SplitState>,
     #[prost(message, repeated, tag = "4")]
     pub members: ::prost::alloc::vec::Vec<KeyspaceGroupMember>,
+    /// V3 keyspace identities that belong to this group. Membership may cross namespaces.
+    #[prost(message, repeated, tag = "5")]
+    pub keyspace_identities: ::prost::alloc::vec::Vec<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FindGroupByKeyspaceIdRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// V1/V2 compatibility keyspace id. V3 should use FindGroupByKeyspaceRequest.identity.
     #[prost(uint32, tag = "2")]
     pub keyspace_id: u32,
+    #[prost(uint64, tag = "3")]
+    pub mod_revision: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -113,6 +133,29 @@ pub struct FindGroupByKeyspaceIdResponse {
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(message, optional, tag = "2")]
     pub keyspace_group: ::core::option::Option<KeyspaceGroup>,
+    #[prost(uint64, tag = "3")]
+    pub mod_revision: u64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct FindGroupByKeyspaceRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<RequestHeader>,
+    /// V3 keyspace identity.
+    #[prost(message, optional, tag = "2")]
+    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    #[prost(uint64, tag = "3")]
+    pub mod_revision: u64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct FindGroupByKeyspaceResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<ResponseHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub keyspace_group: ::core::option::Option<KeyspaceGroup>,
+    #[prost(uint64, tag = "3")]
+    pub mod_revision: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -305,6 +348,32 @@ pub mod tso_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("tsopb.TSO", "FindGroupByKeyspaceID"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Find the keyspace group that the keyspace belongs to by V3 keyspace identity.
+        pub async fn find_group_by_keyspace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::FindGroupByKeyspaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::FindGroupByKeyspaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/tsopb.TSO/FindGroupByKeyspace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("tsopb.TSO", "FindGroupByKeyspace"));
             self.inner.unary(req, path, codec).await
         }
         /// Get the minimum timestamp across all keyspace groups served by the TSO server who receives

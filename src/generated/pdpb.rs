@@ -71,8 +71,17 @@ pub struct RequestHeader {
     #[prost(uint64, tag = "1")]
     pub cluster_id: u64,
     /// sender_id is the ID of the sender server, also member ID or etcd ID.
+    /// sender_id is used in PD internal communication.
     #[prost(uint64, tag = "2")]
     pub sender_id: u64,
+    /// caller_id is the ID of the client which sends the request, such as tikv,
+    /// tidb, cdc, etc.
+    #[prost(string, tag = "3")]
+    pub caller_id: ::prost::alloc::string::String,
+    /// caller_component is the component of the client which sends the request,
+    /// such as ddl, optimizer, etc.
+    #[prost(string, tag = "4")]
+    pub caller_component: ::prost::alloc::string::String,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -100,6 +109,9 @@ pub struct TsoRequest {
     pub count: u32,
     #[prost(string, tag = "3")]
     pub dc_location: ::prost::alloc::string::String,
+    /// V3 keyspace identity for tenant-scoped TSO requests.
+    #[prost(message, optional, tag = "4")]
+    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -162,6 +174,8 @@ pub struct IsBootstrappedResponse {
 pub struct AllocIdRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    #[prost(uint32, tag = "2")]
+    pub count: u32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -170,6 +184,8 @@ pub struct AllocIdResponse {
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(uint64, tag = "2")]
     pub id: u64,
+    #[prost(uint32, tag = "3")]
+    pub count: u32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -243,6 +259,7 @@ pub struct GetAllStoresResponse {
 pub struct GetRegionRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// Physical key bytes used for Region lookup.
     #[prost(bytes = "vec", tag = "2")]
     pub region_key: ::prost::alloc::vec::Vec<u8>,
     #[prost(bool, tag = "3")]
@@ -280,15 +297,67 @@ pub struct GetRegionByIdRequest {
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryRegionRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<RequestHeader>,
+    /// Whether to include the buckets info within the response.
+    #[prost(bool, tag = "2")]
+    pub need_buckets: bool,
+    /// The region IDs to query.
+    #[prost(uint64, repeated, tag = "3")]
+    pub ids: ::prost::alloc::vec::Vec<u64>,
+    /// Physical key bytes to query.
+    #[prost(bytes = "vec", repeated, tag = "4")]
+    pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    /// Previous physical key bytes to query.
+    #[prost(bytes = "vec", repeated, tag = "5")]
+    pub prev_keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryRegionResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<ResponseHeader>,
+    /// This array functions as a map corresponding to the region IDs,
+    /// preserving the order of the input region keys, if they are present.
+    #[prost(uint64, repeated, tag = "2")]
+    pub key_id_map: ::prost::alloc::vec::Vec<u64>,
+    /// This array functions as a map corresponding to the previous region IDs,
+    /// preserving the order of the input previous region keys, if they are present.
+    #[prost(uint64, repeated, tag = "3")]
+    pub prev_key_id_map: ::prost::alloc::vec::Vec<u64>,
+    /// RegionID -> RegionResponse
+    #[prost(map = "uint64, message", tag = "4")]
+    pub regions_by_id: ::std::collections::HashMap<u64, RegionResponse>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RegionResponse {
+    #[prost(message, optional, tag = "1")]
+    pub region: ::core::option::Option<super::metapb::Region>,
+    #[prost(message, optional, tag = "2")]
+    pub leader: ::core::option::Option<super::metapb::Peer>,
+    #[prost(message, repeated, tag = "3")]
+    pub down_peers: ::prost::alloc::vec::Vec<PeerStats>,
+    #[prost(message, repeated, tag = "4")]
+    pub pending_peers: ::prost::alloc::vec::Vec<super::metapb::Peer>,
+    #[prost(message, optional, tag = "5")]
+    pub buckets: ::core::option::Option<super::metapb::Buckets>,
+}
+/// Use GetRegionResponse as the response of GetRegionByIDRequest.
+/// Deprecated: use BatchScanRegionsRequest instead.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ScanRegionsRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// Physical start key bytes.
     #[prost(bytes = "vec", tag = "2")]
     pub start_key: ::prost::alloc::vec::Vec<u8>,
     /// no limit when limit \<= 0.
     #[prost(int32, tag = "3")]
     pub limit: i32,
-    /// end_key is +inf when it is empty.
+    /// Physical end key bytes. end_key is +inf when it is empty.
     #[prost(bytes = "vec", tag = "4")]
     pub end_key: ::prost::alloc::vec::Vec<u8>,
 }
@@ -306,6 +375,9 @@ pub struct Region {
     /// working followers.
     #[prost(message, repeated, tag = "4")]
     pub pending_peers: ::prost::alloc::vec::Vec<super::metapb::Peer>,
+    /// buckets isn't nil only when need_buckets is true.
+    #[prost(message, optional, tag = "5")]
+    pub buckets: ::core::option::Option<super::metapb::Buckets>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -319,6 +391,45 @@ pub struct ScanRegionsResponse {
     pub leaders: ::prost::alloc::vec::Vec<super::metapb::Peer>,
     /// Extended region info with down/pending peers.
     #[prost(message, repeated, tag = "4")]
+    pub regions: ::prost::alloc::vec::Vec<Region>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct KeyRange {
+    /// Physical start key bytes.
+    #[prost(bytes = "vec", tag = "1")]
+    pub start_key: ::prost::alloc::vec::Vec<u8>,
+    /// Physical end key bytes. end_key is +inf when it is empty.
+    #[prost(bytes = "vec", tag = "2")]
+    pub end_key: ::prost::alloc::vec::Vec<u8>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BatchScanRegionsRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<RequestHeader>,
+    #[prost(bool, tag = "2")]
+    pub need_buckets: bool,
+    /// Physical key ranges. The given ranges must be in order.
+    #[prost(message, repeated, tag = "3")]
+    pub ranges: ::prost::alloc::vec::Vec<KeyRange>,
+    /// limit the total number of regions to scan.
+    #[prost(int32, tag = "4")]
+    pub limit: i32,
+    /// If contain_all_key_range is true, the output must contain all
+    /// key ranges in the request.
+    /// If the output does not contain all key ranges, the request is considered
+    /// failed and returns an error(REGIONS_NOT_CONTAIN_ALL_KEY_RANGE).
+    #[prost(bool, tag = "5")]
+    pub contain_all_key_range: bool,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BatchScanRegionsResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<ResponseHeader>,
+    /// the returned regions are flattened into a list, because the given ranges can located in the same range, we do not return duplicated regions then.
+    #[prost(message, repeated, tag = "2")]
     pub regions: ::prost::alloc::vec::Vec<Region>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -468,14 +579,27 @@ pub struct RegionHeartbeatRequest {
     /// QueryStats reported write query stats, and there are read query stats in store heartbeat
     #[prost(message, optional, tag = "16")]
     pub query_stats: ::core::option::Option<QueryStats>,
-    /// cpu_usage is the CPU time usage of the leader region since the last heartbeat,
+    /// cpu_usage is the total CPU time usage of the leader region since the last heartbeat,
     /// which is calculated by cpu_time_delta/heartbeat_reported_interval.
+    /// Deprecated: use cpu_stats instead.
+    #[deprecated]
     #[prost(uint64, tag = "17")]
     pub cpu_usage: u64,
-    /// (Serverless) Approximate size of key-value pairs for billing.
+    /// cpu_stats reports CPU usage breakdown for the leader region by kind
+    /// (e.g. unified read).
+    #[prost(message, optional, tag = "21")]
+    pub cpu_stats: ::core::option::Option<CpuStats>,
+    /// Approximate size of row-based key-value pairs for billing.
     /// It's counted on size of user key & value (excluding metadata fields), before compression, and latest versions only.
     #[prost(uint64, tag = "18")]
     pub approximate_kv_size: u64,
+    /// Approximate size of column-based key-value pairs for billing.
+    /// It's counted on size of user key & value (excluding metadata fields), before compression, and latest versions only.
+    #[prost(uint64, tag = "19")]
+    pub approximate_columnar_kv_size: u64,
+    /// BucketMeta is the bucket version and keys of this region if TiKV enabled the bucket feature
+    #[prost(message, optional, tag = "20")]
+    pub bucket_meta: ::core::option::Option<super::metapb::BucketMeta>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -511,6 +635,7 @@ pub struct Merge {
 pub struct SplitRegion {
     #[prost(enumeration = "CheckPolicy", tag = "1")]
     pub policy: i32,
+    /// Physical split key bytes.
     #[prost(bytes = "vec", repeated, tag = "2")]
     pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
@@ -527,6 +652,13 @@ pub struct SwitchWitness {
 pub struct BatchSwitchWitness {
     #[prost(message, repeated, tag = "1")]
     pub switch_witnesses: ::prost::alloc::vec::Vec<SwitchWitness>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ChangeSplit {
+    /// auto_split_enabled configures whether the corresponding Region is allowed to be auto split by size or load.
+    #[prost(bool, tag = "1")]
+    pub auto_split_enabled: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -576,6 +708,8 @@ pub struct RegionHeartbeatResponse {
     pub change_peer_v2: ::core::option::Option<ChangePeerV2>,
     #[prost(message, optional, tag = "10")]
     pub switch_witnesses: ::core::option::Option<BatchSwitchWitness>,
+    #[prost(message, optional, tag = "11")]
+    pub change_split: ::core::option::Option<ChangeSplit>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -624,6 +758,8 @@ pub struct AskBatchSplitRequest {
     pub region: ::core::option::Option<super::metapb::Region>,
     #[prost(uint32, tag = "3")]
     pub split_count: u32,
+    #[prost(enumeration = "SplitReason", tag = "4")]
+    pub reason: i32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -688,6 +824,10 @@ pub struct PeerStat {
     pub written_keys: u64,
     #[prost(uint64, tag = "6")]
     pub written_bytes: u64,
+    /// cpu_stats is the CPU usage of the region's unified read pool since the last heartbeat,
+    /// which is calculated by cpu_time_delta/heartbeat_reported_interval.
+    #[prost(message, optional, tag = "7")]
+    pub cpu_stats: ::core::option::Option<CpuStats>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -777,6 +917,48 @@ pub struct StoreStats {
     /// Used memory of the store in bytes.
     #[prost(uint64, tag = "29")]
     pub used_memory: u64,
+    /// Network_slow_scores indicate the network status between TiKV nodes, ranging from 1 to 100 (lower is better).
+    /// StoreID -> score
+    #[prost(map = "uint64, uint64", tag = "30")]
+    pub network_slow_scores: ::std::collections::HashMap<u64, u64>,
+    /// The statistics about DFS uploads.
+    #[prost(message, repeated, tag = "31")]
+    pub dfs: ::prost::alloc::vec::Vec<DfsStatItem>,
+    /// True if the store is undergoing graceful shutdown.
+    #[prost(bool, tag = "32")]
+    pub is_stopping: bool,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DfsStatScope {
+    /// When true, the statistic is not tied to any keyspace.
+    #[prost(bool, tag = "1")]
+    pub is_global: bool,
+    /// The keyspace of this statistic. Ignore when is_global is true.
+    /// NOTE: This field is only meaningful for V1/V2 compatibility. V3 should use identity.
+    #[prost(uint32, tag = "2")]
+    pub keyspace_id: u32,
+    /// The component that provides the statistic.
+    #[prost(string, tag = "3")]
+    pub component: ::prost::alloc::string::String,
+    /// V3 keyspace identity of this statistic. Ignore when is_global is true or identities is set.
+    #[prost(message, optional, tag = "4")]
+    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    /// V3 multi-keyspace statistic scope. Ignore when is_global is true.
+    #[prost(message, repeated, tag = "5")]
+    pub identities: ::prost::alloc::vec::Vec<super::apipb::KeyspaceIdentity>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DfsStatItem {
+    #[prost(message, optional, tag = "1")]
+    pub scope: ::core::option::Option<DfsStatScope>,
+    /// Number of bytes written to DFS.
+    #[prost(uint64, tag = "2")]
+    pub written_bytes: u64,
+    /// Number of write requests sent to DFS.
+    #[prost(uint64, tag = "3")]
+    pub write_requests: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -822,6 +1004,9 @@ pub struct PeerReport {
     /// The peer has proposed but uncommitted commit merge.
     #[prost(bool, tag = "4")]
     pub has_commit_merge: bool,
+    /// raft applied index
+    #[prost(uint64, tag = "5")]
+    pub applied_index: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -928,6 +1113,9 @@ pub struct StoreHeartbeatResponse {
     /// Pd can return operations to let TiKV forcely PAUSE | RESUME grpc server.
     #[prost(message, optional, tag = "7")]
     pub control_grpc: ::core::option::Option<ControlGrpc>,
+    /// NodeState is going to mark the state of the store.
+    #[prost(enumeration = "super::metapb::NodeState", tag = "8")]
+    pub state: i32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -962,6 +1150,8 @@ pub struct ScatterRegionResponse {
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(uint64, tag = "2")]
     pub finished_percentage: u64,
+    #[prost(uint64, repeated, tag = "3")]
+    pub failed_regions_id: ::prost::alloc::vec::Vec<u64>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1022,8 +1212,12 @@ pub struct UpdateServiceGcSafePointResponse {
 pub struct GetGcSafePointV2Request {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// V1/V2 compatibility keyspace id. V3 should use identity.
     #[prost(uint32, tag = "2")]
     pub keyspace_id: u32,
+    /// V3 keyspace identity.
+    #[prost(message, optional, tag = "3")]
+    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1032,6 +1226,9 @@ pub struct GetGcSafePointV2Response {
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(uint64, tag = "2")]
     pub safe_point: u64,
+    /// V3 keyspace identity served by this response.
+    #[prost(message, optional, tag = "3")]
+    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1045,12 +1242,16 @@ pub struct WatchGcSafePointV2Request {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SafePointEvent {
+    /// V1/V2 compatibility keyspace id. V3 should use identity.
     #[prost(uint32, tag = "1")]
     pub keyspace_id: u32,
     #[prost(uint64, tag = "2")]
     pub safe_point: u64,
     #[prost(enumeration = "EventType", tag = "3")]
     pub r#type: i32,
+    /// V3 keyspace identity served by this event.
+    #[prost(message, optional, tag = "4")]
+    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1067,10 +1268,14 @@ pub struct WatchGcSafePointV2Response {
 pub struct UpdateGcSafePointV2Request {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// V1/V2 compatibility keyspace id. V3 should use identity.
     #[prost(uint32, tag = "2")]
     pub keyspace_id: u32,
     #[prost(uint64, tag = "3")]
     pub safe_point: u64,
+    /// V3 keyspace identity.
+    #[prost(message, optional, tag = "4")]
+    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1079,12 +1284,16 @@ pub struct UpdateGcSafePointV2Response {
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(uint64, tag = "2")]
     pub new_safe_point: u64,
+    /// V3 keyspace identity served by this response.
+    #[prost(message, optional, tag = "3")]
+    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UpdateServiceSafePointV2Request {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// V1/V2 compatibility keyspace id. V3 should use identity.
     #[prost(uint32, tag = "2")]
     pub keyspace_id: u32,
     #[prost(bytes = "vec", tag = "3")]
@@ -1098,6 +1307,9 @@ pub struct UpdateServiceSafePointV2Request {
     /// cluster garbage collection.
     #[prost(int64, tag = "5")]
     pub ttl: i64,
+    /// V3 keyspace identity.
+    #[prost(message, optional, tag = "6")]
+    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1110,6 +1322,9 @@ pub struct UpdateServiceSafePointV2Response {
     pub ttl: i64,
     #[prost(uint64, tag = "4")]
     pub min_safe_point: u64,
+    /// V3 keyspace identity served by this response.
+    #[prost(message, optional, tag = "5")]
+    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1120,10 +1335,14 @@ pub struct GetAllGcSafePointV2Request {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GcSafePointV2 {
+    /// V1/V2 compatibility keyspace id. V3 should use identity.
     #[prost(uint32, tag = "1")]
     pub keyspace_id: u32,
     #[prost(uint64, tag = "2")]
     pub gc_safe_point: u64,
+    /// V3 keyspace identity.
+    #[prost(message, optional, tag = "3")]
+    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1134,6 +1353,202 @@ pub struct GetAllGcSafePointV2Response {
     pub gc_safe_points: ::prost::alloc::vec::Vec<GcSafePointV2>,
     #[prost(int64, tag = "3")]
     pub revision: i64,
+}
+/// A wrapper over keyspace scope.
+/// keyspace_id is kept for V1/V2 compatibility. V3 should use identity and reject
+/// missing/invalid namespace or keyspace IDs in tenant-scoped requests.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct KeyspaceScope {
+    #[prost(uint32, tag = "1")]
+    pub keyspace_id: u32,
+    /// V3 keyspace identity.
+    #[prost(message, optional, tag = "2")]
+    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AdvanceGcSafePointRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<RequestHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub keyspace_scope: ::core::option::Option<KeyspaceScope>,
+    #[prost(uint64, tag = "3")]
+    pub target: u64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AdvanceGcSafePointResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<ResponseHeader>,
+    #[prost(uint64, tag = "2")]
+    pub old_gc_safe_point: u64,
+    #[prost(uint64, tag = "3")]
+    pub new_gc_safe_point: u64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AdvanceTxnSafePointRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<RequestHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub keyspace_scope: ::core::option::Option<KeyspaceScope>,
+    #[prost(uint64, tag = "3")]
+    pub target: u64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AdvanceTxnSafePointResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<ResponseHeader>,
+    #[prost(uint64, tag = "2")]
+    pub old_txn_safe_point: u64,
+    #[prost(uint64, tag = "3")]
+    pub new_txn_safe_point: u64,
+    #[prost(string, tag = "4")]
+    pub blocker_description: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SetGcBarrierRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<RequestHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub keyspace_scope: ::core::option::Option<KeyspaceScope>,
+    #[prost(string, tag = "3")]
+    pub barrier_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "4")]
+    pub barrier_ts: u64,
+    #[prost(int64, tag = "5")]
+    pub ttl_seconds: i64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GcBarrierInfo {
+    #[prost(string, tag = "1")]
+    pub barrier_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub barrier_ts: u64,
+    #[prost(int64, tag = "3")]
+    pub ttl_seconds: i64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SetGcBarrierResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<ResponseHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub new_barrier_info: ::core::option::Option<GcBarrierInfo>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DeleteGcBarrierRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<RequestHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub keyspace_scope: ::core::option::Option<KeyspaceScope>,
+    #[prost(string, tag = "3")]
+    pub barrier_id: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DeleteGcBarrierResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<ResponseHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub deleted_barrier_info: ::core::option::Option<GcBarrierInfo>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SetGlobalGcBarrierRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<RequestHeader>,
+    #[prost(string, tag = "2")]
+    pub barrier_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "3")]
+    pub barrier_ts: u64,
+    #[prost(int64, tag = "4")]
+    pub ttl_seconds: i64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SetGlobalGcBarrierResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<ResponseHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub new_barrier_info: ::core::option::Option<GlobalGcBarrierInfo>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DeleteGlobalGcBarrierRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<RequestHeader>,
+    #[prost(string, tag = "2")]
+    pub barrier_id: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DeleteGlobalGcBarrierResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<ResponseHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub deleted_barrier_info: ::core::option::Option<GlobalGcBarrierInfo>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GlobalGcBarrierInfo {
+    #[prost(string, tag = "1")]
+    pub barrier_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub barrier_ts: u64,
+    #[prost(int64, tag = "3")]
+    pub ttl_seconds: i64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetGcStateRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<RequestHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub keyspace_scope: ::core::option::Option<KeyspaceScope>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GcState {
+    #[prost(message, optional, tag = "1")]
+    pub keyspace_scope: ::core::option::Option<KeyspaceScope>,
+    #[prost(bool, tag = "2")]
+    pub is_keyspace_level_gc: bool,
+    #[prost(uint64, tag = "3")]
+    pub txn_safe_point: u64,
+    #[prost(uint64, tag = "4")]
+    pub gc_safe_point: u64,
+    #[prost(message, repeated, tag = "5")]
+    pub gc_barriers: ::prost::alloc::vec::Vec<GcBarrierInfo>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetGcStateResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<ResponseHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub gc_state: ::core::option::Option<GcState>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetAllKeyspacesGcStatesRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<RequestHeader>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetAllKeyspacesGcStatesResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<ResponseHeader>,
+    #[prost(message, repeated, tag = "2")]
+    pub gc_states: ::prost::alloc::vec::Vec<GcState>,
+    #[prost(message, repeated, tag = "3")]
+    pub global_gc_barriers: ::prost::alloc::vec::Vec<GlobalGcBarrierInfo>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1244,6 +1659,7 @@ pub struct SyncMaxTsResponse {
 pub struct SplitRegionsRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// Physical split key bytes.
     #[prost(bytes = "vec", repeated, tag = "2")]
     pub split_keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
     #[prost(uint64, tag = "3")]
@@ -1264,6 +1680,7 @@ pub struct SplitRegionsResponse {
 pub struct SplitAndScatterRegionsRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// Physical split key bytes.
     #[prost(bytes = "vec", repeated, tag = "2")]
     pub split_keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
     #[prost(string, tag = "3")]
@@ -1329,6 +1746,17 @@ pub struct QueryStats {
     pub commit: u64,
     #[prost(uint64, tag = "11")]
     pub rollback: u64,
+}
+/// CPU usage breakdown by kind. New kinds may be added in the future.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CpuStats {
+    /// UnifiedRead is the CPU usage of the unified read pool.
+    #[prost(uint64, tag = "1")]
+    pub unified_read: u64,
+    /// Scheduler is the CPU usage of the scheduler pool, it contains `sched-pool`, `sched-high`, and `sched-pri`.
+    #[prost(uint64, tag = "2")]
+    pub scheduler: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1446,6 +1874,7 @@ pub enum ErrorType {
     InvalidValue = 10,
     /// required watch revision is smaller than current compact/min revision.
     DataCompacted = 11,
+    RegionsNotContainAllKeyRange = 12,
 }
 impl ErrorType {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1466,6 +1895,9 @@ impl ErrorType {
             ErrorType::EntryNotFound => "ENTRY_NOT_FOUND",
             ErrorType::InvalidValue => "INVALID_VALUE",
             ErrorType::DataCompacted => "DATA_COMPACTED",
+            ErrorType::RegionsNotContainAllKeyRange => {
+                "REGIONS_NOT_CONTAIN_ALL_KEY_RANGE"
+            }
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1483,6 +1915,9 @@ impl ErrorType {
             "ENTRY_NOT_FOUND" => Some(Self::EntryNotFound),
             "INVALID_VALUE" => Some(Self::InvalidValue),
             "DATA_COMPACTED" => Some(Self::DataCompacted),
+            "REGIONS_NOT_CONTAIN_ALL_KEY_RANGE" => {
+                Some(Self::RegionsNotContainAllKeyRange)
+            }
             _ => None,
         }
     }
@@ -1541,6 +1976,35 @@ impl CheckPolicy {
             "SCAN" => Some(Self::Scan),
             "APPROXIMATE" => Some(Self::Approximate),
             "USEKEY" => Some(Self::Usekey),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum SplitReason {
+    Admin = 0,
+    Size = 1,
+    Load = 2,
+}
+impl SplitReason {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            SplitReason::Admin => "ADMIN",
+            SplitReason::Size => "SIZE",
+            SplitReason::Load => "LOAD",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ADMIN" => Some(Self::Admin),
+            "SIZE" => Some(Self::Size),
+            "LOAD" => Some(Self::Load),
             _ => None,
         }
     }
@@ -2088,6 +2552,31 @@ pub mod pd_client {
             req.extensions_mut().insert(GrpcMethod::new("pdpb.PD", "GetRegionByID"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn query_region(
+            &mut self,
+            request: impl tonic::IntoStreamingRequest<
+                Message = super::QueryRegionRequest,
+            >,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::QueryRegionResponse>>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/pdpb.PD/QueryRegion");
+            let mut req = request.into_streaming_request();
+            req.extensions_mut().insert(GrpcMethod::new("pdpb.PD", "QueryRegion"));
+            self.inner.streaming(req, path, codec).await
+        }
+        /// Deprecated: use BatchScanRegions instead.
         pub async fn scan_regions(
             &mut self,
             request: impl tonic::IntoRequest<super::ScanRegionsRequest>,
@@ -2108,6 +2597,28 @@ pub mod pd_client {
             let path = http::uri::PathAndQuery::from_static("/pdpb.PD/ScanRegions");
             let mut req = request.into_request();
             req.extensions_mut().insert(GrpcMethod::new("pdpb.PD", "ScanRegions"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn batch_scan_regions(
+            &mut self,
+            request: impl tonic::IntoRequest<super::BatchScanRegionsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::BatchScanRegionsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/pdpb.PD/BatchScanRegions");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("pdpb.PD", "BatchScanRegions"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn ask_split(
@@ -2455,6 +2966,197 @@ pub mod pd_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("pdpb.PD", "GetAllGCSafePointV2"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn advance_gc_safe_point(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AdvanceGcSafePointRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AdvanceGcSafePointResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/pdpb.PD/AdvanceGCSafePoint",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("pdpb.PD", "AdvanceGCSafePoint"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn advance_txn_safe_point(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AdvanceTxnSafePointRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AdvanceTxnSafePointResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/pdpb.PD/AdvanceTxnSafePoint",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("pdpb.PD", "AdvanceTxnSafePoint"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn set_gc_barrier(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SetGcBarrierRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SetGcBarrierResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/pdpb.PD/SetGCBarrier");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("pdpb.PD", "SetGCBarrier"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn delete_gc_barrier(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeleteGcBarrierRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteGcBarrierResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/pdpb.PD/DeleteGCBarrier");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("pdpb.PD", "DeleteGCBarrier"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn set_global_gc_barrier(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SetGlobalGcBarrierRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SetGlobalGcBarrierResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/pdpb.PD/SetGlobalGCBarrier",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("pdpb.PD", "SetGlobalGCBarrier"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn delete_global_gc_barrier(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeleteGlobalGcBarrierRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteGlobalGcBarrierResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/pdpb.PD/DeleteGlobalGCBarrier",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("pdpb.PD", "DeleteGlobalGCBarrier"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_gc_state(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetGcStateRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetGcStateResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/pdpb.PD/GetGCState");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("pdpb.PD", "GetGCState"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_all_keyspaces_gc_states(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetAllKeyspacesGcStatesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetAllKeyspacesGcStatesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/pdpb.PD/GetAllKeyspacesGCStates",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("pdpb.PD", "GetAllKeyspacesGCStates"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn sync_regions(

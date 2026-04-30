@@ -349,11 +349,26 @@ mod test {
             todo!()
         }
 
+        async fn get_timestamp_with_identity(
+            self: Arc<Self>,
+            _identity: Option<crate::proto::apipb::KeyspaceIdentity>,
+        ) -> Result<crate::proto::pdpb::Timestamp> {
+            todo!()
+        }
+
         async fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> Result<bool> {
             todo!()
         }
 
         async fn load_keyspace(&self, _keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
+            unimplemented!()
+        }
+
+        async fn lookup_keyspace(
+            &self,
+            _keyspace: &str,
+            _namespace_id: u32,
+        ) -> Result<keyspacepb::KeyspaceMeta> {
             unimplemented!()
         }
     }

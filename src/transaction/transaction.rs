@@ -847,7 +847,11 @@ impl<PdC: PdClient> Transaction<PdC> {
             .buffer
             .get_primary_key()
             .unwrap_or_else(|| first_key.clone());
-        let for_update_ts = self.rpc.clone().get_timestamp().await?;
+        let for_update_ts = self
+            .rpc
+            .clone()
+            .get_timestamp_with_identity(self.keyspace.v3_identity())
+            .await?;
         self.options.push_for_update_ts(for_update_ts.clone());
         let request = new_pessimistic_lock_request(
             keys.clone().into_iter(),
@@ -1381,7 +1385,11 @@ impl<PdC: PdClient> Committer<PdC> {
     async fn commit_primary(&mut self) -> Result<Timestamp> {
         debug!("committing primary");
         let primary_key = self.primary_key.clone().into_iter();
-        let commit_version = self.rpc.clone().get_timestamp().await?;
+        let commit_version = self
+            .rpc
+            .clone()
+            .get_timestamp_with_identity(self.keyspace.v3_identity())
+            .await?;
         let req = new_commit_request(
             primary_key,
             self.start_version.clone(),

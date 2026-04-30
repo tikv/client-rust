@@ -115,16 +115,52 @@ impl Client {
         config: Config,
     ) -> Result<Client> {
         debug!("creating new transactional client");
+        if matches!(config.keyspace_namespace_id, Some(0)) {
+            return Err(crate::Error::StringError(
+                "config.keyspace_namespace_id must be non-zero".to_owned(),
+            ));
+        }
+        let configured_keyspace_identity = config
+            .keyspace_identity
+            .map(|identity| Keyspace::api_v3(identity.namespace_id, identity.keyspace_id))
+            .transpose()?;
+        if configured_keyspace_identity.is_none()
+            && config.keyspace_namespace_id.is_some()
+            && config.keyspace.is_none()
+        {
+            return Err(crate::Error::StringError(
+                "config.keyspace must be set when config.keyspace_namespace_id is set".to_owned(),
+            ));
+        }
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?);
-        let keyspace = match config.keyspace {
-            Some(name) => {
-                let keyspace = pd.load_keyspace(&name).await?;
-                Keyspace::Enable {
-                    keyspace_id: keyspace.id,
+        let keyspace = if let Some(keyspace) = configured_keyspace_identity {
+            keyspace
+        } else if let Some(namespace_id) = config.keyspace_namespace_id {
+            let name = config.keyspace.ok_or_else(|| {
+                crate::Error::StringError(
+                    "config.keyspace must be set when config.keyspace_namespace_id is set"
+                        .to_owned(),
+                )
+            })?;
+            let keyspace = pd.lookup_keyspace(&name, namespace_id).await?;
+            let identity = keyspace.identity.ok_or_else(|| {
+                crate::Error::StringError(format!(
+                    "keyspace '{}' in namespace {} does not have V3 identity",
+                    name, namespace_id
+                ))
+            })?;
+            Keyspace::api_v3(identity.namespace_id, identity.keyspace_id)?
+        } else {
+            match config.keyspace {
+                Some(name) => {
+                    let keyspace = pd.load_keyspace(&name).await?;
+                    Keyspace::Enable {
+                        keyspace_id: keyspace.id,
+                    }
                 }
+                None => Keyspace::Disable,
             }
-            None => Keyspace::Disable,
         };
         Ok(Client { pd, keyspace })
     }
@@ -137,9 +173,12 @@ impl Client {
         pd_endpoints: Vec<S>,
         config: Config,
     ) -> Result<Client> {
-        if config.keyspace.is_some() {
+        if config.keyspace.is_some()
+            || config.keyspace_identity.is_some()
+            || config.keyspace_namespace_id.is_some()
+        {
             return Err(crate::Error::StringError(
-                "config.keyspace must be unset when using api-v2-no-prefix mode".to_owned(),
+                "config.keyspace, config.keyspace_identity and config.keyspace_namespace_id must be unset when using api-v2-no-prefix mode".to_owned(),
             ));
         }
 
@@ -243,7 +282,10 @@ impl Client {
     /// # });
     /// ```
     pub async fn current_timestamp(&self) -> Result<Timestamp> {
-        self.pd.clone().get_timestamp().await
+        self.pd
+            .clone()
+            .get_timestamp_with_identity(self.keyspace.v3_identity())
+            .await
     }
 
     /// Request garbage collection (GC) of the TiKV cluster.
@@ -375,5 +417,38 @@ impl Client {
 
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
         Transaction::new(timestamp, self.pd.clone(), options, self.keyspace)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_api_v3_transaction_client_rejects_invalid_identity_before_pd_connect() {
+        let result = Client::new_with_config(
+            Vec::<String>::new(),
+            Config::default().with_keyspace_identity(0, 1),
+        )
+        .await;
+        let err = match result {
+            Ok(_) => panic!("invalid API V3 identity should be rejected before PD connect"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("namespace_id must be non-zero"));
+    }
+
+    #[tokio::test]
+    async fn test_api_v3_transaction_client_rejects_namespace_without_keyspace_before_pd_connect() {
+        let result = Client::new_with_config(
+            Vec::<String>::new(),
+            Config::default().with_keyspace_namespace_id(1),
+        )
+        .await;
+        let err = match result {
+            Ok(_) => panic!("API V3 namespace lookup should require a keyspace name"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("config.keyspace must be set"));
     }
 }

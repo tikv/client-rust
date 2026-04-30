@@ -15,6 +15,7 @@ use tonic::Request;
 
 use super::timestamp::TimestampOracle;
 use crate::internal_err;
+use crate::proto::apipb;
 use crate::proto::keyspacepb;
 use crate::proto::pdpb;
 use crate::Error;
@@ -85,6 +86,13 @@ impl Cluster {
         self.tso.clone().get_timestamp().await
     }
 
+    pub async fn get_timestamp_with_identity(
+        &self,
+        identity: Option<apipb::KeyspaceIdentity>,
+    ) -> Result<Timestamp> {
+        self.tso.clone().get_timestamp_with_identity(identity).await
+    }
+
     pub async fn update_safepoint(
         &mut self,
         safepoint: u64,
@@ -107,6 +115,26 @@ impl Cluster {
             .keyspace
             .ok_or_else(|| Error::KeyspaceNotFound(keyspace.to_owned()))?;
         Ok(keyspace)
+    }
+
+    pub async fn lookup_keyspace(
+        &mut self,
+        keyspace: &str,
+        namespace_id: u32,
+        timeout: Duration,
+    ) -> Result<keyspacepb::KeyspaceMeta> {
+        let mut req = pd_request!(self.id, keyspacepb::LookupKeyspaceRequest);
+        req.name = keyspace.to_string();
+        req.namespace_id = namespace_id;
+        let mut resp = req.send(&mut self.keyspace_client, timeout).await?;
+        match resp.keyspaces.len() {
+            1 => Ok(resp.keyspaces.remove(0)),
+            0 => Err(Error::KeyspaceNotFound(keyspace.to_owned())),
+            _ => Err(Error::StringError(format!(
+                "multiple keyspaces named '{}' found in namespace {}",
+                keyspace, namespace_id
+            ))),
+        }
     }
 }
 
@@ -419,6 +447,16 @@ impl PdMessage for keyspacepb::LoadKeyspaceRequest {
     }
 }
 
+#[async_trait]
+impl PdMessage for keyspacepb::LookupKeyspaceRequest {
+    type Client = keyspacepb::keyspace_client::KeyspaceClient<Channel>;
+    type Response = keyspacepb::LookupKeyspaceResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.lookup_keyspace(req).await?.into_inner())
+    }
+}
+
 trait PdResponse {
     fn header(&self) -> &pdpb::ResponseHeader;
 }
@@ -448,6 +486,12 @@ impl PdResponse for pdpb::UpdateGcSafePointResponse {
 }
 
 impl PdResponse for keyspacepb::LoadKeyspaceResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.header.as_ref().unwrap()
+    }
+}
+
+impl PdResponse for keyspacepb::LookupKeyspaceResponse {
     fn header(&self) -> &pdpb::ResponseHeader {
         self.header.as_ref().unwrap()
     }
