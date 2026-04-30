@@ -78,6 +78,8 @@ pub trait PdClient: Send + Sync + 'static {
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta>;
 
+    async fn lookup_keyspaces(&self, keyspace: &str) -> Result<Vec<keyspacepb::KeyspaceMeta>>;
+
     async fn lookup_keyspace(
         &self,
         keyspace: &str,
@@ -301,6 +303,10 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
         self.pd.load_keyspace(keyspace).await
+    }
+
+    async fn lookup_keyspaces(&self, keyspace: &str) -> Result<Vec<keyspacepb::KeyspaceMeta>> {
+        self.pd.lookup_keyspaces(keyspace).await
     }
 
     async fn lookup_keyspace(

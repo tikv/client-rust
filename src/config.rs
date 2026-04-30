@@ -36,6 +36,7 @@ pub struct Config {
     pub keyspace: Option<String>,
     pub keyspace_identity: Option<KeyspaceIdentity>,
     pub keyspace_namespace_id: Option<u32>,
+    pub keyspace_global_name_lookup: bool,
 }
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -52,6 +53,7 @@ impl Default for Config {
             keyspace: None,
             keyspace_identity: None,
             keyspace_namespace_id: None,
+            keyspace_global_name_lookup: false,
         }
     }
 }
@@ -128,6 +130,8 @@ impl Config {
     pub fn with_keyspace(mut self, keyspace: &str) -> Self {
         self.keyspace = Some(keyspace.to_owned());
         self.keyspace_identity = None;
+        self.keyspace_namespace_id = None;
+        self.keyspace_global_name_lookup = false;
         self
     }
 
@@ -136,6 +140,20 @@ impl Config {
     pub fn with_keyspace_namespace_id(mut self, namespace_id: u32) -> Self {
         self.keyspace_identity = None;
         self.keyspace_namespace_id = Some(namespace_id);
+        self.keyspace_global_name_lookup = false;
+        self
+    }
+
+    /// Resolve the keyspace by globally unique name and use API V3 identity when PD returns one.
+    ///
+    /// This is intended for DB9-style deployments where keyspace names are globally unique even
+    /// though PD's native API V3 uniqueness rule is namespace-scoped.
+    #[must_use]
+    pub fn with_keyspace_global_name_lookup(mut self, keyspace: &str) -> Self {
+        self.keyspace = Some(keyspace.to_owned());
+        self.keyspace_identity = None;
+        self.keyspace_namespace_id = None;
+        self.keyspace_global_name_lookup = true;
         self
     }
 
@@ -147,6 +165,7 @@ impl Config {
     pub fn with_keyspace_identity(mut self, namespace_id: u32, keyspace_id: u32) -> Self {
         self.keyspace = None;
         self.keyspace_namespace_id = None;
+        self.keyspace_global_name_lookup = false;
         self.keyspace_identity = Some(KeyspaceIdentity {
             namespace_id,
             keyspace_id,

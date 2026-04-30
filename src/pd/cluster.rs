@@ -136,6 +136,25 @@ impl Cluster {
             ))),
         }
     }
+
+    pub async fn lookup_keyspaces(
+        &mut self,
+        keyspace: &str,
+        timeout: Duration,
+    ) -> Result<Vec<keyspacepb::KeyspaceMeta>> {
+        let mut req = pd_request!(self.id, keyspacepb::LookupKeyspaceRequest);
+        req.name = keyspace.to_string();
+        let resp = req.send(&mut self.keyspace_client, timeout).await?;
+        if resp
+            .header
+            .as_ref()
+            .and_then(|h| h.error.as_ref())
+            .is_some()
+        {
+            return Err(Error::KeyspaceNotFound(keyspace.to_owned()));
+        }
+        Ok(resp.keyspaces)
+    }
 }
 
 /// An object for connecting and reconnecting to a PD cluster.

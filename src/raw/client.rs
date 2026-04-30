@@ -112,6 +112,19 @@ impl Client<PdRpcClient> {
                 "config.keyspace_namespace_id must be non-zero".to_owned(),
             ));
         }
+        if config.keyspace_global_name_lookup
+            && (config.keyspace_identity.is_some() || config.keyspace_namespace_id.is_some())
+        {
+            return Err(crate::Error::StringError(
+                "config.keyspace_global_name_lookup cannot be combined with config.keyspace_identity or config.keyspace_namespace_id".to_owned(),
+            ));
+        }
+        if config.keyspace_global_name_lookup && config.keyspace.is_none() {
+            return Err(crate::Error::StringError(
+                "config.keyspace must be set when config.keyspace_global_name_lookup is set"
+                    .to_owned(),
+            ));
+        }
         let configured_keyspace_identity = config
             .keyspace_identity
             .map(|identity| Keyspace::api_v3(identity.namespace_id, identity.keyspace_id))
@@ -126,14 +139,15 @@ impl Client<PdRpcClient> {
         }
         let enable_codec = config.keyspace.is_some()
             || config.keyspace_identity.is_some()
-            || config.keyspace_namespace_id.is_some();
+            || config.keyspace_namespace_id.is_some()
+            || config.keyspace_global_name_lookup;
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let rpc =
             Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), enable_codec).await?);
         let keyspace = if let Some(keyspace) = configured_keyspace_identity {
             keyspace
         } else if let Some(namespace_id) = config.keyspace_namespace_id {
-            let name = config.keyspace.ok_or_else(|| {
+            let name = config.keyspace.clone().ok_or_else(|| {
                 crate::Error::StringError(
                     "config.keyspace must be set when config.keyspace_namespace_id is set"
                         .to_owned(),
@@ -147,8 +161,35 @@ impl Client<PdRpcClient> {
                 ))
             })?;
             Keyspace::api_v3(identity.namespace_id, identity.keyspace_id)?
+        } else if config.keyspace_global_name_lookup {
+            let name = config.keyspace.clone().ok_or_else(|| {
+                crate::Error::StringError(
+                    "config.keyspace must be set when config.keyspace_global_name_lookup is set"
+                        .to_owned(),
+                )
+            })?;
+            let mut keyspaces = rpc.lookup_keyspaces(&name).await?;
+            match keyspaces.len() {
+                1 => {
+                    let keyspace = keyspaces.remove(0);
+                    if let Some(identity) = keyspace.identity {
+                        Keyspace::api_v3(identity.namespace_id, identity.keyspace_id)?
+                    } else {
+                        Keyspace::Enable {
+                            keyspace_id: keyspace.id,
+                        }
+                    }
+                }
+                0 => return Err(crate::Error::KeyspaceNotFound(name)),
+                _ => {
+                    return Err(crate::Error::StringError(format!(
+                        "multiple keyspaces named '{}' found; DB9 global-name lookup requires unique names",
+                        name
+                    )));
+                }
+            }
         } else {
-            match config.keyspace {
+            match config.keyspace.clone() {
                 Some(name) => {
                     let keyspace = rpc.load_keyspace(&name).await?;
                     Keyspace::Enable {

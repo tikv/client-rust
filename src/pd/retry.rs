@@ -55,6 +55,8 @@ pub trait RetryClientTrait {
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta>;
 
+    async fn lookup_keyspaces(&self, keyspace: &str) -> Result<Vec<keyspacepb::KeyspaceMeta>>;
+
     async fn lookup_keyspace(
         &self,
         keyspace: &str,
@@ -226,6 +228,12 @@ impl RetryClientTrait for RetryClient<Cluster> {
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
         retry_mut!(self, "load_keyspace", |cluster| async {
             cluster.load_keyspace(keyspace, self.timeout).await
+        })
+    }
+
+    async fn lookup_keyspaces(&self, keyspace: &str) -> Result<Vec<keyspacepb::KeyspaceMeta>> {
+        retry_mut!(self, "lookup_keyspaces", |cluster| async {
+            cluster.lookup_keyspaces(keyspace, self.timeout).await
         })
     }
 
