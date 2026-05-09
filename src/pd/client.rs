@@ -338,16 +338,21 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
     }
 
     async fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
-        if let Some(client) = self.kv_client_cache.read().await.get(address) {
-            return Ok(client.clone());
+        let cache_connections = self.kv_connect.cache_connections();
+        if cache_connections {
+            if let Some(client) = self.kv_client_cache.read().await.get(address) {
+                return Ok(client.clone());
+            }
         };
         info!("connect to tikv endpoint: {:?}", address);
         match self.kv_connect.connect(address).await {
             Ok(client) => {
-                self.kv_client_cache
-                    .write()
-                    .await
-                    .insert(address.to_owned(), client.clone());
+                if cache_connections {
+                    self.kv_client_cache
+                        .write()
+                        .await
+                        .insert(address.to_owned(), client.clone());
+                }
                 Ok(client)
             }
             Err(e) => Err(e),
@@ -364,11 +369,18 @@ fn make_key_range(start_key: Vec<u8>, end_key: Vec<u8>) -> kvrpcpb::KeyRange {
 
 #[cfg(test)]
 pub mod test {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
     use futures::executor;
     use futures::executor::block_on;
 
     use super::*;
     use crate::mock::*;
+    use crate::pd::RetryClient;
+    use crate::store::KvConnect;
+    use crate::Config;
 
     #[tokio::test]
     async fn test_kv_client_caching() {
@@ -382,6 +394,55 @@ pub mod test {
         let kv3 = client.kv_client(addr2).await.unwrap();
         assert!(kv1.addr != kv2.addr);
         assert_eq!(kv2.addr, kv3.addr);
+    }
+
+    #[tokio::test]
+    async fn test_kv_client_reloadable_connections_are_not_cached() {
+        #[derive(Clone)]
+        struct CountingConnect {
+            connects: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl KvConnect for CountingConnect {
+            type KvClient = MockKvClient;
+
+            async fn connect(&self, address: &str) -> Result<Self::KvClient> {
+                self.connects.fetch_add(1, Ordering::SeqCst);
+                let mut client = MockKvClient::default();
+                client.addr = address.to_owned();
+                Ok(client)
+            }
+
+            fn cache_connections(&self) -> bool {
+                false
+            }
+        }
+
+        let connects = Arc::new(AtomicUsize::new(0));
+        let connects_clone = connects.clone();
+        let client = PdRpcClient::new(
+            Config::default(),
+            move |_| CountingConnect {
+                connects: connects_clone.clone(),
+            },
+            |sm| async move {
+                Ok(RetryClient::new_with_cluster(
+                    sm,
+                    Config::default().timeout,
+                    MockCluster,
+                ))
+            },
+            false,
+        )
+        .await
+        .unwrap();
+
+        let kv1 = client.kv_client("foo").await.unwrap();
+        let kv2 = client.kv_client("foo").await.unwrap();
+        assert_eq!(kv1.addr, "foo");
+        assert_eq!(kv2.addr, "foo");
+        assert_eq!(connects.load(Ordering::SeqCst), 2);
     }
 
     #[test]
