@@ -21,8 +21,8 @@ pub trait KvConnect: Sized + Send + Sync + 'static {
 
     async fn connect(&self, address: &str) -> Result<Self::KvClient>;
 
-    fn cache_connections(&self) -> bool {
-        true
+    fn connection_cache_key(&self) -> Result<Option<u64>> {
+        Ok(None)
     }
 }
 
@@ -48,8 +48,8 @@ impl KvConnect for TikvConnect {
             .map(|c| KvRpcClient::new(c, self.timeout))
     }
 
-    fn cache_connections(&self) -> bool {
-        !self.security_mgr.tls_configured()
+    fn connection_cache_key(&self) -> Result<Option<u64>> {
+        self.security_mgr.connection_cache_key()
     }
 }
 

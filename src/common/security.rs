@@ -1,10 +1,15 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::collections::hash_map::DefaultHasher;
+use std::fs;
 use std::fs::File;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
+use std::time::SystemTime;
 
 use log::info;
 use regex::Regex;
@@ -75,6 +80,18 @@ impl SecurityManager {
         self.ca_path.is_some()
     }
 
+    pub(crate) fn connection_cache_key(&self) -> Result<Option<u64>> {
+        if !self.tls_configured() {
+            return Ok(None);
+        }
+
+        let mut hasher = DefaultHasher::new();
+        file_signature(self.ca_path.as_ref().expect("tls_configured checked"))?.hash(&mut hasher);
+        file_signature(self.cert_path.as_ref().expect("tls_configured checked"))?.hash(&mut hasher);
+        file_signature(self.key_path.as_ref().expect("tls_configured checked"))?.hash(&mut hasher);
+        Ok(Some(hasher.finish()))
+    }
+
     /// Connect to gRPC server using TLS connection. If TLS is not configured, use normal connection.
     pub async fn connect<Factory, Client>(
         &self,
@@ -141,6 +158,17 @@ impl SecurityManager {
     }
 }
 
+fn file_signature(path: &Path) -> Result<(u64, Option<u128>)> {
+    let metadata = fs::metadata(path)
+        .map_err(|e| internal_err!("failed to stat {}: {:?}", path.display(), e))?;
+    let modified = metadata.modified().ok().and_then(|t: SystemTime| {
+        t.duration_since(SystemTime::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_nanos())
+    });
+    Ok((metadata.len(), modified))
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs::File;
@@ -189,6 +217,7 @@ mod tests {
 
         let mgr = SecurityManager::load(&example_ca, &example_cert, &example_pem).unwrap();
         let first = mgr.load_tls_materials().unwrap();
+        let key1 = mgr.connection_cache_key().unwrap();
 
         File::create(&example_ca).unwrap().write_all(&[9]).unwrap();
         File::create(&example_cert)
@@ -198,9 +227,11 @@ mod tests {
         File::create(&example_pem).unwrap().write_all(&[7]).unwrap();
 
         let second = mgr.load_tls_materials().unwrap();
+        let key2 = mgr.connection_cache_key().unwrap();
         assert_ne!(first, second);
         assert_eq!(second.0, vec![9]);
         assert_eq!(second.1, vec![8]);
         assert_eq!(second.2, vec![7]);
+        assert_ne!(key1, key2);
     }
 }

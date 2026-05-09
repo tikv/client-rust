@@ -214,9 +214,15 @@ pub trait PdClient: Send + Sync + 'static {
 pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl = Cluster> {
     pd: Arc<RetryClient<Cl>>,
     kv_connect: KvC,
-    kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
+    kv_client_cache: Arc<RwLock<HashMap<String, CachedKvClient<KvC::KvClient>>>>,
     enable_codec: bool,
     region_cache: RegionCache<RetryClient<Cl>>,
+}
+
+#[derive(Clone)]
+struct CachedKvClient<Client> {
+    cache_key: Option<u64>,
+    client: Client,
 }
 
 #[async_trait]
@@ -338,21 +344,22 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
     }
 
     async fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
-        let cache_connections = self.kv_connect.cache_connections();
-        if cache_connections {
-            if let Some(client) = self.kv_client_cache.read().await.get(address) {
-                return Ok(client.clone());
+        let cache_key = self.kv_connect.connection_cache_key()?;
+        if let Some(cached) = self.kv_client_cache.read().await.get(address) {
+            if cached.cache_key == cache_key {
+                return Ok(cached.client.clone());
             }
         };
         info!("connect to tikv endpoint: {:?}", address);
         match self.kv_connect.connect(address).await {
             Ok(client) => {
-                if cache_connections {
-                    self.kv_client_cache
-                        .write()
-                        .await
-                        .insert(address.to_owned(), client.clone());
-                }
+                self.kv_client_cache.write().await.insert(
+                    address.to_owned(),
+                    CachedKvClient {
+                        cache_key,
+                        client: client.clone(),
+                    },
+                );
                 Ok(client)
             }
             Err(e) => Err(e),
@@ -397,7 +404,7 @@ pub mod test {
     }
 
     #[tokio::test]
-    async fn test_kv_client_reloadable_connections_are_not_cached() {
+    async fn test_kv_client_cache_hits_when_key_is_stable() {
         #[derive(Clone)]
         struct CountingConnect {
             connects: Arc<AtomicUsize>,
@@ -414,8 +421,8 @@ pub mod test {
                 Ok(client)
             }
 
-            fn cache_connections(&self) -> bool {
-                false
+            fn connection_cache_key(&self) -> Result<Option<u64>> {
+                Ok(Some(0))
             }
         }
 
@@ -439,6 +446,60 @@ pub mod test {
         .unwrap();
 
         let kv1 = client.kv_client("foo").await.unwrap();
+        let kv2 = client.kv_client("foo").await.unwrap();
+        assert_eq!(kv1.addr, "foo");
+        assert_eq!(kv2.addr, "foo");
+        assert_eq!(connects.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_kv_client_cache_invalidate_on_key_change() {
+        #[derive(Clone)]
+        struct CountingConnect {
+            connects: Arc<AtomicUsize>,
+            cache_key: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl KvConnect for CountingConnect {
+            type KvClient = MockKvClient;
+
+            async fn connect(&self, address: &str) -> Result<Self::KvClient> {
+                self.connects.fetch_add(1, Ordering::SeqCst);
+                let mut client = MockKvClient::default();
+                client.addr = address.to_owned();
+                Ok(client)
+            }
+
+            fn connection_cache_key(&self) -> Result<Option<u64>> {
+                Ok(Some(self.cache_key.load(Ordering::SeqCst) as u64))
+            }
+        }
+
+        let connects = Arc::new(AtomicUsize::new(0));
+        let cache_key = Arc::new(AtomicUsize::new(1));
+        let connects_clone = connects.clone();
+        let cache_key_clone = cache_key.clone();
+        let client = PdRpcClient::new(
+            Config::default(),
+            move |_| CountingConnect {
+                connects: connects_clone.clone(),
+                cache_key: cache_key_clone.clone(),
+            },
+            |sm| async move {
+                Ok(RetryClient::new_with_cluster(
+                    sm,
+                    Config::default().timeout,
+                    MockCluster,
+                ))
+            },
+            false,
+        )
+        .await
+        .unwrap();
+
+        let kv1 = client.kv_client("foo").await.unwrap();
+        cache_key.store(2, Ordering::SeqCst);
         let kv2 = client.kv_client("foo").await.unwrap();
         assert_eq!(kv1.addr, "foo");
         assert_eq!(kv2.addr, "foo");
