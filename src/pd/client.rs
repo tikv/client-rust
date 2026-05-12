@@ -344,22 +344,26 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
     }
 
     async fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
-        let cache_key = self.kv_connect.connection_cache_key()?;
-        if let Some(cached) = self.kv_client_cache.read().await.get(address) {
-            if cached.cache_key == cache_key {
-                return Ok(cached.client.clone());
+        let cache_key = self.kv_connect.connection_cache_key().await;
+        if let Ok(cache_key) = cache_key {
+            if let Some(cached) = self.kv_client_cache.read().await.get(address) {
+                if cached.cache_key == cache_key {
+                    return Ok(cached.client.clone());
+                }
             }
         }
         info!("connect to tikv endpoint: {:?}", address);
         match self.kv_connect.connect(address).await {
             Ok(client) => {
-                self.kv_client_cache.write().await.insert(
-                    address.to_owned(),
-                    CachedKvClient {
-                        cache_key,
-                        client: client.clone(),
-                    },
-                );
+                if let Ok(cache_key) = cache_key {
+                    self.kv_client_cache.write().await.insert(
+                        address.to_owned(),
+                        CachedKvClient {
+                            cache_key,
+                            client: client.clone(),
+                        },
+                    );
+                }
                 Ok(client)
             }
             Err(e) => Err(e),
@@ -421,7 +425,7 @@ pub mod test {
                 Ok(client)
             }
 
-            fn connection_cache_key(&self) -> Result<Option<u64>> {
+            async fn connection_cache_key(&self) -> Result<Option<u64>> {
                 Ok(Some(0))
             }
         }
@@ -471,7 +475,7 @@ pub mod test {
                 Ok(client)
             }
 
-            fn connection_cache_key(&self) -> Result<Option<u64>> {
+            async fn connection_cache_key(&self) -> Result<Option<u64>> {
                 Ok(Some(self.cache_key.load(Ordering::SeqCst) as u64))
             }
         }
