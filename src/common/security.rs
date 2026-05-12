@@ -219,19 +219,25 @@ mod tests {
         let first = mgr.load_tls_materials().unwrap();
         let key1 = mgr.connection_cache_key().unwrap();
 
-        File::create(&example_ca).unwrap().write_all(&[9]).unwrap();
+        File::create(&example_ca)
+            .unwrap()
+            .write_all(&[9, 9])
+            .unwrap();
         File::create(&example_cert)
             .unwrap()
-            .write_all(&[8])
+            .write_all(&[8, 8, 8])
             .unwrap();
-        File::create(&example_pem).unwrap().write_all(&[7]).unwrap();
+        File::create(&example_pem)
+            .unwrap()
+            .write_all(&[7, 7, 7, 7])
+            .unwrap();
 
         let second = mgr.load_tls_materials().unwrap();
         let key2 = mgr.connection_cache_key().unwrap();
         assert_ne!(first, second);
-        assert_eq!(second.0, vec![9]);
-        assert_eq!(second.1, vec![8]);
-        assert_eq!(second.2, vec![7]);
+        assert_eq!(second.0, vec![9, 9]);
+        assert_eq!(second.1, vec![8, 8, 8]);
+        assert_eq!(second.2, vec![7, 7, 7, 7]);
         assert_ne!(key1, key2);
     }
 }

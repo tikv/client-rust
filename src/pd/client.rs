@@ -349,7 +349,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             if cached.cache_key == cache_key {
                 return Ok(cached.client.clone());
             }
-        };
+        }
         info!("connect to tikv endpoint: {:?}", address);
         match self.kv_connect.connect(address).await {
             Ok(client) => {
