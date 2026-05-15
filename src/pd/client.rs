@@ -214,15 +214,9 @@ pub trait PdClient: Send + Sync + 'static {
 pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl = Cluster> {
     pd: Arc<RetryClient<Cl>>,
     kv_connect: KvC,
-    kv_client_cache: Arc<RwLock<HashMap<String, CachedKvClient<KvC::KvClient>>>>,
+    kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
     enable_codec: bool,
     region_cache: RegionCache<RetryClient<Cl>>,
-}
-
-#[derive(Clone)]
-struct CachedKvClient<Client> {
-    cache_key: Option<u64>,
-    client: Client,
 }
 
 #[async_trait]
@@ -280,7 +274,10 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     }
 
     async fn invalidate_store_cache(&self, store_id: StoreId) {
-        self.region_cache.invalidate_store_cache(store_id).await
+        let store = self.region_cache.invalidate_store_cache(store_id).await;
+        if let Some(store) = store {
+            self.invalidate_kv_client_cache(&store.address).await;
+        }
     }
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
@@ -344,30 +341,24 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
     }
 
     async fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
-        let cache_key = self.kv_connect.connection_cache_key().await;
-        if let Ok(cache_key) = cache_key {
-            if let Some(cached) = self.kv_client_cache.read().await.get(address) {
-                if cached.cache_key == cache_key {
-                    return Ok(cached.client.clone());
-                }
-            }
+        if let Some(cached) = self.kv_client_cache.read().await.get(address) {
+            return Ok(cached.clone());
         }
         info!("connect to tikv endpoint: {:?}", address);
         match self.kv_connect.connect(address).await {
             Ok(client) => {
-                if let Ok(cache_key) = cache_key {
-                    self.kv_client_cache.write().await.insert(
-                        address.to_owned(),
-                        CachedKvClient {
-                            cache_key,
-                            client: client.clone(),
-                        },
-                    );
-                }
+                self.kv_client_cache.write().await.insert(
+                    address.to_owned(),
+                    client.clone(),
+                );
                 Ok(client)
             }
             Err(e) => Err(e),
         }
+    }
+
+    async fn invalidate_kv_client_cache(&self, address: &str) {
+        self.kv_client_cache.write().await.remove(address);
     }
 }
 
@@ -397,18 +388,15 @@ pub mod test {
     async fn test_kv_client_caching() {
         let client = block_on(pd_rpc_client());
 
-        let addr1 = "foo";
-        let addr2 = "bar";
-
-        let kv1 = client.kv_client(addr1).await.unwrap();
-        let kv2 = client.kv_client(addr2).await.unwrap();
-        let kv3 = client.kv_client(addr2).await.unwrap();
+        let kv1 = client.kv_client("foo").await.unwrap();
+        let kv2 = client.kv_client("bar").await.unwrap();
+        let kv3 = client.kv_client("bar").await.unwrap();
         assert!(kv1.addr != kv2.addr);
         assert_eq!(kv2.addr, kv3.addr);
     }
 
     #[tokio::test]
-    async fn test_kv_client_cache_hits_when_key_is_stable() {
+    async fn test_kv_client_cache_hits_lazily() {
         #[derive(Clone)]
         struct CountingConnect {
             connects: Arc<AtomicUsize>,
@@ -423,10 +411,6 @@ pub mod test {
                 let mut client = MockKvClient::default();
                 client.addr = address.to_owned();
                 Ok(client)
-            }
-
-            async fn connection_cache_key(&self) -> Result<Option<u64>> {
-                Ok(Some(0))
             }
         }
 
@@ -457,11 +441,10 @@ pub mod test {
     }
 
     #[tokio::test]
-    async fn test_kv_client_cache_invalidate_on_key_change() {
+    async fn test_kv_client_cache_reconnects_after_invalidation() {
         #[derive(Clone)]
         struct CountingConnect {
             connects: Arc<AtomicUsize>,
-            cache_key: Arc<AtomicUsize>,
         }
 
         #[async_trait]
@@ -474,21 +457,14 @@ pub mod test {
                 client.addr = address.to_owned();
                 Ok(client)
             }
-
-            async fn connection_cache_key(&self) -> Result<Option<u64>> {
-                Ok(Some(self.cache_key.load(Ordering::SeqCst) as u64))
-            }
         }
 
         let connects = Arc::new(AtomicUsize::new(0));
-        let cache_key = Arc::new(AtomicUsize::new(1));
         let connects_clone = connects.clone();
-        let cache_key_clone = cache_key.clone();
         let client = PdRpcClient::new(
             Config::default(),
             move |_| CountingConnect {
                 connects: connects_clone.clone(),
-                cache_key: cache_key_clone.clone(),
             },
             |sm| async move {
                 Ok(RetryClient::new_with_cluster(
@@ -503,7 +479,7 @@ pub mod test {
         .unwrap();
 
         let kv1 = client.kv_client("foo").await.unwrap();
-        cache_key.store(2, Ordering::SeqCst);
+        client.invalidate_kv_client_cache("foo").await;
         let kv2 = client.kv_client("foo").await.unwrap();
         assert_eq!(kv1.addr, "foo");
         assert_eq!(kv2.addr, "foo");
