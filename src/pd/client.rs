@@ -347,10 +347,10 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         info!("connect to tikv endpoint: {:?}", address);
         match self.kv_connect.connect(address).await {
             Ok(client) => {
-                self.kv_client_cache.write().await.insert(
-                    address.to_owned(),
-                    client.clone(),
-                );
+                self.kv_client_cache
+                    .write()
+                    .await
+                    .insert(address.to_owned(), client.clone());
                 Ok(client)
             }
             Err(e) => Err(e),

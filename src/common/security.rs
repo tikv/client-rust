@@ -97,7 +97,7 @@ impl SecurityManager {
     }
 
     async fn tls_channel(&self, addr: &str) -> Result<Endpoint> {
-        let (ca, cert, key) = self.load_tls_materials()?;
+        let (ca, cert, key) = self.load_tls_materials().await?;
         let addr = "https://".to_string() + &SCHEME_REG.replace(addr, "");
         let builder = self.endpoint(addr.to_string())?;
         let tls = ClientTlsConfig::new()
@@ -107,25 +107,30 @@ impl SecurityManager {
         Ok(builder)
     }
 
-    fn load_tls_materials(&self) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    async fn load_tls_materials(&self) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
         let ca_path = self
             .ca_path
-            .as_ref()
+            .clone()
             .ok_or_else(|| internal_err!("TLS is not configured"))?;
         let cert_path = self
             .cert_path
-            .as_ref()
+            .clone()
             .ok_or_else(|| internal_err!("TLS is not configured"))?;
         let key_path = self
             .key_path
-            .as_ref()
+            .clone()
             .ok_or_else(|| internal_err!("TLS is not configured"))?;
 
-        Ok((
-            load_pem_file("ca", ca_path)?,
-            load_pem_file("certificate", cert_path)?,
-            load_pem_file("private key", key_path)?,
-        ))
+        let materials =
+            tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+                Ok((
+                    load_pem_file("ca", &ca_path)?,
+                    load_pem_file("certificate", &cert_path)?,
+                    load_pem_file("private key", &key_path)?,
+                ))
+            })
+            .await??;
+        Ok(materials)
     }
 
     async fn default_channel(&self, addr: &str) -> Result<Endpoint> {
@@ -151,8 +156,8 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_security() {
+    #[tokio::test]
+    async fn test_security() {
         let temp = tempfile::tempdir().unwrap();
         let example_ca = temp.path().join("ca");
         let example_cert = temp.path().join("cert");
@@ -168,14 +173,14 @@ mod tests {
         let ca_path: PathBuf = format!("{}", example_ca.display()).into();
         let mgr = SecurityManager::load(ca_path, cert_path, &key_path).unwrap();
         assert!(mgr.tls_configured());
-        let (ca, cert, key) = mgr.load_tls_materials().unwrap();
+        let (ca, cert, key) = mgr.load_tls_materials().await.unwrap();
         assert_eq!(ca, vec![0]);
         assert_eq!(cert, vec![1]);
         assert_eq!(key, vec![2]);
     }
 
-    #[test]
-    fn test_security_reload() {
+    #[tokio::test]
+    async fn test_security_reload() {
         let temp = tempfile::tempdir().unwrap();
         let example_ca = temp.path().join("ca");
         let example_cert = temp.path().join("cert");
@@ -188,7 +193,7 @@ mod tests {
         }
 
         let mgr = SecurityManager::load(&example_ca, &example_cert, &example_pem).unwrap();
-        let first = mgr.load_tls_materials().unwrap();
+        let first = mgr.load_tls_materials().await.unwrap();
 
         File::create(&example_ca)
             .unwrap()
@@ -203,7 +208,7 @@ mod tests {
             .write_all(&[7, 7, 7, 7])
             .unwrap();
 
-        let second = mgr.load_tls_materials().unwrap();
+        let second = mgr.load_tls_materials().await.unwrap();
         assert_ne!(first, second);
         assert_eq!(second.0, vec![9, 9]);
         assert_eq!(second.1, vec![8, 8, 8]);

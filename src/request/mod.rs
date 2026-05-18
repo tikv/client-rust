@@ -594,7 +594,8 @@ mod test {
             invalidate_store_count: AtomicUsize::new(0),
         });
 
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, MockKvRequest)
+        let plan =
+            crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, MockKvRequest)
                 .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 1))
                 .plan();
         let response = plan.execute().await;
