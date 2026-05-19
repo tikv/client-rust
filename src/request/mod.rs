@@ -90,21 +90,25 @@ impl RetryOptions {
 mod test {
     use std::any::Any;
     use std::iter;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
 
+    use async_trait::async_trait;
     use tonic::transport::Channel;
 
     use super::*;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
+    use crate::proto::keyspacepb;
     use crate::proto::kvrpcpb;
+    use crate::proto::metapb::{self, RegionEpoch};
     use crate::proto::pdpb::Timestamp;
     use crate::proto::tikvpb::tikv_client::TikvClient;
-    use crate::region::RegionWithLeader;
+    use crate::region::{RegionId, RegionVerId, RegionWithLeader, StoreId};
     use crate::store::region_stream_for_keys;
     use crate::store::HasRegionError;
+    use crate::store::{RegionStore, Store};
     use crate::transaction::lowering::new_commit_request;
     use crate::Error;
     use crate::Key;
@@ -207,6 +211,196 @@ mod test {
     }
 
     #[tokio::test]
+    async fn test_region_store_mapping_retry() {
+        #[derive(Debug, Clone)]
+        struct MockOkResponse;
+
+        impl HasKeyErrors for MockOkResponse {
+            fn key_errors(&mut self) -> Option<Vec<Error>> {
+                None
+            }
+        }
+
+        impl HasRegionError for MockOkResponse {
+            fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
+                None
+            }
+        }
+
+        impl HasLocks for MockOkResponse {}
+
+        struct FlakyStoreMappingPdClient {
+            client: MockKvClient,
+            invalidated: AtomicBool,
+            invalidation_count: AtomicUsize,
+        }
+
+        impl FlakyStoreMappingPdClient {
+            fn region(store_id: StoreId) -> RegionWithLeader {
+                let mut region = RegionWithLeader::default();
+                region.region.id = 1;
+                region.region.start_key = vec![];
+                region.region.end_key = vec![];
+                region.region.region_epoch = Some(RegionEpoch {
+                    conf_ver: 0,
+                    version: 0,
+                });
+                region.leader = Some(metapb::Peer {
+                    store_id,
+                    ..Default::default()
+                });
+                region
+            }
+        }
+
+        #[async_trait]
+        impl crate::pd::PdClient for FlakyStoreMappingPdClient {
+            type KvClient = MockKvClient;
+
+            async fn map_region_to_store(
+                self: Arc<Self>,
+                region: RegionWithLeader,
+            ) -> Result<RegionStore> {
+                match region.get_store_id()? {
+                    41 => Err(Error::InternalError {
+                        message: "invalid store ID 41, not found".to_owned(),
+                    }),
+                    _ => Ok(RegionStore::new(region, Arc::new(self.client.clone()))),
+                }
+            }
+
+            async fn region_for_key(&self, _: &Key) -> Result<RegionWithLeader> {
+                let store_id = if self.invalidated.load(Ordering::SeqCst) {
+                    42
+                } else {
+                    41
+                };
+                Ok(Self::region(store_id))
+            }
+
+            async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {
+                match id {
+                    1 => self.region_for_key(&Key::EMPTY).await,
+                    _ => Err(Error::RegionNotFoundInResponse { region_id: id }),
+                }
+            }
+
+            async fn all_stores(&self) -> Result<Vec<Store>> {
+                Ok(vec![Store::new(Arc::new(self.client.clone()))])
+            }
+
+            async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
+                Ok(Timestamp::default())
+            }
+
+            async fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> Result<bool> {
+                unimplemented!()
+            }
+
+            async fn load_keyspace(&self, _keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
+                unimplemented!()
+            }
+
+            async fn update_leader(
+                &self,
+                _ver_id: RegionVerId,
+                _leader: metapb::Peer,
+            ) -> Result<()> {
+                Ok(())
+            }
+
+            async fn invalidate_region_cache(&self, _ver_id: RegionVerId) {
+                self.invalidated.store(true, Ordering::SeqCst);
+                self.invalidation_count.fetch_add(1, Ordering::SeqCst);
+            }
+
+            async fn invalidate_store_cache(&self, _store_id: StoreId) {}
+        }
+
+        #[derive(Clone)]
+        struct MockKvRequest {
+            shard_invoking_count: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl Request for MockKvRequest {
+            async fn dispatch(&self, _: &TikvClient<Channel>, _: Duration) -> Result<Box<dyn Any>> {
+                Ok(Box::new(MockOkResponse))
+            }
+
+            fn label(&self) -> &'static str {
+                "mock"
+            }
+
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
+
+            fn set_leader(&mut self, _: &RegionWithLeader) -> Result<()> {
+                Ok(())
+            }
+
+            fn set_api_version(&mut self, _: kvrpcpb::ApiVersion) {}
+        }
+
+        #[async_trait]
+        impl KvRequest for MockKvRequest {
+            type Response = MockOkResponse;
+        }
+
+        impl Shardable for MockKvRequest {
+            type Shard = Vec<Vec<u8>>;
+
+            fn shards(
+                &self,
+                pd_client: &Arc<impl crate::pd::PdClient>,
+            ) -> futures::stream::BoxStream<
+                'static,
+                crate::Result<(Self::Shard, crate::region::RegionWithLeader)>,
+            > {
+                self.shard_invoking_count.fetch_add(1, Ordering::SeqCst);
+                region_stream_for_keys(
+                    Some(Key::from("mock_key".to_owned())).into_iter(),
+                    pd_client.clone(),
+                )
+            }
+
+            fn apply_shard(&mut self, _shard: Self::Shard) {}
+
+            fn apply_store(&mut self, _store: &crate::store::RegionStore) -> crate::Result<()> {
+                Ok(())
+            }
+        }
+
+        let dispatch_count = Arc::new(AtomicUsize::new(0));
+        let shard_invoking_count = Arc::new(AtomicUsize::new(0));
+        let dispatch_count_clone = dispatch_count.clone();
+
+        let pd_client = Arc::new(FlakyStoreMappingPdClient {
+            client: MockKvClient::with_dispatch_hook(move |_: &dyn Any| {
+                dispatch_count_clone.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::new(MockOkResponse) as Box<dyn Any>)
+            }),
+            invalidated: AtomicBool::new(false),
+            invalidation_count: AtomicUsize::new(0),
+        });
+
+        let request = MockKvRequest {
+            shard_invoking_count: shard_invoking_count.clone(),
+        };
+
+        let plan = crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, request)
+            .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
+            .plan();
+
+        let response = plan.execute().await;
+        assert!(response.is_ok());
+        assert_eq!(dispatch_count.load(Ordering::SeqCst), 1);
+        assert_eq!(shard_invoking_count.load(Ordering::SeqCst), 2);
+        assert_eq!(pd_client.invalidation_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn test_extract_error() {
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |_: &dyn Any| {
@@ -233,5 +427,180 @@ mod test {
             .extract_error()
             .plan();
         assert!(plan.execute().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_grpc_error_invalidates_store_cache() {
+        #[derive(Debug, Clone)]
+        struct MockOkResponse;
+
+        impl HasKeyErrors for MockOkResponse {
+            fn key_errors(&mut self) -> Option<Vec<Error>> {
+                None
+            }
+        }
+
+        impl HasRegionError for MockOkResponse {
+            fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
+                None
+            }
+        }
+
+        impl HasLocks for MockOkResponse {}
+
+        struct InvalidationTrackingPdClient {
+            client: MockKvClient,
+            invalidate_region_count: AtomicUsize,
+            invalidate_store_count: AtomicUsize,
+        }
+
+        impl InvalidationTrackingPdClient {
+            fn region() -> RegionWithLeader {
+                let mut region = RegionWithLeader::default();
+                region.region.id = 1;
+                region.region.start_key = vec![];
+                region.region.end_key = vec![];
+                region.region.region_epoch = Some(RegionEpoch {
+                    conf_ver: 0,
+                    version: 0,
+                });
+                region.leader = Some(metapb::Peer {
+                    store_id: 41,
+                    ..Default::default()
+                });
+                region
+            }
+        }
+
+        #[async_trait]
+        impl crate::pd::PdClient for InvalidationTrackingPdClient {
+            type KvClient = MockKvClient;
+
+            async fn map_region_to_store(
+                self: Arc<Self>,
+                region: RegionWithLeader,
+            ) -> Result<RegionStore> {
+                Ok(RegionStore::new(region, Arc::new(self.client.clone())))
+            }
+
+            async fn region_for_key(&self, _: &Key) -> Result<RegionWithLeader> {
+                Ok(Self::region())
+            }
+
+            async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {
+                match id {
+                    1 => Ok(Self::region()),
+                    _ => Err(Error::RegionNotFoundInResponse { region_id: id }),
+                }
+            }
+
+            async fn all_stores(&self) -> Result<Vec<Store>> {
+                Ok(vec![Store::new(Arc::new(self.client.clone()))])
+            }
+
+            async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
+                Ok(Timestamp::default())
+            }
+
+            async fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> Result<bool> {
+                unimplemented!()
+            }
+
+            async fn load_keyspace(&self, _keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
+                unimplemented!()
+            }
+
+            async fn update_leader(
+                &self,
+                _ver_id: RegionVerId,
+                _leader: metapb::Peer,
+            ) -> Result<()> {
+                Ok(())
+            }
+
+            async fn invalidate_region_cache(&self, _ver_id: RegionVerId) {
+                self.invalidate_region_count.fetch_add(1, Ordering::SeqCst);
+            }
+
+            async fn invalidate_store_cache(&self, _store_id: StoreId) {
+                self.invalidate_store_count.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        #[derive(Clone)]
+        struct MockKvRequest;
+
+        #[async_trait]
+        impl Request for MockKvRequest {
+            async fn dispatch(&self, _: &TikvClient<Channel>, _: Duration) -> Result<Box<dyn Any>> {
+                Ok(Box::new(MockOkResponse))
+            }
+
+            fn label(&self) -> &'static str {
+                "mock"
+            }
+
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
+
+            fn set_leader(&mut self, _: &RegionWithLeader) -> Result<()> {
+                Ok(())
+            }
+
+            fn set_api_version(&mut self, _: kvrpcpb::ApiVersion) {}
+        }
+
+        #[async_trait]
+        impl KvRequest for MockKvRequest {
+            type Response = MockOkResponse;
+        }
+
+        impl Shardable for MockKvRequest {
+            type Shard = Vec<Vec<u8>>;
+
+            fn shards(
+                &self,
+                pd_client: &Arc<impl crate::pd::PdClient>,
+            ) -> futures::stream::BoxStream<
+                'static,
+                crate::Result<(Self::Shard, crate::region::RegionWithLeader)>,
+            > {
+                region_stream_for_keys(
+                    Some(Key::from("mock_key".to_owned())).into_iter(),
+                    pd_client.clone(),
+                )
+            }
+
+            fn apply_shard(&mut self, _shard: Self::Shard) {}
+
+            fn apply_store(&mut self, _store: &crate::store::RegionStore) -> crate::Result<()> {
+                Ok(())
+            }
+        }
+
+        let fail_first_dispatch = Arc::new(AtomicBool::new(true));
+        let pd_client = Arc::new(InvalidationTrackingPdClient {
+            client: MockKvClient::with_dispatch_hook(move |_: &dyn Any| {
+                if fail_first_dispatch.swap(false, Ordering::SeqCst) {
+                    Err(Error::GrpcAPI(tonic::Status::unavailable(
+                        "transient failure",
+                    )))
+                } else {
+                    Ok(Box::new(MockOkResponse) as Box<dyn Any>)
+                }
+            }),
+            invalidate_region_count: AtomicUsize::new(0),
+            invalidate_store_count: AtomicUsize::new(0),
+        });
+
+        let plan =
+            crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, MockKvRequest)
+                .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 1))
+                .plan();
+        let response = plan.execute().await;
+        assert!(response.is_ok());
+        assert_eq!(pd_client.invalidate_region_count.load(Ordering::SeqCst), 1);
+        assert_eq!(pd_client.invalidate_store_count.load(Ordering::SeqCst), 1);
     }
 }

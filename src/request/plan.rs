@@ -163,6 +163,8 @@ where
         preserve_region_results: bool,
     ) -> Result<<Self as Plan>::Result> {
         debug!("single_shard_handler");
+        let region_ver_id = region.ver_id();
+        let store_id = region.get_store_id().ok();
         let region_store = match pd_client
             .clone()
             .map_region_to_store(region)
@@ -172,26 +174,19 @@ where
                 Ok(region_store)
             }) {
             Ok(region_store) => region_store,
-            Err(Error::LeaderNotFound { region }) => {
-                debug!(
-                    "single_shard_handler::sharding: leader not found: {:?}",
-                    region
-                );
+            Err(err) => {
+                debug!("single_shard_handler::sharding, error: {:?}", err);
                 return Self::handle_other_error(
                     pd_client,
                     plan,
-                    region.clone(),
-                    None,
+                    region_ver_id,
+                    store_id,
                     backoff,
                     permits,
                     preserve_region_results,
-                    Error::LeaderNotFound { region },
+                    err,
                 )
                 .await;
-            }
-            Err(err) => {
-                debug!("single_shard_handler::sharding, error: {:?}", err);
-                return Err(err);
             }
         };
 
