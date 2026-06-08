@@ -233,9 +233,9 @@ impl<C: RetryClientTrait> RegionCache<C> {
         }
     }
 
-    pub async fn invalidate_store_cache(&self, store_id: StoreId) {
+    pub async fn invalidate_store_cache(&self, store_id: StoreId) -> Option<Store> {
         let mut cache = self.store_cache.write().await;
-        cache.remove(&store_id);
+        cache.remove(&store_id)
     }
 
     pub async fn read_through_all_stores(&self) -> Result<Vec<Store>> {
