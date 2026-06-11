@@ -17,10 +17,8 @@ option (rustproto.lite_runtime_all) = true;
 
 service TSO {
   rpc Tso(stream TsoRequest) returns (stream TsoResponse) {}
-  // Find the keyspace group that the keyspace belongs to by keyspace id.
+  // Find the keyspace group that the keyspace belongs to.
   rpc FindGroupByKeyspaceID(FindGroupByKeyspaceIDRequest) returns (FindGroupByKeyspaceIDResponse) {}
-  // Find the keyspace group that the keyspace belongs to by V3 keyspace identity.
-  rpc FindGroupByKeyspace(FindGroupByKeyspaceRequest) returns (FindGroupByKeyspaceResponse) {}
   // Get the minimum timestamp across all keyspace groups served by the TSO server who receives
   // and handle the request. If the TSO server/pod is not serving any keyspace group, return
   // an empty timestamp, and the client needs to skip the empty timestamps when collecting
@@ -122,25 +120,16 @@ message KeyspaceGroup {
 
 message FindGroupByKeyspaceIDRequest {
   RequestHeader header = 1;
-  // V1/V2 compatibility keyspace id. V3 should use FindGroupByKeyspaceRequest.keyspace_identity.
-  uint32 keyspace_id = 2;
+  oneof keyspace {
+    // V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+    uint32 keyspace_id = 2;
+    // V3 keyspace identity.
+    apipb.KeyspaceIdentity keyspace_identity = 4;
+  }
   uint64 mod_revision = 3;
 }
 
 message FindGroupByKeyspaceIDResponse {
-  ResponseHeader header = 1;
-  KeyspaceGroup keyspace_group = 2;
-  uint64 mod_revision = 3;
-}
-
-message FindGroupByKeyspaceRequest {
-  RequestHeader header = 1;
-  // V3 keyspace identity.
-  apipb.KeyspaceIdentity keyspace_identity = 2;
-  uint64 mod_revision = 3;
-}
-
-message FindGroupByKeyspaceResponse {
   ResponseHeader header = 1;
   KeyspaceGroup keyspace_group = 2;
   uint64 mod_revision = 3;

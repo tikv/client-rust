@@ -135,36 +135,27 @@ pub struct KeyspaceGroup {
 pub struct FindGroupByKeyspaceIdRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
-    /// V1/V2 compatibility keyspace id. V3 should use FindGroupByKeyspaceRequest.keyspace_identity.
-    #[prost(uint32, tag = "2")]
-    pub keyspace_id: u32,
     #[prost(uint64, tag = "3")]
     pub mod_revision: u64,
+    #[prost(oneof = "find_group_by_keyspace_id_request::Keyspace", tags = "2, 4")]
+    pub keyspace: ::core::option::Option<find_group_by_keyspace_id_request::Keyspace>,
+}
+/// Nested message and enum types in `FindGroupByKeyspaceIDRequest`.
+pub mod find_group_by_keyspace_id_request {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "4")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FindGroupByKeyspaceIdResponse {
-    #[prost(message, optional, tag = "1")]
-    pub header: ::core::option::Option<ResponseHeader>,
-    #[prost(message, optional, tag = "2")]
-    pub keyspace_group: ::core::option::Option<KeyspaceGroup>,
-    #[prost(uint64, tag = "3")]
-    pub mod_revision: u64,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct FindGroupByKeyspaceRequest {
-    #[prost(message, optional, tag = "1")]
-    pub header: ::core::option::Option<RequestHeader>,
-    /// V3 keyspace identity.
-    #[prost(message, optional, tag = "2")]
-    pub keyspace_identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
-    #[prost(uint64, tag = "3")]
-    pub mod_revision: u64,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct FindGroupByKeyspaceResponse {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(message, optional, tag = "2")]
@@ -339,7 +330,7 @@ pub mod tso_client {
             req.extensions_mut().insert(GrpcMethod::new("tsopb.TSO", "Tso"));
             self.inner.streaming(req, path, codec).await
         }
-        /// Find the keyspace group that the keyspace belongs to by keyspace id.
+        /// Find the keyspace group that the keyspace belongs to.
         pub async fn find_group_by_keyspace_id(
             &mut self,
             request: impl tonic::IntoRequest<super::FindGroupByKeyspaceIdRequest>,
@@ -363,32 +354,6 @@ pub mod tso_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("tsopb.TSO", "FindGroupByKeyspaceID"));
-            self.inner.unary(req, path, codec).await
-        }
-        /// Find the keyspace group that the keyspace belongs to by V3 keyspace identity.
-        pub async fn find_group_by_keyspace(
-            &mut self,
-            request: impl tonic::IntoRequest<super::FindGroupByKeyspaceRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::FindGroupByKeyspaceResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/tsopb.TSO/FindGroupByKeyspace",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("tsopb.TSO", "FindGroupByKeyspace"));
             self.inner.unary(req, path, codec).await
         }
         /// Get the minimum timestamp across all keyspace groups served by the TSO server who receives
