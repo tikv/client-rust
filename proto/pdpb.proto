@@ -1027,8 +1027,6 @@ message GetGCSafePointV2Response {
   ResponseHeader header = 1;
 
   uint64 safe_point = 2;
-  // V3 keyspace identity served by this response.
-  apipb.KeyspaceIdentity keyspace_identity = 3;
 }
 
 message WatchGCSafePointV2Request {
@@ -1070,8 +1068,6 @@ message UpdateGCSafePointV2Response {
   ResponseHeader header = 1;
 
   uint64 new_safe_point = 2;
-  // V3 keyspace identity served by this response.
-  apipb.KeyspaceIdentity keyspace_identity = 3;
 }
 
 message UpdateServiceSafePointV2Request {

@@ -1232,9 +1232,6 @@ pub struct GetGcSafePointV2Response {
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(uint64, tag = "2")]
     pub safe_point: u64,
-    /// V3 keyspace identity served by this response.
-    #[prost(message, optional, tag = "3")]
-    pub keyspace_identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1308,9 +1305,6 @@ pub struct UpdateGcSafePointV2Response {
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(uint64, tag = "2")]
     pub new_safe_point: u64,
-    /// V3 keyspace identity served by this response.
-    #[prost(message, optional, tag = "3")]
-    pub keyspace_identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
