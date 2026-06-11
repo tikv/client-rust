@@ -1349,9 +1349,6 @@ pub struct UpdateServiceSafePointV2Response {
     pub ttl: i64,
     #[prost(uint64, tag = "4")]
     pub min_safe_point: u64,
-    /// V3 keyspace identity served by this response.
-    #[prost(message, optional, tag = "5")]
-    pub keyspace_identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

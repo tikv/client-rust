@@ -1095,8 +1095,6 @@ message UpdateServiceSafePointV2Response {
   bytes service_id = 2;
   int64 ttl = 3;
   uint64 min_safe_point = 4;
-  // V3 keyspace identity served by this response.
-  apipb.KeyspaceIdentity keyspace_identity = 5;
 }
 
 message GetAllGCSafePointV2Request {
