@@ -934,28 +934,16 @@ pub struct DfsStatScope {
     /// When true, the statistic is not tied to any keyspace.
     #[prost(bool, tag = "1")]
     pub is_global: bool,
+    /// The keyspace of this statistic. Ignore when is_global is true.
+    /// NOTE: This field is only meaningful for V1/V2 compatibility. V3 should use keyspace_identities.
+    #[prost(uint32, tag = "2")]
+    pub keyspace_id: u32,
     /// The component that provides the statistic.
     #[prost(string, tag = "3")]
     pub component: ::prost::alloc::string::String,
     /// V3 multi-keyspace statistic scope. Ignore when is_global is true.
-    #[prost(message, repeated, tag = "5")]
+    #[prost(message, repeated, tag = "4")]
     pub keyspace_identities: ::prost::alloc::vec::Vec<super::apipb::KeyspaceIdentity>,
-    #[prost(oneof = "dfs_stat_scope::Keyspace", tags = "2, 4")]
-    pub keyspace: ::core::option::Option<dfs_stat_scope::Keyspace>,
-}
-/// Nested message and enum types in `DfsStatScope`.
-pub mod dfs_stat_scope {
-    #[allow(clippy::derive_partial_eq_without_eq)]
-    #[derive(Clone, PartialEq, ::prost::Oneof)]
-    pub enum Keyspace {
-        /// The keyspace of this statistic. Ignore when is_global is true.
-        /// NOTE: This field is only meaningful for V1/V2 compatibility. V3 should use keyspace_identity.
-        #[prost(uint32, tag = "2")]
-        KeyspaceId(u32),
-        /// V3 keyspace identity of this statistic. Ignore when is_global is true or keyspace_identities is set.
-        #[prost(message, tag = "4")]
-        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
-    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

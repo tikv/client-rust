@@ -822,17 +822,13 @@ message StoreStats {
 message DfsStatScope {
   // When true, the statistic is not tied to any keyspace.
   bool is_global = 1;
-  oneof keyspace {
-    // The keyspace of this statistic. Ignore when is_global is true.
-    // NOTE: This field is only meaningful for V1/V2 compatibility. V3 should use keyspace_identity.
-    uint32 keyspace_id = 2;
-    // V3 keyspace identity of this statistic. Ignore when is_global is true or keyspace_identities is set.
-    apipb.KeyspaceIdentity keyspace_identity = 4;
-  }
+  // The keyspace of this statistic. Ignore when is_global is true.
+  // NOTE: This field is only meaningful for V1/V2 compatibility. V3 should use keyspace_identities.
+  uint32 keyspace_id = 2;
   // The component that provides the statistic.
   string component = 3;
   // V3 multi-keyspace statistic scope. Ignore when is_global is true.
-  repeated apipb.KeyspaceIdentity keyspace_identities = 5;
+  repeated apipb.KeyspaceIdentity keyspace_identities = 4;
 }
 
 message DfsStatItem {
