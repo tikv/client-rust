@@ -33,15 +33,125 @@ pub mod keyspace_meta {
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NamespaceMeta {
+    #[prost(uint32, tag = "1")]
+    pub id: u32,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(enumeration = "KeyspaceState", tag = "3")]
+    pub state: i32,
+    #[prost(int64, tag = "4")]
+    pub created_at: i64,
+    #[prost(int64, tag = "5")]
+    pub state_changed_at: i64,
+    #[prost(map = "string, string", tag = "7")]
+    pub config: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NamespaceRef {
+    #[prost(oneof = "namespace_ref::Namespace", tags = "1, 2")]
+    pub namespace: ::core::option::Option<namespace_ref::Namespace>,
+}
+/// Nested message and enum types in `NamespaceRef`.
+pub mod namespace_ref {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Namespace {
+        /// API V3 namespace id.
+        #[prost(uint32, tag = "1")]
+        NamespaceId(u32),
+        /// API V3 namespace name.
+        #[prost(string, tag = "2")]
+        NamespaceName(::prost::alloc::string::String),
+    }
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateNamespaceRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(map = "string, string", tag = "3")]
+    pub config: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateNamespaceResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub namespace: ::core::option::Option<NamespaceMeta>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LoadNamespaceRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub namespace: ::core::option::Option<NamespaceRef>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LoadNamespaceResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub namespace: ::core::option::Option<NamespaceMeta>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetAllNamespacesRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(uint32, tag = "2")]
+    pub start_id: u32,
+    #[prost(uint32, tag = "3")]
+    pub limit: u32,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetAllNamespacesResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
+    #[prost(message, repeated, tag = "2")]
+    pub namespaces: ::prost::alloc::vec::Vec<NamespaceMeta>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateNamespaceStateRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub namespace: ::core::option::Option<NamespaceRef>,
+    #[prost(enumeration = "KeyspaceState", tag = "3")]
+    pub state: i32,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateNamespaceStateResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub namespace: ::core::option::Option<NamespaceMeta>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LoadKeyspaceRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
     #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
-    /// Optional namespace for namespace-scoped name lookup in V3.
-    /// If unset, V3 name-only lookup should use LookupKeyspace and may return multiple keyspaces.
-    #[prost(uint32, tag = "3")]
-    pub namespace_id: u32,
+    /// V3 namespace-scoped name lookup. If unset, V3 name-only lookup should use LookupKeyspace and may return multiple keyspaces.
+    #[prost(message, optional, tag = "3")]
+    pub namespace: ::core::option::Option<NamespaceRef>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -66,20 +176,6 @@ pub struct LookupKeyspaceResponse {
     pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
     #[prost(message, repeated, tag = "2")]
     pub keyspaces: ::prost::alloc::vec::Vec<KeyspaceMeta>,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AllocateNamespaceRequest {
-    #[prost(message, optional, tag = "1")]
-    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AllocateNamespaceResponse {
-    #[prost(message, optional, tag = "1")]
-    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
-    #[prost(uint32, tag = "2")]
-    pub namespace_id: u32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -133,9 +229,9 @@ pub struct GetAllKeyspacesRequest {
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
     #[prost(uint32, tag = "3")]
     pub limit: u32,
-    /// V3 namespace-limited pagination. Must be non-zero in V3.
-    #[prost(uint32, tag = "4")]
-    pub namespace_id: u32,
+    /// V3 namespace-scoped pagination. Must be non-zero in V3.
+    #[prost(message, optional, tag = "4")]
+    pub namespace: ::core::option::Option<NamespaceRef>,
     #[prost(oneof = "get_all_keyspaces_request::StartKeyspace", tags = "2, 5")]
     pub start_keyspace: ::core::option::Option<get_all_keyspaces_request::StartKeyspace>,
 }
@@ -278,6 +374,106 @@ pub mod keyspace_client {
             self.inner = self.inner.max_encoding_message_size(limit);
             self
         }
+        pub async fn create_namespace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateNamespaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Keyspace/CreateNamespace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Keyspace", "CreateNamespace"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn load_namespace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::LoadNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::LoadNamespaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Keyspace/LoadNamespace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Keyspace", "LoadNamespace"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_all_namespaces(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetAllNamespacesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetAllNamespacesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Keyspace/GetAllNamespaces",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Keyspace", "GetAllNamespaces"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn update_namespace_state(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateNamespaceStateRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpdateNamespaceStateResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Keyspace/UpdateNamespaceState",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Keyspace", "UpdateNamespaceState"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn load_keyspace(
             &mut self,
             request: impl tonic::IntoRequest<super::LoadKeyspaceRequest>,
@@ -326,31 +522,6 @@ pub mod keyspace_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("keyspacepb.Keyspace", "LookupKeyspace"));
-            self.inner.unary(req, path, codec).await
-        }
-        pub async fn allocate_namespace(
-            &mut self,
-            request: impl tonic::IntoRequest<super::AllocateNamespaceRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::AllocateNamespaceResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/keyspacepb.Keyspace/AllocateNamespace",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("keyspacepb.Keyspace", "AllocateNamespace"));
             self.inner.unary(req, path, codec).await
         }
         /// WatchKeyspaces first return all current keyspaces' metadata as its first response.

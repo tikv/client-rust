@@ -125,7 +125,9 @@ impl Cluster {
     ) -> Result<keyspacepb::KeyspaceMeta> {
         let mut req = pd_request!(self.id, keyspacepb::LoadKeyspaceRequest);
         req.name = keyspace.to_string();
-        req.namespace_id = namespace_id;
+        req.namespace = Some(keyspacepb::NamespaceRef {
+            namespace: Some(keyspacepb::namespace_ref::Namespace::NamespaceId(namespace_id)),
+        });
         let resp = req.send(&mut self.keyspace_client, timeout).await?;
         resp.keyspace
             .ok_or_else(|| Error::KeyspaceNotFound(keyspace.to_owned()))
