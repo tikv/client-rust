@@ -21,6 +21,7 @@ use crate::request::KeyMode;
 use crate::request::Keyspace;
 use crate::request::Plan;
 use crate::request::TruncateKeyspace;
+use crate::request::{keyspace_meta_identity, keyspace_meta_legacy_id};
 use crate::request::{plan, Collect};
 use crate::store::{HasRegionError, RegionStore};
 use crate::Backoff;
@@ -154,7 +155,7 @@ impl Client<PdRpcClient> {
                 )
             })?;
             let keyspace = rpc.lookup_keyspace(&name, namespace_id).await?;
-            let identity = keyspace.identity.ok_or_else(|| {
+            let identity = keyspace_meta_identity(&keyspace).ok_or_else(|| {
                 crate::Error::StringError(format!(
                     "keyspace '{}' in namespace {} does not have V3 identity",
                     name, namespace_id
@@ -172,11 +173,16 @@ impl Client<PdRpcClient> {
             match keyspaces.len() {
                 1 => {
                     let keyspace = keyspaces.remove(0);
-                    if let Some(identity) = keyspace.identity {
+                    if let Some(identity) = keyspace_meta_identity(&keyspace) {
                         Keyspace::api_v3(identity.namespace_id, identity.keyspace_id)?
                     } else {
                         Keyspace::Enable {
-                            keyspace_id: keyspace.id,
+                            keyspace_id: keyspace_meta_legacy_id(&keyspace).ok_or_else(|| {
+                                crate::Error::StringError(format!(
+                                    "keyspace '{}' does not have a legacy id or V3 identity",
+                                    name
+                                ))
+                            })?,
                         }
                     }
                 }
@@ -193,7 +199,12 @@ impl Client<PdRpcClient> {
                 Some(name) => {
                     let keyspace = rpc.load_keyspace(&name).await?;
                     Keyspace::Enable {
-                        keyspace_id: keyspace.id,
+                        keyspace_id: keyspace_meta_legacy_id(&keyspace).ok_or_else(|| {
+                            crate::Error::StringError(format!(
+                                "keyspace '{}' does not have a legacy id",
+                                name
+                            ))
+                        })?,
                     }
                 }
                 None => Keyspace::Disable,
@@ -1074,7 +1085,11 @@ mod tests {
                     let ctx = req.context.as_ref().unwrap();
                     assert_eq!(ctx.region_id, 2);
                     assert_eq!(ctx.api_version, kvrpcpb::ApiVersion::V3 as i32);
-                    let identity = ctx.keyspace_identity.as_ref().unwrap();
+                    let Some(kvrpcpb::context::Keyspace::KeyspaceIdentity(identity)) =
+                        ctx.keyspace.as_ref()
+                    else {
+                        panic!("expected V3 keyspace identity");
+                    };
                     assert_eq!(identity.namespace_id, 1);
                     assert_eq!(identity.keyspace_id, 7);
                     Ok(Box::<kvrpcpb::RawScanResponse>::default() as Box<dyn Any>)
@@ -1122,9 +1137,13 @@ mod tests {
                     assert_eq!(req.data, b"builder-data".to_vec());
                     let ctx = req.context.as_ref().unwrap();
                     assert_eq!(ctx.api_version, kvrpcpb::ApiVersion::V3 as i32);
-                    assert_eq!(ctx.keyspace_id, 0);
-                    assert_eq!(ctx.keyspace_identity.as_ref().unwrap().namespace_id, 1);
-                    assert_eq!(ctx.keyspace_identity.as_ref().unwrap().keyspace_id, 7);
+                    let Some(kvrpcpb::context::Keyspace::KeyspaceIdentity(identity)) =
+                        ctx.keyspace.as_ref()
+                    else {
+                        panic!("expected V3 keyspace identity");
+                    };
+                    assert_eq!(identity.namespace_id, 1);
+                    assert_eq!(identity.keyspace_id, 7);
                     assert_eq!(ctx.region_id, 2);
                     assert_eq!(ctx.peer.as_ref().unwrap().store_id, 42);
                     *seen_dispatch_in_hook.lock().unwrap() = true;

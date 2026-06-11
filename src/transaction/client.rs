@@ -15,6 +15,7 @@ use crate::request::EncodeKeyspace;
 use crate::request::KeyMode;
 use crate::request::Keyspace;
 use crate::request::Plan;
+use crate::request::{keyspace_meta_identity, keyspace_meta_legacy_id};
 use crate::timestamp::TimestampExt;
 use crate::transaction::lock::ResolveLocksOptions;
 use crate::transaction::lowering::new_scan_lock_request;
@@ -157,7 +158,7 @@ impl Client {
                 )
             })?;
             let keyspace = pd.lookup_keyspace(&name, namespace_id).await?;
-            let identity = keyspace.identity.ok_or_else(|| {
+            let identity = keyspace_meta_identity(&keyspace).ok_or_else(|| {
                 crate::Error::StringError(format!(
                     "keyspace '{}' in namespace {} does not have V3 identity",
                     name, namespace_id
@@ -175,11 +176,16 @@ impl Client {
             match keyspaces.len() {
                 1 => {
                     let keyspace = keyspaces.remove(0);
-                    if let Some(identity) = keyspace.identity {
+                    if let Some(identity) = keyspace_meta_identity(&keyspace) {
                         Keyspace::api_v3(identity.namespace_id, identity.keyspace_id)?
                     } else {
                         Keyspace::Enable {
-                            keyspace_id: keyspace.id,
+                            keyspace_id: keyspace_meta_legacy_id(&keyspace).ok_or_else(|| {
+                                crate::Error::StringError(format!(
+                                    "keyspace '{}' does not have a legacy id or V3 identity",
+                                    name
+                                ))
+                            })?,
                         }
                     }
                 }
@@ -196,7 +202,12 @@ impl Client {
                 Some(name) => {
                     let keyspace = pd.load_keyspace(&name).await?;
                     Keyspace::Enable {
-                        keyspace_id: keyspace.id,
+                        keyspace_id: keyspace_meta_legacy_id(&keyspace).ok_or_else(|| {
+                            crate::Error::StringError(format!(
+                                "keyspace '{}' does not have a legacy id",
+                                name
+                            ))
+                        })?,
                     }
                 }
                 None => Keyspace::Disable,

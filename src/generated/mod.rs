@@ -58,6 +58,9 @@ pub mod import_kvpb {
 pub mod import_sstpb {
     include!("import_sstpb.rs");
 }
+pub mod keyspace_encryptionpb {
+    include!("keyspace_encryptionpb.rs");
+}
 pub mod keyspacepb {
     include!("keyspacepb.rs");
 }

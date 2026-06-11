@@ -705,6 +705,9 @@ pub struct ResolveLockRequest {
     /// Only resolve specified keys.
     #[prost(bytes = "vec", repeated, tag = "5")]
     pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    /// If true, the resolve lock action is performed asynchronously and the response may be returned before it's finished.
+    #[prost(bool, tag = "6")]
+    pub is_async: bool,
     /// Reserved for file based transaction.
     #[prost(bool, tag = "100")]
     pub is_txn_file: bool,
@@ -1287,15 +1290,17 @@ pub struct Context {
     /// Some information used for resource control.
     #[prost(message, optional, tag = "28")]
     pub resource_control_context: ::core::option::Option<ResourceControlContext>,
+    /// The declared origin of the request. TiDB server requests set this to TIDB.
+    /// This field is client-provided metadata; consumers should rely on it only when
+    /// the caller is authenticated/authorized by the transport or deployment boundary.
+    /// UNKNOWN means the origin is unset or not recognized by this protocol version.
+    /// Other components should add dedicated enum variants when they need origin-specific behavior.
+    #[prost(enumeration = "RequestOrigin", tag = "29")]
+    pub request_origin: i32,
     /// The keyspace that the request is sent to.
     /// NOTE: This field is only meaningful while the api_version is V2.
     #[prost(string, tag = "31")]
     pub keyspace_name: ::prost::alloc::string::String,
-    /// The keyspace that the request is sent to.
-    /// NOTE: This field is only meaningful while the api_version is V2.
-    /// V3 uses keyspace_identity and must not read this legacy field as the full identity.
-    #[prost(uint32, tag = "32")]
-    pub keyspace_id: u32,
     /// The buckets version that the request is sent to.
     /// NOTE: This field is only meaningful while enable buckets.
     #[prost(uint64, tag = "33")]
@@ -1319,11 +1324,25 @@ pub struct Context {
     /// This field is set by client-go based on an extractor function provided by TiDB.
     #[prost(uint64, tag = "37")]
     pub trace_control_flags: u64,
-    /// The V3 keyspace identity that the request is sent to.
-    /// V3 RPC key fields carry user key bytes; TiKV encodes the physical
-    /// mode + namespace + keyspace prefix at the serving boundary.
-    #[prost(message, optional, tag = "38")]
-    pub keyspace_identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    #[prost(oneof = "context::Keyspace", tags = "32, 38")]
+    pub keyspace: ::core::option::Option<context::Keyspace>,
+}
+/// Nested message and enum types in `Context`.
+pub mod context {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// The keyspace that the request is sent to.
+        /// NOTE: This field is only meaningful while the api_version is V2.
+        /// V3 uses keyspace_identity and must not read this legacy field as the full identity.
+        #[prost(uint32, tag = "32")]
+        KeyspaceId(u32),
+        /// The V3 keyspace identity that the request is sent to.
+        /// V3 RPC key fields carry user key bytes; TiKV encodes the physical
+        /// mode + namespace + keyspace prefix at the serving boundary.
+        #[prost(message, tag = "38")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2247,14 +2266,23 @@ pub struct CompactRequest {
     /// API version of the request
     #[prost(enumeration = "ApiVersion", tag = "7")]
     pub api_version: i32,
-    /// Keyspace of the table located in.
-    /// NOTE: This field is only meaningful for V1/V2 compatibility. V3 uses
-    /// keyspace_identity and must not read this field as the full identity.
-    #[prost(uint32, tag = "8")]
-    pub keyspace_id: u32,
-    /// V3 keyspace identity of the table located in.
-    #[prost(message, optional, tag = "9")]
-    pub keyspace_identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    #[prost(oneof = "compact_request::Keyspace", tags = "8, 9")]
+    pub keyspace: ::core::option::Option<compact_request::Keyspace>,
+}
+/// Nested message and enum types in `CompactRequest`.
+pub mod compact_request {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// Keyspace of the table located in.
+        /// NOTE: This field is only meaningful for V1/V2 compatibility. V3 uses
+        /// keyspace_identity and must not read this field as the full identity.
+        #[prost(uint32, tag = "8")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity of the table located in.
+        #[prost(message, tag = "9")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2500,6 +2528,32 @@ impl CommitRole {
             "Unknown" => Some(Self::Unknown),
             "Primary" => Some(Self::Primary),
             "Secondary" => Some(Self::Secondary),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum RequestOrigin {
+    Unknown = 0,
+    TiDb = 1,
+}
+impl RequestOrigin {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            RequestOrigin::Unknown => "RequestOriginUnknown",
+            RequestOrigin::TiDb => "RequestOriginTiDB",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "RequestOriginUnknown" => Some(Self::Unknown),
+            "RequestOriginTiDB" => Some(Self::TiDb),
             _ => None,
         }
     }

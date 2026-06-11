@@ -111,7 +111,7 @@ pub struct TsoRequest {
     pub dc_location: ::prost::alloc::string::String,
     /// V3 keyspace identity for tenant-scoped TSO requests.
     #[prost(message, optional, tag = "4")]
-    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    pub keyspace_identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -934,19 +934,28 @@ pub struct DfsStatScope {
     /// When true, the statistic is not tied to any keyspace.
     #[prost(bool, tag = "1")]
     pub is_global: bool,
-    /// The keyspace of this statistic. Ignore when is_global is true.
-    /// NOTE: This field is only meaningful for V1/V2 compatibility. V3 should use identity.
-    #[prost(uint32, tag = "2")]
-    pub keyspace_id: u32,
     /// The component that provides the statistic.
     #[prost(string, tag = "3")]
     pub component: ::prost::alloc::string::String,
-    /// V3 keyspace identity of this statistic. Ignore when is_global is true or identities is set.
-    #[prost(message, optional, tag = "4")]
-    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
     /// V3 multi-keyspace statistic scope. Ignore when is_global is true.
     #[prost(message, repeated, tag = "5")]
-    pub identities: ::prost::alloc::vec::Vec<super::apipb::KeyspaceIdentity>,
+    pub keyspace_identities: ::prost::alloc::vec::Vec<super::apipb::KeyspaceIdentity>,
+    #[prost(oneof = "dfs_stat_scope::Keyspace", tags = "2, 4")]
+    pub keyspace: ::core::option::Option<dfs_stat_scope::Keyspace>,
+}
+/// Nested message and enum types in `DfsStatScope`.
+pub mod dfs_stat_scope {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// The keyspace of this statistic. Ignore when is_global is true.
+        /// NOTE: This field is only meaningful for V1/V2 compatibility. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity of this statistic. Ignore when is_global is true or keyspace_identities is set.
+        #[prost(message, tag = "4")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1212,12 +1221,21 @@ pub struct UpdateServiceGcSafePointResponse {
 pub struct GetGcSafePointV2Request {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
-    /// V1/V2 compatibility keyspace id. V3 should use identity.
-    #[prost(uint32, tag = "2")]
-    pub keyspace_id: u32,
-    /// V3 keyspace identity.
-    #[prost(message, optional, tag = "3")]
-    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    #[prost(oneof = "get_gc_safe_point_v2_request::Keyspace", tags = "2, 3")]
+    pub keyspace: ::core::option::Option<get_gc_safe_point_v2_request::Keyspace>,
+}
+/// Nested message and enum types in `GetGCSafePointV2Request`.
+pub mod get_gc_safe_point_v2_request {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "3")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1228,7 +1246,7 @@ pub struct GetGcSafePointV2Response {
     pub safe_point: u64,
     /// V3 keyspace identity served by this response.
     #[prost(message, optional, tag = "3")]
-    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    pub keyspace_identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1242,16 +1260,25 @@ pub struct WatchGcSafePointV2Request {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SafePointEvent {
-    /// V1/V2 compatibility keyspace id. V3 should use identity.
-    #[prost(uint32, tag = "1")]
-    pub keyspace_id: u32,
     #[prost(uint64, tag = "2")]
     pub safe_point: u64,
     #[prost(enumeration = "EventType", tag = "3")]
     pub r#type: i32,
-    /// V3 keyspace identity served by this event.
-    #[prost(message, optional, tag = "4")]
-    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    #[prost(oneof = "safe_point_event::Keyspace", tags = "1, 4")]
+    pub keyspace: ::core::option::Option<safe_point_event::Keyspace>,
+}
+/// Nested message and enum types in `SafePointEvent`.
+pub mod safe_point_event {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "1")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity served by this event.
+        #[prost(message, tag = "4")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1268,14 +1295,23 @@ pub struct WatchGcSafePointV2Response {
 pub struct UpdateGcSafePointV2Request {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
-    /// V1/V2 compatibility keyspace id. V3 should use identity.
-    #[prost(uint32, tag = "2")]
-    pub keyspace_id: u32,
     #[prost(uint64, tag = "3")]
     pub safe_point: u64,
-    /// V3 keyspace identity.
-    #[prost(message, optional, tag = "4")]
-    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    #[prost(oneof = "update_gc_safe_point_v2_request::Keyspace", tags = "2, 4")]
+    pub keyspace: ::core::option::Option<update_gc_safe_point_v2_request::Keyspace>,
+}
+/// Nested message and enum types in `UpdateGCSafePointV2Request`.
+pub mod update_gc_safe_point_v2_request {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "4")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1286,16 +1322,13 @@ pub struct UpdateGcSafePointV2Response {
     pub new_safe_point: u64,
     /// V3 keyspace identity served by this response.
     #[prost(message, optional, tag = "3")]
-    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    pub keyspace_identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UpdateServiceSafePointV2Request {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
-    /// V1/V2 compatibility keyspace id. V3 should use identity.
-    #[prost(uint32, tag = "2")]
-    pub keyspace_id: u32,
     #[prost(bytes = "vec", tag = "3")]
     pub service_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(uint64, tag = "4")]
@@ -1307,9 +1340,21 @@ pub struct UpdateServiceSafePointV2Request {
     /// cluster garbage collection.
     #[prost(int64, tag = "5")]
     pub ttl: i64,
-    /// V3 keyspace identity.
-    #[prost(message, optional, tag = "6")]
-    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    #[prost(oneof = "update_service_safe_point_v2_request::Keyspace", tags = "2, 6")]
+    pub keyspace: ::core::option::Option<update_service_safe_point_v2_request::Keyspace>,
+}
+/// Nested message and enum types in `UpdateServiceSafePointV2Request`.
+pub mod update_service_safe_point_v2_request {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "6")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1324,7 +1369,7 @@ pub struct UpdateServiceSafePointV2Response {
     pub min_safe_point: u64,
     /// V3 keyspace identity served by this response.
     #[prost(message, optional, tag = "5")]
-    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    pub keyspace_identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1335,14 +1380,23 @@ pub struct GetAllGcSafePointV2Request {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GcSafePointV2 {
-    /// V1/V2 compatibility keyspace id. V3 should use identity.
-    #[prost(uint32, tag = "1")]
-    pub keyspace_id: u32,
     #[prost(uint64, tag = "2")]
     pub gc_safe_point: u64,
-    /// V3 keyspace identity.
-    #[prost(message, optional, tag = "3")]
-    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    #[prost(oneof = "gc_safe_point_v2::Keyspace", tags = "1, 3")]
+    pub keyspace: ::core::option::Option<gc_safe_point_v2::Keyspace>,
+}
+/// Nested message and enum types in `GCSafePointV2`.
+pub mod gc_safe_point_v2 {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "1")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "3")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1355,16 +1409,25 @@ pub struct GetAllGcSafePointV2Response {
     pub revision: i64,
 }
 /// A wrapper over keyspace scope.
-/// keyspace_id is kept for V1/V2 compatibility. V3 should use identity and reject
+/// keyspace_id is kept for V1/V2 compatibility. V3 should use keyspace_identity and reject
 /// missing/invalid namespace or keyspace IDs in tenant-scoped requests.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KeyspaceScope {
-    #[prost(uint32, tag = "1")]
-    pub keyspace_id: u32,
-    /// V3 keyspace identity.
-    #[prost(message, optional, tag = "2")]
-    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    #[prost(oneof = "keyspace_scope::Keyspace", tags = "1, 2")]
+    pub keyspace: ::core::option::Option<keyspace_scope::Keyspace>,
+}
+/// Nested message and enum types in `KeyspaceScope`.
+pub mod keyspace_scope {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        #[prost(uint32, tag = "1")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "2")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1511,6 +1574,8 @@ pub struct GetGcStateRequest {
     pub header: ::core::option::Option<RequestHeader>,
     #[prost(message, optional, tag = "2")]
     pub keyspace_scope: ::core::option::Option<KeyspaceScope>,
+    #[prost(bool, tag = "3")]
+    pub exclude_gc_barriers: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1539,6 +1604,10 @@ pub struct GetGcStateResponse {
 pub struct GetAllKeyspacesGcStatesRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    #[prost(bool, tag = "2")]
+    pub exclude_gc_barriers: bool,
+    #[prost(bool, tag = "3")]
+    pub exclude_global_gc_barriers: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

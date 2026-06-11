@@ -21,10 +21,12 @@ message AutoIDRequest {
   uint64 n = 4;
   int64 increment = 5;
   int64 offset = 6;
-  // V1/V2 compatibility keyspace id. V3 should use identity.
-  uint32 keyspaceID = 7;
-  // V3 keyspace identity.
-  apipb.KeyspaceIdentity identity = 8;
+  oneof keyspace {
+    // V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+    uint32 keyspaceID = 7;
+    // V3 keyspace identity.
+    apipb.KeyspaceIdentity keyspace_identity = 8;
+  }
 }
 
 message AutoIDResponse {

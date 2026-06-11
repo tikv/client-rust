@@ -123,18 +123,12 @@ impl Cluster {
         namespace_id: u32,
         timeout: Duration,
     ) -> Result<keyspacepb::KeyspaceMeta> {
-        let mut req = pd_request!(self.id, keyspacepb::LookupKeyspaceRequest);
+        let mut req = pd_request!(self.id, keyspacepb::LoadKeyspaceRequest);
         req.name = keyspace.to_string();
         req.namespace_id = namespace_id;
-        let mut resp = req.send(&mut self.keyspace_client, timeout).await?;
-        match resp.keyspaces.len() {
-            1 => Ok(resp.keyspaces.remove(0)),
-            0 => Err(Error::KeyspaceNotFound(keyspace.to_owned())),
-            _ => Err(Error::StringError(format!(
-                "multiple keyspaces named '{}' found in namespace {}",
-                keyspace, namespace_id
-            ))),
-        }
+        let resp = req.send(&mut self.keyspace_client, timeout).await?;
+        resp.keyspace
+            .ok_or_else(|| Error::KeyspaceNotFound(keyspace.to_owned()))
     }
 
     pub async fn lookup_keyspaces(

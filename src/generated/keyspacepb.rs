@@ -2,9 +2,6 @@
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KeyspaceMeta {
-    /// V1/V2 compatibility keyspace id. V3 should read identity instead.
-    #[prost(uint32, tag = "1")]
-    pub id: u32,
     #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
     #[prost(enumeration = "KeyspaceState", tag = "3")]
@@ -18,9 +15,21 @@ pub struct KeyspaceMeta {
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
-    /// Canonical V3 keyspace identity.
-    #[prost(message, optional, tag = "8")]
-    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    #[prost(oneof = "keyspace_meta::Keyspace", tags = "1, 8")]
+    pub keyspace: ::core::option::Option<keyspace_meta::Keyspace>,
+}
+/// Nested message and enum types in `KeyspaceMeta`.
+pub mod keyspace_meta {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should read keyspace_identity instead.
+        #[prost(uint32, tag = "1")]
+        Id(u32),
+        /// Canonical V3 keyspace identity.
+        #[prost(message, tag = "8")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -49,9 +58,6 @@ pub struct LookupKeyspaceRequest {
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
     #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
-    /// Optional namespace for namespace-scoped lookup. If unset, lookup by name is global and may return multiple keyspaces.
-    #[prost(uint32, tag = "3")]
-    pub namespace_id: u32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -94,14 +100,23 @@ pub struct WatchKeyspacesResponse {
 pub struct UpdateKeyspaceStateRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
-    /// V1/V2 compatibility keyspace id. V3 should use identity.
-    #[prost(uint32, tag = "2")]
-    pub id: u32,
     #[prost(enumeration = "KeyspaceState", tag = "3")]
     pub state: i32,
-    /// V3 keyspace identity.
-    #[prost(message, optional, tag = "4")]
-    pub identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    #[prost(oneof = "update_keyspace_state_request::Keyspace", tags = "2, 4")]
+    pub keyspace: ::core::option::Option<update_keyspace_state_request::Keyspace>,
+}
+/// Nested message and enum types in `UpdateKeyspaceStateRequest`.
+pub mod update_keyspace_state_request {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        Id(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "4")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -116,17 +131,26 @@ pub struct UpdateKeyspaceStateResponse {
 pub struct GetAllKeyspacesRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
-    /// V1/V2 compatibility pagination cursor. V3 should use namespace_id and start_identity.
-    #[prost(uint32, tag = "2")]
-    pub start_id: u32,
     #[prost(uint32, tag = "3")]
     pub limit: u32,
     /// V3 namespace-limited pagination. Must be non-zero in V3.
     #[prost(uint32, tag = "4")]
     pub namespace_id: u32,
-    /// V3 pagination cursor within namespace_id.
-    #[prost(message, optional, tag = "5")]
-    pub start_identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
+    #[prost(oneof = "get_all_keyspaces_request::StartKeyspace", tags = "2, 5")]
+    pub start_keyspace: ::core::option::Option<get_all_keyspaces_request::StartKeyspace>,
+}
+/// Nested message and enum types in `GetAllKeyspacesRequest`.
+pub mod get_all_keyspaces_request {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum StartKeyspace {
+        /// V1/V2 compatibility pagination cursor. V3 should use namespace_id and start_keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        StartId(u32),
+        /// V3 pagination cursor within namespace_id.
+        #[prost(message, tag = "5")]
+        StartKeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

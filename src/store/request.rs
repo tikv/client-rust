@@ -78,22 +78,21 @@ macro_rules! impl_request {
                 ctx.api_version = keyspace.api_version().into();
                 match keyspace {
                     Keyspace::Enable { keyspace_id } => {
-                        ctx.keyspace_id = keyspace_id;
-                        ctx.keyspace_identity = None;
+                        ctx.keyspace = Some(kvrpcpb::context::Keyspace::KeyspaceId(keyspace_id));
                     }
                     Keyspace::ApiV3 {
                         namespace_id,
                         keyspace_id,
                     } => {
-                        ctx.keyspace_id = 0;
-                        ctx.keyspace_identity = Some(crate::proto::apipb::KeyspaceIdentity {
-                            namespace_id,
-                            keyspace_id,
-                        });
+                        ctx.keyspace = Some(kvrpcpb::context::Keyspace::KeyspaceIdentity(
+                            crate::proto::apipb::KeyspaceIdentity {
+                                namespace_id,
+                                keyspace_id,
+                            },
+                        ));
                     }
                     _ => {
-                        ctx.keyspace_id = 0;
-                        ctx.keyspace_identity = None;
+                        ctx.keyspace = None;
                     }
                 }
             }

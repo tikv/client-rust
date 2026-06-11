@@ -34,9 +34,13 @@ message RequestHeader {
   // sender_id is the ID of the sender server.
   uint64 sender_id = 2;
 
-  // keyspace_id is the unique id of the tenant/keyspace in V1/V2.
-  // V3 should use identity and must not read this legacy field as the full identity.
-  uint32 keyspace_id = 3;
+  oneof keyspace {
+    // keyspace_id is the unique id of the tenant/keyspace in V1/V2.
+    // V3 should use keyspace_identity and must not read this legacy field as the full identity.
+    uint32 keyspace_id = 3;
+    // V3 keyspace identity of the request.
+    apipb.KeyspaceIdentity keyspace_identity = 6;
+  }
   // keyspace_group_id is the unique id of the keyspace group to which the tenant/keyspace belongs.
   uint32 keyspace_group_id = 4;
   // callee_id is the ID of the server which the client expects to receive the request.
@@ -44,8 +48,6 @@ message RequestHeader {
   // This field is used to check if the request is sent to the expected server.
   // If it is not matched, the server will return an error.
   string callee_id = 5;
-  // V3 keyspace identity of the request.
-  apipb.KeyspaceIdentity identity = 6;
 }
 
 message ResponseHeader {
@@ -53,13 +55,15 @@ message ResponseHeader {
   uint64 cluster_id = 1;
   Error error = 2;
 
-  // keyspace_id is the unique id of the tenant/keyspace as the response receiver in V1/V2.
-  // V3 should use identity and must not read this legacy field as the full identity.
-  uint32 keyspace_id = 3;
+  oneof keyspace {
+    // keyspace_id is the unique id of the tenant/keyspace as the response receiver in V1/V2.
+    // V3 should use keyspace_identity and must not read this legacy field as the full identity.
+    uint32 keyspace_id = 3;
+    // V3 keyspace identity served by this response.
+    apipb.KeyspaceIdentity keyspace_identity = 5;
+  }
   // keyspace_group_id is the unique id of the keyspace group to which the tenant/keyspace belongs.
   uint32 keyspace_group_id = 4;
-  // V3 keyspace identity served by this response.
-  apipb.KeyspaceIdentity identity = 5;
 }
 
 enum ErrorType {
@@ -114,13 +118,11 @@ message KeyspaceGroup {
   string user_kind = 2;
   SplitState split_state = 3;
   repeated KeyspaceGroupMember members = 4;
-  // V3 keyspace identities that belong to this group. Membership may cross namespaces.
-  repeated apipb.KeyspaceIdentity keyspace_identities = 5;
 }
 
 message FindGroupByKeyspaceIDRequest {
   RequestHeader header = 1;
-  // V1/V2 compatibility keyspace id. V3 should use FindGroupByKeyspaceRequest.identity.
+  // V1/V2 compatibility keyspace id. V3 should use FindGroupByKeyspaceRequest.keyspace_identity.
   uint32 keyspace_id = 2;
   uint64 mod_revision = 3;
 }
@@ -134,7 +136,7 @@ message FindGroupByKeyspaceIDResponse {
 message FindGroupByKeyspaceRequest {
   RequestHeader header = 1;
   // V3 keyspace identity.
-  apipb.KeyspaceIdentity identity = 2;
+  apipb.KeyspaceIdentity keyspace_identity = 2;
   uint64 mod_revision = 3;
 }
 

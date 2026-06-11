@@ -5,7 +5,7 @@ use std::ops::{Bound, Range};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::transaction::Mutation;
-use crate::{proto::apipb, proto::kvrpcpb, Key};
+use crate::{proto::apipb, proto::keyspacepb, proto::kvrpcpb, Key};
 use crate::{BoundRange, KvPair};
 
 pub const RAW_KEY_PREFIX: u8 = b'r';
@@ -92,7 +92,8 @@ impl Keyspace {
         if kvrpcpb::ApiVersion::try_from(ctx.api_version) != Ok(kvrpcpb::ApiVersion::V3) {
             return Keyspace::Disable;
         }
-        let Some(identity) = ctx.keyspace_identity.as_ref() else {
+        let Some(kvrpcpb::context::Keyspace::KeyspaceIdentity(identity)) = ctx.keyspace.as_ref()
+        else {
             return Keyspace::Disable;
         };
         Keyspace::ApiV3 {
@@ -191,6 +192,24 @@ impl Keyspace {
         };
         let start = u64::from_be_bytes(api_v3_keyspace_prefix(namespace_id, keyspace_id, key_mode));
         Some(start.wrapping_add(1).to_be_bytes().to_vec())
+    }
+}
+
+pub(crate) fn keyspace_meta_identity(
+    keyspace: &keyspacepb::KeyspaceMeta,
+) -> Option<apipb::KeyspaceIdentity> {
+    match keyspace.keyspace.as_ref() {
+        Some(keyspacepb::keyspace_meta::Keyspace::KeyspaceIdentity(identity)) => {
+            Some(identity.clone())
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn keyspace_meta_legacy_id(keyspace: &keyspacepb::KeyspaceMeta) -> Option<u32> {
+    match keyspace.keyspace {
+        Some(keyspacepb::keyspace_meta::Keyspace::Id(id)) => Some(id),
+        _ => None,
     }
 }
 

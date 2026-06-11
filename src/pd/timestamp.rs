@@ -187,7 +187,7 @@ impl Stream for TsoRequestStream {
                 }),
                 count: requests.len() as u32,
                 dc_location: String::new(),
-                identity,
+                keyspace_identity: identity,
             };
 
             let request_group = RequestGroup {
@@ -286,7 +286,7 @@ mod tests {
         let req = stream.next().await.expect("request stream should yield");
         assert_eq!(req.header.unwrap().cluster_id, 42);
         assert_eq!(req.count, 2);
-        assert_eq!(req.identity, Some(identity));
+        assert_eq!(req.keyspace_identity, Some(identity));
     }
 
     #[tokio::test]
@@ -317,6 +317,6 @@ mod tests {
 
         let req = stream.next().await.expect("request stream should yield");
         assert_eq!(req.header.unwrap().cluster_id, 42);
-        assert_eq!(req.identity, Some(identity));
+        assert_eq!(req.keyspace_identity, Some(identity));
     }
 }

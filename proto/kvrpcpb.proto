@@ -531,6 +531,9 @@ message ResolveLockRequest {
   // Only resolve specified keys.
   repeated bytes keys = 5;
 
+  // If true, the resolve lock action is performed asynchronously and the response may be returned before it's finished.
+  bool is_async = 6;
+
   // Reserved for file based transaction.
   bool is_txn_file = 100;
 }
@@ -851,6 +854,11 @@ message MvccGetByStartTsResponse {
 
 // Helper messages.
 
+enum RequestOrigin {
+  RequestOriginUnknown = 0;
+  RequestOriginTiDB = 1;
+}
+
 // Miscellaneous metadata attached to most requests.
 message Context {
   reserved 4;
@@ -921,14 +929,27 @@ message Context {
   // Some information used for resource control.
   ResourceControlContext resource_control_context = 28;
 
+  // The declared origin of the request. TiDB server requests set this to TIDB.
+  // This field is client-provided metadata; consumers should rely on it only when
+  // the caller is authenticated/authorized by the transport or deployment boundary.
+  // UNKNOWN means the origin is unset or not recognized by this protocol version.
+  // Other components should add dedicated enum variants when they need origin-specific behavior.
+  RequestOrigin request_origin = 29;
+
   // The keyspace that the request is sent to.
   // NOTE: This field is only meaningful while the api_version is V2.
   string keyspace_name = 31;
 
-  // The keyspace that the request is sent to.
-  // NOTE: This field is only meaningful while the api_version is V2.
-  // V3 uses keyspace_identity and must not read this legacy field as the full identity.
-  uint32 keyspace_id = 32;
+  oneof keyspace {
+    // The keyspace that the request is sent to.
+    // NOTE: This field is only meaningful while the api_version is V2.
+    // V3 uses keyspace_identity and must not read this legacy field as the full identity.
+    uint32 keyspace_id = 32;
+    // The V3 keyspace identity that the request is sent to.
+    // V3 RPC key fields carry user key bytes; TiKV encodes the physical
+    // mode + namespace + keyspace prefix at the serving boundary.
+    apipb.KeyspaceIdentity keyspace_identity = 38;
+  }
 
   // The buckets version that the request is sent to.
   // NOTE: This field is only meaningful while enable buckets.
@@ -952,11 +973,6 @@ message Context {
   // Bits 4-63: Reserved for future use
   // This field is set by client-go based on an extractor function provided by TiDB.
   uint64 trace_control_flags = 37;
-
-  // The V3 keyspace identity that the request is sent to.
-  // V3 RPC key fields carry user key bytes; TiKV encodes the physical
-  // mode + namespace + keyspace prefix at the serving boundary.
-  apipb.KeyspaceIdentity keyspace_identity = 38;
 
   // TODO(slock): tidb should send requests with a feature flag to indicate whether it
   // supports shared locks, so that tikv can fail the requests from old tidb versions
@@ -1699,12 +1715,14 @@ message CompactRequest {
 
   // API version of the request
   APIVersion api_version = 7;
-  // Keyspace of the table located in.
-  // NOTE: This field is only meaningful for V1/V2 compatibility. V3 uses
-  // keyspace_identity and must not read this field as the full identity.
-  uint32 keyspace_id = 8;
-  // V3 keyspace identity of the table located in.
-  apipb.KeyspaceIdentity keyspace_identity = 9;
+  oneof keyspace {
+    // Keyspace of the table located in.
+    // NOTE: This field is only meaningful for V1/V2 compatibility. V3 uses
+    // keyspace_identity and must not read this field as the full identity.
+    uint32 keyspace_id = 8;
+    // V3 keyspace identity of the table located in.
+    apipb.KeyspaceIdentity keyspace_identity = 9;
+  }
 }
 
 message CompactResponse {

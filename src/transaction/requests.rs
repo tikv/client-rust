@@ -934,9 +934,12 @@ mod tests {
 
     fn assert_api_v3_test_context(ctx: &kvrpcpb::Context) {
         assert_eq!(ctx.api_version, kvrpcpb::ApiVersion::V3 as i32);
-        assert_eq!(ctx.keyspace_id, 0);
-        assert_eq!(ctx.keyspace_identity.as_ref().unwrap().namespace_id, 1);
-        assert_eq!(ctx.keyspace_identity.as_ref().unwrap().keyspace_id, 7);
+        let Some(kvrpcpb::context::Keyspace::KeyspaceIdentity(identity)) = ctx.keyspace.as_ref()
+        else {
+            panic!("expected V3 keyspace identity");
+        };
+        assert_eq!(identity.namespace_id, 1);
+        assert_eq!(identity.keyspace_id, 7);
         assert_eq!(ctx.region_id, 2);
         assert_eq!(ctx.peer.as_ref().unwrap().store_id, 42);
     }
@@ -950,12 +953,7 @@ mod tests {
                 let req: &kvrpcpb::GetRequest = req.downcast_ref().unwrap();
                 assert_eq!(req.key, vec![1]);
                 let ctx = req.context.as_ref().unwrap();
-                assert_eq!(ctx.api_version, kvrpcpb::ApiVersion::V3 as i32);
-                assert_eq!(ctx.keyspace_id, 0);
-                assert_eq!(ctx.keyspace_identity.as_ref().unwrap().namespace_id, 1);
-                assert_eq!(ctx.keyspace_identity.as_ref().unwrap().keyspace_id, 7);
-                assert_eq!(ctx.region_id, 2);
-                assert_eq!(ctx.peer.as_ref().unwrap().store_id, 42);
+                assert_api_v3_test_context(ctx);
                 *seen_in_hook.lock().unwrap() = true;
                 Ok(Box::new(kvrpcpb::GetResponse {
                     value: vec![9],
@@ -986,12 +984,7 @@ mod tests {
                 let req: &kvrpcpb::BatchGetRequest = req.downcast_ref().unwrap();
                 assert_eq!(req.keys, vec![vec![1]]);
                 let ctx = req.context.as_ref().unwrap();
-                assert_eq!(ctx.api_version, kvrpcpb::ApiVersion::V3 as i32);
-                assert_eq!(ctx.keyspace_id, 0);
-                assert_eq!(ctx.keyspace_identity.as_ref().unwrap().namespace_id, 1);
-                assert_eq!(ctx.keyspace_identity.as_ref().unwrap().keyspace_id, 7);
-                assert_eq!(ctx.region_id, 2);
-                assert_eq!(ctx.peer.as_ref().unwrap().store_id, 42);
+                assert_api_v3_test_context(ctx);
                 *seen_in_hook.lock().unwrap() = true;
                 Ok(Box::new(kvrpcpb::BatchGetResponse {
                     pairs: vec![kvrpcpb::KvPair {
@@ -1026,12 +1019,7 @@ mod tests {
                 assert_eq!(req.start_key, vec![1]);
                 assert_eq!(req.end_key, vec![2]);
                 let ctx = req.context.as_ref().unwrap();
-                assert_eq!(ctx.api_version, kvrpcpb::ApiVersion::V3 as i32);
-                assert_eq!(ctx.keyspace_id, 0);
-                assert_eq!(ctx.keyspace_identity.as_ref().unwrap().namespace_id, 1);
-                assert_eq!(ctx.keyspace_identity.as_ref().unwrap().keyspace_id, 7);
-                assert_eq!(ctx.region_id, 2);
-                assert_eq!(ctx.peer.as_ref().unwrap().store_id, 42);
+                assert_api_v3_test_context(ctx);
                 *seen_in_hook.lock().unwrap() = true;
                 Ok(Box::new(kvrpcpb::ScanResponse {
                     pairs: vec![kvrpcpb::KvPair {
@@ -1068,12 +1056,7 @@ mod tests {
                 assert_eq!(req.mutations[0].key, vec![1]);
                 assert_eq!(req.primary_lock, vec![9]);
                 let ctx = req.context.as_ref().unwrap();
-                assert_eq!(ctx.api_version, kvrpcpb::ApiVersion::V3 as i32);
-                assert_eq!(ctx.keyspace_id, 0);
-                assert_eq!(ctx.keyspace_identity.as_ref().unwrap().namespace_id, 1);
-                assert_eq!(ctx.keyspace_identity.as_ref().unwrap().keyspace_id, 7);
-                assert_eq!(ctx.region_id, 2);
-                assert_eq!(ctx.peer.as_ref().unwrap().store_id, 42);
+                assert_api_v3_test_context(ctx);
                 *seen_in_hook.lock().unwrap() = true;
                 Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
             },
@@ -1111,12 +1094,7 @@ mod tests {
                 let req: &kvrpcpb::CommitRequest = req.downcast_ref().unwrap();
                 assert_eq!(req.keys, vec![vec![1]]);
                 let ctx = req.context.as_ref().unwrap();
-                assert_eq!(ctx.api_version, kvrpcpb::ApiVersion::V3 as i32);
-                assert_eq!(ctx.keyspace_id, 0);
-                assert_eq!(ctx.keyspace_identity.as_ref().unwrap().namespace_id, 1);
-                assert_eq!(ctx.keyspace_identity.as_ref().unwrap().keyspace_id, 7);
-                assert_eq!(ctx.region_id, 2);
-                assert_eq!(ctx.peer.as_ref().unwrap().store_id, 42);
+                assert_api_v3_test_context(ctx);
                 *seen_in_hook.lock().unwrap() = true;
                 Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
             },
