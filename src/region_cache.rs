@@ -74,7 +74,7 @@ impl<C: RetryClientTrait> RegionCache<C> {
         let res = {
             region_cache_guard
                 .key_to_ver_id
-                .range(..=key)
+                .range::<Key, _>(..=key)
                 .next_back()
                 .map(|(x, y)| (x.clone(), y.clone()))
         };
@@ -180,9 +180,9 @@ impl<C: RetryClientTrait> RegionCache<C> {
 
         let mut search_range = {
             if end_key.is_empty() {
-                cache.key_to_ver_id.range(..)
+                cache.key_to_ver_id.range::<Key, _>(..)
             } else {
-                cache.key_to_ver_id.range(..end_key)
+                cache.key_to_ver_id.range::<Key, _>(..end_key)
             }
         };
         while let Some((_, ver_id_in_cache)) = search_range.next_back() {

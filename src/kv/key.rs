@@ -1,7 +1,8 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::borrow::Borrow;
 use std::fmt;
-use std::ops::Bound;
+use std::ops::{Bound, Deref};
 
 #[allow(unused_imports)]
 #[cfg(test)]
@@ -156,6 +157,26 @@ impl Key {
     }
 }
 
+impl AsRef<[u8]> for Key {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
+impl Borrow<[u8]> for Key {
+    fn borrow(&self) -> &[u8] {
+        self.0.borrow()
+    }
+}
+
+impl Deref for Key {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.0.deref()
+    }
+}
+
 impl From<Vec<u8>> for Key {
     fn from(v: Vec<u8>) -> Self {
         Key(v)
@@ -185,6 +206,7 @@ impl<'a> From<&'a Vec<u8>> for &'a Key {
         unsafe { &*(key as *const Vec<u8> as *const Key) }
     }
 }
+
 impl AsRef<Key> for Key {
     fn as_ref(&self) -> &Key {
         self
