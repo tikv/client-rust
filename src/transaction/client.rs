@@ -243,7 +243,10 @@ impl Client {
     /// # });
     /// ```
     pub async fn current_timestamp(&self) -> Result<Timestamp> {
-        self.pd.clone().get_timestamp().await
+        self.pd
+            .clone()
+            .get_timestamp_with_keyspace_id(self.keyspace.tso_keyspace_id())
+            .await
     }
 
     /// Request garbage collection (GC) of the TiKV cluster.
