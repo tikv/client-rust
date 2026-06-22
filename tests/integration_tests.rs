@@ -1155,8 +1155,8 @@ async fn txn_get_for_update() -> Result<()> {
         .map(From::from)
         .collect();
     t2.commit().await?;
-    assert!(res.get(&key1.clone().into()).unwrap() == &value1);
-    assert!(res.get(&key2.into()).unwrap() == &value2);
+    assert!(res.get(key1.as_bytes()).unwrap() == &value1);
+    assert!(res.get(key2.as_bytes()).unwrap() == &value2);
 
     assert!(t3.get_for_update(key1).await?.is_none());
     assert!(t3.commit().await.is_err());
