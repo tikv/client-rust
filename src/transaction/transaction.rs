@@ -1466,6 +1466,7 @@ impl<PdC: PdClient> Committer<PdC> {
             // Truncate mutation to a new length as `percent/100`.
             // Return error when truncate to zero.
             let fp = || -> Result<usize> {
+                #[allow(unused_mut)]
                 let mut new_len = mutations_len;
                 fail_point!("before-commit-secondary", |percent| {
                     let percent = percent.unwrap().parse::<usize>().unwrap();

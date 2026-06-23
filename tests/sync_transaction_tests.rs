@@ -1,4 +1,5 @@
 #![cfg(feature = "integration-tests")]
+#![allow(clippy::result_large_err)]
 
 //! Tests for SyncTransactionClient
 //!
