@@ -5,7 +5,10 @@
 
 pub use protos::*;
 
+// Rust 1.93's clippy::all flags many protobuf-generated wire types as dead code.
+// Prior toolchain (1.84.1) did not fail on these generated definitions.
 #[allow(clippy::doc_lazy_continuation)]
+#[allow(dead_code)]
 mod protos {
     include!("generated/mod.rs");
 }

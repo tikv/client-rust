@@ -91,6 +91,7 @@
 //! ```
 
 #![allow(clippy::field_reassign_with_default)]
+#![allow(clippy::result_large_err)]
 
 pub mod backoff;
 #[doc(hidden)]

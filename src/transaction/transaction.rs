@@ -283,9 +283,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     .retry_multi_region(retry_options.region_backoff)
                     .merge(Collect)
                     .plan();
-                plan.execute()
-                    .await
-                    .map(|r| r.into_iter().map(Into::into).collect())
+                plan.execute().await.map(|r| r.into_iter().collect())
             })
             .await
             .map(move |pairs| pairs.map(move |pair| pair.truncate_keyspace(keyspace)))
@@ -806,9 +804,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                         .retry_multi_region(retry_options.region_backoff)
                         .merge(Collect)
                         .plan();
-                    plan.execute()
-                        .await
-                        .map(|r| r.into_iter().map(Into::into).collect())
+                    plan.execute().await.map(|r| r.into_iter().collect())
                 },
             )
             .await
@@ -1470,6 +1466,7 @@ impl<PdC: PdClient> Committer<PdC> {
             // Truncate mutation to a new length as `percent/100`.
             // Return error when truncate to zero.
             let fp = || -> Result<usize> {
+                #[allow(unused_mut)]
                 let mut new_len = mutations_len;
                 fail_point!("before-commit-secondary", |percent| {
                     let percent = percent.unwrap().parse::<usize>().unwrap();
