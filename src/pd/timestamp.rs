@@ -29,6 +29,7 @@ use tokio::sync::Mutex;
 use tonic::transport::Channel;
 
 use crate::internal_err;
+use crate::proto::apipb;
 use crate::proto::pdpb::pd_client::PdClient;
 use crate::proto::pdpb::*;
 use crate::Result;
@@ -39,7 +40,10 @@ const MAX_BATCH_SIZE: usize = 64;
 /// TODO: This value should be adjustable.
 const MAX_PENDING_COUNT: usize = 1 << 16;
 
-type TimestampRequest = oneshot::Sender<Timestamp>;
+struct TimestampRequest {
+    sender: oneshot::Sender<Timestamp>,
+    identity: Option<apipb::KeyspaceIdentity>,
+}
 
 /// The timestamp oracle (TSO) which provides monotonically increasing timestamps.
 #[derive(Clone)]
@@ -64,10 +68,17 @@ impl TimestampOracle {
     }
 
     pub(crate) async fn get_timestamp(self) -> Result<Timestamp> {
+        self.get_timestamp_with_identity(None).await
+    }
+
+    pub(crate) async fn get_timestamp_with_identity(
+        self,
+        identity: Option<apipb::KeyspaceIdentity>,
+    ) -> Result<Timestamp> {
         debug!("getting current timestamp");
-        let (request, response) = oneshot::channel();
+        let (sender, response) = oneshot::channel();
         self.request_tx
-            .send(request)
+            .send(TimestampRequest { sender, identity })
             .await
             .map_err(|_| internal_err!("TimestampRequest channel is closed"))?;
         Ok(response.await?)
@@ -90,6 +101,7 @@ async fn run_tso(
     let request_stream = TsoRequestStream {
         cluster_id,
         request_rx,
+        pending_request: None,
         pending_requests: pending_requests.clone(),
         self_waker: sending_future_waker.clone(),
     };
@@ -113,14 +125,15 @@ async fn run_tso(
 
 struct RequestGroup {
     tso_request: TsoRequest,
-    requests: Vec<TimestampRequest>,
+    requests: Vec<oneshot::Sender<Timestamp>>,
 }
 
 #[pin_project]
 struct TsoRequestStream {
     cluster_id: u64,
     #[pin]
-    request_rx: mpsc::Receiver<oneshot::Sender<Timestamp>>,
+    request_rx: mpsc::Receiver<TimestampRequest>,
+    pending_request: Option<TimestampRequest>,
     pending_requests: Arc<Mutex<VecDeque<RequestGroup>>>,
     self_waker: Arc<AtomicWaker>,
 }
@@ -140,26 +153,41 @@ impl Stream for TsoRequestStream {
             this.self_waker.register(cx.waker());
             return Poll::Pending;
         };
-        let mut requests = Vec::new();
-
-        while requests.len() < MAX_BATCH_SIZE && pending_requests.len() < MAX_PENDING_COUNT {
-            match this.request_rx.poll_recv(cx) {
-                Poll::Ready(Some(sender)) => {
-                    requests.push(sender);
+        if pending_requests.len() < MAX_PENDING_COUNT {
+            let timestamp_request = match this.pending_request.take() {
+                Some(request) => request,
+                None => match this.request_rx.poll_recv(cx) {
+                    Poll::Ready(Some(request)) => request,
+                    Poll::Ready(None) => return Poll::Ready(None),
+                    Poll::Pending => {
+                        this.self_waker.register(cx.waker());
+                        return Poll::Pending;
+                    }
+                },
+            };
+            let identity = timestamp_request.identity.clone();
+            let mut requests = vec![timestamp_request.sender];
+            while requests.len() < MAX_BATCH_SIZE {
+                match this.request_rx.poll_recv(cx) {
+                    Poll::Ready(Some(request)) if request.identity == identity => {
+                        requests.push(request.sender);
+                    }
+                    Poll::Ready(Some(request)) => {
+                        *this.pending_request = Some(request);
+                        break;
+                    }
+                    Poll::Ready(None) | Poll::Pending => break,
                 }
-                Poll::Ready(None) if requests.is_empty() => return Poll::Ready(None),
-                _ => break,
             }
-        }
-
-        if !requests.is_empty() {
             let req = TsoRequest {
                 header: Some(RequestHeader {
                     cluster_id: *this.cluster_id,
                     sender_id: 0,
+                    ..Default::default()
                 }),
                 count: requests.len() as u32,
                 dc_location: String::new(),
+                keyspace_identity: identity,
             };
 
             let request_group = RequestGroup {
@@ -215,4 +243,80 @@ fn allocate_timestamps(
         return Err(internal_err!("PD gives more TsoResponse than expected"));
     };
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn tso_request_stream_batches_same_identity() {
+        let (request_tx, request_rx) = mpsc::channel(2);
+        let (sender1, _response1) = oneshot::channel();
+        let (sender2, _response2) = oneshot::channel();
+        let identity = apipb::KeyspaceIdentity {
+            namespace_id: 3,
+            keyspace_id: 7,
+        };
+        request_tx
+            .send(TimestampRequest {
+                sender: sender1,
+                identity: Some(identity.clone()),
+            })
+            .await
+            .expect("test setup should enqueue first timestamp request");
+        request_tx
+            .send(TimestampRequest {
+                sender: sender2,
+                identity: Some(identity.clone()),
+            })
+            .await
+            .expect("test setup should enqueue second timestamp request");
+
+        let pending_requests = Arc::new(Mutex::new(VecDeque::with_capacity(MAX_PENDING_COUNT)));
+        let self_waker = Arc::new(AtomicWaker::new());
+        let mut stream = TsoRequestStream {
+            cluster_id: 42,
+            request_rx,
+            pending_request: None,
+            pending_requests,
+            self_waker,
+        };
+
+        let req = stream.next().await.expect("request stream should yield");
+        assert_eq!(req.header.unwrap().cluster_id, 42);
+        assert_eq!(req.count, 2);
+        assert_eq!(req.keyspace_identity, Some(identity));
+    }
+
+    #[tokio::test]
+    async fn tso_request_stream_includes_identity() {
+        let (request_tx, request_rx) = mpsc::channel(1);
+        let (sender, _response) = oneshot::channel();
+        let identity = apipb::KeyspaceIdentity {
+            namespace_id: 3,
+            keyspace_id: 7,
+        };
+        request_tx
+            .send(TimestampRequest {
+                sender,
+                identity: Some(identity.clone()),
+            })
+            .await
+            .expect("test setup should enqueue timestamp request");
+
+        let pending_requests = Arc::new(Mutex::new(VecDeque::with_capacity(MAX_PENDING_COUNT)));
+        let self_waker = Arc::new(AtomicWaker::new());
+        let mut stream = TsoRequestStream {
+            cluster_id: 42,
+            request_rx,
+            pending_request: None,
+            pending_requests,
+            self_waker,
+        };
+
+        let req = stream.next().await.expect("request stream should yield");
+        assert_eq!(req.header.unwrap().cluster_id, 42);
+        assert_eq!(req.keyspace_identity, Some(identity));
+    }
 }

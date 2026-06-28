@@ -183,6 +183,9 @@ impl<P: Plan + Shardable, PdC: PdClient> Shardable for CleanupLocks<P, PdC> {
 #[macro_export]
 macro_rules! shardable_key {
     ($type_: ty) => {
+        $crate::shardable_key!($type_, $crate::request::KeyMode::Txn);
+    };
+    ($type_: ty, $key_mode: expr) => {
         impl Shardable for $type_ {
             type Shard = Vec<Vec<u8>>;
 
@@ -193,9 +196,11 @@ macro_rules! shardable_key {
                 'static,
                 $crate::Result<(Self::Shard, $crate::region::RegionWithLeader)>,
             > {
-                $crate::store::region_stream_for_keys(
+                $crate::store::region_stream_for_keys_with_keyspace(
                     std::iter::once(self.key.clone()),
                     pd_client.clone(),
+                    $crate::request::Keyspace::from_context(&self.context),
+                    $key_mode,
                 )
             }
 
@@ -215,6 +220,9 @@ macro_rules! shardable_key {
 #[macro_export]
 macro_rules! shardable_keys {
     ($type_: ty) => {
+        $crate::shardable_keys!($type_, $crate::request::KeyMode::Txn);
+    };
+    ($type_: ty, $key_mode: expr) => {
         impl Shardable for $type_ {
             type Shard = Vec<Vec<u8>>;
 
@@ -227,7 +235,12 @@ macro_rules! shardable_keys {
             > {
                 let mut keys = self.keys.clone();
                 keys.sort();
-                $crate::store::region_stream_for_keys(keys.into_iter(), pd_client.clone())
+                $crate::store::region_stream_for_keys_with_keyspace(
+                    keys.into_iter(),
+                    pd_client.clone(),
+                    $crate::request::Keyspace::from_context(&self.context),
+                    $key_mode,
+                )
             }
 
             fn apply_shard(&mut self, shard: Self::Shard) {
@@ -271,6 +284,9 @@ macro_rules! reversible_range_request {
 #[macro_export]
 macro_rules! shardable_range {
     ($type_: ty) => {
+        $crate::shardable_range!($type_, $crate::request::KeyMode::Txn);
+    };
+    ($type_: ty, $key_mode: expr) => {
         impl Shardable for $type_ {
             type Shard = (Vec<u8>, Vec<u8>);
 
@@ -286,7 +302,12 @@ macro_rules! shardable_range {
                 if self.is_reverse() {
                     std::mem::swap(&mut start_key, &mut end_key);
                 }
-                $crate::store::region_stream_for_range((start_key, end_key), pd_client.clone())
+                $crate::store::region_stream_for_range_with_keyspace(
+                    (start_key, end_key),
+                    pd_client.clone(),
+                    $crate::request::Keyspace::from_context(&self.context),
+                    $key_mode,
+                )
             }
 
             fn apply_shard(&mut self, shard: Self::Shard) {

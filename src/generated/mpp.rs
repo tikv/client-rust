@@ -30,9 +30,6 @@ pub struct TaskMeta {
     /// mpp version
     #[prost(int64, tag = "9")]
     pub mpp_version: i64,
-    /// keyspace id of the request
-    #[prost(uint32, tag = "10")]
-    pub keyspace_id: u32,
     /// coordinator_address of this query
     #[prost(string, tag = "11")]
     pub coordinator_address: ::prost::alloc::string::String,
@@ -50,6 +47,25 @@ pub struct TaskMeta {
     /// This is the session alias between a client and tidb
     #[prost(string, tag = "19")]
     pub connection_alias: ::prost::alloc::string::String,
+    #[prost(string, tag = "20")]
+    pub sql_digest: ::prost::alloc::string::String,
+    #[prost(string, tag = "21")]
+    pub plan_digest: ::prost::alloc::string::String,
+    #[prost(oneof = "task_meta::Keyspace", tags = "10, 22")]
+    pub keyspace: ::core::option::Option<task_meta::Keyspace>,
+}
+/// Nested message and enum types in `TaskMeta`.
+pub mod task_meta {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id of the request. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "10")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity of the request.
+        #[prost(message, tag = "22")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -80,6 +96,9 @@ pub struct DispatchTaskRequest {
     /// Used for partition table scan
     #[prost(message, repeated, tag = "6")]
     pub table_regions: ::prost::alloc::vec::Vec<super::coprocessor::TableRegions>,
+    /// Shard infos for TiCI/FTS routing in MPP dispatch path.
+    #[prost(message, repeated, tag = "7")]
+    pub table_shard_infos: ::prost::alloc::vec::Vec<super::coprocessor::TableShardInfos>,
 }
 /// Get response of DispatchTaskRequest.
 #[allow(clippy::derive_partial_eq_without_eq)]

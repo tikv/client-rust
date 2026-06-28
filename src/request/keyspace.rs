@@ -5,18 +5,25 @@ use std::ops::{Bound, Range};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::transaction::Mutation;
-use crate::{proto::kvrpcpb, Key};
+use crate::{proto::apipb, proto::keyspacepb, proto::kvrpcpb, Key};
 use crate::{BoundRange, KvPair};
 
 pub const RAW_KEY_PREFIX: u8 = b'r';
 pub const TXN_KEY_PREFIX: u8 = b'x';
 pub const KEYSPACE_PREFIX_LEN: usize = 4;
+pub const API_V3_PREFIX_LEN: usize = 8;
+pub const API_V3_MAX_KEYSPACE_ID: u32 = 0xFF_FFFF;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Keyspace {
     Disable,
     Enable {
+        keyspace_id: u32,
+    },
+    /// Use API V3 with user keys on the TiKV KV RPC wire format.
+    ApiV3 {
+        namespace_id: u32,
         keyspace_id: u32,
     },
     /// Use API V2 without adding or removing the API V2 keyspace/key-mode prefix.
@@ -34,12 +41,175 @@ pub enum KeyMode {
 }
 
 impl Keyspace {
+    pub fn api_v3(namespace_id: u32, keyspace_id: u32) -> crate::Result<Self> {
+        if namespace_id == 0 {
+            return Err(crate::Error::StringError(
+                "V3 keyspace identity namespace_id must be non-zero".to_owned(),
+            ));
+        }
+        if keyspace_id == 0 {
+            return Err(crate::Error::StringError(
+                "V3 keyspace identity keyspace_id must be non-zero".to_owned(),
+            ));
+        }
+        if keyspace_id > API_V3_MAX_KEYSPACE_ID {
+            return Err(crate::Error::StringError(
+                "V3 keyspace identity keyspace_id must be less than 2^24".to_owned(),
+            ));
+        }
+        Ok(Keyspace::ApiV3 {
+            namespace_id,
+            keyspace_id,
+        })
+    }
+
     pub fn api_version(&self) -> kvrpcpb::ApiVersion {
         match self {
             Keyspace::Disable => kvrpcpb::ApiVersion::V1,
             Keyspace::Enable { .. } => kvrpcpb::ApiVersion::V2,
+            Keyspace::ApiV3 { .. } => kvrpcpb::ApiVersion::V3,
             Keyspace::ApiV2NoPrefix => kvrpcpb::ApiVersion::V2,
         }
+    }
+
+    pub fn v3_identity(&self) -> Option<apipb::KeyspaceIdentity> {
+        match self {
+            Keyspace::ApiV3 {
+                namespace_id,
+                keyspace_id,
+            } => Some(apipb::KeyspaceIdentity {
+                namespace_id: *namespace_id,
+                keyspace_id: *keyspace_id,
+            }),
+            _ => None,
+        }
+    }
+
+    pub fn from_context(context: &Option<kvrpcpb::Context>) -> Self {
+        let Some(ctx) = context else {
+            return Keyspace::Disable;
+        };
+        if kvrpcpb::ApiVersion::try_from(ctx.api_version) != Ok(kvrpcpb::ApiVersion::V3) {
+            return Keyspace::Disable;
+        }
+        let Some(kvrpcpb::context::Keyspace::KeyspaceIdentity(identity)) = ctx.keyspace.as_ref()
+        else {
+            return Keyspace::Disable;
+        };
+        Keyspace::ApiV3 {
+            namespace_id: identity.namespace_id,
+            keyspace_id: identity.keyspace_id,
+        }
+    }
+
+    pub fn v3_route_prefix(&self, key_mode: KeyMode) -> Option<[u8; API_V3_PREFIX_LEN]> {
+        let Keyspace::ApiV3 {
+            namespace_id,
+            keyspace_id,
+        } = *self
+        else {
+            return None;
+        };
+        Some(api_v3_keyspace_prefix(namespace_id, keyspace_id, key_mode))
+    }
+
+    pub fn encode_route_key(&self, key: &Key, key_mode: KeyMode) -> Key {
+        let Some(prefix) = self.v3_route_prefix(key_mode) else {
+            return key.clone();
+        };
+        let mut route_key = key.clone();
+        prepend_bytes(&mut route_key.0, &prefix);
+        route_key
+    }
+
+    pub fn encode_route_range(
+        &self,
+        start_key: Key,
+        end_key: Key,
+        key_mode: KeyMode,
+    ) -> (Key, Key) {
+        let Some(prefix) = self.v3_route_prefix(key_mode) else {
+            return (start_key, end_key);
+        };
+        let mut start = start_key;
+        prepend_bytes(&mut start.0, &prefix);
+        let end = if end_key.is_empty() {
+            self.v3_route_range_end(key_mode)
+                .map(Key::from)
+                .unwrap_or(Key::EMPTY)
+        } else {
+            let mut end = end_key;
+            prepend_bytes(&mut end.0, &prefix);
+            end
+        };
+        (start, end)
+    }
+
+    pub fn decode_route_range(
+        &self,
+        start_key: Key,
+        end_key: Key,
+        key_mode: KeyMode,
+    ) -> (Key, Key) {
+        if self.v3_route_prefix(key_mode).is_none() {
+            return (start_key, end_key);
+        }
+        (
+            self.decode_route_bound(start_key, key_mode),
+            self.decode_route_bound(end_key, key_mode),
+        )
+    }
+
+    fn decode_route_bound(&self, key: Key, key_mode: KeyMode) -> Key {
+        let Some(prefix) = self.v3_route_prefix(key_mode) else {
+            return key;
+        };
+        if key.is_empty() {
+            return key;
+        }
+        if key.0 == prefix {
+            return Key::EMPTY;
+        }
+        if key.0.starts_with(&prefix) {
+            return Key::from(key.0[API_V3_PREFIX_LEN..].to_vec());
+        }
+        if self
+            .v3_route_range_end(key_mode)
+            .is_some_and(|end_prefix| key.0 >= end_prefix)
+        {
+            return Key::EMPTY;
+        }
+        Key::EMPTY
+    }
+
+    fn v3_route_range_end(&self, key_mode: KeyMode) -> Option<Vec<u8>> {
+        let Keyspace::ApiV3 {
+            namespace_id,
+            keyspace_id,
+        } = *self
+        else {
+            return None;
+        };
+        let start = u64::from_be_bytes(api_v3_keyspace_prefix(namespace_id, keyspace_id, key_mode));
+        Some(start.wrapping_add(1).to_be_bytes().to_vec())
+    }
+}
+
+pub(crate) fn keyspace_meta_identity(
+    keyspace: &keyspacepb::KeyspaceMeta,
+) -> Option<apipb::KeyspaceIdentity> {
+    match keyspace.keyspace.as_ref() {
+        Some(keyspacepb::keyspace_meta::Keyspace::KeyspaceIdentity(identity)) => {
+            Some(identity.clone())
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn keyspace_meta_legacy_id(keyspace: &keyspacepb::KeyspaceMeta) -> Option<u32> {
+    match keyspace.keyspace {
+        Some(keyspacepb::keyspace_meta::Keyspace::Id(id)) => Some(id),
+        _ => None,
     }
 }
 
@@ -215,6 +385,29 @@ fn keyspace_prefix(keyspace_id: u32, key_mode: KeyMode) -> [u8; KEYSPACE_PREFIX_
         KeyMode::Txn => TXN_KEY_PREFIX,
     };
     prefix
+}
+
+fn api_v3_keyspace_prefix(
+    namespace_id: u32,
+    keyspace_id: u32,
+    key_mode: KeyMode,
+) -> [u8; API_V3_PREFIX_LEN] {
+    debug_assert!(keyspace_id <= API_V3_MAX_KEYSPACE_ID);
+    let namespace_bytes = namespace_id.to_be_bytes();
+    let keyspace_bytes = keyspace_id.to_be_bytes();
+    [
+        match key_mode {
+            KeyMode::Raw => RAW_KEY_PREFIX,
+            KeyMode::Txn => TXN_KEY_PREFIX,
+        },
+        namespace_bytes[0],
+        namespace_bytes[1],
+        namespace_bytes[2],
+        namespace_bytes[3],
+        keyspace_bytes[1],
+        keyspace_bytes[2],
+        keyspace_bytes[3],
+    ]
 }
 
 fn prepend_bytes<const N: usize>(vec: &mut Vec<u8>, prefix: &[u8; N]) {
@@ -404,6 +597,93 @@ mod tests {
             Keyspace::ApiV2NoPrefix.api_version(),
             kvrpcpb::ApiVersion::V2
         );
+    }
+
+    #[test]
+    fn test_api_v3_keyspace() {
+        let keyspace = Keyspace::api_v3(7, 0xDEAD).unwrap();
+        assert_eq!(keyspace.api_version(), kvrpcpb::ApiVersion::V3);
+        assert_eq!(
+            keyspace.v3_identity(),
+            Some(apipb::KeyspaceIdentity {
+                namespace_id: 7,
+                keyspace_id: 0xDEAD,
+            })
+        );
+        assert!(Keyspace::api_v3(0, 1).is_err());
+        assert!(Keyspace::api_v3(1, 0).is_err());
+        assert!(Keyspace::api_v3(1, API_V3_MAX_KEYSPACE_ID + 1).is_err());
+    }
+
+    #[test]
+    fn test_api_v3_route_key_and_range() {
+        let keyspace = Keyspace::api_v3(0x0102_0304, 0x05_0607).unwrap();
+
+        assert_eq!(
+            keyspace.encode_route_key(&Key::from(vec![b'k']), KeyMode::Raw),
+            Key::from(vec![b'r', 1, 2, 3, 4, 5, 6, 7, b'k'])
+        );
+        assert_eq!(
+            keyspace.encode_route_key(&Key::from(vec![b'k']), KeyMode::Txn),
+            Key::from(vec![b'x', 1, 2, 3, 4, 5, 6, 7, b'k'])
+        );
+
+        let route_range =
+            keyspace.encode_route_range(Key::from(vec![b'a']), Key::from(vec![b'z']), KeyMode::Txn);
+        assert_eq!(
+            route_range.0,
+            Key::from(vec![b'x', 1, 2, 3, 4, 5, 6, 7, b'a'])
+        );
+        assert_eq!(
+            route_range.1,
+            Key::from(vec![b'x', 1, 2, 3, 4, 5, 6, 7, b'z'])
+        );
+        assert_eq!(
+            keyspace.decode_route_range(route_range.0, route_range.1, KeyMode::Txn),
+            (Key::from(vec![b'a']), Key::from(vec![b'z']))
+        );
+
+        let whole_range = keyspace.encode_route_range(Key::EMPTY, Key::EMPTY, KeyMode::Txn);
+        assert_eq!(whole_range.0, Key::from(vec![b'x', 1, 2, 3, 4, 5, 6, 7]));
+        assert_eq!(whole_range.1, Key::from(vec![b'x', 1, 2, 3, 4, 5, 6, 8]));
+        assert_eq!(
+            keyspace.decode_route_range(whole_range.0, whole_range.1, KeyMode::Txn),
+            (Key::EMPTY, Key::EMPTY)
+        );
+
+        let last_keyspace = Keyspace::api_v3(u32::MAX, API_V3_MAX_KEYSPACE_ID).unwrap();
+        let last_whole_range =
+            last_keyspace.encode_route_range(Key::EMPTY, Key::EMPTY, KeyMode::Txn);
+        assert_eq!(
+            last_whole_range.0,
+            Key::from(vec![b'x', 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff])
+        );
+        assert_eq!(
+            last_whole_range.1,
+            Key::from(vec![b'y', 0, 0, 0, 0, 0, 0, 0])
+        );
+        assert_eq!(
+            last_keyspace.decode_route_range(last_whole_range.0, last_whole_range.1, KeyMode::Txn),
+            (Key::EMPTY, Key::EMPTY)
+        );
+    }
+
+    #[test]
+    fn test_api_v3_wire_key_is_noop() {
+        let keyspace = Keyspace::api_v3(7, 0xDEAD).unwrap();
+        let key_mode = KeyMode::Txn;
+
+        let key = Key::from(vec![b'k']);
+        assert_eq!(key.clone().encode_keyspace(keyspace, key_mode), key);
+
+        let pair = KvPair(Key::from(vec![b'k']), vec![b'v']);
+        assert_eq!(pair.clone().encode_keyspace(keyspace, key_mode), pair);
+
+        let range = Range {
+            start: Key::from(vec![b'a']),
+            end: Key::from(vec![b'b']),
+        };
+        assert_eq!(range.clone().truncate_keyspace(keyspace), range);
     }
 
     #[test]

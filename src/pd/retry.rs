@@ -13,6 +13,7 @@ use tokio::time::sleep;
 
 use crate::pd::Cluster;
 use crate::pd::Connection;
+use crate::proto::apipb;
 use crate::proto::keyspacepb;
 use crate::proto::metapb;
 use crate::proto::pdpb::Timestamp;
@@ -45,9 +46,22 @@ pub trait RetryClientTrait {
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp>;
 
+    async fn get_timestamp_with_identity(
+        self: Arc<Self>,
+        identity: Option<apipb::KeyspaceIdentity>,
+    ) -> Result<Timestamp>;
+
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta>;
+
+    async fn lookup_keyspaces(&self, keyspace: &str) -> Result<Vec<keyspacepb::KeyspaceMeta>>;
+
+    async fn lookup_keyspace(
+        &self,
+        keyspace: &str,
+        namespace_id: u32,
+    ) -> Result<keyspacepb::KeyspaceMeta>;
 }
 /// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
 pub struct RetryClient<Cl = Cluster> {
@@ -192,6 +206,16 @@ impl RetryClientTrait for RetryClient<Cluster> {
         retry!(self, "get_timestamp", |cluster| cluster.get_timestamp())
     }
 
+    async fn get_timestamp_with_identity(
+        self: Arc<Self>,
+        identity: Option<apipb::KeyspaceIdentity>,
+    ) -> Result<Timestamp> {
+        retry!(self, "get_timestamp_with_identity", |cluster| {
+            let identity = identity.clone();
+            async move { cluster.get_timestamp_with_identity(identity).await }
+        })
+    }
+
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
         retry_mut!(self, "update_gc_safepoint", |cluster| async {
             cluster
@@ -204,6 +228,24 @@ impl RetryClientTrait for RetryClient<Cluster> {
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
         retry_mut!(self, "load_keyspace", |cluster| async {
             cluster.load_keyspace(keyspace, self.timeout).await
+        })
+    }
+
+    async fn lookup_keyspaces(&self, keyspace: &str) -> Result<Vec<keyspacepb::KeyspaceMeta>> {
+        retry_mut!(self, "lookup_keyspaces", |cluster| async {
+            cluster.lookup_keyspaces(keyspace, self.timeout).await
+        })
+    }
+
+    async fn lookup_keyspace(
+        &self,
+        keyspace: &str,
+        namespace_id: u32,
+    ) -> Result<keyspacepb::KeyspaceMeta> {
+        retry_mut!(self, "lookup_keyspace", |cluster| async {
+            cluster
+                .lookup_keyspace(keyspace, namespace_id, self.timeout)
+                .await
         })
     }
 }

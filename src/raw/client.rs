@@ -21,6 +21,7 @@ use crate::request::KeyMode;
 use crate::request::Keyspace;
 use crate::request::Plan;
 use crate::request::TruncateKeyspace;
+use crate::request::{keyspace_meta_identity, keyspace_meta_legacy_id};
 use crate::request::{plan, Collect};
 use crate::store::{HasRegionError, RegionStore};
 use crate::Backoff;
@@ -107,18 +108,107 @@ impl Client<PdRpcClient> {
         pd_endpoints: Vec<S>,
         config: Config,
     ) -> Result<Self> {
-        let enable_codec = config.keyspace.is_some();
+        if matches!(config.keyspace_namespace_id, Some(0)) {
+            return Err(crate::Error::StringError(
+                "config.keyspace_namespace_id must be non-zero".to_owned(),
+            ));
+        }
+        if config.keyspace_global_name_lookup
+            && (config.keyspace_identity.is_some() || config.keyspace_namespace_id.is_some())
+        {
+            return Err(crate::Error::StringError(
+                "config.keyspace_global_name_lookup cannot be combined with config.keyspace_identity or config.keyspace_namespace_id".to_owned(),
+            ));
+        }
+        if config.keyspace_global_name_lookup && config.keyspace.is_none() {
+            return Err(crate::Error::StringError(
+                "config.keyspace must be set when config.keyspace_global_name_lookup is set"
+                    .to_owned(),
+            ));
+        }
+        let configured_keyspace_identity = config
+            .keyspace_identity
+            .map(|identity| Keyspace::api_v3(identity.namespace_id, identity.keyspace_id))
+            .transpose()?;
+        if configured_keyspace_identity.is_none()
+            && config.keyspace_namespace_id.is_some()
+            && config.keyspace.is_none()
+        {
+            return Err(crate::Error::StringError(
+                "config.keyspace must be set when config.keyspace_namespace_id is set".to_owned(),
+            ));
+        }
+        let enable_codec = config.keyspace.is_some()
+            || config.keyspace_identity.is_some()
+            || config.keyspace_namespace_id.is_some()
+            || config.keyspace_global_name_lookup;
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let rpc =
             Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), enable_codec).await?);
-        let keyspace = match config.keyspace {
-            Some(name) => {
-                let keyspace = rpc.load_keyspace(&name).await?;
-                Keyspace::Enable {
-                    keyspace_id: keyspace.id,
+        let keyspace = if let Some(keyspace) = configured_keyspace_identity {
+            keyspace
+        } else if let Some(namespace_id) = config.keyspace_namespace_id {
+            let name = config.keyspace.clone().ok_or_else(|| {
+                crate::Error::StringError(
+                    "config.keyspace must be set when config.keyspace_namespace_id is set"
+                        .to_owned(),
+                )
+            })?;
+            let keyspace = rpc.lookup_keyspace(&name, namespace_id).await?;
+            let identity = keyspace_meta_identity(&keyspace).ok_or_else(|| {
+                crate::Error::StringError(format!(
+                    "keyspace '{}' in namespace {} does not have V3 identity",
+                    name, namespace_id
+                ))
+            })?;
+            Keyspace::api_v3(identity.namespace_id, identity.keyspace_id)?
+        } else if config.keyspace_global_name_lookup {
+            let name = config.keyspace.clone().ok_or_else(|| {
+                crate::Error::StringError(
+                    "config.keyspace must be set when config.keyspace_global_name_lookup is set"
+                        .to_owned(),
+                )
+            })?;
+            let mut keyspaces = rpc.lookup_keyspaces(&name).await?;
+            match keyspaces.len() {
+                1 => {
+                    let keyspace = keyspaces.remove(0);
+                    if let Some(identity) = keyspace_meta_identity(&keyspace) {
+                        Keyspace::api_v3(identity.namespace_id, identity.keyspace_id)?
+                    } else {
+                        Keyspace::Enable {
+                            keyspace_id: keyspace_meta_legacy_id(&keyspace).ok_or_else(|| {
+                                crate::Error::StringError(format!(
+                                    "keyspace '{}' does not have a legacy id or V3 identity",
+                                    name
+                                ))
+                            })?,
+                        }
+                    }
+                }
+                0 => return Err(crate::Error::KeyspaceNotFound(name)),
+                _ => {
+                    return Err(crate::Error::StringError(format!(
+                        "multiple keyspaces named '{}' found; DB9 global-name lookup requires unique names",
+                        name
+                    )));
                 }
             }
-            None => Keyspace::Disable,
+        } else {
+            match config.keyspace.clone() {
+                Some(name) => {
+                    let keyspace = rpc.load_keyspace(&name).await?;
+                    Keyspace::Enable {
+                        keyspace_id: keyspace_meta_legacy_id(&keyspace).ok_or_else(|| {
+                            crate::Error::StringError(format!(
+                                "keyspace '{}' does not have a legacy id",
+                                name
+                            ))
+                        })?,
+                    }
+                }
+                None => Keyspace::Disable,
+            }
         };
         Ok(Client {
             rpc,
@@ -784,7 +874,7 @@ impl<PdC: PdClient> Client<PdC> {
                 current_limit -= kvs.len() as u32;
                 result.append(&mut kvs);
             }
-            if end_key.clone().is_some_and(|ek| ek <= next_key) {
+            if next_key.is_empty() || end_key.clone().is_some_and(|ek| ek <= next_key) {
                 break;
             } else {
                 current_key = next_key;
@@ -808,7 +898,8 @@ impl<PdC: PdClient> Client<PdC> {
         let start_key = scan_args.start_key;
         let end_key = scan_args.end_key;
         loop {
-            let region = self.rpc.clone().region_for_key(&start_key).await?;
+            let route_start_key = self.keyspace.encode_route_key(&start_key, KeyMode::Raw);
+            let region = self.rpc.clone().region_for_key(&route_start_key).await?;
             let store = self.rpc.clone().store_for_id(region.id()).await?;
             let request = new_raw_scan_request(
                 (start_key.clone(), end_key.clone()).into(),
@@ -833,7 +924,12 @@ impl<PdC: PdClient> Client<PdC> {
                             return Err(RegionError(Box::new(err)));
                         }
                     }
-                    Ok((Some(r), region.end_key()))
+                    let (next_key, _) = self.keyspace.decode_route_range(
+                        region.end_key(),
+                        Key::EMPTY,
+                        KeyMode::Raw,
+                    );
+                    Ok((Some(r), next_key))
                 }
                 Err(err) => Err(err),
             };
@@ -912,7 +1008,7 @@ struct ScanInnerArgs {
 #[cfg(test)]
 mod tests {
     use std::any::Any;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     use super::*;
     use crate::mock::MockKvClient;
@@ -947,6 +1043,151 @@ mod tests {
         ];
         let ttls = vec![0, 0];
         assert!(client.batch_put_with_ttl(pairs, ttls).await.is_ok());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_api_v3_raw_client_rejects_invalid_identity_before_pd_connect() {
+        let result = Client::new_with_config(
+            Vec::<String>::new(),
+            Config::default().with_keyspace_identity(0, 1),
+        )
+        .await;
+        let err = match result {
+            Ok(_) => panic!("invalid API V3 identity should be rejected before PD connect"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("namespace_id must be non-zero"));
+    }
+
+    #[tokio::test]
+    async fn test_api_v3_raw_client_rejects_namespace_without_keyspace_before_pd_connect() {
+        let result = Client::new_with_config(
+            Vec::<String>::new(),
+            Config::default().with_keyspace_namespace_id(1),
+        )
+        .await;
+        let err = match result {
+            Ok(_) => panic!("API V3 namespace lookup should require a keyspace name"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("config.keyspace must be set"));
+    }
+
+    #[tokio::test]
+    async fn test_api_v3_retryable_scan_routes_with_physical_key_but_sends_user_keys() -> Result<()>
+    {
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::RawScanRequest>() {
+                    assert_eq!(req.start_key, vec![1]);
+                    assert_eq!(req.end_key, vec![2]);
+                    let ctx = req.context.as_ref().unwrap();
+                    assert_eq!(ctx.region_id, 2);
+                    assert_eq!(ctx.api_version, kvrpcpb::ApiVersion::V3 as i32);
+                    let Some(kvrpcpb::context::Keyspace::KeyspaceIdentity(identity)) =
+                        ctx.keyspace.as_ref()
+                    else {
+                        panic!("expected V3 keyspace identity");
+                    };
+                    assert_eq!(identity.namespace_id, 1);
+                    assert_eq!(identity.keyspace_id, 7);
+                    Ok(Box::<kvrpcpb::RawScanResponse>::default() as Box<dyn Any>)
+                } else {
+                    unreachable!()
+                }
+            },
+        )));
+        let client = Client {
+            rpc: pd_client,
+            cf: Some(ColumnFamily::Default),
+            backoff: DEFAULT_REGION_BACKOFF,
+            atomic: false,
+            keyspace: Keyspace::api_v3(1, 7).unwrap(),
+        };
+
+        let (resp, next_key) = client
+            .retryable_scan(ScanInnerArgs {
+                start_key: vec![1].into(),
+                end_key: Some(vec![2].into()),
+                limit: 16,
+                key_only: false,
+                reverse: false,
+                backoff: DEFAULT_STORE_BACKOFF,
+            })
+            .await?;
+
+        assert!(resp.is_some());
+        assert!(next_key.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_api_v3_raw_coprocessor_routes_with_physical_key_but_sends_user_ranges(
+    ) -> Result<()> {
+        let seen_dispatch = Arc::new(Mutex::new(false));
+        let seen_dispatch_in_hook = seen_dispatch.clone();
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::RawCoprocessorRequest>() {
+                    assert_eq!(req.copr_name, "example");
+                    assert_eq!(req.ranges.len(), 1);
+                    assert_eq!(req.ranges[0].start_key, vec![1]);
+                    assert_eq!(req.ranges[0].end_key, vec![2]);
+                    assert_eq!(req.data, b"builder-data".to_vec());
+                    let ctx = req.context.as_ref().unwrap();
+                    assert_eq!(ctx.api_version, kvrpcpb::ApiVersion::V3 as i32);
+                    let Some(kvrpcpb::context::Keyspace::KeyspaceIdentity(identity)) =
+                        ctx.keyspace.as_ref()
+                    else {
+                        panic!("expected V3 keyspace identity");
+                    };
+                    assert_eq!(identity.namespace_id, 1);
+                    assert_eq!(identity.keyspace_id, 7);
+                    assert_eq!(ctx.region_id, 2);
+                    assert_eq!(ctx.peer.as_ref().unwrap().store_id, 42);
+                    *seen_dispatch_in_hook.lock().unwrap() = true;
+                    Ok(Box::new(kvrpcpb::RawCoprocessorResponse {
+                        data: req.data.clone(),
+                        ..Default::default()
+                    }) as Box<dyn Any>)
+                } else {
+                    unreachable!()
+                }
+            },
+        )));
+        let client = Client {
+            rpc: pd_client,
+            cf: Some(ColumnFamily::Default),
+            backoff: DEFAULT_REGION_BACKOFF,
+            atomic: false,
+            keyspace: Keyspace::api_v3(1, 7).unwrap(),
+        };
+        let seen_builder = Arc::new(Mutex::new(false));
+        let seen_builder_in_closure = seen_builder.clone();
+        let resps = client
+            .coprocessor(
+                "example",
+                "0.1.0",
+                vec![vec![1]..vec![2]],
+                move |region, ranges| {
+                    assert_eq!(region.id, 2);
+                    assert_eq!(ranges, vec![Key::from(vec![1])..Key::from(vec![2])]);
+                    *seen_builder_in_closure.lock().unwrap() = true;
+                    b"builder-data".to_vec()
+                },
+            )
+            .await?;
+
+        assert_eq!(
+            resps,
+            vec![(
+                vec![Key::from(vec![1])..Key::from(vec![2])],
+                b"builder-data".to_vec()
+            )]
+        );
+        assert!(*seen_builder.lock().unwrap());
+        assert!(*seen_dispatch.lock().unwrap());
         Ok(())
     }
 
