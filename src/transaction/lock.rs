@@ -55,7 +55,10 @@ pub async fn resolve_locks(
     keyspace: Keyspace,
 ) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
     debug!("resolving locks");
-    let ts = pd_client.clone().get_timestamp().await?;
+    let ts = pd_client
+        .clone()
+        .get_timestamp_with_keyspace_id(keyspace.tso_keyspace_id())
+        .await?;
     let caller_start_ts = timestamp.version();
     let current_ts = ts.version();
 
@@ -480,7 +483,10 @@ impl LockResolver {
             Err(err) => return Err(err),
         };
 
-        let current = pd_client.clone().get_timestamp().await?;
+        let current = pd_client
+            .clone()
+            .get_timestamp_with_keyspace_id(keyspace.tso_keyspace_id())
+            .await?;
         status.check_ttl(current);
         let res = Arc::new(status);
         if res.is_cacheable() {
@@ -563,7 +569,10 @@ impl LockResolver {
             {
                 Ok(status) => return Ok(status),
                 Err(Error::TxnNotFound(txn_not_found)) => {
-                    let current = pd_client.clone().get_timestamp().await?;
+                    let current = pd_client
+                        .clone()
+                        .get_timestamp_with_keyspace_id(keyspace.tso_keyspace_id())
+                        .await?;
                     if lock_until_expired_ms(lock.lock_version, lock.lock_ttl, current) <= 0 {
                         warn!(
                             "lock txn not found, lock has expired, lock {:?}, caller_start_ts {}, current_ts {}",

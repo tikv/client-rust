@@ -65,6 +65,14 @@ pub trait PdClient: Send + Sync + 'static {
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp>;
 
+    async fn get_timestamp_with_keyspace_id(
+        self: Arc<Self>,
+        keyspace_id: Option<u32>,
+    ) -> Result<Timestamp> {
+        let _ = keyspace_id;
+        self.get_timestamp().await
+    }
+
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta>;
@@ -259,6 +267,16 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
         self.pd.clone().get_timestamp().await
+    }
+
+    async fn get_timestamp_with_keyspace_id(
+        self: Arc<Self>,
+        keyspace_id: Option<u32>,
+    ) -> Result<Timestamp> {
+        self.pd
+            .clone()
+            .get_timestamp_with_keyspace_id(keyspace_id)
+            .await
     }
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
