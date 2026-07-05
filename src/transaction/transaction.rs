@@ -86,6 +86,11 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     options: TransactionOptions,
     keyspace: Keyspace,
     is_heartbeat_started: bool,
+    /// Set once the transaction enters the commit path (`StartedCommit`), where
+    /// prewrite may place 2PC locks. Kept as a dedicated flag because the status
+    /// transitions to `StartedRollback` on rollback, losing the fact that commit
+    /// had started — which a rollback retry would otherwise need to know.
+    prewritten: bool,
     start_instant: Instant,
 }
 
@@ -109,6 +114,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             options,
             keyspace,
             is_heartbeat_started: false,
+            prewritten: false,
             start_instant: std::time::Instant::now(),
         }
     }
@@ -657,6 +663,10 @@ impl<PdC: PdClient> Transaction<PdC> {
         ) {
             return Err(Error::OperationAfterCommitError);
         }
+        // Record that the commit path has been entered; prewrite may place 2PC
+        // locks. A later rollback needs this even after the status has moved on
+        // to `StartedRollback` (see `rollback`).
+        self.prewritten = true;
 
         let primary_key = self.buffer.get_primary_key();
         let mutations = self.buffer.to_proto_mutations();
@@ -714,10 +724,12 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.timestamp.version()
         );
         // A transaction that already started committing may have placed prewrite
-        // (2PC) locks; capture that before the status transition so the committer
-        // rolls those back with `BatchRollback` rather than `PessimisticRollback`
-        // (which cannot clear them).
-        let prewritten = self.get_status() == TransactionStatus::StartedCommit;
+        // (2PC) locks; use the persisted flag so the committer rolls those back
+        // with `BatchRollback` rather than `PessimisticRollback` (which cannot
+        // clear them). Reading it from the status would be wrong on a rollback
+        // retry: the status is already `StartedRollback` by then, so the fact
+        // that commit had started would be lost.
+        let prewritten = self.prewritten;
         if !self.transit_status(
             |status| {
                 matches!(
