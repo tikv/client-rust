@@ -327,6 +327,46 @@ async fn txn_resolve_locks() -> Result<()> {
     Ok(())
 }
 
+// Regression test for #545: a pessimistic transaction whose commit fails after
+// prewrite has placed its 2PC lock must have that lock cleared by `rollback()`.
+// Previously the terminal pessimistic rollback sent `PessimisticRollback`, which
+// only removes `LockType::Pessimistic` locks, so the prewrite lock was left
+// behind (and `rollback()` still returned `Ok`).
+#[tokio::test]
+#[serial]
+async fn txn_pessimistic_rollback_clears_prewrite_locks() -> Result<()> {
+    init().await?;
+    let scenario = FailScenario::setup();
+
+    fail::cfg("after-prewrite", "return").unwrap();
+    defer! {{
+        fail::cfg("after-prewrite", "off").unwrap();
+    }}
+
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
+    let key = b"pessimistic-rollback-prewrite-key".to_vec();
+
+    let mut txn = client
+        .begin_with_options(
+            TransactionOptions::new_pessimistic()
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(CheckLevel::Warn),
+        )
+        .await?;
+    txn.get_for_update(key.clone()).await?;
+    txn.put(key.clone(), b"value".to_vec()).await?;
+    // The commit fails after prewrite has placed the (2PC) lock.
+    assert!(txn.commit().await.is_err());
+    // rollback() must clear that prewrite lock.
+    txn.rollback().await?;
+    assert_eq!(count_locks(&client).await?, 0);
+
+    scenario.teardown();
+    Ok(())
+}
+
 #[tokio::test]
 #[serial]
 async fn txn_cleanup_2pc_locks() -> Result<()> {
