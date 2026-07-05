@@ -467,17 +467,27 @@ impl LockResolver {
             .plan();
         let mut status: TransactionStatus = match plan.execute().await {
             Ok(status) => status,
-            Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
-                Some(Error::KeyError(key_err)) => {
-                    if let Some(txn_not_found) = key_err.txn_not_found {
-                        return Err(Error::TxnNotFound(txn_not_found));
+            // The per-key error can arrive under either wrapper: `ExtractError`
+            // produces `ExtractedErrors` from errors left in an Ok response,
+            // while `single_plan_handler` surfaces response key errors as
+            // `MultipleKeyErrors` before `ExtractError` ever sees them. Both
+            // must feed the `TxnNotFound` conversion, or the lock-resolution
+            // heal path (`rollback_if_not_exist` after TTL expiry in
+            // `get_txn_status_from_lock`) is unreachable and an orphaned
+            // secondary lock poisons its key forever.
+            Err(Error::ExtractedErrors(mut errors) | Error::MultipleKeyErrors(mut errors)) => {
+                match errors.pop() {
+                    Some(Error::KeyError(key_err)) => {
+                        if let Some(txn_not_found) = key_err.txn_not_found {
+                            return Err(Error::TxnNotFound(txn_not_found));
+                        }
+                        // TODO: handle primary mismatch error.
+                        return Err(Error::KeyError(key_err));
                     }
-                    // TODO: handle primary mismatch error.
-                    return Err(Error::KeyError(key_err));
+                    Some(err) => return Err(err),
+                    None => unreachable!(),
                 }
-                Some(err) => return Err(err),
-                None => unreachable!(),
-            },
+            }
             Err(err) => return Err(err),
         };
 
