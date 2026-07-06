@@ -1610,6 +1610,11 @@ impl<PdC: PdClient> Committer<PdC> {
             self.start_version.version(),
             prewritten
         );
+        fail_point!("before-rollback", |_| {
+            Err(Error::StringError(
+                "failpoint: before-rollback return error".to_owned(),
+            ))
+        });
         if self.options.kind == TransactionKind::Optimistic && self.mutations.is_empty() {
             return Ok(());
         }
