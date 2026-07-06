@@ -37,7 +37,7 @@ use crate::transaction::requests::TransactionStatusKind;
 use crate::Error;
 use crate::Result;
 
-fn format_key_for_log(key: &[u8]) -> String {
+pub(crate) fn format_key_for_log(key: &[u8]) -> String {
     let prefix_len = key.len().min(16);
     format!("len={}, prefix={:?}", key.len(), &key[..prefix_len])
 }
