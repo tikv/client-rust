@@ -1,4 +1,5 @@
 #![cfg(feature = "integration-tests")]
+#![allow(clippy::result_large_err)]
 
 //! # Naming convention
 //!
@@ -861,7 +862,7 @@ async fn raw_write_million() -> Result<()> {
     // test batch_scan
     for batch_num in 1..4 {
         let _ = client
-            .batch_scan(iter::repeat(vec![]..).take(batch_num), limit)
+            .batch_scan(iter::repeat_n(vec![].., batch_num), limit)
             .await?;
         // FIXME: `each_limit` parameter does no work as expected. It limits the
         // entries on each region of each rangqe, instead of each range.
@@ -1155,8 +1156,8 @@ async fn txn_get_for_update() -> Result<()> {
         .map(From::from)
         .collect();
     t2.commit().await?;
-    assert!(res.get(&key1.clone().into()).unwrap() == &value1);
-    assert!(res.get(&key2.into()).unwrap() == &value2);
+    assert!(res.get(key1.as_bytes()).unwrap() == &value1);
+    assert!(res.get(key2.as_bytes()).unwrap() == &value2);
 
     assert!(t3.get_for_update(key1).await?.is_none());
     assert!(t3.commit().await.is_err());

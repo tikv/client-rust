@@ -326,6 +326,11 @@ impl Connection {
         }
     }
 
+    /// Attempts to connect to the PD cluster leader.
+    ///
+    /// Iterates over known members to find a responsive node, then connects
+    /// to the reported leader. Returns an error if no leader is present or
+    /// reachable.
     async fn try_connect_leader(
         &self,
         previous: &pdpb::GetMembersResponse,
@@ -335,7 +340,11 @@ impl Connection {
         keyspacepb::keyspace_client::KeyspaceClient<Channel>,
         pdpb::GetMembersResponse,
     )> {
-        let previous_leader = previous.leader.as_ref().unwrap();
+        let previous_leader = previous
+            .leader
+            .as_ref()
+            .ok_or_else(|| internal_err!("PD cluster has no leader"))?;
+
         let members = &previous.members;
         let cluster_id = previous.header.as_ref().unwrap().cluster_id;
 
