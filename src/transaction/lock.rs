@@ -14,6 +14,7 @@ use tokio::time::sleep;
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::backoff::OPTIMISTIC_BACKOFF;
+use crate::kv::HexRepr;
 use crate::pd::PdClient;
 
 use crate::proto::kvrpcpb;
@@ -39,7 +40,7 @@ use crate::Result;
 
 pub(crate) fn format_key_for_log(key: &[u8]) -> String {
     let prefix_len = key.len().min(16);
-    format!("len={}, prefix={:?}", key.len(), &key[..prefix_len])
+    format!("len={}, prefix={}", key.len(), HexRepr(&key[..prefix_len]))
 }
 
 /// _Resolves_ the given locks. Returns locks still live. When there is no live locks, all the given locks are resolved.
@@ -709,5 +710,19 @@ mod tests {
         assert!(live_locks.is_empty());
         assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 1);
         assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn format_key_for_log_hex_encodes_the_prefix() {
+        assert_eq!(format_key_for_log(b"hello"), "len=5, prefix=68656C6C6F");
+    }
+
+    #[test]
+    fn format_key_for_log_truncates_the_prefix_to_16_bytes() {
+        let key: Vec<u8> = (0u8..20).collect();
+        assert_eq!(
+            format_key_for_log(&key),
+            "len=20, prefix=000102030405060708090A0B0C0D0E0F"
+        );
     }
 }
