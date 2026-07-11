@@ -9,6 +9,7 @@ use futures::future::try_join_all;
 use futures::prelude::*;
 use log::debug;
 use log::info;
+use log::warn;
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
 
@@ -162,9 +163,12 @@ where
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
     ) -> Result<<Self as Plan>::Result> {
-        debug!("single_shard_handler");
         let region_ver_id = region.ver_id();
         let store_id = region.get_store_id().ok();
+        debug!(
+            "single_shard_handler, region: {:?}, store: {:?}",
+            region_ver_id, store_id
+        );
         let region_store = match pd_client
             .clone()
             .map_region_to_store(region)
@@ -221,7 +225,10 @@ where
             debug!("single_shard_handler:execute: key errors: {:?}", e);
             Ok(vec![Err(Error::MultipleKeyErrors(e))])
         } else if let Some(e) = resp.region_error() {
-            debug!("single_shard_handler:execute: region error: {:?}", e);
+            debug!(
+                "single_shard_handler:execute: region error: {:?}, region: {:?}",
+                e, region_ver_id
+            );
             match backoff.next_delay_duration() {
                 Some(duration) => {
                     let region_error_resolved =
@@ -239,7 +246,13 @@ where
                     )
                     .await
                 }
-                None => Err(Error::RegionError(Box::new(e))),
+                None => {
+                    warn!(
+                        "giving up after exhausting retries on region error, region: {:?}",
+                        region_ver_id
+                    );
+                    Err(Error::RegionError(Box::new(e)))
+                }
             }
         } else {
             Ok(vec![Ok(resp)])
@@ -290,9 +303,9 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
     e: errorpb::Error,
     region_store: RegionStore,
 ) -> Result<bool> {
-    debug!("handle_region_error: {:?}", e);
     let ver_id = region_store.region_with_leader.ver_id();
     let store_id = region_store.region_with_leader.get_store_id();
+    debug!("handling region error: {:?}, region: {:?}", e, ver_id);
     if let Some(not_leader) = e.not_leader {
         if let Some(leader) = not_leader.leader {
             match pd_client
@@ -330,8 +343,10 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
     {
         Err(Error::RegionError(Box::new(e)))
     } else {
-        // TODO: pass the logger around
-        // info!("unknwon region error: {:?}", e);
+        debug!(
+            "unknown region error, invalidating region and store caches, region: {:?}: {:?}",
+            ver_id, e
+        );
         pd_client.invalidate_region_cache(ver_id).await;
         if let Ok(store_id) = store_id {
             pd_client.invalidate_store_cache(store_id).await;

@@ -107,6 +107,22 @@ Important note: It is **not recommended or supported** to use both the raw and t
 | `send_heart_beat`      |                     | `u64` (TTL)     |                                                                 |
 | `gc`                   | `Timestamp`         | `bool`          | Returns true if the latest safepoint in PD equals the parameter |
 
+## Logging
+
+The client emits logs through the [`log`](https://docs.rs/log) facade. It does
+not install a logger itself — pick any `log`-compatible backend in your
+application (the examples in `examples/` use [`env_logger`](https://docs.rs/env_logger)).
+With `env_logger`, set `RUST_LOG` to control verbosity, e.g.:
+
+```sh
+RUST_LOG=tikv_client=debug cargo run --example transaction
+```
+
+`debug` traces the transaction lifecycle with each transaction's `start_ts`
+(begin, commit/rollback and their outcomes, prewrite, pessimistic lock, drop),
+plus region/retry activity; `info` and above surface only infrequent
+operational and error events.
+
 # Development and contributing
 
 We welcome your contributions! Contributing code is great, we also appreciate filing [issues](https://github.com/tikv/client-rust/issues/new) to identify bugs and provide feedback, adding tests or examples, and improvements to documentation.
