@@ -5,13 +5,13 @@ use std::sync::Arc;
 
 use async_recursion::async_recursion;
 use async_trait::async_trait;
-use tokio::task::JoinSet;
 use futures::prelude::*;
 use log::debug;
 use log::error;
 use log::info;
 use log::warn;
 use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 use tokio::time::sleep;
 
 use crate::backoff::Backoff;
@@ -94,6 +94,15 @@ pub(crate) fn is_grpc_error(e: &Error) -> bool {
     matches!(e, Error::GrpcAPI(_) | Error::Grpc(_))
 }
 
+/// Await every task in `join_set`, reassembling the results in spawn order.
+///
+/// Contract: on any join failure (a panicked or cancelled task) the remaining tasks
+/// are aborted via [`JoinSet::shutdown`] before the error is returned — an error from
+/// the surrounding handler therefore means *no further effects from this call*. The
+/// previous `try_join_all`-over-`JoinHandle`s code instead **detached** in-flight
+/// tasks on early return, which let them race on after the caller had already
+/// observed the failure and panicked the runtime's timer driver when a short-lived
+/// runtime shut down underneath them (#534).
 async fn collect_join_set_results<T>(
     mut join_set: JoinSet<(usize, T)>,
     task_count: usize,
