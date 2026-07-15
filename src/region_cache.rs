@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use log::debug;
 use tokio::sync::Notify;
 use tokio::sync::RwLock;
 
@@ -216,6 +217,7 @@ impl<C: RetryClientTrait> RegionCache<C> {
         let region_entry = cache.ver_id_to_region.get_mut(&ver_id);
         if let Some(region) = region_entry {
             region.leader = Some(leader);
+            debug!("updated cached region leader, region: {:?}", ver_id);
         }
 
         Ok(())
@@ -230,12 +232,17 @@ impl<C: RetryClientTrait> RegionCache<C> {
             cache.ver_id_to_region.remove(&ver_id);
             cache.id_to_ver_id.remove(&id);
             cache.key_to_ver_id.remove(&start_key);
+            debug!("invalidated region cache entry, region: {:?}", ver_id);
         }
     }
 
     pub async fn invalidate_store_cache(&self, store_id: StoreId) -> Option<Store> {
         let mut cache = self.store_cache.write().await;
-        cache.remove(&store_id)
+        let removed = cache.remove(&store_id);
+        if removed.is_some() {
+            debug!("invalidated store cache entry, store: {:?}", store_id);
+        }
+        removed
     }
 
     pub async fn read_through_all_stores(&self) -> Result<Vec<Store>> {

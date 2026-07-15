@@ -681,7 +681,7 @@ impl<PdC: PdClient> Client<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<Vec<Key>> {
-        debug!("invoking raw scan_keys request");
+        debug!("invoking raw scan_keys_reverse request");
         Ok(self
             .scan_inner(range, limit, true, true)
             .await?

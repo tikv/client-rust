@@ -86,7 +86,6 @@ impl Client {
     /// # });
     /// ```
     pub async fn new<S: Into<String>>(pd_endpoints: Vec<S>) -> Result<Client> {
-        // debug!("creating transactional client");
         Self::new_with_config(pd_endpoints, Config::default()).await
     }
 
@@ -264,8 +263,11 @@ impl Client {
     /// # });
     /// ```
     pub async fn begin_optimistic(&self) -> Result<Transaction> {
-        debug!("creating new optimistic transaction");
         let timestamp = self.current_timestamp().await?;
+        debug!(
+            "began optimistic transaction, start_ts: {}",
+            timestamp.version()
+        );
         Ok(self.new_transaction(timestamp, TransactionOptions::new_optimistic()))
     }
 
@@ -287,8 +289,11 @@ impl Client {
     /// # });
     /// ```
     pub async fn begin_pessimistic(&self) -> Result<Transaction> {
-        debug!("creating new pessimistic transaction");
         let timestamp = self.current_timestamp().await?;
+        debug!(
+            "began pessimistic transaction, start_ts: {}",
+            timestamp.version()
+        );
         Ok(self.new_transaction(timestamp, TransactionOptions::new_pessimistic()))
     }
 
@@ -310,8 +315,8 @@ impl Client {
     /// # });
     /// ```
     pub async fn begin_with_options(&self, options: TransactionOptions) -> Result<Transaction> {
-        debug!("creating new customized transaction");
         let timestamp = self.current_timestamp().await?;
+        debug!("began transaction, start_ts: {}", timestamp.version());
         Ok(self.new_transaction(timestamp, options))
     }
 
@@ -370,7 +375,10 @@ impl Client {
             .update_safepoint(safepoint.version())
             .await?;
         if !res {
-            info!("new safepoint != user-specified safepoint");
+            info!(
+                "GC safepoint not updated: PD already holds a safepoint newer than the requested {}",
+                safepoint.version()
+            );
         }
         Ok(res)
     }
