@@ -430,12 +430,7 @@ pub(crate) async fn on_region_epoch_not_match<PdC: PdClient>(
             let region_epoch = r.region_epoch.unwrap();
             let returned_conf_ver = region_epoch.conf_ver;
             let returned_version = region_epoch.version;
-            let current_region_epoch = region_store
-                .region_with_leader
-                .region
-                .region_epoch
-                .clone()
-                .unwrap();
+            let current_region_epoch = region_store.region_with_leader.region.region_epoch.unwrap();
             let current_conf_ver = current_region_epoch.conf_ver;
             let current_version = current_region_epoch.version;
 
@@ -678,7 +673,7 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
     fn clone(&self) -> Self {
         ResolveLock {
             inner: self.inner.clone(),
-            timestamp: self.timestamp.clone(),
+            timestamp: self.timestamp,
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
             keyspace: self.keyspace,
@@ -707,13 +702,8 @@ where
             }
 
             let pd_client = self.pd_client.clone();
-            let live_locks = resolve_locks(
-                locks,
-                self.timestamp.clone(),
-                pd_client.clone(),
-                self.keyspace,
-            )
-            .await?;
+            let live_locks =
+                resolve_locks(locks, self.timestamp, pd_client.clone(), self.keyspace).await?;
             if live_locks.is_empty() {
                 result = self.inner.execute().await?;
             } else {
