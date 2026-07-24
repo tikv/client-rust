@@ -40,6 +40,9 @@ use crate::KvPair;
 use crate::Result;
 use crate::Value;
 
+mod scanner;
+pub use scanner::Scanner;
+
 /// An undo-able set of actions on the dataset.
 ///
 /// Create a transaction using a [`TransactionClient`](crate::TransactionClient), then run actions
