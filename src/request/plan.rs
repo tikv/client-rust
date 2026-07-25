@@ -132,6 +132,19 @@ where
         .collect())
 }
 
+/// Did this error come from the response body, rather than from a failure to obtain a
+/// response at all?
+///
+/// These are the two error types the `HasKeyErrors` response impls construct — see
+/// `has_key_error!` / `extract_errors` (a `kvrpcpb::KeyError` field) and `has_str_error!`
+/// (a raw endpoint's string `error` field). Everything else reaching `key_errors()` got
+/// there through the catch-all arm of `HasKeyErrors for Result<T, Error>`, which reports
+/// any per-shard `Err` — a transport failure, an exhausted retry — and must not be
+/// relabelled as something the server said about a key.
+fn is_response_error(e: &Error) -> bool {
+    matches!(e, Error::KeyError(_) | Error::KvError { .. })
+}
+
 pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
     pub(super) inner: P,
     pub pd_client: Arc<PdC>,
@@ -862,13 +875,21 @@ where
                 Ok(()) => {
                     result.resolved_locks += lock_size;
                 }
-                Err(Error::ExtractedErrors(mut errors)) => {
-                    // Propagate errors to `retry_multi_region` for retry.
-                    if let Error::RegionError(e) = errors.pop().unwrap() {
+                // Propagate errors to `retry_multi_region` for retry. The variant now
+                // says which kind arrived, so neither arm has to pop an element to find
+                // out. That also fixes a real leak in the old single-variant code: it
+                // popped the last error to type-test it, and on the key-error path
+                // assigned the *remaining* vec to `key_error` — so a lone key error was
+                // dropped and `key_errors()` went on to report `Some(vec![])`, an error
+                // carrying no errors.
+                Err(Error::MultipleRegionErrors(mut errors)) => {
+                    if let Some(Error::RegionError(e)) = errors.pop() {
                         result.region_error = Some(*e);
-                    } else {
-                        result.key_error = Some(errors);
                     }
+                    return Ok(result);
+                }
+                Err(Error::MultipleKeyErrors(errors)) => {
+                    result.key_error = Some(errors);
                     return Ok(result);
                 }
                 Err(e) => {
@@ -915,10 +936,34 @@ where
 
     async fn execute(&self) -> Result<Self::Result> {
         let mut result = self.inner.execute().await?;
+        // Each branch names what it found. Previously both produced one
+        // `ExtractedErrors`, so a caller had to pop an element and inspect its type to
+        // learn which kind it was holding — and whether a caller saw that variant at
+        // all depended on whether a collapsing merge sat between the retry layer and
+        // this plan (see `MultipleKeyErrors`' docs).
         if let Some(errors) = result.key_errors() {
-            Err(Error::ExtractedErrors(errors))
+            // `HasKeyErrors for Result<T, Error>` yields *any* per-shard `Err`, not only
+            // errors the response carried — that is how a plan keeping its
+            // `Vec<Result<_>>` (see `retry_multi_region_preserve_results`) carries a hard
+            // failure through. Wrap only what the response itself reported; a transport
+            // or exhausted-retry error keeps its own class instead of being relabelled.
+            //
+            // "Reported by the response" is exactly the two error types the `HasKeyErrors`
+            // response impls construct: `KeyError` from a `kvrpcpb::KeyError` field
+            // (`has_key_error!`, `extract_errors`) and `KvError` from a raw endpoint's
+            // string `error` field (`has_str_error!`). Both must be treated alike, or
+            // plan shape would still decide the variant for raw operations — the very
+            // thing this split removes.
+            if errors.iter().all(is_response_error) {
+                Err(Error::MultipleKeyErrors(errors))
+            } else {
+                Err(errors
+                    .into_iter()
+                    .find(|e| !is_response_error(e))
+                    .expect("a non-response error exists: the all() test above failed"))
+            }
         } else if let Some(errors) = result.region_errors() {
-            Err(Error::ExtractedErrors(
+            Err(Error::MultipleRegionErrors(
                 errors
                     .into_iter()
                     .map(|e| Error::RegionError(Box::new(e)))
@@ -1061,5 +1106,216 @@ mod test {
             .unwrap();
 
         assert_eq!(results, vec![0, 1, 2]);
+    }
+
+    /// A single-shard plan whose response carries a key error or a region error.
+    #[derive(Clone)]
+    struct FailingPlan {
+        key_error: bool,
+    }
+
+    #[async_trait]
+    impl Plan for FailingPlan {
+        type Result = kvrpcpb::GetResponse;
+
+        async fn execute(&self) -> Result<Self::Result> {
+            let mut resp = kvrpcpb::GetResponse::default();
+            if self.key_error {
+                resp.error = Some(kvrpcpb::KeyError {
+                    abort: "boom".to_owned(),
+                    ..Default::default()
+                });
+            } else {
+                resp.region_error = Some(errorpb::Error {
+                    server_is_busy: Some(errorpb::ServerIsBusy::default()),
+                    ..Default::default()
+                });
+            }
+            Ok(resp)
+        }
+    }
+
+    impl Shardable for FailingPlan {
+        type Shard = ();
+
+        fn shards(
+            &self,
+            _: &Arc<impl crate::pd::PdClient>,
+        ) -> BoxStream<'static, crate::Result<(Self::Shard, RegionWithLeader)>> {
+            Box::pin(stream::iter(vec![Ok(((), MockPdClient::region1()))])).boxed()
+        }
+
+        fn apply_shard(&mut self, _: Self::Shard) {}
+
+        fn apply_store(&mut self, _: &crate::store::RegionStore) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn retryable(key_error: bool) -> RetryableMultiRegion<FailingPlan, MockPdClient> {
+        RetryableMultiRegion {
+            inner: FailingPlan { key_error },
+            pd_client: Arc::new(MockPdClient::default()),
+            backoff: Backoff::no_backoff(),
+            preserve_region_results: false,
+        }
+    }
+
+    /// THE INVARIANT THIS REFACTOR BUYS. A response key error must surface as
+    /// `MultipleKeyErrors` whether or not a collapsing merge sits between the retry
+    /// layer and `ExtractError`.
+    ///
+    /// Before the split these two shapes produced *different* variants — without a
+    /// merge, `ExtractError` normalized the per-shard `Vec<Result<_>>` into
+    /// `ExtractedErrors`; with `CollectSingle`, the merge popped the `Result` out first
+    /// so `MultipleKeyErrors` escaped untouched. Callers matched one and silently missed
+    /// the other, and adding a merge to any plan flipped it with no compile error.
+    #[tokio::test]
+    async fn key_errors_surface_under_one_variant_whatever_the_plan_shape() {
+        // Shape A: no collapsing merge — ExtractError sees Vec<Result<_>>.
+        let unmerged = ExtractError {
+            inner: retryable(true),
+        };
+        assert!(
+            matches!(unmerged.execute().await, Err(Error::MultipleKeyErrors(_))),
+            "unmerged plan must report key errors as MultipleKeyErrors"
+        );
+
+        // Shape B: CollectSingle pops the single Result out before ExtractError.
+        let merged = ExtractError {
+            inner: MergeResponse {
+                inner: retryable(true),
+                merge: CollectSingle,
+                phantom: PhantomData,
+            },
+        };
+        assert!(
+            matches!(merged.execute().await, Err(Error::MultipleKeyErrors(_))),
+            "merged plan must report key errors as MultipleKeyErrors too"
+        );
+    }
+
+    /// A bare plan whose response carries a region error, with no retry layer above it.
+    #[derive(Clone)]
+    struct RegionErrPlan;
+
+    #[async_trait]
+    impl Plan for RegionErrPlan {
+        type Result = kvrpcpb::GetResponse;
+
+        async fn execute(&self) -> Result<Self::Result> {
+            Ok(kvrpcpb::GetResponse {
+                region_error: Some(errorpb::Error {
+                    server_is_busy: Some(errorpb::ServerIsBusy::default()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        }
+    }
+
+    /// Raw endpoints report failures as a string `error` field, which `has_str_error!`
+    /// turns into `Error::KvError` rather than `Error::KeyError`. That must be treated
+    /// as response-originated too — otherwise `batch_put_with_ttl` (no merge) would
+    /// return a bare `KvError` while `put_with_ttl` (CollectSingle) returned
+    /// `MultipleKeyErrors`, and plan shape would still decide the public variant.
+    #[tokio::test]
+    async fn raw_string_errors_are_response_errors_under_either_plan_shape() {
+        #[derive(Clone)]
+        struct RawErrPlan;
+
+        #[async_trait]
+        impl Plan for RawErrPlan {
+            type Result = kvrpcpb::RawPutResponse;
+
+            async fn execute(&self) -> Result<Self::Result> {
+                Ok(kvrpcpb::RawPutResponse {
+                    error: "boom".to_owned(),
+                    ..Default::default()
+                })
+            }
+        }
+
+        // Unmerged: ExtractError classifies the response's string error.
+        let unmerged = ExtractError { inner: RawErrPlan };
+        match unmerged.execute().await {
+            Err(Error::MultipleKeyErrors(errors)) => {
+                assert!(matches!(errors.as_slice(), [Error::KvError { .. }]));
+            }
+            other => panic!("want MultipleKeyErrors([KvError]), got {other:?}"),
+        }
+
+        // And a shard error carried through as a Vec<Result<_>> classifies the same way.
+        #[derive(Clone)]
+        struct PreservedRawErr;
+
+        #[async_trait]
+        impl Plan for PreservedRawErr {
+            type Result = Vec<Result<kvrpcpb::RawPutResponse>>;
+
+            async fn execute(&self) -> Result<Self::Result> {
+                Ok(vec![Ok(kvrpcpb::RawPutResponse {
+                    error: "boom".to_owned(),
+                    ..Default::default()
+                })])
+            }
+        }
+
+        let preserved = ExtractError {
+            inner: PreservedRawErr,
+        };
+        assert!(
+            matches!(preserved.execute().await, Err(Error::MultipleKeyErrors(_))),
+            "the same response error must not change variant with plan shape"
+        );
+    }
+
+    /// A hard per-shard failure must keep its own class. `HasKeyErrors for
+    /// Result<T, Error>` reports *any* `Err` as a key error, so without a guard in
+    /// `ExtractError` a gRPC or exhausted-retry failure carried through a
+    /// preserve-results plan would be relabelled `MultipleKeyErrors` — the exact
+    /// mislabelling this refactor exists to remove.
+    #[tokio::test]
+    async fn a_non_key_error_is_not_relabelled_as_a_key_error() {
+        #[derive(Clone)]
+        struct PreservedShardErr;
+
+        #[async_trait]
+        impl Plan for PreservedShardErr {
+            type Result = Vec<Result<kvrpcpb::GetResponse>>;
+
+            async fn execute(&self) -> Result<Self::Result> {
+                Ok(vec![Err(Error::Unimplemented)])
+            }
+        }
+
+        let plan = ExtractError {
+            inner: PreservedShardErr,
+        };
+        match plan.execute().await {
+            Err(Error::Unimplemented) => {}
+            other => panic!("want the hard error propagated unchanged, got {other:?}"),
+        }
+    }
+
+    /// The region-error counterpart: a distinct variant, so a caller no longer has to
+    /// pop an element and type-test it to learn which kind it is holding.
+    ///
+    /// Note the shape. `RetryableMultiRegion` consumes region errors itself — it retries
+    /// them and, once the backoff is spent, returns a bare `Error::RegionError`. So
+    /// `ExtractError` only ever sees a region error for a plan with no retry layer above
+    /// it, which is exactly `resolve_lock_with_retry`'s shape: it drives the backoff
+    /// itself and needs the error handed back rather than retried underneath it.
+    #[tokio::test]
+    async fn region_errors_surface_as_multiple_region_errors() {
+        let plan = ExtractError {
+            inner: RegionErrPlan,
+        };
+        match plan.execute().await {
+            Err(Error::MultipleRegionErrors(errors)) => {
+                assert!(matches!(errors.as_slice(), [Error::RegionError(_)]));
+            }
+            other => panic!("want MultipleRegionErrors, got {other:?}"),
+        }
     }
 }

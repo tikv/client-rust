@@ -1490,7 +1490,7 @@ impl<PdC: PdClient> Committer<PdC> {
         loop {
             match self.commit_primary().await {
                 Ok(commit_version) => return Ok(commit_version),
-                Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
+                Err(Error::MultipleKeyErrors(mut errors)) => match errors.pop() {
                     Some(Error::KeyError(key_err)) => {
                         if let Some(expired) = key_err.commit_ts_expired {
                             // Ref: https://github.com/tikv/client-go/blob/tidb-8.5/txnkv/transaction/commit.go

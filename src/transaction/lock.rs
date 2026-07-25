@@ -184,37 +184,40 @@ async fn resolve_lock_with_retry(
             Ok(_) => {
                 return Ok(ver_id);
             }
-            // Retry on region error
-            Err(Error::ExtractedErrors(mut errors)) => {
-                // ResolveLockResponse can have at most 1 error
-                match errors.pop() {
-                    Some(Error::RegionError(e)) => match backoff.next_delay_duration() {
-                        Some(duration) => {
-                            let region_error_resolved =
-                                handle_region_error(pd_client.clone(), *e, store.clone()).await?;
-                            if !region_error_resolved {
-                                sleep(duration).await;
-                            }
-                            continue;
+            // Retry on region error. `ResolveLockResponse` can have at most 1 error, and
+            // the variant now says which kind it is rather than requiring a type test on
+            // a popped element.
+            Err(Error::MultipleRegionErrors(mut errors)) => match errors.pop() {
+                Some(Error::RegionError(e)) => match backoff.next_delay_duration() {
+                    Some(duration) => {
+                        let region_error_resolved =
+                            handle_region_error(pd_client.clone(), *e, store.clone()).await?;
+                        if !region_error_resolved {
+                            sleep(duration).await;
                         }
-                        None => return Err(Error::RegionError(e)),
-                    },
-                    Some(Error::KeyError(key_err)) => {
-                        // Keyspace is not truncated here because we need full key info for logging.
-                        error!(
-                            "resolve_lock error, unexpected resolve err: {:?}, lock: {{key: {}, start_version: {}, commit_version: {}, is_txn_file: {}}}",
-                            key_err,
-                            format_key_for_log(key),
-                            start_version,
-                            commit_version,
-                            is_txn_file,
-                        );
-                        return Err(Error::KeyError(key_err));
+                        continue;
                     }
-                    Some(e) => return Err(e),
-                    None => unreachable!(),
+                    None => return Err(Error::RegionError(e)),
+                },
+                Some(e) => return Err(e),
+                None => unreachable!(),
+            },
+            Err(Error::MultipleKeyErrors(mut errors)) => match errors.pop() {
+                Some(Error::KeyError(key_err)) => {
+                    // Keyspace is not truncated here because we need full key info for logging.
+                    error!(
+                        "resolve_lock error, unexpected resolve err: {:?}, lock: {{key: {}, start_version: {}, commit_version: {}, is_txn_file: {}}}",
+                        key_err,
+                        format_key_for_log(key),
+                        start_version,
+                        commit_version,
+                        is_txn_file,
+                    );
+                    return Err(Error::KeyError(key_err));
                 }
-            }
+                Some(e) => return Err(e),
+                None => unreachable!(),
+            },
             Err(e) if is_grpc_error(&e) => match backoff.next_delay_duration() {
                 Some(duration) => {
                     pd_client.invalidate_region_cache(ver_id.clone()).await;
@@ -467,16 +470,14 @@ impl LockResolver {
             .plan();
         let mut status: TransactionStatus = match plan.execute().await {
             Ok(status) => status,
-            // The per-key error can arrive under either wrapper. `single_shard_handler`
-            // returns response key errors as `MultipleKeyErrors`; plans that keep the
-            // per-shard `Vec<Result<_>>` let `ExtractError` normalize those into
-            // `ExtractedErrors`, but `CollectSingle` pops the single `Result` out first,
-            // so the `MultipleKeyErrors` becomes the merged plan's own error and
-            // `ExtractError` re-raises it without ever calling `key_errors`. Both must
-            // feed the `TxnNotFound` conversion, or the lock-resolution heal path
-            // (`rollback_if_not_exist` after TTL expiry in `get_txn_status_from_lock`)
-            // is unreachable and an orphaned secondary lock poisons its key forever.
-            Err(Error::ExtractedErrors(mut errors) | Error::MultipleKeyErrors(mut errors)) => {
+            // Response key errors now reach us under exactly one variant, whichever
+            // shape the plan has: `single_shard_handler` and `ExtractError` both produce
+            // `MultipleKeyErrors`. Before the variants were split this arm had to accept
+            // two, because a collapsing merge decided which one surfaced — and matching
+            // only one left the lock-resolution heal path (`rollback_if_not_exist` after
+            // TTL expiry in `get_txn_status_from_lock`) unreachable, so an orphaned
+            // secondary lock poisoned its key forever.
+            Err(Error::MultipleKeyErrors(mut errors)) => {
                 match errors.pop() {
                     Some(Error::KeyError(key_err)) => {
                         if let Some(txn_not_found) = key_err.txn_not_found {
@@ -725,10 +726,10 @@ mod tests {
     }
 
     /// An orphaned lock whose primary was never written: `CheckTxnStatus` answers
-    /// `txn_not_found`, which reaches us as `MultipleKeyErrors` because the plan merges
-    /// with `CollectSingle`. It must still convert to `Error::TxnNotFound` so that
-    /// `get_txn_status_from_lock` retries with `rollback_if_not_exist` and heals the key;
-    /// matching only `ExtractedErrors` leaves the lock unresolved forever.
+    /// `txn_not_found`, which reaches us as `MultipleKeyErrors`. It must convert to
+    /// `Error::TxnNotFound` so that `get_txn_status_from_lock` retries with
+    /// `rollback_if_not_exist` and heals the key; failing to match that variant leaves
+    /// the lock unresolved forever.
     #[tokio::test]
     #[serial]
     async fn test_resolve_locks_rolls_back_expired_lock_whose_primary_is_missing() {
