@@ -28,6 +28,7 @@ mod client;
 mod lock;
 pub mod lowering;
 mod requests;
+pub(crate) use lock::reject_shared_locks;
 pub use lock::LockResolver;
 pub use lock::ResolveLocksContext;
 pub use lock::ResolveLocksOptions;
