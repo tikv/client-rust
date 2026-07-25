@@ -1340,7 +1340,34 @@ impl<PdC: PdClient> Committer<PdC> {
             self.start_version.version()
         );
 
-        let min_commit_ts = self.prewrite().await?;
+        let min_commit_ts = match self.prewrite().await {
+            Ok(ts) => ts,
+            Err(e) => {
+                // With async commit or 1PC the PREWRITE is the commit point: when the
+                // server reports the outcome as unknown (errorpb.UndeterminedResult),
+                // or we never received its answer at all (a gRPC error), the
+                // transaction may already be durable, and a plain error would invite
+                // the caller to replay it. client-go marks undetermined the same way
+                // (prewrite.go, prewrite1BatchReqHandler.drop: any RPC error on an
+                // async-commit/1PC prewrite sets the committer's undetermined error).
+                //
+                // PRECISION NOTE: if 1PC was configured but sharding disabled it on
+                // the actual requests (multi-region transactions), this is
+                // conservative — it can report UNDETERMINED for a prewrite that could
+                // not have committed. That is the safe direction: the caller verifies
+                // instead of replaying. The per-request 1PC state is not observable
+                // on the error path; precise gating belongs to the upfront
+                // single-region 1PC decision (client-go's checkOnePC shape) that full
+                // 1PC support will introduce.
+                return if (self.options.async_commit || self.options.try_one_pc)
+                    && is_commit_outcome_unknown(&e)
+                {
+                    Err(Error::UndeterminedError(Box::new(e)))
+                } else {
+                    Err(e)
+                };
+            }
+        };
 
         fail_point!("after-prewrite", |_| {
             Err(Error::StringError(
@@ -1411,16 +1438,23 @@ impl<PdC: PdClient> Committer<PdC> {
             .collect();
         // FIXME set max_commit_ts and min_commit_ts
 
-        let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
-            .resolve_lock(
-                self.start_version.clone(),
-                self.options.retry_options.lock_backoff.clone(),
-                self.keyspace,
+        let builder = PlanBuilder::new(self.rpc.clone(), self.keyspace, request).resolve_lock(
+            self.start_version.clone(),
+            self.options.retry_options.lock_backoff.clone(),
+            self.keyspace,
+        );
+        // With async commit or 1PC this prewrite IS the commit point, so an unknown
+        // apply outcome must not be retried away or overwritten by a later error
+        // (stricter than client-go, in the safe direction; commit() classifies it).
+        // An ordinary 2PC prewrite retries, as client-go's does.
+        let builder = if self.options.async_commit || self.options.try_one_pc {
+            builder.retry_multi_region_terminal_on_undetermined(
+                self.options.retry_options.region_backoff.clone(),
             )
-            .retry_multi_region(self.options.retry_options.region_backoff.clone())
-            .merge(CollectError)
-            .extract_error()
-            .plan();
+        } else {
+            builder.retry_multi_region(self.options.retry_options.region_backoff.clone())
+        };
+        let plan = builder.merge(CollectError).extract_error().plan();
         let response = plan.execute().await?;
 
         if self.options.try_one_pc && response.len() == 1 {
@@ -1464,7 +1498,12 @@ impl<PdC: PdClient> Committer<PdC> {
                 self.options.retry_options.lock_backoff.clone(),
                 self.keyspace,
             )
-            .retry_multi_region(self.options.retry_options.region_backoff.clone())
+            // The primary commit is THE commit point: client-go returns
+            // ErrResultUndetermined here rather than retrying (commit.go), so an
+            // unknown outcome can never be overwritten by a later retry error.
+            .retry_multi_region_terminal_on_undetermined(
+                self.options.retry_options.region_backoff.clone(),
+            )
             .extract_error()
             .plan();
         plan.execute()
@@ -1475,9 +1514,22 @@ impl<PdC: PdClient> Committer<PdC> {
                     self.start_version.version()
                 );
                 // We don't know whether the transaction is committed or not if we fail to receive
-                // the response. Then, we mark the transaction as undetermined and propagate the
-                // error to the user.
-                if let Error::Grpc(_) = e {
+                // the response — or if the server itself reports the raft outcome as unknown
+                // (errorpb.UndeterminedResult). Then, we mark the transaction as undetermined
+                // and propagate the error to the user. Failing-to-receive means ANY gRPC error:
+                // dispatch failures are `Error::GrpcAPI` since the tonic migration (the old
+                // `Error::Grpc`-only match here was a grpcio-era leftover that no longer caught
+                // them), and client-go's equivalent (sender.GetRPCError(), commit.go) likewise
+                // covers status errors and connection failures alike.
+                //
+                // PROVENANCE NOTE: this plan wraps the commit in `resolve_lock`, so an
+                // undetermined error could in principle originate from an auxiliary
+                // CheckTxnStatus/ResolveLock RPC rather than the commit dispatch itself. That
+                // only over-reports (marks undetermined when the commit was actually rejected),
+                // which is the SAFE direction — the caller verifies instead of assuming a clean
+                // outcome. Distinguishing per-layer error provenance is a precision improvement,
+                // not a safety fix, and is left as follow-up.
+                if is_commit_outcome_unknown(e) {
                     self.undetermined = true;
                 }
             })
@@ -1662,6 +1714,19 @@ impl<PdC: PdClient> Committer<PdC> {
         }
         lock_ttl
     }
+}
+
+/// Is the outcome of a commit-point request unknown?
+///
+/// Two ways to lose certainty: we failed to receive a response (a gRPC error — the
+/// analogue of client-go's `sender.GetRPCError()`, which records *any* error from the
+/// RPC call: status errors and connection failures alike), or we received one and the
+/// server itself reported the raft apply outcome unknown
+/// (`errorpb.UndeterminedResult`). Note `Error::GrpcAPI` is the variant every KV RPC
+/// dispatch failure takes since the tonic migration; `Error::Grpc` is only connection
+/// establishment.
+fn is_commit_outcome_unknown(e: &Error) -> bool {
+    crate::request::plan::is_grpc_error(e) || crate::request::plan::is_undetermined_region_error(e)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -1869,5 +1934,33 @@ mod tests {
                 .any(|line| line.contains("start_ts") && line.contains(&start_ts.to_string())),
             "expected a lifecycle log carrying start_ts {start_ts}; captured: {logs:?}"
         );
+    }
+
+    #[test]
+    fn commit_outcome_unknown_errors_are_recognized() {
+        use super::is_commit_outcome_unknown;
+
+        // The case an `Error::Grpc`-only match would miss: every KV RPC dispatch
+        // failure is `Error::GrpcAPI` since the tonic migration.
+        assert!(is_commit_outcome_unknown(&crate::Error::GrpcAPI(
+            tonic::Status::unavailable("no response received")
+        )));
+        // The server received the request but reports the raft apply outcome unknown.
+        assert!(is_commit_outcome_unknown(&crate::Error::RegionError(
+            Box::new(crate::proto::errorpb::Error {
+                undetermined_result: Some(crate::proto::errorpb::UndeterminedResult::default()),
+                ..Default::default()
+            })
+        )));
+        // Determinate failures stay plain failures.
+        assert!(!is_commit_outcome_unknown(&crate::Error::StringError(
+            "rejected".to_owned()
+        )));
+        assert!(!is_commit_outcome_unknown(&crate::Error::RegionError(
+            Box::new(crate::proto::errorpb::Error {
+                server_is_busy: Some(crate::proto::errorpb::ServerIsBusy::default()),
+                ..Default::default()
+            })
+        )));
     }
 }
