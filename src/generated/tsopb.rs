@@ -14,6 +14,12 @@ pub struct RequestHeader {
     /// keyspace_group_id is the unique id of the keyspace group to which the tenant/keyspace belongs.
     #[prost(uint32, tag = "4")]
     pub keyspace_group_id: u32,
+    /// callee_id is the ID of the server which the client expects to receive the request.
+    /// such as tso-0, tso-1, pd-0, pd-1 etc.
+    /// This field is used to check if the request is sent to the expected server.
+    /// If it is not matched, the server will return an error.
+    #[prost(string, tag = "5")]
+    pub callee_id: ::prost::alloc::string::String,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -105,6 +111,8 @@ pub struct FindGroupByKeyspaceIdRequest {
     pub header: ::core::option::Option<RequestHeader>,
     #[prost(uint32, tag = "2")]
     pub keyspace_id: u32,
+    #[prost(uint64, tag = "3")]
+    pub mod_revision: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -113,6 +121,8 @@ pub struct FindGroupByKeyspaceIdResponse {
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(message, optional, tag = "2")]
     pub keyspace_group: ::core::option::Option<KeyspaceGroup>,
+    #[prost(uint64, tag = "3")]
+    pub mod_revision: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

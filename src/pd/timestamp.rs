@@ -156,7 +156,7 @@ impl Stream for TsoRequestStream {
             let req = TsoRequest {
                 header: Some(RequestHeader {
                     cluster_id: *this.cluster_id,
-                    sender_id: 0,
+                    ..Default::default()
                 }),
                 count: requests.len() as u32,
                 dc_location: String::new(),

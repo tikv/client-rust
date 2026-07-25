@@ -108,6 +108,53 @@ pub struct MasterKeyKms {
     /// KMS endpoint. Normally not needed.
     #[prost(string, tag = "4")]
     pub endpoint: ::prost::alloc::string::String,
+    /// optional, used to set up azure master key backend
+    #[prost(message, optional, tag = "5")]
+    pub azure_kms: ::core::option::Option<AzureKms>,
+    /// optional, used to set up gcp master key backend
+    #[prost(message, optional, tag = "6")]
+    pub gcp_kms: ::core::option::Option<GcpKms>,
+    /// optional, used to set up aws master key backend
+    #[prost(message, optional, tag = "7")]
+    pub aws_kms: ::core::option::Option<AwsKms>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AzureKms {
+    #[prost(string, tag = "1")]
+    pub tenant_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub client_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub client_secret: ::prost::alloc::string::String,
+    /// Key vault to encrypt/decrypt data key.
+    #[prost(string, tag = "4")]
+    pub key_vault_url: ::prost::alloc::string::String,
+    /// optional hsm used to generate data key
+    #[prost(string, tag = "5")]
+    pub hsm_name: ::prost::alloc::string::String,
+    #[prost(string, tag = "6")]
+    pub hsm_url: ::prost::alloc::string::String,
+    #[prost(string, tag = "7")]
+    pub client_certificate: ::prost::alloc::string::String,
+    #[prost(string, tag = "8")]
+    pub client_certificate_path: ::prost::alloc::string::String,
+    #[prost(string, tag = "9")]
+    pub client_certificate_password: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GcpKms {
+    #[prost(string, tag = "1")]
+    pub credential: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AwsKms {
+    #[prost(string, tag = "1")]
+    pub access_key: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub secret_access_key: ::prost::alloc::string::String,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -133,6 +180,44 @@ pub struct EncryptedContent {
     /// Valid only when KMS is used.
     #[prost(bytes = "vec", tag = "5")]
     pub ciphertext_key: ::prost::alloc::vec::Vec<u8>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct FileEncryptionInfo {
+    /// file encryption method
+    #[prost(enumeration = "EncryptionMethod", tag = "3")]
+    pub encryption_method: i32,
+    /// iv to encrypt the file by data key
+    #[prost(bytes = "vec", tag = "4")]
+    pub file_iv: ::prost::alloc::vec::Vec<u8>,
+    /// file checksum after encryption, optional if using GCM
+    #[prost(bytes = "vec", tag = "5")]
+    pub checksum: ::prost::alloc::vec::Vec<u8>,
+    #[prost(oneof = "file_encryption_info::Mode", tags = "1, 2")]
+    pub mode: ::core::option::Option<file_encryption_info::Mode>,
+}
+/// Nested message and enum types in `FileEncryptionInfo`.
+pub mod file_encryption_info {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Mode {
+        #[prost(message, tag = "1")]
+        PlainTextDataKey(super::PlainTextDataKey),
+        #[prost(message, tag = "2")]
+        MasterKeyBased(super::MasterKeyBased),
+    }
+}
+/// not recommended in production.
+/// user needs to pass back the same data key for restore.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PlainTextDataKey {}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MasterKeyBased {
+    /// encrypted data key with metadata
+    #[prost(message, repeated, tag = "1")]
+    pub data_key_encrypted_content: ::prost::alloc::vec::Vec<EncryptedContent>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

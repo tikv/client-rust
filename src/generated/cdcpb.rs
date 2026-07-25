@@ -31,6 +31,15 @@ pub struct ClusterIdMismatch {
     #[prost(uint64, tag = "2")]
     pub request: u64,
 }
+/// Congested is an error variable that
+/// tells people that the TiKV-CDC is congested.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Congested {
+    /// The region ID that triggers the congestion.
+    #[prost(uint64, tag = "1")]
+    pub region_id: u64,
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Error {
@@ -48,6 +57,8 @@ pub struct Error {
     pub cluster_id_mismatch: ::core::option::Option<ClusterIdMismatch>,
     #[prost(message, optional, tag = "7")]
     pub server_is_busy: ::core::option::Option<super::errorpb::ServerIsBusy>,
+    #[prost(message, optional, tag = "8")]
+    pub congested: ::core::option::Option<Congested>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -92,6 +103,9 @@ pub mod event {
         pub commit_ts: u64,
         #[prost(enumeration = "LogType", tag = "3")]
         pub r#type: i32,
+        /// generation is for pipelined DML protocol. See kvrpcpb.FlushRequest.generation.
+        #[prost(uint64, tag = "10")]
+        pub generation: u64,
         #[prost(enumeration = "row::OpType", tag = "4")]
         pub op_type: i32,
         #[prost(bytes = "vec", tag = "5")]

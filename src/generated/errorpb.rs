@@ -207,6 +207,14 @@ pub struct MismatchPeerId {
     #[prost(uint64, tag = "2")]
     pub store_peer_id: u64,
 }
+/// UndeterminedResult is the error variant that tells the result is not determined yet.
+/// For example, the raft protocol timed out and the apply result is unknown.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UndeterminedResult {
+    #[prost(string, tag = "1")]
+    pub message: ::prost::alloc::string::String,
+}
 /// Error wraps all region errors, indicates an error encountered by a request.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -263,4 +271,7 @@ pub struct Error {
     /// BucketVersionNotMatch is the error variant that tells the request buckets version is not match.
     #[prost(message, optional, tag = "21")]
     pub bucket_version_not_match: ::core::option::Option<BucketVersionNotMatch>,
+    /// UndeterminedResult is the error variant that tells the result is not determined yet.
+    #[prost(message, optional, tag = "22")]
+    pub undetermined_result: ::core::option::Option<UndeterminedResult>,
 }
