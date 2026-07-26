@@ -312,6 +312,8 @@ pub struct CommitMergeRequest {
     /// Used in v2. When it's present, `source` and `commit` will not be set.
     #[prost(message, optional, tag = "4")]
     pub source_state: ::core::option::Option<super::raft_serverpb::RegionLocalState>,
+    #[prost(bytes = "vec", tag = "100")]
+    pub source_meta: ::prost::alloc::vec::Vec<u8>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -515,6 +517,12 @@ pub struct RaftResponseHeader {
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CustomRequest {
+    #[prost(bytes = "vec", tag = "1")]
+    pub data: ::prost::alloc::vec::Vec<u8>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RaftCmdRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RaftRequestHeader>,
@@ -526,6 +534,8 @@ pub struct RaftCmdRequest {
     pub admin_request: ::core::option::Option<AdminRequest>,
     #[prost(message, optional, tag = "4")]
     pub status_request: ::core::option::Option<StatusRequest>,
+    #[prost(message, optional, tag = "5")]
+    pub custom_request: ::core::option::Option<CustomRequest>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

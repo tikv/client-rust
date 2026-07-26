@@ -90,8 +90,15 @@ pub struct RewriteRule {
     pub old_key_prefix: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "2")]
     pub new_key_prefix: ::prost::alloc::vec::Vec<u8>,
+    /// (Optional) Rewrite all keys in the range to use this timestamp.
     #[prost(uint64, tag = "3")]
     pub new_timestamp: u64,
+    /// (Optional) Skip keys with timestamps greater than this during download, useful for compacted SST backups.
+    #[prost(uint64, tag = "4")]
+    pub ignore_after_timestamp: u64,
+    /// (Optional) Skip write CF keys with timestamps less than this during download. Default CF keys are preserved.
+    #[prost(uint64, tag = "5")]
+    pub ignore_before_timestamp: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -185,6 +192,8 @@ pub struct DownloadRequest {
     /// same order, otherwise the RPC request will fail.
     #[prost(message, optional, tag = "13")]
     pub rewrite_rule: ::core::option::Option<RewriteRule>,
+    #[prost(message, repeated, tag = "20")]
+    pub sorted_rewrite_rules: ::prost::alloc::vec::Vec<RewriteRule>,
     #[prost(message, optional, tag = "14")]
     pub storage_backend: ::core::option::Option<super::backup::StorageBackend>,
     /// The identity for the stroage backend.
@@ -246,6 +255,12 @@ pub struct SetDownloadSpeedLimitRequest {
     /// The download speed limit (bytes/second). Set to 0 for unlimited speed.
     #[prost(uint64, tag = "1")]
     pub speed_limit: u64,
+    /// The download speed limit task id.
+    #[prost(string, tag = "2")]
+    pub task_id: ::prost::alloc::string::String,
+    /// The download speed limit ttl. Set to 0 means it will never expire.
+    #[prost(uint64, tag = "3")]
+    pub ttl_seconds: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -464,6 +479,11 @@ pub struct KvMeta {
     /// the compression type for the file.
     #[prost(enumeration = "super::backup::CompressionType", tag = "13")]
     pub compression_type: i32,
+    /// encryption information of the kv file, not set if encryption is not enabled.
+    #[prost(message, optional, tag = "14")]
+    pub file_encryption_info: ::core::option::Option<
+        super::encryptionpb::FileEncryptionInfo,
+    >,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -498,9 +518,12 @@ pub struct ApplyRequest {
     /// context represents region info and it used to build raft commands.
     #[prost(message, optional, tag = "4")]
     pub context: ::core::option::Option<super::kvrpcpb::Context>,
-    /// cipher_info is used to decrypt kv file when download file.
+    /// plaintext data key to decrypt kv file if configured during log backup.
     #[prost(message, optional, tag = "11")]
     pub cipher_info: ::core::option::Option<super::backup::CipherInfo>,
+    /// master keys config used to decrypt data keys in restore if configured during log backup.
+    #[prost(message, repeated, tag = "14")]
+    pub master_keys: ::prost::alloc::vec::Vec<super::encryptionpb::MasterKey>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -525,6 +548,31 @@ pub struct ClearResponse {
     #[prost(message, optional, tag = "1")]
     pub error: ::core::option::Option<Error>,
 }
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AddPartitionRangeRequest {
+    #[prost(message, optional, tag = "1")]
+    pub range: ::core::option::Option<Range>,
+    /// the number of seconds this range is valid.
+    /// After this duration, if this range is still not removed by
+    /// `RemoveForcePartitionRange`, tikv will automically remove it. So the client
+    /// should set a big enough value to avoid auto cleanup. But in general, 1h
+    /// should be a big enough value. If its value is 0, tikv will auto adjust it to 3600(1h).
+    #[prost(uint64, tag = "2")]
+    pub ttl_seconds: u64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AddPartitionRangeResponse {}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RemovePartitionRangeRequest {
+    #[prost(message, optional, tag = "1")]
+    pub range: ::core::option::Option<Range>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RemovePartitionRangeResponse {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum SwitchMode {
@@ -858,6 +906,62 @@ pub mod import_sst_client {
                 .insert(GrpcMethod::new("import_sstpb.ImportSST", "Download"));
             self.inner.unary(req, path, codec).await
         }
+        /// Download SST files in batch from external storage, perform key rewrite,
+        /// and merge them into one SST after downloading.
+        pub async fn batch_download(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DownloadRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DownloadResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/import_sstpb.ImportSST/BatchDownload",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("import_sstpb.ImportSST", "BatchDownload"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Download SST files in batch from external storage, perform key rewrite,
+        /// merge them into one SST, and keep only the latest MVCC version after downloading.
+        pub async fn batch_download_latest_mvcc(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DownloadRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DownloadResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/import_sstpb.ImportSST/BatchDownloadLatestMVCC",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("import_sstpb.ImportSST", "BatchDownloadLatestMVCC"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
         /// Open a write stream to generate sst files
         pub async fn write(
             &mut self,
@@ -1025,6 +1129,69 @@ pub mod import_sst_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("import_sstpb.ImportSST", "SuspendImportRPC"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// AddForcePartitionRange marks a range in tikv that any compact overlaps with this range
+        /// should generates SST files partitioned at region boundaries as well as this range boundary.
+        /// TiKV will also try to do manual compact(if needed) after setting this range to eusure
+        /// any incoming SST under this range can be ingested into the bottom level if there is no real kv overlap.
+        pub async fn add_force_partition_range(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AddPartitionRangeRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AddPartitionRangeResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/import_sstpb.ImportSST/AddForcePartitionRange",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("import_sstpb.ImportSST", "AddForcePartitionRange"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Remove the force partition range after the task is finished. If this function is not called,
+        /// tikv will cleanup the range after TTL to ensure it can be cleaned eventually.
+        pub async fn remove_force_partition_range(
+            &mut self,
+            request: impl tonic::IntoRequest<super::RemovePartitionRangeRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RemovePartitionRangeResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/import_sstpb.ImportSST/RemoveForcePartitionRange",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "import_sstpb.ImportSST",
+                        "RemoveForcePartitionRange",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
     }
