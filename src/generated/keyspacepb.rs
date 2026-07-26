@@ -28,6 +28,14 @@ pub struct LoadKeyspaceRequest {
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LoadKeyspaceByIdRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(uint32, tag = "2")]
+    pub id: u32,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LoadKeyspaceResponse {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
@@ -225,6 +233,31 @@ pub mod keyspace_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("keyspacepb.Keyspace", "LoadKeyspace"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn load_keyspace_by_id(
+            &mut self,
+            request: impl tonic::IntoRequest<super::LoadKeyspaceByIdRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::LoadKeyspaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Keyspace/LoadKeyspaceByID",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Keyspace", "LoadKeyspaceByID"));
             self.inner.unary(req, path, codec).await
         }
         /// WatchKeyspaces first return all current keyspaces' metadata as its first response.

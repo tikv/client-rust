@@ -32,11 +32,31 @@ pub struct WaitForEntry {
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReplaceLockByKeyItem {
+    #[prost(uint64, tag = "1")]
+    pub key_hash: u64,
+    #[prost(bytes = "vec", tag = "2")]
+    pub key: ::prost::alloc::vec::Vec<u8>,
+    #[prost(uint64, tag = "3")]
+    pub old_lock_ts: u64,
+    #[prost(uint64, tag = "4")]
+    pub new_lock_ts: u64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReplaceLocksByKeysRequest {
+    #[prost(message, repeated, tag = "1")]
+    pub items: ::prost::alloc::vec::Vec<ReplaceLockByKeyItem>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DeadlockRequest {
     #[prost(enumeration = "DeadlockRequestType", tag = "1")]
     pub tp: i32,
     #[prost(message, optional, tag = "2")]
     pub entry: ::core::option::Option<WaitForEntry>,
+    #[prost(message, optional, tag = "3")]
+    pub replace_locks_by_keys: ::core::option::Option<ReplaceLocksByKeysRequest>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -44,13 +64,16 @@ pub struct DeadlockResponse {
     /// The same entry sent by DeadlockRequest, identifies the sender.
     #[prost(message, optional, tag = "1")]
     pub entry: ::core::option::Option<WaitForEntry>,
-    /// The key hash of the lock that is hold by the waiting transaction.
+    /// The key hash of the lock that is hold by the waiting transaction. The hash of the `deadlock_key` field.
     #[prost(uint64, tag = "2")]
     pub deadlock_key_hash: u64,
     /// The other entries of the dead lock circle. The current entry is in `entry` field and  not
     /// included in this field.
     #[prost(message, repeated, tag = "3")]
     pub wait_chain: ::prost::alloc::vec::Vec<WaitForEntry>,
+    /// The key of the lock that is hold by the waiting transaction.
+    #[prost(bytes = "vec", tag = "4")]
+    pub deadlock_key: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

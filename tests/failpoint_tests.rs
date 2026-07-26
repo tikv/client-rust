@@ -23,6 +23,23 @@ use tikv_client::RetryOptions;
 use tikv_client::TransactionClient;
 use tikv_client::TransactionOptions;
 
+/// Mark a phase boundary in a long-running cleanup test.
+///
+/// These tests occasionally stall in CI until nextest's 600s cap kills them (#516),
+/// and a killed test reports no elapsed timings — so the *entry* marker is the useful
+/// one: the last `phase >` line in the log names the step that never finished. The
+/// exit marker gives the duration when the test does complete, which is what tells a
+/// reader whether a step is merely slow or genuinely stuck.
+macro_rules! phase {
+    ($name:expr, $body:expr) => {{
+        info!("phase > {}", $name);
+        let __start = std::time::Instant::now();
+        let __out = $body;
+        info!("phase < {} in {:?}", $name, __start.elapsed());
+        __out
+    }};
+}
+
 #[tokio::test]
 #[serial]
 async fn txn_optimistic_heartbeat() -> Result<()> {
@@ -185,10 +202,16 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
             Config::default().with_default_keyspace(),
         )
         .await?;
-        let keys = write_data(&client, true, false).await?;
+        let keys = phase!(
+            "async/partial: write_data",
+            write_data(&client, true, false).await?
+        );
         // Wait for async commit to complete.
         let expected = keys.len() * percent / 100;
-        let remaining = wait_for_locks_count(&client, expected).await?;
+        let remaining = phase!(
+            "async/partial: wait for locks to settle",
+            wait_for_locks_count(&client, expected).await?
+        );
         assert_eq!(remaining, expected);
 
         let safepoint = client.current_timestamp().await?;
@@ -436,8 +459,13 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
             Config::default().with_default_keyspace(),
         )
         .await?;
-        let keys = write_data(&client, false, true).await?;
-        assert_eq!(count_locks(&client).await?, keys.len());
+        let keys = phase!(
+            "2pc/no-commit: write_data",
+            write_data(&client, false, true).await?
+        );
+        phase!("2pc/no-commit: count locks", {
+            assert_eq!(count_locks(&client).await?, keys.len());
+        });
 
         let safepoint = client.current_timestamp().await?;
         {
@@ -445,20 +473,27 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
                 async_commit_only: true, // Skip 2pc locks.
                 ..Default::default()
             };
-            client
-                .cleanup_locks(full_range, &safepoint, options)
-                .await?;
+            phase!("2pc/no-commit: cleanup_locks(async_commit_only)", {
+                client
+                    .cleanup_locks(full_range, &safepoint, options)
+                    .await?;
+            });
             assert_eq!(count_locks(&client).await?, keys.len());
         }
         let options = ResolveLocksOptions {
             async_commit_only: false,
             ..Default::default()
         };
-        client
-            .cleanup_locks(full_range, &safepoint, options)
-            .await?;
+        phase!("2pc/no-commit: cleanup_locks(all)", {
+            client
+                .cleanup_locks(full_range, &safepoint, options)
+                .await?;
+        });
 
-        must_rollbacked(&client, keys).await;
+        phase!(
+            "2pc/no-commit: must_rollbacked",
+            must_rollbacked(&client, keys).await
+        );
         assert_eq!(count_locks(&client).await?, 0);
     }
 
@@ -470,19 +505,29 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
             Config::default().with_default_keyspace(),
         )
         .await?;
-        let keys = write_data(&client, false, false).await?;
-        assert_eq!(wait_for_locks_count(&client, 0).await?, 0);
+        let keys = phase!(
+            "2pc/all-committed: write_data",
+            write_data(&client, false, false).await?
+        );
+        phase!("2pc/all-committed: wait for locks to drain", {
+            assert_eq!(wait_for_locks_count(&client, 0).await?, 0);
+        });
 
         let safepoint = client.current_timestamp().await?;
         let options = ResolveLocksOptions {
             async_commit_only: false,
             ..Default::default()
         };
-        client
-            .cleanup_locks(full_range, &safepoint, options)
-            .await?;
+        phase!("2pc/all-committed: cleanup_locks(all)", {
+            client
+                .cleanup_locks(full_range, &safepoint, options)
+                .await?;
+        });
 
-        must_committed(&client, keys).await;
+        phase!(
+            "2pc/all-committed: must_committed",
+            must_committed(&client, keys).await
+        );
         assert_eq!(count_locks(&client).await?, 0);
     }
 

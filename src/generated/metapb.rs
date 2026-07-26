@@ -110,6 +110,16 @@ pub struct Buckets {
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BucketMeta {
+    /// A hint indicate if keys have changed.
+    #[prost(uint64, tag = "1")]
+    pub version: u64,
+    /// keys of buckets, include start/end key of region
+    #[prost(bytes = "vec", repeated, tag = "2")]
+    pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Region {
     #[prost(uint64, tag = "1")]
     pub id: u64,
