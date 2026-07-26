@@ -113,8 +113,10 @@ async fn ensure_region_split(
 
     info!("splitting regions...");
     let start_time = std::time::Instant::now();
+    let mut observed_regions;
     loop {
-        if ctl::get_region_count().await? as u32 >= region_count {
+        observed_regions = ctl::get_region_count().await? as u32;
+        if observed_regions >= region_count {
             break;
         }
         if start_time.elapsed() > REGION_SPLIT_TIME_LIMIT {
@@ -123,6 +125,15 @@ async fn ensure_region_split(
         }
         sleep(Duration::from_millis(200)).await;
     }
+    // Setup cost is charged to whichever test runs first, so record it: when that
+    // test is the one CI kills, this says whether the time went here or in the body.
+    // Reuses the count the loop already fetched — diagnostics must not add a
+    // fallible request that could itself fail or stall the setup.
+    info!(
+        "region split finished in {:?} ({} regions)",
+        start_time.elapsed(),
+        observed_regions
+    );
 
     Ok(())
 }
