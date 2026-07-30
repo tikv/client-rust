@@ -130,6 +130,8 @@ pub use common::ProtoRegionError;
 pub use common::Result;
 #[doc(inline)]
 pub use config::Config;
+#[doc(inline)]
+pub use config::KeyspaceIdentity;
 
 #[doc(inline)]
 pub use crate::backoff::Backoff;

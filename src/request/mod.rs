@@ -3,6 +3,8 @@
 use async_trait::async_trait;
 use derive_new::new;
 
+pub(crate) use self::keyspace::keyspace_meta_identity;
+pub(crate) use self::keyspace::keyspace_meta_legacy_id;
 pub use self::keyspace::EncodeKeyspace;
 pub use self::keyspace::KeyMode;
 pub use self::keyspace::Keyspace;
@@ -301,6 +303,21 @@ mod test {
                 unimplemented!()
             }
 
+            async fn lookup_keyspaces(
+                &self,
+                _keyspace: &str,
+            ) -> Result<Vec<keyspacepb::KeyspaceMeta>> {
+                unimplemented!()
+            }
+
+            async fn lookup_keyspace(
+                &self,
+                _keyspace: &str,
+                _namespace_id: u32,
+            ) -> Result<keyspacepb::KeyspaceMeta> {
+                unimplemented!()
+            }
+
             async fn update_leader(
                 &self,
                 _ver_id: RegionVerId,
@@ -507,6 +524,21 @@ mod test {
             }
 
             async fn load_keyspace(&self, _keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
+                unimplemented!()
+            }
+
+            async fn lookup_keyspaces(
+                &self,
+                _keyspace: &str,
+            ) -> Result<Vec<keyspacepb::KeyspaceMeta>> {
+                unimplemented!()
+            }
+
+            async fn lookup_keyspace(
+                &self,
+                _keyspace: &str,
+                _namespace_id: u32,
+            ) -> Result<keyspacepb::KeyspaceMeta> {
                 unimplemented!()
             }
 

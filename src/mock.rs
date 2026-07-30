@@ -221,4 +221,16 @@ impl PdClient for MockPdClient {
     async fn load_keyspace(&self, _keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
         unimplemented!()
     }
+
+    async fn lookup_keyspaces(&self, _keyspace: &str) -> Result<Vec<keyspacepb::KeyspaceMeta>> {
+        unimplemented!()
+    }
+
+    async fn lookup_keyspace(
+        &self,
+        _keyspace: &str,
+        _namespace_id: u32,
+    ) -> Result<keyspacepb::KeyspaceMeta> {
+        unimplemented!()
+    }
 }
