@@ -2,16 +2,18 @@ syntax = "proto3";
 
 package import_kvpb;
 
-import "import_sstpb.proto";
 import "gogoproto/gogo.proto";
+import "import_sstpb.proto";
 import "rustproto.proto";
 
-option (gogoproto.sizer_all) = true;
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
 option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
 option (gogoproto.unmarshaler_all) = true;
 option (rustproto.lite_runtime_all) = true;
-
-option java_package = "org.tikv.kvproto";
 
 // ImportKV provides a service to import key-value pairs to TiKV.
 //
@@ -32,137 +34,130 @@ option java_package = "org.tikv.kvproto";
 //    in the engine. An engine can not be cleaned up when it is
 //    writing or importing.
 service ImportKV {
-    // Switch the target cluster to normal/import mode.
-    rpc SwitchMode(SwitchModeRequest) returns (SwitchModeResponse) {}
-    // Open an engine.
-    rpc OpenEngine(OpenEngineRequest) returns (OpenEngineResponse) {}
-    // Open a write stream to the engine.
-    rpc WriteEngine(stream WriteEngineRequest) returns (WriteEngineResponse) {}
-    // Write to engine, single message version
-    rpc WriteEngineV3(WriteEngineV3Request) returns (WriteEngineResponse) {}
-    // Close the engine.
-    rpc CloseEngine(CloseEngineRequest) returns (CloseEngineResponse) {}
-    // Import the engine to the target cluster.
-    rpc ImportEngine(ImportEngineRequest) returns (ImportEngineResponse) {}
-    // Clean up the engine.
-    rpc CleanupEngine(CleanupEngineRequest) returns (CleanupEngineResponse) {}
-    // Compact the target cluster for better performance.
-    rpc CompactCluster(CompactClusterRequest) returns (CompactClusterResponse) {}
-    // Get current version and commit hash
-    rpc GetVersion(GetVersionRequest) returns (GetVersionResponse) {}
-    // Get importer metrics
-    rpc GetMetrics(GetMetricsRequest) returns (GetMetricsResponse) {}
+  // Switch the target cluster to normal/import mode.
+  rpc SwitchMode(SwitchModeRequest) returns (SwitchModeResponse) {}
+  // Open an engine.
+  rpc OpenEngine(OpenEngineRequest) returns (OpenEngineResponse) {}
+  // Open a write stream to the engine.
+  rpc WriteEngine(stream WriteEngineRequest) returns (WriteEngineResponse) {}
+  // Write to engine, single message version
+  rpc WriteEngineV3(WriteEngineV3Request) returns (WriteEngineResponse) {}
+  // Close the engine.
+  rpc CloseEngine(CloseEngineRequest) returns (CloseEngineResponse) {}
+  // Import the engine to the target cluster.
+  rpc ImportEngine(ImportEngineRequest) returns (ImportEngineResponse) {}
+  // Clean up the engine.
+  rpc CleanupEngine(CleanupEngineRequest) returns (CleanupEngineResponse) {}
+  // Compact the target cluster for better performance.
+  rpc CompactCluster(CompactClusterRequest) returns (CompactClusterResponse) {}
+  // Get current version and commit hash
+  rpc GetVersion(GetVersionRequest) returns (GetVersionResponse) {}
+  // Get importer metrics
+  rpc GetMetrics(GetMetricsRequest) returns (GetMetricsResponse) {}
 }
 
 message SwitchModeRequest {
-    string pd_addr = 1;
-    import_sstpb.SwitchModeRequest request = 2;
+  string pd_addr = 1;
+  import_sstpb.SwitchModeRequest request = 2;
 }
 
-message SwitchModeResponse {
-}
+message SwitchModeResponse {}
 
 message OpenEngineRequest {
-    bytes uuid = 1;
-    bytes key_prefix = 2;
+  bytes uuid = 1;
+  bytes key_prefix = 2;
 }
 
-message OpenEngineResponse {
-}
+message OpenEngineResponse {}
 
 message WriteHead {
-    bytes uuid = 1;
+  bytes uuid = 1;
 }
 
 message Mutation {
-    enum OP {
-        Put = 0;
-    }
-    OP op = 1;
-    bytes key = 2;
-    bytes value = 3;
+  enum OP {
+    Put = 0;
+  }
+  OP op = 1;
+  bytes key = 2;
+  bytes value = 3;
 }
 
 message WriteBatch {
-    uint64 commit_ts = 1;
-    repeated Mutation mutations = 2;
+  uint64 commit_ts = 1;
+  repeated Mutation mutations = 2;
 }
 
 message WriteEngineRequest {
-    oneof chunk {
-        WriteHead head = 1;
-        WriteBatch batch = 2;
-    }
+  oneof chunk {
+    WriteHead head = 1;
+    WriteBatch batch = 2;
+  }
 }
 
 message KVPair {
-    bytes key = 1;
-    bytes value = 2;
+  bytes key = 1;
+  bytes value = 2;
 }
 
 message WriteEngineV3Request {
-    bytes uuid = 1;
-    uint64 commit_ts = 2;
-    repeated KVPair pairs = 3; 
+  bytes uuid = 1;
+  uint64 commit_ts = 2;
+  repeated KVPair pairs = 3;
 }
 
 message WriteEngineResponse {
-    Error error = 1;
+  Error error = 1;
 }
 
 message CloseEngineRequest {
-    bytes uuid = 1;
+  bytes uuid = 1;
 }
 
 message CloseEngineResponse {
-    Error error = 1;
+  Error error = 1;
 }
 
 message ImportEngineRequest {
-    bytes uuid = 1;
-    string pd_addr = 2;
+  bytes uuid = 1;
+  string pd_addr = 2;
 }
 
-message ImportEngineResponse {
-}
+message ImportEngineResponse {}
 
 message CleanupEngineRequest {
-    bytes uuid = 1;
+  bytes uuid = 1;
 }
 
-message CleanupEngineResponse {
-}
+message CleanupEngineResponse {}
 
 message CompactClusterRequest {
-    string pd_addr = 1;
-    import_sstpb.CompactRequest request = 2;
+  string pd_addr = 1;
+  import_sstpb.CompactRequest request = 2;
 }
 
-message CompactClusterResponse {
-}
+message CompactClusterResponse {}
 
-message GetVersionRequest {
-}
+message GetVersionRequest {}
 
 message GetVersionResponse {
-    string version = 1;
-    string commit = 2;
+  string version = 1;
+  string commit = 2;
 }
 
-message GetMetricsRequest {
-}
+message GetMetricsRequest {}
 
 message GetMetricsResponse {
-    string prometheus = 1;
+  string prometheus = 1;
 }
 
 message Error {
-    message EngineNotFound {
-        bytes uuid = 1;
-    }
-    // This can happen if the client hasn't opened the engine, or the server
-    // restarts while the client is writing or closing. An unclosed engine will
-    // be removed on server restart, so the client should not continue but
-    // restart the previous job in that case.
-    EngineNotFound engine_not_found = 1;
+  message EngineNotFound {
+    bytes uuid = 1;
+  }
+  // This can happen if the client hasn't opened the engine, or the server
+  // restarts while the client is writing or closing. An unclosed engine will
+  // be removed on server restart, so the client should not continue but
+  // restart the previous job in that case.
+  EngineNotFound engine_not_found = 1;
 }

@@ -31,6 +31,15 @@ pub struct ClusterIdMismatch {
     #[prost(uint64, tag = "2")]
     pub request: u64,
 }
+/// Congested is an error variable that
+/// tells people that the TiKV-CDC is congested.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Congested {
+    /// The region ID that triggers the congestion.
+    #[prost(uint64, tag = "1")]
+    pub region_id: u64,
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Error {
@@ -48,6 +57,8 @@ pub struct Error {
     pub cluster_id_mismatch: ::core::option::Option<ClusterIdMismatch>,
     #[prost(message, optional, tag = "7")]
     pub server_is_busy: ::core::option::Option<super::errorpb::ServerIsBusy>,
+    #[prost(message, optional, tag = "8")]
+    pub congested: ::core::option::Option<Congested>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -92,6 +103,9 @@ pub mod event {
         pub commit_ts: u64,
         #[prost(enumeration = "LogType", tag = "3")]
         pub r#type: i32,
+        /// generation is for pipelined DML protocol. See kvrpcpb.FlushRequest.generation.
+        #[prost(uint64, tag = "10")]
+        pub generation: u64,
         #[prost(enumeration = "row::OpType", tag = "4")]
         pub op_type: i32,
         #[prost(bytes = "vec", tag = "5")]
@@ -288,6 +302,9 @@ pub struct ChangeDataRequest {
     /// Whether to filter out the value write by cdc itself.
     #[prost(bool, tag = "12")]
     pub filter_loop: bool,
+    /// ScanPriority tells the CDC service how to schedule the initial scan.
+    #[prost(enumeration = "ScanPriority", tag = "14")]
+    pub scan_priority: i32,
     #[prost(oneof = "change_data_request::Request", tags = "9, 10, 13")]
     pub request: ::core::option::Option<change_data_request::Request>,
 }
@@ -358,6 +375,35 @@ pub mod change_data_request {
         NotifyTxnStatus(NotifyTxnStatus),
         #[prost(message, tag = "13")]
         Deregister(Deregister),
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ScanPriority {
+    Unknown = 0,
+    Low = 1,
+    High = 2,
+}
+impl ScanPriority {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            ScanPriority::Unknown => "SCAN_PRIORITY_UNKNOWN",
+            ScanPriority::Low => "SCAN_PRIORITY_LOW",
+            ScanPriority::High => "SCAN_PRIORITY_HIGH",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SCAN_PRIORITY_UNKNOWN" => Some(Self::Unknown),
+            "SCAN_PRIORITY_LOW" => Some(Self::Low),
+            "SCAN_PRIORITY_HIGH" => Some(Self::High),
+            _ => None,
+        }
     }
 }
 /// Generated client implementations.

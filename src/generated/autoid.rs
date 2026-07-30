@@ -53,6 +53,21 @@ pub struct RebaseRequest {
     pub base: i64,
     #[prost(bool, tag = "5")]
     pub force: bool,
+    #[prost(oneof = "rebase_request::Keyspace", tags = "6, 7")]
+    pub keyspace: ::core::option::Option<rebase_request::Keyspace>,
+}
+/// Nested message and enum types in `RebaseRequest`.
+pub mod rebase_request {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "6")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "7")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

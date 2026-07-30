@@ -392,6 +392,10 @@ pub struct ExtraMessage {
     /// notice the peer to refresh buckets version
     #[prost(message, optional, tag = "9")]
     pub refresh_buckets: ::core::option::Option<RefreshBuckets>,
+    /// snap_gen_precheck_passed is used to indicate the precheck result when
+    /// a follower responds to a leader's snapshot gen precheck request.
+    #[prost(bool, tag = "10")]
+    pub snap_gen_precheck_passed: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -453,6 +457,15 @@ pub enum ExtraMessageType {
     MsgGcPeerResponse = 12,
     MsgFlushMemtable = 13,
     MsgRefreshBuckets = 14,
+    /// Messages for the snapshot gen precheck process.
+    MsgSnapGenPrecheckRequest = 15,
+    MsgSnapGenPrecheckResponse = 16,
+    /// Used in transfer leader process for leader to inform follower to load the
+    /// region into in-memory engine if the relevant region is cached.
+    MsgPreLoadRegionRequest = 17,
+    /// Used in transfer leader process for follower to inform leader the completes
+    /// of the region cache
+    MsgPreLoadRegionResponse = 18,
 }
 impl ExtraMessageType {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -482,6 +495,10 @@ impl ExtraMessageType {
             ExtraMessageType::MsgGcPeerResponse => "MsgGcPeerResponse",
             ExtraMessageType::MsgFlushMemtable => "MsgFlushMemtable",
             ExtraMessageType::MsgRefreshBuckets => "MsgRefreshBuckets",
+            ExtraMessageType::MsgSnapGenPrecheckRequest => "MsgSnapGenPrecheckRequest",
+            ExtraMessageType::MsgSnapGenPrecheckResponse => "MsgSnapGenPrecheckResponse",
+            ExtraMessageType::MsgPreLoadRegionRequest => "MsgPreLoadRegionRequest",
+            ExtraMessageType::MsgPreLoadRegionResponse => "MsgPreLoadRegionResponse",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -508,6 +525,10 @@ impl ExtraMessageType {
             "MsgGcPeerResponse" => Some(Self::MsgGcPeerResponse),
             "MsgFlushMemtable" => Some(Self::MsgFlushMemtable),
             "MsgRefreshBuckets" => Some(Self::MsgRefreshBuckets),
+            "MsgSnapGenPrecheckRequest" => Some(Self::MsgSnapGenPrecheckRequest),
+            "MsgSnapGenPrecheckResponse" => Some(Self::MsgSnapGenPrecheckResponse),
+            "MsgPreLoadRegionRequest" => Some(Self::MsgPreLoadRegionRequest),
+            "MsgPreLoadRegionResponse" => Some(Self::MsgPreLoadRegionResponse),
             _ => None,
         }
     }

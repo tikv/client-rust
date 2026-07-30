@@ -232,6 +232,8 @@ pub struct AskBatchSplitRequest {
     pub region: ::core::option::Option<super::metapb::Region>,
     #[prost(uint32, tag = "3")]
     pub split_count: u32,
+    #[prost(enumeration = "super::pdpb::SplitReason", tag = "4")]
+    pub reason: i32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

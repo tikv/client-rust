@@ -100,6 +100,7 @@ pub struct Error {
     #[prost(string, tag = "2")]
     pub message: ::prost::alloc::string::String,
 }
+/// This message intentionally omits namespace/keyspace-related fields because API v2 never supported keyspaces when routing TSO requests through the PD API server.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TsoRequest {
@@ -109,9 +110,6 @@ pub struct TsoRequest {
     pub count: u32,
     #[prost(string, tag = "3")]
     pub dc_location: ::prost::alloc::string::String,
-    /// V3 keyspace identity for tenant-scoped TSO requests.
-    #[prost(message, optional, tag = "4")]
-    pub keyspace_identity: ::core::option::Option<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

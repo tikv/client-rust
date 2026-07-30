@@ -61,9 +61,26 @@ pub struct Request {
     /// When `versioned_ranges` is non-empty, all `versioned_ranges\[i\].range` must be point range.
     #[prost(message, repeated, tag = "15")]
     pub versioned_ranges: ::prost::alloc::vec::Vec<VersionedKeyRange>,
-    /// max_keys_read is 0 when disabled, otherwise limits storage engine keys read per coprocessor task.
+    /// max_keys_read is 0 when disabled, otherwise limits the number of storage
+    /// engine keys scanned per coprocessor task. It is a per-task hard ceiling
+    /// applied uniformly to any coprocessor request, used to bound worst-case
+    /// scan amplification regardless of how the request is paginated.
     #[prost(uint64, tag = "16")]
     pub max_keys_read: u64,
+    /// paging_size_bytes is 0 when disabled, otherwise it should be a positive number.
+    /// When set, within a paged coprocessor request, TiKV stops scanning the current
+    /// page once accumulated scanned bytes reach this limit and returns the page
+    /// boundary so the next page can resume from there.
+    ///
+    /// Unlike max_keys_read, which is a per-task hard ceiling on keys scanned,
+    /// paging_size_bytes is an independent rate-control dimension intended for
+    /// Resource Control: it bounds the byte volume of a single page so that RU
+    /// pre-charging in PD's resource controller can be performed at byte
+    /// granularity, complementing the existing row-count-based paging
+    /// (paging_size). The two fields target different scenarios and may be set
+    /// independently.
+    #[prost(uint64, tag = "17")]
+    pub paging_size_bytes: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -228,6 +245,9 @@ pub struct StoreBatchTask {
     /// When `versioned_ranges` is non-empty, all `versioned_ranges\[i\].range` must be point range.
     #[prost(message, repeated, tag = "6")]
     pub versioned_ranges: ::prost::alloc::vec::Vec<VersionedKeyRange>,
+    /// Bucket metadata version used to validate this child task.
+    #[prost(uint64, tag = "7")]
+    pub buckets_version: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

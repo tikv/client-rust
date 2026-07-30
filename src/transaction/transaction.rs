@@ -86,6 +86,11 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     options: TransactionOptions,
     keyspace: Keyspace,
     is_heartbeat_started: bool,
+    /// Set once the transaction enters the commit path (`StartedCommit`), where
+    /// prewrite may place 2PC locks. Kept as a dedicated flag because the status
+    /// transitions to `StartedRollback` on rollback, losing the fact that commit
+    /// had started — which a rollback retry would otherwise need to know.
+    prewritten: bool,
     start_instant: Instant,
 }
 
@@ -109,6 +114,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             options,
             keyspace,
             is_heartbeat_started: false,
+            prewritten: false,
             start_instant: std::time::Instant::now(),
         }
     }
@@ -657,6 +663,10 @@ impl<PdC: PdClient> Transaction<PdC> {
         ) {
             return Err(Error::OperationAfterCommitError);
         }
+        // Record that the commit path has been entered; prewrite may place 2PC
+        // locks. A later rollback needs this even after the status has moved on
+        // to `StartedRollback` (see `rollback`).
+        self.prewritten = true;
 
         let primary_key = self.buffer.get_primary_key();
         let mutations = self.buffer.to_proto_mutations();
@@ -713,6 +723,13 @@ impl<PdC: PdClient> Transaction<PdC> {
             "rolling back transaction, start_ts: {}",
             self.timestamp.version()
         );
+        // A transaction that already started committing may have placed prewrite
+        // (2PC) locks; use the persisted flag so the committer rolls those back
+        // with `BatchRollback` rather than `PessimisticRollback` (which cannot
+        // clear them). Reading it from the status would be wrong on a rollback
+        // retry: the status is already `StartedRollback` by then, so the fact
+        // that commit had started would be lost.
+        let prewritten = self.prewritten;
         if !self.transit_status(
             |status| {
                 matches!(
@@ -739,7 +756,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.buffer.get_write_size() as u64,
             self.start_instant,
         )
-        .rollback()
+        .rollback(prewritten)
         .await;
 
         if res.is_ok() {
@@ -1583,11 +1600,29 @@ impl<PdC: PdClient> Committer<PdC> {
         Ok(())
     }
 
-    async fn rollback(self) -> Result<()> {
+    /// Roll back the transaction.
+    ///
+    /// `prewritten` must be `true` when the transaction has already started
+    /// committing (its prewrite may have placed 2PC locks). A pessimistic
+    /// transaction that has been prewritten holds `Put`/`Delete` (2PC) locks,
+    /// which `PessimisticRollback` cannot remove — it only clears
+    /// `LockType::Pessimistic` locks and would silently leave the prewrite locks
+    /// behind. Those are rolled back with `BatchRollback` (as the optimistic
+    /// path and client-go's commit cleanup do), which rolls back by `start_ts`
+    /// regardless of lock type. Only a pessimistic transaction that has *not*
+    /// been prewritten (locks still pessimistic) uses the narrower
+    /// `PessimisticRollback`.
+    async fn rollback(self, prewritten: bool) -> Result<()> {
         debug!(
-            "rolling back (2pc), start_ts: {}",
-            self.start_version.version()
+            "rolling back (2pc), start_ts: {}, prewritten: {}",
+            self.start_version.version(),
+            prewritten
         );
+        fail_point!("before-rollback", |_| {
+            Err(Error::StringError(
+                "failpoint: before-rollback return error".to_owned(),
+            ))
+        });
         if self.options.kind == TransactionKind::Optimistic && self.mutations.is_empty() {
             return Ok(());
         }
@@ -1596,30 +1631,28 @@ impl<PdC: PdClient> Committer<PdC> {
             .into_iter()
             .map(|mutation| mutation.key.into());
         let start_version = self.start_version.clone();
+        let lock_backoff = self.options.retry_options.lock_backoff.clone();
+        let region_backoff = self.options.retry_options.region_backoff.clone();
+        let rpc = self.rpc;
+        let keyspace = self.keyspace;
         match self.options.kind {
-            TransactionKind::Optimistic => {
-                let req = new_batch_rollback_request(keys, start_version.clone());
-                let plan = PlanBuilder::new(self.rpc, self.keyspace, req)
-                    .resolve_lock(
-                        start_version.clone(),
-                        self.options.retry_options.lock_backoff,
-                        self.keyspace,
-                    )
-                    .retry_multi_region(self.options.retry_options.region_backoff)
+            TransactionKind::Pessimistic(for_update_ts) if !prewritten => {
+                let req =
+                    new_pessimistic_rollback_request(keys, start_version.clone(), for_update_ts);
+                let plan = PlanBuilder::new(rpc, keyspace, req)
+                    .resolve_lock(start_version, lock_backoff, keyspace)
+                    .retry_multi_region(region_backoff)
                     .extract_error()
                     .plan();
                 plan.execute().await?;
             }
-            TransactionKind::Pessimistic(for_update_ts) => {
-                let req =
-                    new_pessimistic_rollback_request(keys, start_version.clone(), for_update_ts);
-                let plan = PlanBuilder::new(self.rpc, self.keyspace, req)
-                    .resolve_lock(
-                        start_version.clone(),
-                        self.options.retry_options.lock_backoff,
-                        self.keyspace,
-                    )
-                    .retry_multi_region(self.options.retry_options.region_backoff)
+            // Optimistic, or pessimistic after prewrite: BatchRollback clears
+            // both pessimistic and 2PC locks by start_ts.
+            _ => {
+                let req = new_batch_rollback_request(keys, start_version.clone());
+                let plan = PlanBuilder::new(rpc, keyspace, req)
+                    .resolve_lock(start_version, lock_backoff, keyspace)
+                    .retry_multi_region(region_backoff)
                     .extract_error()
                     .plan();
                 plan.execute().await?;

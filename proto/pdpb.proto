@@ -232,13 +232,12 @@ message Error {
   string message = 2;
 }
 
+// This message intentionally omits namespace/keyspace-related fields because API v2 never supported keyspaces when routing TSO requests through the PD API server.
 message TsoRequest {
   RequestHeader header = 1;
 
   uint32 count = 2;
   string dc_location = 3;
-  // V3 keyspace identity for tenant-scoped TSO requests.
-  apipb.KeyspaceIdentity keyspace_identity = 4;
 }
 
 message Timestamp {

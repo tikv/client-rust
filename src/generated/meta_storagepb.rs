@@ -109,6 +109,37 @@ pub struct PutResponse {
 /// copied from etcd <https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/mvccpb/kv.proto>
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DeleteRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<RequestHeader>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub key: ::prost::alloc::vec::Vec<u8>,
+    /// range_end is the key following the last key to delete for the range \[key, range_end).
+    /// If range_end is not given, the range is defined to contain only the key argument.
+    /// If range_end is one bit larger than the given key, then the range is all the keys
+    /// with the prefix (the given key).
+    /// If range_end is '\0', the range is all keys greater than or equal to the key argument.
+    #[prost(bytes = "vec", tag = "3")]
+    pub range_end: ::prost::alloc::vec::Vec<u8>,
+    /// If prev_kv is set, etcd gets the previous key-value pairs before deleting it.
+    /// The previous key-value pairs will be returned in the delete response.
+    #[prost(bool, tag = "4")]
+    pub prev_kv: bool,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DeleteResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<ResponseHeader>,
+    /// deleted is the number of keys deleted by the delete range request.
+    #[prost(int64, tag = "2")]
+    pub deleted: i64,
+    #[prost(message, repeated, tag = "3")]
+    pub prev_kvs: ::prost::alloc::vec::Vec<KeyValue>,
+}
+/// copied from etcd <https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/mvccpb/kv.proto>
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KeyValue {
     /// key is the key in bytes. An empty key is not allowed.
     #[prost(bytes = "vec", tag = "1")]
@@ -377,6 +408,30 @@ pub mod meta_storage_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("meta_storagepb.MetaStorage", "Put"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Delete is the same as etcd Range which might be implemented in a more common way
+        /// so that we can use other storages to replace etcd in the future.
+        pub async fn delete(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeleteRequest>,
+        ) -> std::result::Result<tonic::Response<super::DeleteResponse>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/meta_storagepb.MetaStorage/Delete",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("meta_storagepb.MetaStorage", "Delete"));
             self.inner.unary(req, path, codec).await
         }
     }

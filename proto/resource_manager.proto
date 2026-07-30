@@ -27,23 +27,25 @@ service ResourceManager {
   rpc AcquireTokenBuckets(stream TokenBucketsRequest) returns (stream TokenBucketsResponse) {}
 }
 
-// KeyspaceIDValue is a wrapper for the value of keyspace ID.
-// Because the 0 value is a valid keyspace ID in V1/V2, we need to use a wrapper to distinguish it from the null keyspace ID.
-// V3 tenant-scoped resource filters should use apipb.KeyspaceIdentity fields instead.
+// KeyspaceIDValue carries the versioned identity of a keyspace. The message
+// name is retained for compatibility with existing ResourceManager APIs.
 message KeyspaceIDValue {
-  uint32 value = 1;
+  oneof keyspace {
+    // V1/V2 compatibility keyspace ID. The wrapper distinguishes a valid zero
+    // value from an unset keyspace, which represents the null keyspace ID.
+    uint32 value = 1;
+    // V3 keyspace identity.
+    apipb.KeyspaceIdentity keyspace_identity = 2;
+  }
 }
 
 message ListResourceGroupsRequest {
   bool with_ru_stats = 1;
   // There're two cases for this field:
-  //   - If the keyspace ID is not set, it means this may be a message from an older version.
+  //   - If the keyspace is not set, it means this may be a message from an older version.
   //     To maintain compatibility, we will treat it as a null keyspace ID, which is uint32.Max.
-  //   - If the keyspace ID is set to a valid value, the listed resource groups will be filtered
-  //     by the given keyspace ID.
+  //   - If the keyspace is set, the listed resource groups will be filtered by the given keyspace.
   KeyspaceIDValue keyspace_id = 2;
-  // V3 keyspace identity filter.
-  apipb.KeyspaceIdentity keyspace_identity = 3;
 }
 
 message ListResourceGroupsResponse {
@@ -55,13 +57,10 @@ message GetResourceGroupRequest {
   string resource_group_name = 1;
   bool with_ru_stats = 2;
   // There're two cases for this field:
-  //   - If the keyspace ID is not set, it means this may be a message from an older version.
+  //   - If the keyspace is not set, it means this may be a message from an older version.
   //     To maintain compatibility, we will treat it as a null keyspace ID, which is uint32.Max.
-  //   - If the keyspace ID is set to a valid value, it will try to get the resource group within
-  //     the given keyspace ID.
+  //   - If the keyspace is set, it will try to get the resource group within the given keyspace.
   KeyspaceIDValue keyspace_id = 3;
-  // V3 keyspace identity filter.
-  apipb.KeyspaceIdentity keyspace_identity = 4;
 }
 
 message GetResourceGroupResponse {
@@ -72,13 +71,10 @@ message GetResourceGroupResponse {
 message DeleteResourceGroupRequest {
   string resource_group_name = 1;
   // There're two cases for this field:
-  //   - If the keyspace ID is not set, it means this may be a message from an older version.
+  //   - If the keyspace is not set, it means this may be a message from an older version.
   //     To maintain compatibility, we will treat it as a null keyspace ID, which is uint32.Max.
-  //   - If the keyspace ID is set to a valid value, it will try to delete the resource group within
-  //     the given keyspace ID.
+  //   - If the keyspace is set, it will try to delete the resource group within the given keyspace.
   KeyspaceIDValue keyspace_id = 2;
-  // V3 keyspace identity filter.
-  apipb.KeyspaceIdentity keyspace_identity = 3;
 }
 
 message DeleteResourceGroupResponse {
@@ -122,13 +118,11 @@ message TokenBucketRequest {
   bool is_background = 5;
   bool is_tiflash = 6;
   // There're two cases for this field:
-  //   - If the keyspace ID is not set, it means this may be a message from an older version.
+  //   - If the keyspace is not set, it means this may be a message from an older version.
   //     To maintain compatibility, we will treat it as a null keyspace ID, which is uint32.Max.
-  //   - If the keyspace ID is set to a valid value, it will try to request the token bucket from
-  //     the resource group within the given keyspace ID.
+  //   - If the keyspace is set, it will try to request the token bucket from the resource group
+  //     within the given keyspace.
   KeyspaceIDValue keyspace_id = 7;
-  // V3 keyspace identity filter.
-  apipb.KeyspaceIdentity keyspace_identity = 8;
 }
 
 message TokenBucketsResponse {
@@ -143,13 +137,10 @@ message TokenBucketResponse {
   // Raw mode
   repeated GrantedRawResourceTokenBucket granted_resource_tokens = 3;
   // There're two cases for this field:
-  //   - If the keyspace ID is not set, it means this may be a message from an older version,
+  //   - If the keyspace is not set, it means this may be a message from an older version,
   //     which can be safely ignored to keep compatibility.
-  //   - If the keyspace ID is set to a valid value, it means this response is from the resource
-  //     group within this keyspace ID.
+  //   - If the keyspace is set, it means this response is from the resource group within this keyspace.
   KeyspaceIDValue keyspace_id = 4;
-  // V3 keyspace identity served by this response.
-  apipb.KeyspaceIdentity keyspace_identity = 5;
 }
 
 message GrantedRUTokenBucket {
@@ -225,14 +216,12 @@ message ResourceGroup {
   BackgroundSettings background_settings = 7;
   // RU consumption statistics.
   Consumption RUStats = 8;
-  // The keyspace ID that the resource group belongs to.
+  // The keyspace that the resource group belongs to.
   // There're two cases for this field:
-  //   - If the keyspace ID is not set, it means this may be a message from an older version.
+  //   - If the keyspace is not set, it means this may be a message from an older version.
   //     To maintain compatibility, we will treat it as a null keyspace ID, which is uint32.Max.
-  //   - If the keyspace ID is set to a valid value, it will directly be used.
+  //   - If the keyspace is set, it will directly be used.
   KeyspaceIDValue keyspace_id = 9;
-  // V3 keyspace identity that the resource group belongs to.
-  apipb.KeyspaceIdentity keyspace_identity = 10;
 }
 
 message GroupRequestUnitSettings {

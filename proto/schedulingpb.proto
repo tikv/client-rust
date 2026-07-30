@@ -197,6 +197,7 @@ message AskBatchSplitRequest {
 
   metapb.Region region = 2;
   uint32 split_count = 3;
+  pdpb.SplitReason reason = 4;
 }
 
 message AskBatchSplitResponse {

@@ -1799,6 +1799,102 @@ pub struct ExecDetailsV2 {
     /// RU (Request Unit) consumption details.
     #[prost(message, optional, tag = "5")]
     pub ru_v2: ::core::option::Option<Ruv2>,
+    /// Scheduling and execution details for the request's read-pool task.
+    /// Available when read-pool task tracking is enabled in TiKV.
+    #[prost(message, optional, tag = "6")]
+    pub read_pool_task_details: ::core::option::Option<PoolTaskDetails>,
+}
+/// Scheduling and execution details collected across all polls of one task running in a pool.
+/// The timing model is:
+/// total_wall_nanos
+/// \<--------------------------------------------------------------------->
+///
+/// ```text
+/// submitted      worker starts       async event       worker starts   done
+///      │                │               completes             │          │
+///      ▼                ▼                   ▼                 ▼          ▼
+/// ┌──────────────┬─────────────────┬─────────────────┬──────────────┬──────┐
+/// │  Queue Wait  │ Poll Execution  │ Async/Wake Wait │  Queue Wait  │ Poll │
+/// │              │                 │                 │              │ Exec │
+/// │ task is      │ Future::poll    │ Future is       │ task is      │      │
+/// │ runnable,    │ returns Pending │ Pending, waiting│ runnable,    │Ready │
+/// │ waiting for  │                 │ for I/O, timer, │ waiting for  │      │
+/// │ a worker     │                 │ lock, etc.      │ a worker     │      │
+/// └──────────────┴─────────────────┴─────────────────┴──────────────┴──────┘
+///         │                │                  │
+///         │                │                  └─ total/max/min_wake_wait_nanos
+///         │                │
+///         │                ├─ poll_wall_nanos
+///         │                └─ poll_cpu_nanos
+///         │
+///         ├─ total/max/min_queue_wait_nanos
+///         └─ fair_queue_waited_task_slices
+/// ```
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PoolTaskDetails {
+    /// Number of Future::poll calls, including immediate repolls within one worker dispatch.
+    #[prost(uint64, tag = "1")]
+    pub poll_count: u64,
+    /// Number of worker dispatches. Immediate repolls in one dispatch are not counted separately.
+    #[prost(uint64, tag = "2")]
+    pub dispatch_count: u64,
+    /// Wall time from immediately before the initial pool submission until the final poll completes.
+    #[prost(uint64, tag = "3")]
+    pub total_wall_nanos: u64,
+    /// Total time from enqueueing a ready task until a worker starts dispatching it.
+    /// Zero when no queue-wait sample was recorded.
+    #[prost(uint64, tag = "4")]
+    pub total_queue_wait_nanos: u64,
+    /// Maximum queue wait time among all dispatches.
+    #[prost(uint64, tag = "5")]
+    pub max_queue_wait_nanos: u64,
+    /// Minimum queue wait time among all dispatches.
+    #[prost(uint64, tag = "6")]
+    pub min_queue_wait_nanos: u64,
+    /// Total time from a pending poll's completion until the task is scheduled again.
+    /// Zero when no wake-wait sample was recorded.
+    #[prost(uint64, tag = "7")]
+    pub total_wake_wait_nanos: u64,
+    /// Maximum wake wait time among all wakeups.
+    #[prost(uint64, tag = "8")]
+    pub max_wake_wait_nanos: u64,
+    /// Minimum wake wait time among all wakeups.
+    #[prost(uint64, tag = "9")]
+    pub min_wake_wait_nanos: u64,
+    /// Whether fair-queue waited-slice data was collected for this task.
+    #[prost(bool, tag = "10")]
+    pub fair_queue_enabled: bool,
+    /// Total number of task slices dispatched ahead of this task while it waited in the fair queue.
+    /// Zero when no fair-queue wait sample was recorded.
+    #[prost(uint64, tag = "11")]
+    pub total_fair_queue_waited_task_slices: u64,
+    /// Maximum number of task slices dispatched ahead of this task during one fair-queue wait.
+    #[prost(uint64, tag = "12")]
+    pub max_fair_queue_waited_task_slices: u64,
+    /// Minimum number of task slices dispatched ahead of this task during one fair-queue wait.
+    #[prost(uint64, tag = "13")]
+    pub min_fair_queue_waited_task_slices: u64,
+    /// Total thread CPU time consumed by Future::poll calls.
+    /// Zero when no poll sample was recorded.
+    #[prost(uint64, tag = "14")]
+    pub poll_cpu_nanos: u64,
+    /// Maximum thread CPU time consumed by one Future::poll call.
+    #[prost(uint64, tag = "15")]
+    pub max_poll_cpu_nanos: u64,
+    /// Minimum thread CPU time consumed by one Future::poll call.
+    #[prost(uint64, tag = "16")]
+    pub min_poll_cpu_nanos: u64,
+    /// Total wall time consumed by Future::poll calls.
+    /// Zero when no poll sample was recorded.
+    #[prost(uint64, tag = "17")]
+    pub poll_wall_nanos: u64,
+    /// Minimum wall time consumed by one Future::poll call.
+    #[prost(uint64, tag = "18")]
+    pub min_poll_wall_nanos: u64,
+    /// Maximum wall time consumed by one Future::poll call.
+    #[prost(uint64, tag = "19")]
+    pub max_poll_wall_nanos: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

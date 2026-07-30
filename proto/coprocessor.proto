@@ -54,8 +54,24 @@ message Request {
   // Versioned point ranges for TiCI lookup.
   // When `versioned_ranges` is non-empty, all `versioned_ranges[i].range` must be point range.
   repeated VersionedKeyRange versioned_ranges = 15;
-  // max_keys_read is 0 when disabled, otherwise limits storage engine keys read per coprocessor task.
+  // max_keys_read is 0 when disabled, otherwise limits the number of storage
+  // engine keys scanned per coprocessor task. It is a per-task hard ceiling
+  // applied uniformly to any coprocessor request, used to bound worst-case
+  // scan amplification regardless of how the request is paginated.
   uint64 max_keys_read = 16;
+  // paging_size_bytes is 0 when disabled, otherwise it should be a positive number.
+  // When set, within a paged coprocessor request, TiKV stops scanning the current
+  // page once accumulated scanned bytes reach this limit and returns the page
+  // boundary so the next page can resume from there.
+  //
+  // Unlike max_keys_read, which is a per-task hard ceiling on keys scanned,
+  // paging_size_bytes is an independent rate-control dimension intended for
+  // Resource Control: it bounds the byte volume of a single page so that RU
+  // pre-charging in PD's resource controller can be performed at byte
+  // granularity, complementing the existing row-count-based paging
+  // (paging_size). The two fields target different scenarios and may be set
+  // independently.
+  uint64 paging_size_bytes = 17;
 }
 
 message Response {
@@ -165,6 +181,8 @@ message StoreBatchTask {
   // Versioned point ranges for TiCI lookup.
   // When `versioned_ranges` is non-empty, all `versioned_ranges[i].range` must be point range.
   repeated VersionedKeyRange versioned_ranges = 6;
+  // Bucket metadata version used to validate this child task.
+  uint64 buckets_version = 7;
 }
 
 message StoreBatchTaskResponse {
