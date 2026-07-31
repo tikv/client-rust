@@ -34,6 +34,13 @@ pub enum KeyMode {
 }
 
 impl Keyspace {
+    pub fn tso_keyspace_id(&self) -> Option<u32> {
+        match self {
+            Keyspace::Enable { keyspace_id } => Some(*keyspace_id),
+            _ => None,
+        }
+    }
+
     pub fn api_version(&self) -> kvrpcpb::ApiVersion {
         match self {
             Keyspace::Disable => kvrpcpb::ApiVersion::V1,
