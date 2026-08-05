@@ -841,6 +841,10 @@ where
                 has_more_batch = false;
             }
 
+            // BEFORE any filter: a shared-lock wrapper's fields (including
+            // `use_async_commit`) must not be read — filtering on them would silently
+            // drop the real member locks. Refuse instead; see `reject_shared_locks`.
+            crate::transaction::reject_shared_locks(&locks)?;
             if self.options.async_commit_only {
                 locks = locks
                     .into_iter()
