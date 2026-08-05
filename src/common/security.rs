@@ -76,10 +76,27 @@ impl SecurityManager {
     }
 
     /// Connect to gRPC server using TLS connection. If TLS is not configured, use normal connection.
-    pub async fn connect<Factory, Client>(
+    ///
+    /// The dial is bounded by the default request timeout — see
+    /// [`Self::connect_with_timeout`] to choose the bound.
+    pub async fn connect<Factory, Client>(&self, addr: &str, factory: Factory) -> Result<Client>
+    where
+        Factory: FnOnce(Channel) -> Client,
+    {
+        self.connect_with_timeout(addr, crate::config::DEFAULT_REQUEST_TIMEOUT, factory)
+            .await
+    }
+
+    /// Like [`Self::connect`], with `connect_timeout` bounding the whole dial,
+    /// HTTP/2 handshake included. A frozen peer can complete the TCP handshake
+    /// from its kernel (which keeps running when the process does not) and then
+    /// never answer the HTTP/2 preface, hanging an unbounded connect until the
+    /// peer thaws (#516).
+    pub async fn connect_with_timeout<Factory, Client>(
         &self,
         // env: Arc<Environment>,
         addr: &str,
+        connect_timeout: Duration,
         factory: Factory,
     ) -> Result<Client>
     where
@@ -91,7 +108,15 @@ impl SecurityManager {
         } else {
             self.default_channel(addr).await?
         };
-        let ch = channel.connect().await?;
+        let ch = tokio::time::timeout(connect_timeout, channel.connect())
+            .await
+            .map_err(|_| {
+                internal_err!(
+                    "connecting to {} timed out after {:?}",
+                    addr,
+                    connect_timeout
+                )
+            })??;
 
         Ok(factory(ch))
     }
