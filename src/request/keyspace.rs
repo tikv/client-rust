@@ -160,23 +160,63 @@ impl TruncateKeyspace for Vec<KvPair> {
     }
 }
 
+/// Is this key field UNSET, as opposed to carrying the empty logical key?
+///
+/// An encoded key always carries its 4-byte keyspace prefix, so on the wire an empty
+/// byte string means "not set" — never "the empty logical key", which encodes to the
+/// bare prefix. Guarding on this keeps the codecs off `pretruncate_bytes`' length
+/// assertion for fields a shared-lock wrapper leaves unset, and mirrors client-go's
+/// `codecV2.DecodeKey`, which returns early on a zero-length key.
+fn is_unset_key(key: &[u8]) -> bool {
+    key.is_empty()
+}
+
 impl TruncateKeyspace for Vec<crate::proto::kvrpcpb::LockInfo> {
     fn truncate_keyspace(mut self, keyspace: Keyspace) -> Self {
         if !matches!(keyspace, Keyspace::Enable { .. }) {
             return self;
         }
         for lock in &mut self {
-            take_mut::take(&mut lock.key, |key| {
-                Key::from(key).truncate_keyspace(keyspace).into()
-            });
-            take_mut::take(&mut lock.primary_lock, |primary| {
-                Key::from(primary).truncate_keyspace(keyspace).into()
-            });
+            // Convert this lock's OWN key fields, then recurse into any shared-lock
+            // members — the shape of client-go's `codecV2.decodeLockInfo`, which
+            // decodes Key/PrimaryLock/Secondaries and *then* walks SharedLockInfos,
+            // with no wrapper special case.
+            //
+            // Per TiKV's writer (`SharedLocks::into_lock_info`, txn_types/src/lock.rs)
+            // a wrapper sets `lock_type`, `shared_lock_infos` and `key` — the key it
+            // locks — and leaves `primary_lock`/`lock_version` at their defaults. Each
+            // member is built from that SAME raw key plus its own primary and version.
+            // So the wrapper's key must be converted like any other (skipping it would
+            // hand `scan_locks` a physical key beside decoded member keys), while its
+            // unset fields must be left alone — hence no wrapper special case, just the
+            // per-field guard below.
+            if !is_unset_key(&lock.key) {
+                take_mut::take(&mut lock.key, |key| {
+                    Key::from(key).truncate_keyspace(keyspace).into()
+                });
+            }
+            if !is_unset_key(&lock.primary_lock) {
+                take_mut::take(&mut lock.primary_lock, |primary| {
+                    Key::from(primary).truncate_keyspace(keyspace).into()
+                });
+            }
             for secondary in lock.secondaries.iter_mut() {
+                // Unlike `key`/`primary_lock` above, this guard is not an unset-field
+                // case: an unset `secondaries` is an empty Vec, with no elements to
+                // visit. A present-but-empty ELEMENT is malformed input (an encoded
+                // key always carries its prefix); skipping it merely keeps a corrupt
+                // entry from panicking the codec on `pretruncate_bytes`' length
+                // assertion.
+                if is_unset_key(secondary) {
+                    continue;
+                }
                 take_mut::take(secondary, |secondary| {
                     Key::from(secondary).truncate_keyspace(keyspace).into()
                 });
             }
+            take_mut::take(&mut lock.shared_lock_infos, |members| {
+                members.truncate_keyspace(keyspace)
+            });
         }
         self
     }
@@ -188,6 +228,17 @@ impl EncodeKeyspace for Vec<crate::proto::kvrpcpb::LockInfo> {
             return self;
         }
         for lock in &mut self {
+            // Deliberately NOT symmetric with the TruncateKeyspace impl above. There,
+            // empty bytes can only mean "unset", because an encoded key always carries
+            // its 4-byte prefix. Here the input is a LOGICAL key, and the empty logical
+            // key is valid in API v2 — it encodes to the bare prefix. Skipping empties
+            // would strand a lock on the empty key with no prefix, and `scan_locks` ->
+            // `resolve_locks` (transaction/client.rs) round-trips exactly that way, so
+            // its region lookup would then use an empty physical key.
+            //
+            // Shared-lock wrappers do not need the unset-field guard here: resolution
+            // refuses them (`reject_shared_locks`) before anything acts on the encoded
+            // result.
             take_mut::take(&mut lock.key, |key| {
                 Key::from(key).encode_keyspace(keyspace, key_mode).into()
             });
@@ -203,6 +254,9 @@ impl EncodeKeyspace for Vec<crate::proto::kvrpcpb::LockInfo> {
                         .into()
                 });
             }
+            take_mut::take(&mut lock.shared_lock_infos, |members| {
+                members.encode_keyspace(keyspace, key_mode)
+            });
         }
         self
     }
@@ -476,5 +530,121 @@ mod tests {
         };
         let locks = vec![lock];
         assert_eq!(locks.clone().truncate_keyspace(keyspace), locks);
+    }
+
+    /// A shared-lock wrapper carries the key it locks, and its members are built from
+    /// that same raw key (TiKV's `SharedLocks::into_lock_info`). Both must be converted:
+    /// skipping the wrapper would hand `scan_locks` a physical key beside decoded member
+    /// keys. The wrapper's *other* fields are a different matter — see
+    /// [`unset_lock_key_fields_survive_truncation`].
+    #[test]
+    fn shared_lock_wrapper_keys_are_converted_alongside_their_members() {
+        use crate::proto::kvrpcpb::{LockInfo, Op};
+        let keyspace = Keyspace::Enable { keyspace_id: 0 };
+
+        let wrapper = LockInfo {
+            key: vec![b'x', 0, 0, 0, b'k'],
+            lock_type: Op::SharedLock as i32,
+            shared_lock_infos: vec![LockInfo {
+                key: vec![b'x', 0, 0, 0, b'm'],
+                primary_lock: vec![b'x', 0, 0, 0, b'p'],
+                lock_version: 8,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let out = vec![wrapper].truncate_keyspace(keyspace);
+        assert_eq!(
+            out[0].key,
+            vec![b'k'],
+            "the wrapper's own key must be decoded, not left physical"
+        );
+        assert_eq!(out[0].shared_lock_infos[0].key, vec![b'm']);
+        assert_eq!(out[0].shared_lock_infos[0].primary_lock, vec![b'p']);
+
+        let back = out.encode_keyspace(keyspace, KeyMode::Txn);
+        assert_eq!(back[0].key, vec![b'x', 0, 0, 0, b'k']);
+        assert_eq!(back[0].shared_lock_infos[0].key, vec![b'x', 0, 0, 0, b'm']);
+    }
+
+    /// The empty logical key is VALID in API v2: it encodes to the bare keyspace
+    /// prefix. `scan_locks` -> `resolve_locks` round-trips locks through
+    /// truncate-then-encode, so a lock on the empty key must regain its prefix —
+    /// otherwise resolution would look up the region for an empty physical key.
+    /// This is why the encode side does not share the truncate side's unset guard.
+    #[test]
+    fn a_lock_on_the_empty_logical_key_round_trips() {
+        use crate::proto::kvrpcpb::LockInfo;
+        let keyspace = Keyspace::Enable { keyspace_id: 0 };
+
+        let physical = vec![LockInfo {
+            key: vec![b'x', 0, 0, 0],
+            primary_lock: vec![b'x', 0, 0, 0],
+            ..Default::default()
+        }];
+        let logical = physical.clone().truncate_keyspace(keyspace);
+        assert!(logical[0].key.is_empty(), "the empty logical key");
+
+        let back = logical.encode_keyspace(keyspace, KeyMode::Txn);
+        assert_eq!(
+            back, physical,
+            "a lock on the empty logical key must regain its keyspace prefix"
+        );
+    }
+
+    /// TiKV's `SharedLocks::into_lock_info` leaves a wrapper's `primary_lock` at its
+    /// default, so the codec meets genuinely unset fields in practice — they must be
+    /// skipped, not run into `pretruncate_bytes`' length assertion.
+    #[test]
+    fn unset_lock_key_fields_survive_truncation() {
+        use crate::proto::kvrpcpb::{LockInfo, Op};
+        let keyspace = Keyspace::Enable { keyspace_id: 0 };
+
+        // The writer's actual shape: key and members set, primary_lock left default.
+        let realistic = LockInfo {
+            key: vec![b'x', 0, 0, 0, b'k'],
+            lock_type: Op::SharedLock as i32,
+            shared_lock_infos: vec![LockInfo {
+                key: vec![b'x', 0, 0, 0, b'k'],
+                primary_lock: vec![b'x', 0, 0, 0, b'p'],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let out = vec![realistic].truncate_keyspace(keyspace);
+        assert_eq!(out[0].key, vec![b'k']);
+        assert!(
+            out[0].primary_lock.is_empty(),
+            "the wrapper's unset primary must be skipped, not truncated"
+        );
+        assert_eq!(out[0].shared_lock_infos[0].primary_lock, vec![b'p']);
+
+        // Defensively, a wrapper with no key at all must not panic either.
+        let keyless = LockInfo {
+            lock_type: Op::SharedLock as i32,
+            ..Default::default()
+        };
+        let out = vec![keyless].truncate_keyspace(keyspace);
+        assert!(out[0].key.is_empty());
+    }
+
+    /// An empty element INSIDE `secondaries` is a different case from the unset
+    /// fields above: an unset `secondaries` is an empty Vec with no elements, so a
+    /// present-but-empty element can only be malformed input. It is tolerated —
+    /// skipped rather than run into `pretruncate_bytes`' length assertion — while
+    /// the well-formed elements beside it still convert.
+    #[test]
+    fn a_malformed_empty_secondary_is_tolerated_not_truncated() {
+        use crate::proto::kvrpcpb::LockInfo;
+        let keyspace = Keyspace::Enable { keyspace_id: 0 };
+
+        let malformed = LockInfo {
+            key: vec![b'x', 0, 0, 0, b'k'],
+            secondaries: vec![vec![], vec![b'x', 0, 0, 0, b's']],
+            ..Default::default()
+        };
+        let out = vec![malformed].truncate_keyspace(keyspace);
+        assert_eq!(out[0].secondaries, vec![vec![], vec![b's']]);
     }
 }
