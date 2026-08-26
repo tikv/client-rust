@@ -132,6 +132,14 @@ where
         .collect())
 }
 
+/// Did the server say the request's outcome is UNKNOWN — e.g. a raft timeout where the
+/// apply result was never observed (`errorpb.UndeterminedResult`)? A commit receiving
+/// this must be reported as undetermined: reporting plain failure would invite the
+/// caller to retry effects that may already be durable.
+pub(crate) fn is_undetermined_region_error(e: &Error) -> bool {
+    matches!(e, Error::RegionError(re) if re.undetermined_result.is_some())
+}
+
 pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
     pub(super) inner: P,
     pub pd_client: Arc<PdC>,
@@ -141,6 +149,30 @@ pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
     /// If true, return Ok and preserve all regions' results, even if some of them are Err.
     /// Otherwise, return the first Err if there is any.
     pub preserve_region_results: bool,
+
+    /// Terminal treatment of `errorpb.UndeterminedResult` (an unknown raft apply
+    /// outcome). client-go's transport never retries it and each ACTION decides
+    /// (region_request.go: "should not retry ... processed by the caller"); its one
+    /// terminal action is the primary non-async commit (commit.go: returns
+    /// ErrResultUndetermined). Plans opt in when a replay could produce a WRONG
+    /// RESULT (raw CAS replaying against its own effect) or when the request is a
+    /// commit point and a later, different retry error must not overwrite the
+    /// uncertainty (primary commit; async/1PC prewrite — stricter than client-go,
+    /// in the safe direction). Everything else retries: re-applying an idempotent
+    /// request resolves the uncertainty, and on backoff exhaustion the error
+    /// escapes UNCHANGED for the caller to classify.
+    pub terminal_on_undetermined: bool,
+
+    /// Terminal treatment of a DISPATCH-stage gRPC error, for the request whose
+    /// replay is not idempotent with respect to its own result: raw CAS. Once the
+    /// request may have been sent, a lost response is as ambiguous as
+    /// `errorpb.UndeterminedResult` — a replay would compare against the first
+    /// attempt's own write and could report `succeed = false` for a write that
+    /// happened. Sharding/connection errors still retry (the request was never
+    /// sent), and commit points do NOT set this: replaying a commit is idempotent —
+    /// it can only resolve the uncertainty — and client-go's transport likewise
+    /// retries RPC errors there (region_request.go, onSendFail).
+    pub terminal_on_dispatch_error: bool,
 }
 
 impl<P: Plan + Shardable, PdC: PdClient> RetryableMultiRegion<P, PdC>
@@ -155,6 +187,8 @@ where
         backoff: Backoff,
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
+        terminal_on_undetermined: bool,
+        terminal_on_dispatch_error: bool,
     ) -> Result<<Self as Plan>::Result> {
         let shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
         let shards_len = shards.len();
@@ -182,6 +216,8 @@ where
                         backoff,
                         permits,
                         preserve_region_results,
+                        terminal_on_undetermined,
+                        terminal_on_dispatch_error,
                     )
                     .await,
                 )
@@ -200,15 +236,34 @@ where
                 })
                 .collect())
         } else {
-            Ok(results
-                .into_iter()
-                .collect::<Result<Vec<_>>>()?
-                .into_iter()
-                .flatten()
-                .collect())
+            // A terminal undetermined outcome must never be masked by another shard's
+            // determinate error. `collect::<Result<_>>()` would return the first error
+            // by shard index, so if a lower-index shard failed with (say) a gRPC error
+            // while a higher-index shard reported `UndeterminedResult`, the caller would
+            // be told the request definitely failed — and might replay a transaction
+            // that may already be durable. So an undetermined error
+            // from ANY shard wins over a determinate one.
+            let mut oks = Vec::with_capacity(results.len());
+            let mut first_err: Option<Error> = None;
+            let mut undetermined: Option<Error> = None;
+            for r in results {
+                match r {
+                    Ok(v) => oks.push(v),
+                    Err(e) if undetermined.is_none() && is_undetermined_region_error(&e) => {
+                        undetermined = Some(e)
+                    }
+                    Err(e) if first_err.is_none() => first_err = Some(e),
+                    Err(_) => {}
+                }
+            }
+            if let Some(e) = undetermined.or(first_err) {
+                return Err(e);
+            }
+            Ok(oks.into_iter().flatten().collect())
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[async_recursion]
     async fn single_shard_handler(
         pd_client: Arc<PdC>,
@@ -217,6 +272,8 @@ where
         mut backoff: Backoff,
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
+        terminal_on_undetermined: bool,
+        terminal_on_dispatch_error: bool,
     ) -> Result<<Self as Plan>::Result> {
         let region_ver_id = region.ver_id();
         let store_id = region.get_store_id().ok();
@@ -243,6 +300,8 @@ where
                     backoff,
                     permits,
                     preserve_region_results,
+                    terminal_on_undetermined,
+                    terminal_on_dispatch_error,
                     err,
                 )
                 .await;
@@ -258,6 +317,21 @@ where
             Ok(resp) => resp,
             Err(e) if is_grpc_error(&e) => {
                 debug!("single_shard_handler:execute: grpc error: {:?}", e);
+                // See `terminal_on_dispatch_error`: a non-idempotent request (raw
+                // CAS) that may have reached the server must not be replayed — the
+                // error surfaces UNCHANGED for the caller to handle. Only the REPLAY
+                // is skipped: routing is refreshed exactly as `handle_other_error`
+                // would, because the failure may be a dead cached leader/store and
+                // later requests must not keep selecting it.
+                if terminal_on_dispatch_error {
+                    pd_client
+                        .invalidate_region_cache(region_store.region_with_leader.ver_id())
+                        .await;
+                    if let Ok(store_id) = region_store.region_with_leader.get_store_id() {
+                        pd_client.invalidate_store_cache(store_id).await;
+                    }
+                    return Err(e);
+                }
                 return Self::handle_other_error(
                     pd_client,
                     plan,
@@ -266,6 +340,8 @@ where
                     backoff,
                     permits,
                     preserve_region_results,
+                    terminal_on_undetermined,
+                    terminal_on_dispatch_error,
                     e,
                 )
                 .await;
@@ -284,6 +360,13 @@ where
                 "single_shard_handler:execute: region error: {:?}, region: {:?}",
                 e, region_ver_id
             );
+            // See `terminal_on_undetermined`: for CAS and commit points, an unknown
+            // apply outcome must surface on FIRST sight — a replay could contradict
+            // its own effect, and a later different error must not overwrite the
+            // uncertainty. The caller classifies (commit maps it to UndeterminedError).
+            if terminal_on_undetermined && e.undetermined_result.is_some() {
+                return Err(Error::RegionError(Box::new(e)));
+            }
             match backoff.next_delay_duration() {
                 Some(duration) => {
                     let region_error_resolved =
@@ -298,6 +381,8 @@ where
                         backoff,
                         permits,
                         preserve_region_results,
+                        terminal_on_undetermined,
+                        terminal_on_dispatch_error,
                     )
                     .await
                 }
@@ -323,6 +408,8 @@ where
         mut backoff: Backoff,
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
+        terminal_on_undetermined: bool,
+        terminal_on_dispatch_error: bool,
         e: Error,
     ) -> Result<<Self as Plan>::Result> {
         debug!("handle_other_error: {:?}", e);
@@ -341,6 +428,8 @@ where
                     backoff,
                     permits,
                     preserve_region_results,
+                    terminal_on_undetermined,
+                    terminal_on_dispatch_error,
                 )
                 .await
             }
@@ -391,6 +480,15 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
         on_region_epoch_not_match(pd_client.clone(), region_store, e.epoch_not_match.unwrap()).await
     } else if e.stale_command.is_some() || e.region_not_found.is_some() {
         pd_client.invalidate_region_cache(ver_id).await;
+        Ok(false)
+    } else if e.undetermined_result.is_some() {
+        // The apply outcome is UNKNOWN (a raft timeout, errorpb.UndeterminedResult).
+        // Default: retry — matching client-go's ACTION layers (ordinary prewrites and
+        // secondary commits back off and re-send; re-applying an idempotent request
+        // resolves the uncertainty). Routing is not suspect, so nothing is
+        // invalidated. On backoff exhaustion the error escapes UNCHANGED, and commit
+        // paths classify it via `is_undetermined_region_error`. Plans for which a
+        // replay is unsafe never reach this arm — see `terminal_on_undetermined`.
         Ok(false)
     } else if e.server_is_busy.is_some()
         || e.raft_entry_too_large.is_some()
@@ -457,6 +555,8 @@ impl<P: Plan, PdC: PdClient> Clone for RetryableMultiRegion<P, PdC> {
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
             preserve_region_results: self.preserve_region_results,
+            terminal_on_undetermined: self.terminal_on_undetermined,
+            terminal_on_dispatch_error: self.terminal_on_dispatch_error,
         }
     }
 }
@@ -479,6 +579,8 @@ where
             self.backoff.clone(),
             concurrency_permits.clone(),
             self.preserve_region_results,
+            self.terminal_on_undetermined,
+            self.terminal_on_dispatch_error,
         )
         .await
     }
@@ -995,6 +1097,8 @@ impl<Resp: HasRegionError, Shard> HasRegionError for ResponseWithShard<Resp, Sha
 
 #[cfg(test)]
 mod test {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
     use std::time::Duration;
 
     use futures::stream::BoxStream;
@@ -1046,6 +1150,8 @@ mod test {
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),
             preserve_region_results: false,
+            terminal_on_undetermined: false,
+            terminal_on_dispatch_error: false,
         };
         assert!(plan.execute().await.is_err())
     }
@@ -1065,5 +1171,294 @@ mod test {
             .unwrap();
 
         assert_eq!(results, vec![0, 1, 2]);
+    }
+
+    /// Always answers with an undetermined apply outcome, and counts how many times
+    /// it is dispatched. The retry loop re-shards a CLONE per attempt, so the count
+    /// lives behind an `Arc` the clones share.
+    #[derive(Clone, Default)]
+    struct UndeterminedPlan {
+        dispatches: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Plan for UndeterminedPlan {
+        type Result = BatchGetResponse;
+
+        async fn execute(&self) -> Result<Self::Result> {
+            self.dispatches.fetch_add(1, Ordering::SeqCst);
+            // The server says the apply outcome is UNKNOWN.
+            Ok(BatchGetResponse {
+                region_error: Some(errorpb::Error {
+                    undetermined_result: Some(errorpb::UndeterminedResult::default()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        }
+    }
+
+    impl Shardable for UndeterminedPlan {
+        type Shard = ();
+
+        fn shards(
+            &self,
+            _: &Arc<impl crate::pd::PdClient>,
+        ) -> BoxStream<'static, crate::Result<(Self::Shard, RegionWithLeader)>> {
+            Box::pin(stream::iter(vec![Ok(((), MockPdClient::region1()))])).boxed()
+        }
+
+        fn apply_shard(&mut self, _: Self::Shard) {}
+
+        fn apply_store(&mut self, _: &crate::store::RegionStore) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn an_undetermined_result_is_terminal_on_first_sight_for_optedin_plans() {
+        // CAS and commit points: a replay could contradict its own effect, and a
+        // later different error must not overwrite the uncertainty. The error alone
+        // cannot prove terminality — retrying to exhaustion resurfaces the SAME
+        // error — so the proof is the dispatch count: a generous backoff that WOULD
+        // allow 10 retries, and exactly one dispatch anyway.
+        let inner = UndeterminedPlan::default();
+        let dispatches = inner.dispatches.clone();
+        let plan = RetryableMultiRegion {
+            inner,
+            pd_client: Arc::new(MockPdClient::default()),
+            backoff: Backoff::no_jitter_backoff(1, 2, 10),
+            preserve_region_results: false,
+            terminal_on_undetermined: true,
+            terminal_on_dispatch_error: false,
+        };
+        let err = plan.execute().await.unwrap_err();
+        assert!(
+            is_undetermined_region_error(&err),
+            "want the undetermined region error surfaced unchanged, got {err:?}"
+        );
+        assert_eq!(
+            dispatches.load(Ordering::SeqCst),
+            1,
+            "terminal means the first sight is the last: no replay may follow"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_undetermined_result_stays_recognizable_when_retries_exhaust() {
+        // Everything else retries (client-go's action-layer behavior for ordinary
+        // prewrites and secondary commits); when the backoff exhausts, the error
+        // must escape UNCHANGED so commit paths can still classify it as undetermined.
+        // The dispatch count proves the retries actually happened — the complement
+        // of the terminal test above.
+        const RETRIES: u32 = 3;
+        let inner = UndeterminedPlan::default();
+        let dispatches = inner.dispatches.clone();
+        let plan = RetryableMultiRegion {
+            inner,
+            pd_client: Arc::new(MockPdClient::default()),
+            backoff: Backoff::no_jitter_backoff(1, 2, RETRIES),
+            preserve_region_results: false,
+            terminal_on_undetermined: false,
+            terminal_on_dispatch_error: false,
+        };
+        let err = plan.execute().await.unwrap_err();
+        assert!(
+            is_undetermined_region_error(&err),
+            "want the undetermined region error preserved, got {err:?}"
+        );
+        assert_eq!(
+            dispatches.load(Ordering::SeqCst),
+            RETRIES as usize + 1,
+            "the default path retries: one initial dispatch plus one per backoff attempt"
+        );
+    }
+
+    /// Always fails DISPATCH with a gRPC status error (the shape of a lost response:
+    /// the request may have reached the server), counting dispatches like
+    /// [`UndeterminedPlan`].
+    #[derive(Clone, Default)]
+    struct GrpcErrPlan {
+        dispatches: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Plan for GrpcErrPlan {
+        type Result = BatchGetResponse;
+
+        async fn execute(&self) -> Result<Self::Result> {
+            self.dispatches.fetch_add(1, Ordering::SeqCst);
+            Err(Error::GrpcAPI(tonic::Status::unavailable("response lost")))
+        }
+    }
+
+    impl Shardable for GrpcErrPlan {
+        type Shard = ();
+
+        fn shards(
+            &self,
+            _: &Arc<impl crate::pd::PdClient>,
+        ) -> BoxStream<'static, crate::Result<(Self::Shard, RegionWithLeader)>> {
+            Box::pin(stream::iter(vec![Ok(((), MockPdClient::region1()))])).boxed()
+        }
+
+        fn apply_shard(&mut self, _: Self::Shard) {}
+
+        fn apply_store(&mut self, _: &crate::store::RegionStore) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_dispatch_error_is_terminal_on_first_sight_for_nonidempotent_plans() {
+        // Raw CAS: a dispatch that may have reached the server is as ambiguous as
+        // UndeterminedResult — a replay would compare against its own effect. Same
+        // proof shape as the terminal-on-undetermined test: a backoff that WOULD
+        // allow 10 retries, and exactly one dispatch anyway.
+        let inner = GrpcErrPlan::default();
+        let dispatches = inner.dispatches.clone();
+        let plan = RetryableMultiRegion {
+            inner,
+            pd_client: Arc::new(MockPdClient::default()),
+            backoff: Backoff::no_jitter_backoff(1, 2, 10),
+            preserve_region_results: false,
+            terminal_on_undetermined: true,
+            terminal_on_dispatch_error: true,
+        };
+        let err = plan.execute().await.unwrap_err();
+        assert!(
+            is_grpc_error(&err),
+            "want the gRPC error surfaced unchanged, got {err:?}"
+        );
+        assert_eq!(
+            dispatches.load(Ordering::SeqCst),
+            1,
+            "a non-idempotent request must never be replayed once it may have been sent"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dispatch_error_still_retries_for_commit_points() {
+        // Commit points set only `terminal_on_undetermined`: replaying a commit is
+        // idempotent — it can only resolve the uncertainty — and client-go's
+        // transport likewise retries RPC errors there (region_request.go,
+        // onSendFail). On exhaustion the error escapes unchanged for the commit
+        // path to classify as undetermined.
+        const RETRIES: u32 = 3;
+        let inner = GrpcErrPlan::default();
+        let dispatches = inner.dispatches.clone();
+        let plan = RetryableMultiRegion {
+            inner,
+            pd_client: Arc::new(MockPdClient::default()),
+            backoff: Backoff::no_jitter_backoff(1, 2, RETRIES),
+            preserve_region_results: false,
+            terminal_on_undetermined: true,
+            terminal_on_dispatch_error: false,
+        };
+        let err = plan.execute().await.unwrap_err();
+        assert!(
+            is_grpc_error(&err),
+            "want the gRPC error preserved for the caller to classify, got {err:?}"
+        );
+        assert_eq!(
+            dispatches.load(Ordering::SeqCst),
+            RETRIES as usize + 1,
+            "commit dispatches retry gRPC errors: one initial plus one per backoff attempt"
+        );
+    }
+
+    #[test]
+    fn undetermined_region_errors_are_recognized() {
+        // errorpb.UndeterminedResult: the apply outcome is UNKNOWN. The commit path
+        // must map this to UndeterminedError — a plain failure would invite the caller
+        // to retry effects that may already be durable.
+        let undetermined = Error::RegionError(Box::new(errorpb::Error {
+            undetermined_result: Some(errorpb::UndeterminedResult::default()),
+            ..Default::default()
+        }));
+        assert!(is_undetermined_region_error(&undetermined));
+
+        let busy = Error::RegionError(Box::new(errorpb::Error {
+            server_is_busy: Some(errorpb::ServerIsBusy::default()),
+            ..Default::default()
+        }));
+        assert!(!is_undetermined_region_error(&busy));
+        assert!(!is_undetermined_region_error(&Error::StringError(
+            "x".to_owned()
+        )));
+    }
+
+    /// A two-shard plan: the LOWER-index shard fails determinately, the HIGHER-index
+    /// shard reports `UndeterminedResult`. Reproduces the masking hazard the shard
+    /// aggregation guards against.
+    #[derive(Clone)]
+    struct MaskingPlan {
+        idx: usize,
+    }
+
+    #[async_trait]
+    impl Plan for MaskingPlan {
+        type Result = BatchGetResponse;
+
+        async fn execute(&self) -> Result<Self::Result> {
+            if self.idx == 0 {
+                // Determinate, lower index — the error that MUST NOT win.
+                Err(Error::Unimplemented)
+            } else {
+                // Undetermined, higher index.
+                Ok(BatchGetResponse {
+                    region_error: Some(errorpb::Error {
+                        undetermined_result: Some(errorpb::UndeterminedResult::default()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+            }
+        }
+    }
+
+    impl Shardable for MaskingPlan {
+        type Shard = usize;
+
+        fn shards(
+            &self,
+            _: &Arc<impl crate::pd::PdClient>,
+        ) -> BoxStream<'static, crate::Result<(Self::Shard, RegionWithLeader)>> {
+            Box::pin(stream::iter(vec![
+                Ok((0usize, MockPdClient::region1())),
+                Ok((1usize, MockPdClient::region2())),
+            ]))
+            .boxed()
+        }
+
+        fn apply_shard(&mut self, shard: Self::Shard) {
+            self.idx = shard;
+        }
+
+        fn apply_store(&mut self, _: &crate::store::RegionStore) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn an_undetermined_shard_is_not_masked_by_another_shards_error() {
+        // THE MASKING HAZARD. Shard 0 fails determinately (lower index); shard 1 is
+        // undetermined. First-error-by-index would report shard 0's determinate
+        // failure and hide the fact that shard 1 may have applied — claiming clean
+        // failure for a write that may be durable.
+        // The aggregation must surface the undetermined error instead.
+        let plan = RetryableMultiRegion {
+            inner: MaskingPlan { idx: 0 },
+            pd_client: Arc::new(MockPdClient::default()),
+            backoff: Backoff::no_backoff(),
+            preserve_region_results: false,
+            terminal_on_undetermined: true,
+            terminal_on_dispatch_error: false,
+        };
+        let err = plan.execute().await.unwrap_err();
+        assert!(
+            is_undetermined_region_error(&err),
+            "the undetermined shard must win over the determinate one, got {err:?}"
+        );
     }
 }

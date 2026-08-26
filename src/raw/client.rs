@@ -697,7 +697,13 @@ impl<PdC: PdClient> Client<PdC> {
             self.cf.clone(),
         );
         let plan = crate::request::PlanBuilder::new(self.rpc.clone(), self.keyspace, req)
-            .retry_multi_region(self.backoff.clone())
+            // CAS is not replay-safe once the outcome is unknown: if the first attempt
+            // applied, a retry would compare against the swapped-in value and report
+            // `succeed = false` for a write that HAPPENED. Terminal on first sight —
+            // and the outcome is unknown BOTH when the server says so
+            // (errorpb.UndeterminedResult) and when the dispatch fails after the
+            // request may have been sent (a gRPC error), so both are terminal here.
+            .retry_multi_region_terminal_on_ambiguous_outcome(self.backoff.clone())
             .merge(CollectSingle)
             .post_process_default()
             .plan();
