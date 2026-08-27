@@ -7,6 +7,7 @@ use crate::BoundRange;
 use crate::Key;
 use crate::KvPair;
 use crate::Result;
+use crate::Scanner;
 use crate::Transaction;
 use crate::Value;
 
@@ -52,6 +53,15 @@ impl Snapshot {
     ) -> Result<impl Iterator<Item = KvPair>> {
         debug!("invoking scan request on snapshot");
         self.transaction.scan(range, limit).await
+    }
+
+    /// Scan a range incrementally, buffering at most one batch of pairs in memory.
+    ///
+    /// Equivalent of client-go's `KVSnapshot.Iter(start, end)`; see
+    /// [`Transaction::scanner`].
+    pub async fn scanner(&mut self, range: impl Into<BoundRange>) -> Result<Scanner<'_>> {
+        debug!("creating scanner on snapshot");
+        self.transaction.scanner(range).await
     }
 
     /// Scan a range, return at most `limit` keys that lying in the range.

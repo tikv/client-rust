@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::collections::btree_map::Entry;
+use std::collections::btree_map::Range;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::future::Future;
@@ -129,11 +130,12 @@ impl Buffer {
         let mutation_range = self.entry_map.range(range.clone());
 
         // fetch from TiKV
-        // fetch more entries because some of them may be deleted.
+        // fetch more entries because some of them may be hidden by buffered
+        // deletions or not-exist checks.
         let deleted_count = u32::try_from(
             mutation_range
                 .clone()
-                .filter(|(_, m)| matches!(m, BufferEntry::Del))
+                .filter(|(_, m)| matches!(m, BufferEntry::Del | BufferEntry::CheckNotExist))
                 .count(),
         )
         .unwrap_or(u32::MAX);
@@ -145,13 +147,16 @@ impl Buffer {
             .map(|pair| pair.into())
             .collect::<HashMap<Key, Value>>();
 
-        // override using local data
+        // Override using local data. An inserted value is visible like a put
+        // and a not-exist check hides the key like a delete, consistent with
+        // point reads (`get_value`) and the scanner's `MutationIterator`;
+        // cached reads and locks do not change the visible value.
         for (k, m) in mutation_range {
             match m {
-                BufferEntry::Put(v) => {
+                BufferEntry::Put(v) | BufferEntry::Insert(v) => {
                     results.insert(k.clone(), v.clone());
                 }
-                BufferEntry::Del => {
+                BufferEntry::Del | BufferEntry::CheckNotExist => {
                     results.remove(k);
                 }
                 _ => {}
@@ -178,6 +183,18 @@ impl Buffer {
         }
 
         Ok(res.into_iter().take(limit as usize))
+    }
+
+    /// Iterate over buffered mutations in `range` in key order.
+    ///
+    /// Cached reads and locks do not change the value visible through a scan,
+    /// so they are skipped. The underlying `BTreeMap` range is created once and
+    /// then advanced linearly, matching client-go's mem-buffer iterator without
+    /// materializing all mutations in an intermediate collection.
+    pub(super) fn mutation_iter(&self, range: BoundRange) -> MutationIterator<'_> {
+        MutationIterator {
+            inner: self.entry_map.range(range),
+        }
     }
 
     /// Lock the given key if necessary.
@@ -310,6 +327,25 @@ impl Buffer {
             self.primary_key.get_or_insert_with(|| key.clone());
         }
         self.entry_map.insert(key, entry);
+    }
+}
+
+/// A key-ordered iterator over the mutations visible to a transactional scan.
+pub(super) struct MutationIterator<'a> {
+    inner: Range<'a, Key, BufferEntry>,
+}
+
+impl Iterator for MutationIterator<'_> {
+    type Item = (Key, Option<Value>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.find_map(|(key, entry)| match entry {
+            BufferEntry::Put(value) | BufferEntry::Insert(value) => {
+                Some((key.clone(), Some(value.clone())))
+            }
+            BufferEntry::Del | BufferEntry::CheckNotExist => Some((key.clone(), None)),
+            BufferEntry::Cached(_) | BufferEntry::Locked(_) => None,
+        })
     }
 }
 
@@ -533,6 +569,41 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(res.is_empty());
+    }
+
+    #[test]
+    fn scan_and_fetch_overlays_insert_and_check_not_exist() {
+        let mut buffer = Buffer::new(false);
+        // An inserted value is visible like a put: it overrides an existing
+        // TiKV value and adds an absent one.
+        buffer.insert(b"key1".to_vec().into(), b"inserted1".to_vec());
+        buffer.insert(b"key2".to_vec().into(), b"inserted2".to_vec());
+        // Insert + Delete = CheckNotExist, which hides the key like a delete.
+        buffer.insert(b"key3".to_vec().into(), b"inserted3".to_vec());
+        buffer.delete(b"key3".to_vec().into());
+
+        // The single hidden key raises the fetch limit by one.
+        let res = block_on(
+            buffer.scan_and_fetch((..).into(), 10, false, false, |_, limit| {
+                assert_eq!(limit, 11);
+                ready(Ok(vec![
+                    KvPair::new(b"key1".to_vec(), b"tikv1".to_vec()),
+                    KvPair::new(b"key3".to_vec(), b"tikv3".to_vec()),
+                    KvPair::new(b"key4".to_vec(), b"tikv4".to_vec()),
+                ]))
+            }),
+        )
+        .unwrap()
+        .collect::<Vec<_>>();
+
+        assert_eq!(
+            res,
+            vec![
+                KvPair::new(b"key1".to_vec(), b"inserted1".to_vec()),
+                KvPair::new(b"key2".to_vec(), b"inserted2".to_vec()),
+                KvPair::new(b"key4".to_vec(), b"tikv4".to_vec()),
+            ]
+        );
     }
 
     // Check that multiple writes to the same key combine in the correct way.
