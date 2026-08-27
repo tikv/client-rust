@@ -164,6 +164,8 @@ pub use crate::transaction::Client as TransactionClient;
 #[doc(inline)]
 pub use crate::transaction::ProtoLockInfo;
 #[doc(inline)]
+pub use crate::transaction::Scanner;
+#[doc(inline)]
 pub use crate::transaction::Snapshot;
 #[doc(inline)]
 pub use crate::transaction::SyncSnapshot;
