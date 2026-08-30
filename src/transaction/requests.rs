@@ -46,6 +46,7 @@ use crate::timestamp::TimestampExt;
 use crate::transaction::requests::kvrpcpb::prewrite_request::PessimisticAction;
 use crate::transaction::HasLocks;
 use crate::util::iter::FlatMapOkIterExt;
+use crate::Error;
 use crate::KvPair;
 use crate::Result;
 use crate::Value;
@@ -715,6 +716,21 @@ pub enum TransactionStatusKind {
 }
 
 impl TransactionStatus {
+    /// A final status established outside `CheckTxnStatus`, e.g. by async-commit recovery: a
+    /// positive commit version means committed, zero means rolled back.
+    pub fn from_commit_version(commit_version: u64) -> Self {
+        let kind = if commit_version == 0 {
+            TransactionStatusKind::RolledBack
+        } else {
+            TransactionStatusKind::Committed(Timestamp::from_version(commit_version))
+        };
+        TransactionStatus {
+            kind,
+            action: kvrpcpb::Action::NoAction,
+            is_expired: false,
+        }
+    }
+
     pub fn check_ttl(&mut self, current: Timestamp) {
         if let TransactionStatusKind::Locked(ref ttl, ref lock_info) = self.kind {
             if current.physical - Timestamp::from_version(lock_info.lock_version).physical
@@ -725,26 +741,14 @@ impl TransactionStatus {
         }
     }
 
-    // is_cacheable checks whether the transaction status is certain.
-    // If transaction is already committed, the result could be cached.
-    // Otherwise:
-    //   If l.LockType is pessimistic lock type:
-    //       - if its primary lock is pessimistic too, the check txn status result should not be cached.
-    //       - if its primary lock is prewrite lock type, the check txn status could be cached.
-    //   If l.lockType is prewrite lock type:
-    //       - always cache the check txn status result.
-    // For prewrite locks, their primary keys should ALWAYS be the correct one and will NOT change.
+    // Only final states are cacheable. A Locked result is not final even when its TTL expired:
+    // async-commit recovery still has to inspect every secondary, and force-sync fallback must be
+    // able to issue a fresh CheckTxnStatus request.
     pub fn is_cacheable(&self) -> bool {
-        match &self.kind {
-            TransactionStatusKind::RolledBack | TransactionStatusKind::Committed(..) => true,
-            TransactionStatusKind::Locked(..) if self.is_expired => matches!(
-                self.action,
-                kvrpcpb::Action::NoAction
-                    | kvrpcpb::Action::LockNotExistRollback
-                    | kvrpcpb::Action::TtlExpireRollback
-            ),
-            _ => false,
-        }
+        matches!(
+            self.kind,
+            TransactionStatusKind::RolledBack | TransactionStatusKind::Committed(..)
+        )
     }
 }
 
@@ -775,45 +779,119 @@ impl KvRequest for kvrpcpb::CheckSecondaryLocksRequest {
 
 shardable_keys!(kvrpcpb::CheckSecondaryLocksRequest);
 
-impl Merge<kvrpcpb::CheckSecondaryLocksResponse> for Collect {
+/// Collects the per-region responses of a sharded `CheckSecondaryLocks` request for the
+/// transaction `start_version` — client-go's `asyncResolveData` fed by `addKeys`.
+#[derive(Clone, Debug)]
+pub struct CollectSecondaryLocks {
+    pub start_version: u64,
+}
+
+/// Merge the per-region responses of a sharded `CheckSecondaryLocks` request. Each shard
+/// (`Vec<Vec<u8>>`) is the list of secondary keys sent to one region; pairing every response
+/// with its own key list is what makes missing-lock detection possible — TiKV only returns
+/// the locks it found, never the keys that no longer hold one.
+impl Merge<ResponseWithShard<kvrpcpb::CheckSecondaryLocksResponse, Vec<Vec<u8>>>>
+    for CollectSecondaryLocks
+{
     type Out = SecondaryLocksStatus;
 
-    fn merge(&self, input: Vec<Result<kvrpcpb::CheckSecondaryLocksResponse>>) -> Result<Self::Out> {
+    fn merge(
+        &self,
+        input: Vec<Result<ResponseWithShard<kvrpcpb::CheckSecondaryLocksResponse, Vec<Vec<u8>>>>>,
+    ) -> Result<Self::Out> {
         let mut out = SecondaryLocksStatus {
             commit_ts: None,
             min_commit_ts: 0,
             fallback_2pc: false,
         };
+
         for resp in input {
-            let resp = resp?;
-            for lock in resp.locks.into_iter() {
+            let ResponseWithShard(resp, requested_keys) = resp?;
+            if resp.locks.len() > requested_keys.len() {
+                return Err(Error::ProtocolViolation {
+                    message: format!(
+                        "CheckSecondaryLocks returned {} locks for {} requested keys",
+                        resp.locks.len(),
+                        requested_keys.len()
+                    ),
+                });
+            }
+            for lock in &resp.locks {
+                if lock.lock_version != self.start_version {
+                    return Err(Error::ProtocolViolation {
+                        message: format!(
+                            "CheckSecondaryLocks returned a lock of transaction {} while checking transaction {}",
+                            lock.lock_version, self.start_version
+                        ),
+                    });
+                }
                 if !lock.use_async_commit {
                     out.fallback_2pc = true;
-                    return Ok(out);
                 }
                 out.min_commit_ts = cmp::max(out.min_commit_ts, lock.min_commit_ts);
             }
-            out.commit_ts = match (
-                out.commit_ts.take(),
-                Timestamp::try_from_version(resp.commit_ts),
-            ) {
-                (Some(a), Some(b)) => {
-                    assert_eq!(a, b);
-                    Some(a)
+
+            // TiKV checks the requested keys one by one and stops at the first key that no
+            // longer holds a lock of this transaction, making the transaction's fate durable
+            // on the way: unless that key is already committed, a protected rollback is
+            // written for it. The decision is reported through `commit_ts` — the commit TS,
+            // or zero for a rollback — and the returned locks then no longer cover every
+            // requested key. A short lock list therefore means the transaction is decided.
+            if resp.locks.len() < requested_keys.len() {
+                if out.commit_ts.is_some_and(|ts| ts != resp.commit_ts) {
+                    return Err(Error::ProtocolViolation {
+                        message: format!(
+                            "CheckSecondaryLocks reported conflicting commit TS ({:?} and {}) for one transaction",
+                            out.commit_ts,
+                            resp.commit_ts
+                        ),
+                    });
                 }
-                (Some(a), None) => Some(a),
-                (None, Some(b)) => Some(b),
-                (None, None) => None,
-            };
+                out.commit_ts = Some(resp.commit_ts);
+            }
         }
+
         Ok(out)
     }
 }
 
+/// The aggregated outcome of `CheckSecondaryLocks` over the secondary keys of an
+/// async-commit transaction.
 pub struct SecondaryLocksStatus {
-    pub commit_ts: Option<Timestamp>,
+    /// A missing lock's durable decision: `Some(0)` for rollback, `Some(ts)` for commit.
+    /// `None` means every requested lock is still present.
+    pub commit_ts: Option<u64>,
+    /// The maximum `min_commit_ts` across the locks that are still alive.
     pub min_commit_ts: u64,
+    /// True when a surviving lock fell back from async commit to 2PC: the transaction's
+    /// fate then belongs to its primary lock, not to the secondaries.
     pub fallback_2pc: bool,
+}
+
+impl SecondaryLocksStatus {
+    /// The version this transaction must be resolved with: a positive commit version to
+    /// commit, or zero to roll back — the same encoding `TxnInfo.status` uses on the wire.
+    ///
+    /// While every lock is still alive the transaction is committable, and the commit
+    /// version is the maximum `min_commit_ts` across the primary and all secondary locks —
+    /// exactly the value the transaction's own committer would compute. Once a lock is
+    /// missing, TiKV has already made the decision durable and `commit_ts` carries it.
+    ///
+    /// Returns an error when TiKV reports a commit TS below a surviving lock's
+    /// `min_commit_ts`: every lock promised its readers no commit below that point.
+    pub fn resolved_commit_version(&self, primary_min_commit_ts: u64) -> Result<u64> {
+        let min_commit_ts = cmp::max(primary_min_commit_ts, self.min_commit_ts);
+        let commit_version = self.commit_ts.unwrap_or(min_commit_ts);
+        if commit_version != 0 && commit_version < min_commit_ts {
+            return Err(Error::ProtocolViolation {
+                message: format!(
+                    "CheckSecondaryLocks reported commit TS {} below a surviving lock's min_commit_ts {}",
+                    commit_version, min_commit_ts
+                ),
+            });
+        }
+        Ok(commit_version)
+    }
 }
 
 pair_locks!(kvrpcpb::BatchGetResponse);
@@ -891,13 +969,253 @@ impl Merge<kvrpcpb::UnsafeDestroyRangeResponse> for Collect {
 
 #[cfg(test)]
 mod tests {
+    use crate::common::Error;
     use crate::common::Error::PessimisticLockError;
     use crate::common::Error::ResolveLockError;
     use crate::proto::kvrpcpb;
+    use crate::proto::pdpb::Timestamp;
     use crate::request::plan::Merge;
     use crate::request::CollectWithShard;
     use crate::request::ResponseWithShard;
+    use crate::timestamp::TimestampExt;
     use crate::KvPair;
+
+    use super::CollectSecondaryLocks;
+    use super::TransactionStatus;
+    use super::TransactionStatusKind;
+
+    /// The transaction whose secondary locks the merge tests check.
+    const TXN_VERSION: u64 = 42;
+
+    /// The merger under test, expecting locks of `TXN_VERSION`.
+    fn check_secondaries() -> CollectSecondaryLocks {
+        CollectSecondaryLocks {
+            start_version: TXN_VERSION,
+        }
+    }
+
+    /// A still-live async-commit lock, as returned inside `CheckSecondaryLocksResponse`.
+    fn async_commit_lock(key: &[u8], min_commit_ts: u64) -> kvrpcpb::LockInfo {
+        kvrpcpb::LockInfo {
+            key: key.to_vec(),
+            lock_version: TXN_VERSION,
+            use_async_commit: true,
+            min_commit_ts,
+            ..Default::default()
+        }
+    }
+
+    #[rstest::rstest]
+    #[case(7, 8)]
+    #[case(0, 8)]
+    #[case(7, 0)]
+    fn check_secondary_conflicting_commit_ts_is_a_protocol_violation(
+        #[case] first: u64,
+        #[case] second: u64,
+    ) {
+        let result = check_secondaries().merge(vec![
+            Ok(ResponseWithShard(
+                kvrpcpb::CheckSecondaryLocksResponse {
+                    commit_ts: first,
+                    ..Default::default()
+                },
+                vec![b"a".to_vec()],
+            )),
+            Ok(ResponseWithShard(
+                kvrpcpb::CheckSecondaryLocksResponse {
+                    commit_ts: second,
+                    ..Default::default()
+                },
+                vec![b"b".to_vec()],
+            )),
+        ]);
+
+        assert!(matches!(result, Err(Error::ProtocolViolation { .. })));
+    }
+
+    #[test]
+    fn check_secondary_rejects_more_locks_than_requested_keys() {
+        let result = check_secondaries().merge(vec![Ok(ResponseWithShard(
+            kvrpcpb::CheckSecondaryLocksResponse {
+                locks: vec![async_commit_lock(b"a", 1), async_commit_lock(b"b", 2)],
+                ..Default::default()
+            },
+            vec![b"a".to_vec()],
+        ))]);
+
+        assert!(matches!(result, Err(Error::ProtocolViolation { .. })));
+    }
+
+    /// client-go `addKeys`: a returned lock must belong to the transaction being checked —
+    /// a foreign transaction's lock means TiKV answered about the wrong transaction.
+    #[test]
+    fn check_secondary_rejects_lock_of_another_transaction() {
+        let result = check_secondaries().merge(vec![Ok(ResponseWithShard(
+            kvrpcpb::CheckSecondaryLocksResponse {
+                locks: vec![kvrpcpb::LockInfo {
+                    lock_version: TXN_VERSION + 1,
+                    ..async_commit_lock(b"a", 1)
+                }],
+                ..Default::default()
+            },
+            vec![b"a".to_vec()],
+        ))]);
+
+        assert!(matches!(result, Err(Error::ProtocolViolation { .. })));
+    }
+
+    #[test]
+    fn check_secondary_all_locks_present_uses_max_min_commit_ts() {
+        let result = check_secondaries()
+            .merge(vec![Ok(ResponseWithShard(
+                kvrpcpb::CheckSecondaryLocksResponse {
+                    locks: vec![async_commit_lock(b"secondary", 70)],
+                    ..Default::default()
+                },
+                vec![b"secondary".to_vec()],
+            ))])
+            .unwrap();
+
+        assert_eq!(result.commit_ts, None);
+        assert_eq!(result.resolved_commit_version(80).unwrap(), 80);
+    }
+
+    #[test]
+    fn check_secondary_missing_lock_preserves_exact_commit_ts() {
+        let result = check_secondaries()
+            .merge(vec![Ok(ResponseWithShard(
+                kvrpcpb::CheckSecondaryLocksResponse {
+                    commit_ts: 77,
+                    ..Default::default()
+                },
+                vec![b"missing".to_vec()],
+            ))])
+            .unwrap();
+
+        assert_eq!(result.commit_ts, Some(77));
+        assert_eq!(result.resolved_commit_version(70).unwrap(), 77);
+    }
+
+    #[test]
+    fn check_secondary_missing_lock_with_zero_commit_ts_resolves_as_rollback() {
+        let result = check_secondaries()
+            .merge(vec![Ok(ResponseWithShard(
+                // No lock and no commit TS: TiKV wrote a protected rollback for the key.
+                kvrpcpb::CheckSecondaryLocksResponse::default(),
+                vec![b"missing".to_vec()],
+            ))])
+            .unwrap();
+
+        assert_eq!(result.commit_ts, Some(0));
+        assert_eq!(result.resolved_commit_version(80).unwrap(), 0);
+    }
+
+    #[rstest::rstest]
+    #[case(0)]
+    #[case(77)]
+    fn check_secondary_missing_lock_keeps_decision_across_live_shards(#[case] commit_ts: u64) {
+        let missing = ResponseWithShard(
+            kvrpcpb::CheckSecondaryLocksResponse {
+                commit_ts,
+                ..Default::default()
+            },
+            vec![b"missing".to_vec()],
+        );
+        let live = ResponseWithShard(
+            kvrpcpb::CheckSecondaryLocksResponse {
+                locks: vec![async_commit_lock(b"live", 70)],
+                ..Default::default()
+            },
+            vec![b"live".to_vec()],
+        );
+        for responses in [
+            vec![Ok(missing.clone()), Ok(live.clone())],
+            vec![Ok(live), Ok(missing)],
+        ] {
+            let result = check_secondaries().merge(responses).unwrap();
+            assert_eq!(result.resolved_commit_version(75).unwrap(), commit_ts);
+        }
+    }
+
+    #[test]
+    fn check_secondary_rejects_commit_ts_below_primary_min_commit_ts() {
+        let result = check_secondaries()
+            .merge(vec![Ok(ResponseWithShard(
+                kvrpcpb::CheckSecondaryLocksResponse {
+                    commit_ts: 77,
+                    ..Default::default()
+                },
+                vec![b"missing".to_vec()],
+            ))])
+            .unwrap();
+
+        assert!(matches!(
+            result.resolved_commit_version(80),
+            Err(Error::ProtocolViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn check_secondary_rejects_commit_ts_below_locked_min_commit_ts() {
+        let result = check_secondaries()
+            .merge(vec![
+                Ok(ResponseWithShard(
+                    kvrpcpb::CheckSecondaryLocksResponse {
+                        locks: vec![async_commit_lock(b"locked", 80)],
+                        ..Default::default()
+                    },
+                    vec![b"locked".to_vec()],
+                )),
+                Ok(ResponseWithShard(
+                    kvrpcpb::CheckSecondaryLocksResponse {
+                        commit_ts: 77,
+                        ..Default::default()
+                    },
+                    vec![b"missing".to_vec()],
+                )),
+            ])
+            .unwrap();
+
+        // The merge only aggregates; the min_commit_ts gate lives in
+        // `resolved_commit_version`, which every commit-path caller goes through.
+        assert!(matches!(
+            result.resolved_commit_version(0),
+            Err(Error::ProtocolViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn only_final_transaction_statuses_are_cacheable() {
+        let committed = TransactionStatus {
+            kind: TransactionStatusKind::Committed(Timestamp::from_version(5)),
+            action: kvrpcpb::Action::NoAction,
+            is_expired: false,
+        };
+        assert!(committed.is_cacheable());
+
+        let rolled_back = TransactionStatus {
+            kind: TransactionStatusKind::RolledBack,
+            action: kvrpcpb::Action::NoAction,
+            is_expired: false,
+        };
+        assert!(rolled_back.is_cacheable());
+
+        // A `Locked` status is a snapshot, never a fact — not even once the TTL has
+        // expired: async-commit recovery must inspect the secondaries afresh, and the
+        // force-sync fallback must be able to issue a new CheckTxnStatus request.
+        let expired_async_commit_lock = TransactionStatus {
+            kind: TransactionStatusKind::Locked(
+                1,
+                kvrpcpb::LockInfo {
+                    use_async_commit: true,
+                    ..Default::default()
+                },
+            ),
+            action: kvrpcpb::Action::NoAction,
+            is_expired: true,
+        };
+        assert!(!expired_async_commit_lock.is_cacheable());
+    }
 
     #[tokio::test]
     async fn test_merge_pessimistic_lock_response() {
