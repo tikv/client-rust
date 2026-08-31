@@ -128,7 +128,7 @@ impl Connection {
         let members = self.validate_endpoints(endpoints, timeout).await?;
         let (client, keyspace_client, members) = self.try_connect_leader(&members, timeout).await?;
         let id = members.header.as_ref().unwrap().cluster_id;
-        let tso = TimestampOracle::new(id, &client)?;
+        let tso = TimestampOracle::new(id, &client, timeout)?;
         let cluster = Cluster {
             id,
             client,
@@ -145,7 +145,7 @@ impl Connection {
         let start = Instant::now();
         let (client, keyspace_client, members) =
             self.try_connect_leader(&cluster.members, timeout).await?;
-        let tso = TimestampOracle::new(cluster.id, &client)?;
+        let tso = TimestampOracle::new(cluster.id, &client, timeout)?;
         *cluster = Cluster {
             id: cluster.id,
             client,
@@ -213,7 +213,7 @@ impl Connection {
     async fn connect(
         &self,
         addr: &str,
-        _timeout: Duration,
+        timeout: Duration,
     ) -> Result<(
         pdpb::pd_client::PdClient<Channel>,
         keyspacepb::keyspace_client::KeyspaceClient<Channel>,
@@ -221,19 +221,25 @@ impl Connection {
     )> {
         let mut client = self
             .security_mgr
-            .connect(addr, pdpb::pd_client::PdClient::<Channel>::new)
+            .connect_with_timeout(addr, timeout, pdpb::pd_client::PdClient::<Channel>::new)
             .await?;
         let keyspace_client = self
             .security_mgr
-            .connect(
+            .connect_with_timeout(
                 addr,
+                timeout,
                 keyspacepb::keyspace_client::KeyspaceClient::<Channel>::new,
             )
             .await?;
-        let resp: pdpb::GetMembersResponse = client
-            .get_members(pdpb::GetMembersRequest::default())
-            .await?
-            .into_inner();
+        // Bounded like every other request in this path: this is the first RPC
+        // on a fresh connection, exactly where a frozen peer would hang it.
+        let resp: pdpb::GetMembersResponse = tokio::time::timeout(
+            timeout,
+            client.get_members(pdpb::GetMembersRequest::default()),
+        )
+        .await
+        .map_err(|_| internal_err!("get_members timed out after {:?}", timeout))??
+        .into_inner();
         if let Some(err) = resp
             .header
             .as_ref()
