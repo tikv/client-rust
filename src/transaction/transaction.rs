@@ -40,6 +40,9 @@ use crate::KvPair;
 use crate::Result;
 use crate::Value;
 
+mod scanner;
+pub use scanner::Scanner;
+
 /// An undo-able set of actions on the dataset.
 ///
 /// Create a transaction using a [`TransactionClient`](crate::TransactionClient), then run actions
@@ -86,6 +89,11 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     options: TransactionOptions,
     keyspace: Keyspace,
     is_heartbeat_started: bool,
+    /// Set once the transaction enters the commit path (`StartedCommit`), where
+    /// prewrite may place 2PC locks. Kept as a dedicated flag because the status
+    /// transitions to `StartedRollback` on rollback, losing the fact that commit
+    /// had started — which a rollback retry would otherwise need to know.
+    prewritten: bool,
     start_instant: Instant,
 }
 
@@ -109,6 +117,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             options,
             keyspace,
             is_heartbeat_started: false,
+            prewritten: false,
             start_instant: std::time::Instant::now(),
         }
     }
@@ -657,6 +666,10 @@ impl<PdC: PdClient> Transaction<PdC> {
         ) {
             return Err(Error::OperationAfterCommitError);
         }
+        // Record that the commit path has been entered; prewrite may place 2PC
+        // locks. A later rollback needs this even after the status has moved on
+        // to `StartedRollback` (see `rollback`).
+        self.prewritten = true;
 
         let primary_key = self.buffer.get_primary_key();
         let mutations = self.buffer.to_proto_mutations();
@@ -713,6 +726,13 @@ impl<PdC: PdClient> Transaction<PdC> {
             "rolling back transaction, start_ts: {}",
             self.timestamp.version()
         );
+        // A transaction that already started committing may have placed prewrite
+        // (2PC) locks; use the persisted flag so the committer rolls those back
+        // with `BatchRollback` rather than `PessimisticRollback` (which cannot
+        // clear them). Reading it from the status would be wrong on a rollback
+        // retry: the status is already `StartedRollback` by then, so the fact
+        // that commit had started would be lost.
+        let prewritten = self.prewritten;
         if !self.transit_status(
             |status| {
                 matches!(
@@ -739,7 +759,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.buffer.get_write_size() as u64,
             self.start_instant,
         )
-        .rollback()
+        .rollback(prewritten)
         .await;
 
         if res.is_ok() {
@@ -1318,7 +1338,34 @@ impl<PdC: PdClient> Committer<PdC> {
             self.start_version.version()
         );
 
-        let min_commit_ts = self.prewrite().await?;
+        let min_commit_ts = match self.prewrite().await {
+            Ok(ts) => ts,
+            Err(e) => {
+                // With async commit or 1PC the PREWRITE is the commit point: when the
+                // server reports the outcome as unknown (errorpb.UndeterminedResult),
+                // or we never received its answer at all (a gRPC error), the
+                // transaction may already be durable, and a plain error would invite
+                // the caller to replay it. client-go marks undetermined the same way
+                // (prewrite.go, prewrite1BatchReqHandler.drop: any RPC error on an
+                // async-commit/1PC prewrite sets the committer's undetermined error).
+                //
+                // PRECISION NOTE: if 1PC was configured but sharding disabled it on
+                // the actual requests (multi-region transactions), this is
+                // conservative — it can report UNDETERMINED for a prewrite that could
+                // not have committed. That is the safe direction: the caller verifies
+                // instead of replaying. The per-request 1PC state is not observable
+                // on the error path; precise gating belongs to the upfront
+                // single-region 1PC decision (client-go's checkOnePC shape) that full
+                // 1PC support will introduce.
+                return if (self.options.async_commit || self.options.try_one_pc)
+                    && is_commit_outcome_unknown(&e)
+                {
+                    Err(Error::UndeterminedError(Box::new(e)))
+                } else {
+                    Err(e)
+                };
+            }
+        };
 
         fail_point!("after-prewrite", |_| {
             Err(Error::StringError(
@@ -1389,16 +1436,23 @@ impl<PdC: PdClient> Committer<PdC> {
             .collect();
         // FIXME set max_commit_ts and min_commit_ts
 
-        let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
-            .resolve_lock(
-                self.start_version,
-                self.options.retry_options.lock_backoff.clone(),
-                self.keyspace,
+        let builder = PlanBuilder::new(self.rpc.clone(), self.keyspace, request).resolve_lock(
+            self.start_version,
+            self.options.retry_options.lock_backoff.clone(),
+            self.keyspace,
+        );
+        // With async commit or 1PC this prewrite IS the commit point, so an unknown
+        // apply outcome must not be retried away or overwritten by a later error
+        // (stricter than client-go, in the safe direction; commit() classifies it).
+        // An ordinary 2PC prewrite retries, as client-go's does.
+        let builder = if self.options.async_commit || self.options.try_one_pc {
+            builder.retry_multi_region_terminal_on_undetermined(
+                self.options.retry_options.region_backoff.clone(),
             )
-            .retry_multi_region(self.options.retry_options.region_backoff.clone())
-            .merge(CollectError)
-            .extract_error()
-            .plan();
+        } else {
+            builder.retry_multi_region(self.options.retry_options.region_backoff.clone())
+        };
+        let plan = builder.merge(CollectError).extract_error().plan();
         let response = plan.execute().await?;
 
         if self.options.try_one_pc && response.len() == 1 {
@@ -1438,7 +1492,12 @@ impl<PdC: PdClient> Committer<PdC> {
                 self.options.retry_options.lock_backoff.clone(),
                 self.keyspace,
             )
-            .retry_multi_region(self.options.retry_options.region_backoff.clone())
+            // The primary commit is THE commit point: client-go returns
+            // ErrResultUndetermined here rather than retrying (commit.go), so an
+            // unknown outcome can never be overwritten by a later retry error.
+            .retry_multi_region_terminal_on_undetermined(
+                self.options.retry_options.region_backoff.clone(),
+            )
             .extract_error()
             .plan();
         plan.execute()
@@ -1449,9 +1508,22 @@ impl<PdC: PdClient> Committer<PdC> {
                     self.start_version.version()
                 );
                 // We don't know whether the transaction is committed or not if we fail to receive
-                // the response. Then, we mark the transaction as undetermined and propagate the
-                // error to the user.
-                if let Error::Grpc(_) = e {
+                // the response — or if the server itself reports the raft outcome as unknown
+                // (errorpb.UndeterminedResult). Then, we mark the transaction as undetermined
+                // and propagate the error to the user. Failing-to-receive means ANY gRPC error:
+                // dispatch failures are `Error::GrpcAPI` since the tonic migration (the old
+                // `Error::Grpc`-only match here was a grpcio-era leftover that no longer caught
+                // them), and client-go's equivalent (sender.GetRPCError(), commit.go) likewise
+                // covers status errors and connection failures alike.
+                //
+                // PROVENANCE NOTE: this plan wraps the commit in `resolve_lock`, so an
+                // undetermined error could in principle originate from an auxiliary
+                // CheckTxnStatus/ResolveLock RPC rather than the commit dispatch itself. That
+                // only over-reports (marks undetermined when the commit was actually rejected),
+                // which is the SAFE direction — the caller verifies instead of assuming a clean
+                // outcome. Distinguishing per-layer error provenance is a precision improvement,
+                // not a safety fix, and is left as follow-up.
+                if is_commit_outcome_unknown(e) {
                     self.undetermined = true;
                 }
             })
@@ -1566,11 +1638,29 @@ impl<PdC: PdClient> Committer<PdC> {
         Ok(())
     }
 
-    async fn rollback(self) -> Result<()> {
+    /// Roll back the transaction.
+    ///
+    /// `prewritten` must be `true` when the transaction has already started
+    /// committing (its prewrite may have placed 2PC locks). A pessimistic
+    /// transaction that has been prewritten holds `Put`/`Delete` (2PC) locks,
+    /// which `PessimisticRollback` cannot remove — it only clears
+    /// `LockType::Pessimistic` locks and would silently leave the prewrite locks
+    /// behind. Those are rolled back with `BatchRollback` (as the optimistic
+    /// path and client-go's commit cleanup do), which rolls back by `start_ts`
+    /// regardless of lock type. Only a pessimistic transaction that has *not*
+    /// been prewritten (locks still pessimistic) uses the narrower
+    /// `PessimisticRollback`.
+    async fn rollback(self, prewritten: bool) -> Result<()> {
         debug!(
-            "rolling back (2pc), start_ts: {}",
-            self.start_version.version()
+            "rolling back (2pc), start_ts: {}, prewritten: {}",
+            self.start_version.version(),
+            prewritten
         );
+        fail_point!("before-rollback", |_| {
+            Err(Error::StringError(
+                "failpoint: before-rollback return error".to_owned(),
+            ))
+        });
         if self.options.kind == TransactionKind::Optimistic && self.mutations.is_empty() {
             return Ok(());
         }
@@ -1579,29 +1669,27 @@ impl<PdC: PdClient> Committer<PdC> {
             .into_iter()
             .map(|mutation| mutation.key.into());
         let start_version = self.start_version;
+        let lock_backoff = self.options.retry_options.lock_backoff.clone();
+        let region_backoff = self.options.retry_options.region_backoff.clone();
+        let rpc = self.rpc;
+        let keyspace = self.keyspace;
         match self.options.kind {
-            TransactionKind::Optimistic => {
-                let req = new_batch_rollback_request(keys, start_version);
-                let plan = PlanBuilder::new(self.rpc, self.keyspace, req)
-                    .resolve_lock(
-                        start_version,
-                        self.options.retry_options.lock_backoff,
-                        self.keyspace,
-                    )
-                    .retry_multi_region(self.options.retry_options.region_backoff)
+            TransactionKind::Pessimistic(for_update_ts) if !prewritten => {
+                let req = new_pessimistic_rollback_request(keys, start_version, for_update_ts);
+                let plan = PlanBuilder::new(rpc, keyspace, req)
+                    .resolve_lock(start_version, lock_backoff, keyspace)
+                    .retry_multi_region(region_backoff)
                     .extract_error()
                     .plan();
                 plan.execute().await?;
             }
-            TransactionKind::Pessimistic(for_update_ts) => {
-                let req = new_pessimistic_rollback_request(keys, start_version, for_update_ts);
-                let plan = PlanBuilder::new(self.rpc, self.keyspace, req)
-                    .resolve_lock(
-                        start_version,
-                        self.options.retry_options.lock_backoff,
-                        self.keyspace,
-                    )
-                    .retry_multi_region(self.options.retry_options.region_backoff)
+            // Optimistic, or pessimistic after prewrite: BatchRollback clears
+            // both pessimistic and 2PC locks by start_ts.
+            _ => {
+                let req = new_batch_rollback_request(keys, start_version);
+                let plan = PlanBuilder::new(rpc, keyspace, req)
+                    .resolve_lock(start_version, lock_backoff, keyspace)
+                    .retry_multi_region(region_backoff)
                     .extract_error()
                     .plan();
                 plan.execute().await?;
@@ -1619,6 +1707,19 @@ impl<PdC: PdClient> Committer<PdC> {
         }
         lock_ttl
     }
+}
+
+/// Is the outcome of a commit-point request unknown?
+///
+/// Two ways to lose certainty: we failed to receive a response (a gRPC error — the
+/// analogue of client-go's `sender.GetRPCError()`, which records *any* error from the
+/// RPC call: status errors and connection failures alike), or we received one and the
+/// server itself reported the raft apply outcome unknown
+/// (`errorpb.UndeterminedResult`). Note `Error::GrpcAPI` is the variant every KV RPC
+/// dispatch failure takes since the tonic migration; `Error::Grpc` is only connection
+/// establishment.
+fn is_commit_outcome_unknown(e: &Error) -> bool {
+    crate::request::plan::is_grpc_error(e) || crate::request::plan::is_undetermined_region_error(e)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -1826,5 +1927,33 @@ mod tests {
                 .any(|line| line.contains("start_ts") && line.contains(&start_ts.to_string())),
             "expected a lifecycle log carrying start_ts {start_ts}; captured: {logs:?}"
         );
+    }
+
+    #[test]
+    fn commit_outcome_unknown_errors_are_recognized() {
+        use super::is_commit_outcome_unknown;
+
+        // The case an `Error::Grpc`-only match would miss: every KV RPC dispatch
+        // failure is `Error::GrpcAPI` since the tonic migration.
+        assert!(is_commit_outcome_unknown(&crate::Error::GrpcAPI(
+            tonic::Status::unavailable("no response received")
+        )));
+        // The server received the request but reports the raft apply outcome unknown.
+        assert!(is_commit_outcome_unknown(&crate::Error::RegionError(
+            Box::new(crate::proto::errorpb::Error {
+                undetermined_result: Some(crate::proto::errorpb::UndeterminedResult::default()),
+                ..Default::default()
+            })
+        )));
+        // Determinate failures stay plain failures.
+        assert!(!is_commit_outcome_unknown(&crate::Error::StringError(
+            "rejected".to_owned()
+        )));
+        assert!(!is_commit_outcome_unknown(&crate::Error::RegionError(
+            Box::new(crate::proto::errorpb::Error {
+                server_is_busy: Some(crate::proto::errorpb::ServerIsBusy::default()),
+                ..Default::default()
+            })
+        )));
     }
 }

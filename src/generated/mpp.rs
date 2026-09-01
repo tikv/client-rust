@@ -49,6 +49,10 @@ pub struct TaskMeta {
     /// This is the session alias between a client and tidb
     #[prost(string, tag = "19")]
     pub connection_alias: ::prost::alloc::string::String,
+    #[prost(string, tag = "20")]
+    pub sql_digest: ::prost::alloc::string::String,
+    #[prost(string, tag = "21")]
+    pub plan_digest: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct IsAliveRequest {}
@@ -76,6 +80,9 @@ pub struct DispatchTaskRequest {
     /// Used for partition table scan
     #[prost(message, repeated, tag = "6")]
     pub table_regions: ::prost::alloc::vec::Vec<super::coprocessor::TableRegions>,
+    /// Shard infos for TiCI/FTS routing in MPP dispatch path.
+    #[prost(message, repeated, tag = "7")]
+    pub table_shard_infos: ::prost::alloc::vec::Vec<super::coprocessor::TableShardInfos>,
 }
 /// Get response of DispatchTaskRequest.
 #[derive(Clone, PartialEq, ::prost::Message)]

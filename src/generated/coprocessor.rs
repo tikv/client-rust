@@ -7,6 +7,15 @@ pub struct KeyRange {
     #[prost(bytes = "vec", tag = "2")]
     pub end: ::prost::alloc::vec::Vec<u8>,
 }
+/// KeyRange with an attached read_ts (version).
+/// It is used by TiCI versioned lookup. Callers must ensure `range` is a point range.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct VersionedKeyRange {
+    #[prost(message, optional, tag = "1")]
+    pub range: ::core::option::Option<KeyRange>,
+    #[prost(uint64, tag = "2")]
+    pub read_ts: u64,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Request {
     #[prost(message, optional, tag = "1")]
@@ -42,6 +51,33 @@ pub struct Request {
     /// This is the session alias between a client and tidb
     #[prost(string, tag = "13")]
     pub connection_alias: ::prost::alloc::string::String,
+    /// Shard infos for FTS index, used by TiFlash reading TiCI.
+    #[prost(message, repeated, tag = "14")]
+    pub table_shard_infos: ::prost::alloc::vec::Vec<TableShardInfos>,
+    /// Versioned point ranges for TiCI lookup.
+    /// When `versioned_ranges` is non-empty, all `versioned_ranges\[i\].range` must be point range.
+    #[prost(message, repeated, tag = "15")]
+    pub versioned_ranges: ::prost::alloc::vec::Vec<VersionedKeyRange>,
+    /// max_keys_read is 0 when disabled, otherwise limits the number of storage
+    /// engine keys scanned per coprocessor task. It is a per-task hard ceiling
+    /// applied uniformly to any coprocessor request, used to bound worst-case
+    /// scan amplification regardless of how the request is paginated.
+    #[prost(uint64, tag = "16")]
+    pub max_keys_read: u64,
+    /// paging_size_bytes is 0 when disabled, otherwise it should be a positive number.
+    /// When set, within a paged coprocessor request, TiKV stops scanning the current
+    /// page once accumulated scanned bytes reach this limit and returns the page
+    /// boundary so the next page can resume from there.
+    ///
+    /// Unlike max_keys_read, which is a per-task hard ceiling on keys scanned,
+    /// paging_size_bytes is an independent rate-control dimension intended for
+    /// Resource Control: it bounds the byte volume of a single page so that RU
+    /// pre-charging in PD's resource controller can be performed at byte
+    /// granularity, complementing the existing row-count-based paging
+    /// (paging_size). The two fields target different scenarios and may be set
+    /// independently.
+    #[prost(uint64, tag = "17")]
+    pub paging_size_bytes: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Response {
@@ -87,6 +123,50 @@ pub struct RegionInfo {
     pub ranges: ::prost::alloc::vec::Vec<KeyRange>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ShardInfo {
+    #[prost(uint64, tag = "1")]
+    pub shard_id: u64,
+    #[prost(uint64, tag = "2")]
+    pub shard_epoch: u64,
+    #[prost(message, repeated, tag = "3")]
+    pub ranges: ::prost::alloc::vec::Vec<KeyRange>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TableShardInfos {
+    /// The executor ID is used to identify the tici executor.
+    #[prost(string, tag = "1")]
+    pub executor_id: ::prost::alloc::string::String,
+    /// The shard_infos contains the shard information for each tici executor.
+    #[prost(message, repeated, tag = "2")]
+    pub shard_infos: ::prost::alloc::vec::Vec<ShardInfo>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TiCiEstimateCountRequest {
+    #[prost(message, optional, tag = "1")]
+    pub context: ::core::option::Option<super::kvrpcpb::Context>,
+    #[prost(uint64, tag = "2")]
+    pub start_ts: u64,
+    #[prost(int64, tag = "3")]
+    pub table_id: i64,
+    #[prost(int64, tag = "4")]
+    pub index_id: i64,
+    #[prost(bytes = "vec", tag = "5")]
+    pub fts_query_info: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, tag = "6")]
+    pub time_zone_name: ::prost::alloc::string::String,
+    #[prost(int64, tag = "7")]
+    pub time_zone_offset: i64,
+    #[prost(message, repeated, tag = "8")]
+    pub shard_infos: ::prost::alloc::vec::Vec<ShardInfo>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct TiCiEstimateCountResponse {
+    #[prost(uint64, tag = "1")]
+    pub est_count: u64,
+    #[prost(string, tag = "2")]
+    pub other_error: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TableRegions {
     #[prost(int64, tag = "1")]
     pub physical_table_id: i64,
@@ -119,6 +199,9 @@ pub struct BatchRequest {
     /// This is the session alias between a client and tidb
     #[prost(string, tag = "10")]
     pub connection_alias: ::prost::alloc::string::String,
+    /// Shard infos for FTS index, used by TiFlash reading TiCI.
+    #[prost(message, repeated, tag = "11")]
+    pub table_shard_infos: ::prost::alloc::vec::Vec<TableShardInfos>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BatchResponse {
@@ -130,6 +213,8 @@ pub struct BatchResponse {
     pub exec_details: ::core::option::Option<super::kvrpcpb::ExecDetails>,
     #[prost(message, repeated, tag = "4")]
     pub retry_regions: ::prost::alloc::vec::Vec<super::metapb::Region>,
+    #[prost(message, repeated, tag = "5")]
+    pub retry_shards: ::prost::alloc::vec::Vec<ShardInfo>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StoreBatchTask {
@@ -143,6 +228,13 @@ pub struct StoreBatchTask {
     pub ranges: ::prost::alloc::vec::Vec<KeyRange>,
     #[prost(uint64, tag = "5")]
     pub task_id: u64,
+    /// Versioned point ranges for TiCI lookup.
+    /// When `versioned_ranges` is non-empty, all `versioned_ranges\[i\].range` must be point range.
+    #[prost(message, repeated, tag = "6")]
+    pub versioned_ranges: ::prost::alloc::vec::Vec<VersionedKeyRange>,
+    /// Bucket metadata version used to validate this child task.
+    #[prost(uint64, tag = "7")]
+    pub buckets_version: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StoreBatchTaskResponse {
@@ -158,4 +250,37 @@ pub struct StoreBatchTaskResponse {
     pub task_id: u64,
     #[prost(message, optional, tag = "6")]
     pub exec_details_v2: ::core::option::Option<super::kvrpcpb::ExecDetailsV2>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DelegateRequest {
+    #[prost(message, optional, tag = "1")]
+    pub context: ::core::option::Option<super::kvrpcpb::Context>,
+    #[prost(uint64, tag = "2")]
+    pub start_ts: u64,
+    #[prost(message, repeated, tag = "3")]
+    pub ranges: ::prost::alloc::vec::Vec<KeyRange>,
+    /// Used for avoid redundant mem-table copying.
+    /// If the sequence is the same, tikv-server will not return the mem-table.
+    #[prost(uint64, tag = "4")]
+    pub mem_table_sequence: u64,
+    /// Used for avoid redundant snapshot copying.
+    /// If the sequence is the same, tikv-server will not return the snapshot.
+    #[prost(uint64, tag = "5")]
+    pub snapshot_sequence: u64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DelegateResponse {
+    #[prost(bytes = "vec", tag = "1")]
+    pub mem_table_data: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub snapshot: ::prost::alloc::vec::Vec<u8>,
+    #[prost(message, optional, tag = "3")]
+    pub region_error: ::core::option::Option<super::errorpb::Error>,
+    #[prost(message, optional, tag = "4")]
+    pub locked: ::core::option::Option<super::kvrpcpb::LockInfo>,
+    #[prost(string, tag = "5")]
+    pub other_error: ::prost::alloc::string::String,
+    /// Used for avoid redundant mem-table copying.
+    #[prost(uint64, tag = "6")]
+    pub mem_table_sequence: u64,
 }

@@ -72,9 +72,15 @@ pub struct MockKvConnect;
 
 pub struct MockCluster;
 
+#[allow(clippy::type_complexity)]
 #[derive(new)]
 pub struct MockPdClient {
     client: MockKvClient,
+    /// Optional override for `region_for_key`, e.g. to simulate PD failing to
+    /// locate a region for a key.
+    #[new(default)]
+    region_for_key_hook:
+        Option<Arc<dyn Fn(&Key) -> Result<RegionWithLeader> + Send + Sync + 'static>>,
 }
 
 #[async_trait]
@@ -101,9 +107,17 @@ impl KvConnect for MockKvConnect {
 
 impl MockPdClient {
     pub fn default() -> MockPdClient {
-        MockPdClient {
-            client: MockKvClient::default(),
-        }
+        MockPdClient::new(MockKvClient::default())
+    }
+
+    /// Override `region_for_key` with a custom hook, leaving the rest of the
+    /// mock's behavior untouched.
+    pub fn with_region_for_key_hook<F>(mut self, hook: F) -> MockPdClient
+    where
+        F: Fn(&Key) -> Result<RegionWithLeader> + Send + Sync + 'static,
+    {
+        self.region_for_key_hook = Some(Arc::new(hook));
+        self
     }
 
     pub fn region1() -> RegionWithLeader {
@@ -173,6 +187,9 @@ impl PdClient for MockPdClient {
     }
 
     async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
+        if let Some(hook) = &self.region_for_key_hook {
+            return hook(key);
+        }
         let bytes: &[_] = key.into();
         let region = if bytes.is_empty() || bytes < &[10][..] {
             Self::region1()

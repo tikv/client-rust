@@ -24,6 +24,13 @@ pub struct LoadKeyspaceRequest {
     #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LoadKeyspaceByIdRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(uint32, tag = "2")]
+    pub id: u32,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LoadKeyspaceResponse {
     #[prost(message, optional, tag = "1")]
@@ -31,7 +38,7 @@ pub struct LoadKeyspaceResponse {
     #[prost(message, optional, tag = "2")]
     pub keyspace: ::core::option::Option<KeyspaceMeta>,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WatchKeyspacesRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
@@ -43,7 +50,7 @@ pub struct WatchKeyspacesResponse {
     #[prost(message, repeated, tag = "2")]
     pub keyspaces: ::prost::alloc::vec::Vec<KeyspaceMeta>,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UpdateKeyspaceStateRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
@@ -59,7 +66,7 @@ pub struct UpdateKeyspaceStateResponse {
     #[prost(message, optional, tag = "2")]
     pub keyspace: ::core::option::Option<KeyspaceMeta>,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetAllKeyspacesRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
@@ -221,6 +228,30 @@ pub mod keyspace_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("keyspacepb.Keyspace", "LoadKeyspace"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn load_keyspace_by_id(
+            &mut self,
+            request: impl tonic::IntoRequest<super::LoadKeyspaceByIdRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::LoadKeyspaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Keyspace/LoadKeyspaceByID",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Keyspace", "LoadKeyspaceByID"));
             self.inner.unary(req, path, codec).await
         }
         /// WatchKeyspaces first return all current keyspaces' metadata as its first response.

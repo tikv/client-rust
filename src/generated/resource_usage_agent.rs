@@ -5,7 +5,7 @@ pub struct ResourceMeteringRequest {}
 pub struct EmptyResponse {}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResourceUsageRecord {
-    #[prost(oneof = "resource_usage_record::RecordOneof", tags = "1")]
+    #[prost(oneof = "resource_usage_record::RecordOneof", tags = "1, 2")]
     pub record_oneof: ::core::option::Option<resource_usage_record::RecordOneof>,
 }
 /// Nested message and enum types in `ResourceUsageRecord`.
@@ -14,6 +14,8 @@ pub mod resource_usage_record {
     pub enum RecordOneof {
         #[prost(message, tag = "1")]
         Record(super::GroupTagRecord),
+        #[prost(message, tag = "2")]
+        RegionRecord(super::RegionRecord),
     }
 }
 /// GroupTagRecord is a set of resource usage data grouped by resource_group_tag.
@@ -34,6 +36,22 @@ pub struct GroupTagRecordItem {
     pub read_keys: u32,
     #[prost(uint32, tag = "4")]
     pub write_keys: u32,
+    #[prost(uint64, tag = "5")]
+    pub network_in_bytes: u64,
+    #[prost(uint64, tag = "6")]
+    pub network_out_bytes: u64,
+    #[prost(uint64, tag = "7")]
+    pub logical_read_bytes: u64,
+    #[prost(uint64, tag = "8")]
+    pub logical_write_bytes: u64,
+}
+/// RegionRecord is a set of resource usage data grouped by region.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RegionRecord {
+    #[prost(uint64, tag = "1")]
+    pub region_id: u64,
+    #[prost(message, repeated, tag = "2")]
+    pub items: ::prost::alloc::vec::Vec<GroupTagRecordItem>,
 }
 /// Generated client implementations.
 pub mod resource_usage_agent_client {

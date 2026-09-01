@@ -47,6 +47,22 @@ pub struct FlushEvent {
     #[prost(uint64, tag = "3")]
     pub checkpoint: u64,
 }
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct FlushNowRequest {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct FlushNowResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub results: ::prost::alloc::vec::Vec<FlushResult>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct FlushResult {
+    #[prost(string, tag = "1")]
+    pub task_name: ::prost::alloc::string::String,
+    #[prost(bool, tag = "2")]
+    pub success: bool,
+    #[prost(string, tag = "3")]
+    pub error_message: ::prost::alloc::string::String,
+}
 /// Generated client implementations.
 pub mod log_backup_client {
     #![allow(
@@ -191,6 +207,30 @@ pub mod log_backup_client {
             req.extensions_mut()
                 .insert(GrpcMethod::new("logbackup.LogBackup", "SubscribeFlushEvent"));
             self.inner.server_streaming(req, path, codec).await
+        }
+        pub async fn flush_now(
+            &mut self,
+            request: impl tonic::IntoRequest<super::FlushNowRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::FlushNowResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/logbackup.LogBackup/FlushNow",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("logbackup.LogBackup", "FlushNow"));
+            self.inner.unary(req, path, codec).await
         }
     }
 }

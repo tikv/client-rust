@@ -102,6 +102,15 @@ pub struct Buckets {
     #[prost(uint64, tag = "5")]
     pub period_in_ms: u64,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct BucketMeta {
+    /// A hint indicate if keys have changed.
+    #[prost(uint64, tag = "1")]
+    pub version: u64,
+    /// keys of buckets, include start/end key of region
+    #[prost(bytes = "vec", repeated, tag = "2")]
+    pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Region {
     #[prost(uint64, tag = "1")]

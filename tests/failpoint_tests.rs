@@ -23,6 +23,23 @@ use tikv_client::RetryOptions;
 use tikv_client::TransactionClient;
 use tikv_client::TransactionOptions;
 
+/// Mark a phase boundary in a long-running cleanup test.
+///
+/// These tests occasionally stall in CI until nextest's 600s cap kills them (#516),
+/// and a killed test reports no elapsed timings — so the *entry* marker is the useful
+/// one: the last `phase >` line in the log names the step that never finished. The
+/// exit marker gives the duration when the test does complete, which is what tells a
+/// reader whether a step is merely slow or genuinely stuck.
+macro_rules! phase {
+    ($name:expr, $body:expr) => {{
+        info!("phase > {}", $name);
+        let __start = std::time::Instant::now();
+        let __out = $body;
+        info!("phase < {} in {:?}", $name, __start.elapsed());
+        __out
+    }};
+}
+
 #[tokio::test]
 #[serial]
 async fn txn_optimistic_heartbeat() -> Result<()> {
@@ -185,10 +202,16 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
             Config::default().with_default_keyspace(),
         )
         .await?;
-        let keys = write_data(&client, true, false).await?;
+        let keys = phase!(
+            "async/partial: write_data",
+            write_data(&client, true, false).await?
+        );
         // Wait for async commit to complete.
         let expected = keys.len() * percent / 100;
-        let remaining = wait_for_locks_count(&client, expected).await?;
+        let remaining = phase!(
+            "async/partial: wait for locks to settle",
+            wait_for_locks_count(&client, expected).await?
+        );
         assert_eq!(remaining, expected);
 
         let safepoint = client.current_timestamp().await?;
@@ -327,6 +350,95 @@ async fn txn_resolve_locks() -> Result<()> {
     Ok(())
 }
 
+// Regression test for #545: a pessimistic transaction whose commit fails after
+// prewrite has placed its 2PC lock must have that lock cleared by `rollback()`.
+// Previously the terminal pessimistic rollback sent `PessimisticRollback`, which
+// only removes `LockType::Pessimistic` locks, so the prewrite lock was left
+// behind (and `rollback()` still returned `Ok`).
+#[tokio::test]
+#[serial]
+async fn txn_pessimistic_rollback_clears_prewrite_locks() -> Result<()> {
+    init().await?;
+    let scenario = FailScenario::setup();
+
+    fail::cfg("after-prewrite", "return").unwrap();
+    defer! {{
+        fail::cfg("after-prewrite", "off").unwrap();
+    }}
+
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
+    let key = b"pessimistic-rollback-prewrite-key".to_vec();
+
+    let mut txn = client
+        .begin_with_options(
+            TransactionOptions::new_pessimistic()
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(CheckLevel::Warn),
+        )
+        .await?;
+    txn.get_for_update(key.clone()).await?;
+    txn.put(key.clone(), b"value".to_vec()).await?;
+    // The commit fails after prewrite has placed the (2PC) lock.
+    assert!(txn.commit().await.is_err());
+    // rollback() must clear that prewrite lock.
+    txn.rollback().await?;
+    assert_eq!(count_locks(&client).await?, 0);
+
+    scenario.teardown();
+    Ok(())
+}
+
+// Regression test for #545 (retry path): `rollback()` may be re-entered from
+// `StartedRollback` after a failed first attempt. The "already started
+// committing" fact must survive that transition so the retry still uses
+// `BatchRollback`; if it were recomputed from the (now `StartedRollback`)
+// status, a pessimistic txn would fall back to `PessimisticRollback` and leak
+// the prewrite lock again.
+#[tokio::test]
+#[serial]
+async fn txn_pessimistic_rollback_retry_clears_prewrite_locks() -> Result<()> {
+    init().await?;
+    let scenario = FailScenario::setup();
+
+    // Commit fails after prewrite places the 2PC lock.
+    fail::cfg("after-prewrite", "return").unwrap();
+    // The first rollback attempt fails; the retry must still clear the lock.
+    fail::cfg("before-rollback", "1*return").unwrap();
+    defer! {{
+        fail::cfg("after-prewrite", "off").unwrap();
+        fail::cfg("before-rollback", "off").unwrap();
+    }}
+
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
+    let key = b"pessimistic-rollback-retry-key".to_vec();
+
+    let mut txn = client
+        .begin_with_options(
+            TransactionOptions::new_pessimistic()
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(CheckLevel::Warn),
+        )
+        .await?;
+    txn.get_for_update(key.clone()).await?;
+    txn.put(key.clone(), b"value".to_vec()).await?;
+    // The commit fails after prewrite has placed the (2PC) lock.
+    assert!(txn.commit().await.is_err());
+    // First rollback fails at the failpoint; status stays `StartedRollback`.
+    assert!(txn.rollback().await.is_err());
+    // The retry must persist `prewritten` and use `BatchRollback` to clear the
+    // 2PC lock — recomputing it from status here would fall back to
+    // `PessimisticRollback` and leave the lock behind.
+    txn.rollback().await?;
+    assert_eq!(count_locks(&client).await?, 0);
+
+    scenario.teardown();
+    Ok(())
+}
+
 #[tokio::test]
 #[serial]
 async fn txn_cleanup_2pc_locks() -> Result<()> {
@@ -347,8 +459,13 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
             Config::default().with_default_keyspace(),
         )
         .await?;
-        let keys = write_data(&client, false, true).await?;
-        assert_eq!(count_locks(&client).await?, keys.len());
+        let keys = phase!(
+            "2pc/no-commit: write_data",
+            write_data(&client, false, true).await?
+        );
+        phase!("2pc/no-commit: count locks", {
+            assert_eq!(count_locks(&client).await?, keys.len());
+        });
 
         let safepoint = client.current_timestamp().await?;
         {
@@ -356,20 +473,27 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
                 async_commit_only: true, // Skip 2pc locks.
                 ..Default::default()
             };
-            client
-                .cleanup_locks(full_range, &safepoint, options)
-                .await?;
+            phase!("2pc/no-commit: cleanup_locks(async_commit_only)", {
+                client
+                    .cleanup_locks(full_range, &safepoint, options)
+                    .await?;
+            });
             assert_eq!(count_locks(&client).await?, keys.len());
         }
         let options = ResolveLocksOptions {
             async_commit_only: false,
             ..Default::default()
         };
-        client
-            .cleanup_locks(full_range, &safepoint, options)
-            .await?;
+        phase!("2pc/no-commit: cleanup_locks(all)", {
+            client
+                .cleanup_locks(full_range, &safepoint, options)
+                .await?;
+        });
 
-        must_rollbacked(&client, keys).await;
+        phase!(
+            "2pc/no-commit: must_rollbacked",
+            must_rollbacked(&client, keys).await
+        );
         assert_eq!(count_locks(&client).await?, 0);
     }
 
@@ -381,19 +505,29 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
             Config::default().with_default_keyspace(),
         )
         .await?;
-        let keys = write_data(&client, false, false).await?;
-        assert_eq!(wait_for_locks_count(&client, 0).await?, 0);
+        let keys = phase!(
+            "2pc/all-committed: write_data",
+            write_data(&client, false, false).await?
+        );
+        phase!("2pc/all-committed: wait for locks to drain", {
+            assert_eq!(wait_for_locks_count(&client, 0).await?, 0);
+        });
 
         let safepoint = client.current_timestamp().await?;
         let options = ResolveLocksOptions {
             async_commit_only: false,
             ..Default::default()
         };
-        client
-            .cleanup_locks(full_range, &safepoint, options)
-            .await?;
+        phase!("2pc/all-committed: cleanup_locks(all)", {
+            client
+                .cleanup_locks(full_range, &safepoint, options)
+                .await?;
+        });
 
-        must_committed(&client, keys).await;
+        phase!(
+            "2pc/all-committed: must_committed",
+            must_committed(&client, keys).await
+        );
         assert_eq!(count_locks(&client).await?, 0);
     }
 

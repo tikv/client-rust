@@ -91,6 +91,9 @@ pub struct RegionHeartbeatRequest {
     /// Actually reported time interval
     #[prost(message, optional, tag = "14")]
     pub interval: ::core::option::Option<super::pdpb::TimeInterval>,
+    /// BucketMeta is the bucket version and keys of this region if TiKV enabled the bucket feature
+    #[prost(message, optional, tag = "15")]
+    pub bucket_meta: ::core::option::Option<super::metapb::BucketMeta>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RegionHeartbeatResponse {
@@ -139,6 +142,8 @@ pub struct RegionHeartbeatResponse {
     pub change_peer_v2: ::core::option::Option<super::pdpb::ChangePeerV2>,
     #[prost(message, optional, tag = "10")]
     pub switch_witnesses: ::core::option::Option<super::pdpb::BatchSwitchWitness>,
+    #[prost(message, optional, tag = "11")]
+    pub change_split: ::core::option::Option<super::pdpb::ChangeSplit>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ScatterRegionsRequest {
@@ -162,6 +167,8 @@ pub struct ScatterRegionsResponse {
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(uint64, tag = "2")]
     pub finished_percentage: u64,
+    #[prost(uint64, repeated, tag = "3")]
+    pub failed_regions_id: ::prost::alloc::vec::Vec<u64>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SplitRegionsRequest {
@@ -209,6 +216,8 @@ pub struct AskBatchSplitRequest {
     pub region: ::core::option::Option<super::metapb::Region>,
     #[prost(uint32, tag = "3")]
     pub split_count: u32,
+    #[prost(enumeration = "super::pdpb::SplitReason", tag = "4")]
+    pub reason: i32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AskBatchSplitResponse {
@@ -216,6 +225,20 @@ pub struct AskBatchSplitResponse {
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(message, repeated, tag = "2")]
     pub ids: ::prost::alloc::vec::Vec<super::pdpb::SplitId>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RegionBucketsRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<RequestHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub region_epoch: ::core::option::Option<super::metapb::RegionEpoch>,
+    #[prost(message, optional, tag = "3")]
+    pub buckets: ::core::option::Option<super::metapb::Buckets>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RegionBucketsResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<ResponseHeader>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -491,6 +514,32 @@ pub mod scheduling_client {
             req.extensions_mut()
                 .insert(GrpcMethod::new("schedulingpb.Scheduling", "AskBatchSplit"));
             self.inner.unary(req, path, codec).await
+        }
+        pub async fn region_buckets(
+            &mut self,
+            request: impl tonic::IntoStreamingRequest<
+                Message = super::RegionBucketsRequest,
+            >,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::RegionBucketsResponse>>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/schedulingpb.Scheduling/RegionBuckets",
+            );
+            let mut req = request.into_streaming_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("schedulingpb.Scheduling", "RegionBuckets"));
+            self.inner.streaming(req, path, codec).await
         }
     }
 }
