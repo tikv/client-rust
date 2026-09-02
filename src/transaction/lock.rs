@@ -500,17 +500,28 @@ impl LockResolver {
             .plan();
         let mut status: TransactionStatus = match plan.execute().await {
             Ok(status) => status,
-            Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
-                Some(Error::KeyError(key_err)) => {
-                    if let Some(txn_not_found) = key_err.txn_not_found {
-                        return Err(Error::TxnNotFound(txn_not_found));
+            // The per-key error can arrive under either wrapper. `single_shard_handler`
+            // returns response key errors as `MultipleKeyErrors`; plans that keep the
+            // per-shard `Vec<Result<_>>` let `ExtractError` normalize those into
+            // `ExtractedErrors`, but `CollectSingle` pops the single `Result` out first,
+            // so the `MultipleKeyErrors` becomes the merged plan's own error and
+            // `ExtractError` re-raises it without ever calling `key_errors`. Both must
+            // feed the `TxnNotFound` conversion, or the lock-resolution heal path
+            // (`rollback_if_not_exist` after TTL expiry in `get_txn_status_from_lock`)
+            // is unreachable and an orphaned secondary lock poisons its key forever.
+            Err(Error::ExtractedErrors(mut errors) | Error::MultipleKeyErrors(mut errors)) => {
+                match errors.pop() {
+                    Some(Error::KeyError(key_err)) => {
+                        if let Some(txn_not_found) = key_err.txn_not_found {
+                            return Err(Error::TxnNotFound(txn_not_found));
+                        }
+                        // TODO: handle primary mismatch error.
+                        return Err(Error::KeyError(key_err));
                     }
-                    // TODO: handle primary mismatch error.
-                    return Err(Error::KeyError(key_err));
+                    Some(err) => return Err(err),
+                    None => unreachable!(),
                 }
-                Some(err) => return Err(err),
-                None => unreachable!(),
-            },
+            }
             Err(err) => return Err(err),
         };
 
@@ -643,6 +654,7 @@ mod tests {
     use std::any::Any;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
+    use std::sync::Mutex;
 
     use fail::FailScenario;
     use serial_test::serial;
@@ -771,6 +783,80 @@ mod tests {
 
         assert!(live_locks.is_empty());
         assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 1);
+        assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 1);
+    }
+
+    /// An orphaned lock whose primary was never written: `CheckTxnStatus` answers
+    /// `txn_not_found`, which reaches us as `MultipleKeyErrors` because the plan merges
+    /// with `CollectSingle`. It must still convert to `Error::TxnNotFound` so that
+    /// `get_txn_status_from_lock` retries with `rollback_if_not_exist` and heals the key;
+    /// matching only `ExtractedErrors` leaves the lock unresolved forever.
+    #[tokio::test]
+    #[serial]
+    async fn test_resolve_locks_rolls_back_expired_lock_whose_primary_is_missing() {
+        let check_txn_status_reqs = Arc::new(Mutex::new(Vec::new()));
+        let resolve_lock_count = Arc::new(AtomicUsize::new(0));
+
+        let check_txn_status_reqs_captured = check_txn_status_reqs.clone();
+        let resolve_lock_count_captured = resolve_lock_count.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
+                    check_txn_status_reqs_captured
+                        .lock()
+                        .unwrap()
+                        .push(req.rollback_if_not_exist);
+
+                    // Until the client asks TiKV to roll back a missing primary, TiKV can
+                    // only report that it never saw the transaction.
+                    if !req.rollback_if_not_exist {
+                        let resp = kvrpcpb::CheckTxnStatusResponse {
+                            error: Some(kvrpcpb::KeyError {
+                                txn_not_found: Some(kvrpcpb::TxnNotFound {
+                                    start_ts: 1,
+                                    primary_key: vec![2],
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        };
+                        return Ok(Box::new(resp) as Box<dyn Any>);
+                    }
+
+                    // With rollback_if_not_exist set, TiKV writes the rollback tombstone.
+                    // commit_version 0 + lock_ttl 0 + no lock_info => RolledBack.
+                    let resp = kvrpcpb::CheckTxnStatusResponse {
+                        action: kvrpcpb::Action::LockNotExistRollback as i32,
+                        ..Default::default()
+                    };
+                    return Ok(Box::new(resp) as Box<dyn Any>);
+                }
+                if req.is::<kvrpcpb::ResolveLockRequest>() {
+                    resolve_lock_count_captured.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+
+        let mut lock = kvrpcpb::LockInfo::default();
+        lock.key = vec![1];
+        lock.primary_lock = vec![2]; // a primary that was never written
+        lock.lock_version = 1;
+        lock.lock_ttl = 0; // expired under MockPdClient's Timestamp::default()
+
+        let live_locks = resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable)
+            .await
+            .unwrap();
+
+        // The lock is gone, not left live.
+        assert!(live_locks.is_empty());
+        // Asked twice: once optimistically, then again escalating to a rollback.
+        assert_eq!(
+            *check_txn_status_reqs.lock().unwrap(),
+            vec![false, true],
+            "txn_not_found must escalate to rollback_if_not_exist"
+        );
         assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 1);
     }
 
