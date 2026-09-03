@@ -263,7 +263,7 @@ impl<PdC: PdClient> RemoteScanner<PdC> {
             status: txn.status.clone(),
             pd_client: txn.rpc.clone(),
             keyspace: txn.keyspace,
-            timestamp: txn.timestamp.clone(),
+            timestamp: txn.timestamp,
             retry_options: txn.options.retry_options.clone(),
             end,
             next_start: start,
@@ -371,20 +371,14 @@ impl<PdC: PdClient> RemoteScanner<PdC> {
                 }
             };
 
-            let request = new_scan_request(
-                span,
-                self.timestamp.clone(),
-                SCANNER_BATCH_SIZE,
-                false,
-                false,
-            );
+            let request = new_scan_request(span, self.timestamp, SCANNER_BATCH_SIZE, false, false);
             let plan = match PlanBuilder::new(self.pd_client.clone(), keyspace, request)
                 .single_region_with_store(region_store.clone())
                 .await
             {
                 Ok(builder) => builder
                     .resolve_lock(
-                        self.timestamp.clone(),
+                        self.timestamp,
                         self.retry_options.lock_backoff.clone(),
                         keyspace,
                     )
