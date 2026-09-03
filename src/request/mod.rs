@@ -90,7 +90,7 @@ impl RetryOptions {
 mod test {
     use std::any::Any;
     use std::iter;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -211,7 +211,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_region_store_mapping_retry() {
+    async fn test_fallback_mapping_error_tries_remaining_voter() {
         #[derive(Debug, Clone)]
         struct MockOkResponse;
 
@@ -231,12 +231,13 @@ mod test {
 
         struct FlakyStoreMappingPdClient {
             client: MockKvClient,
-            invalidated: AtomicBool,
-            invalidation_count: AtomicUsize,
+            mapped_store_ids: std::sync::Mutex<Vec<StoreId>>,
+            invalidate_region_count: AtomicUsize,
+            invalidated_store_ids: std::sync::Mutex<Vec<StoreId>>,
         }
 
         impl FlakyStoreMappingPdClient {
-            fn region(store_id: StoreId) -> RegionWithLeader {
+            fn region() -> RegionWithLeader {
                 let mut region = RegionWithLeader::default();
                 region.region.id = 1;
                 region.region.start_key = vec![];
@@ -245,10 +246,23 @@ mod test {
                     conf_ver: 0,
                     version: 0,
                 });
-                region.leader = Some(metapb::Peer {
-                    store_id,
+                let leader = metapb::Peer {
+                    id: 1,
+                    store_id: 41,
                     ..Default::default()
-                });
+                };
+                let follower = metapb::Peer {
+                    id: 2,
+                    store_id: 42,
+                    ..Default::default()
+                };
+                let second_follower = metapb::Peer {
+                    id: 3,
+                    store_id: 43,
+                    ..Default::default()
+                };
+                region.region.peers = vec![leader.clone(), follower, second_follower];
+                region.leader = Some(leader);
                 region
             }
         }
@@ -261,21 +275,22 @@ mod test {
                 self: Arc<Self>,
                 region: RegionWithLeader,
             ) -> Result<RegionStore> {
-                match region.get_store_id()? {
-                    41 => Err(Error::InternalError {
-                        message: "invalid store ID 41, not found".to_owned(),
-                    }),
-                    _ => Ok(RegionStore::new(region, Arc::new(self.client.clone()))),
+                let store_id = region.get_store_id()?;
+                {
+                    let mut mapped_store_ids = self.mapped_store_ids.lock().unwrap();
+                    mapped_store_ids.push(store_id);
+                }
+                if store_id == 42 {
+                    Err(Error::GrpcAPI(tonic::Status::unavailable(
+                        "follower mapping failure",
+                    )))
+                } else {
+                    Ok(RegionStore::new(region, Arc::new(self.client.clone())))
                 }
             }
 
             async fn region_for_key(&self, _: &Key) -> Result<RegionWithLeader> {
-                let store_id = if self.invalidated.load(Ordering::SeqCst) {
-                    42
-                } else {
-                    41
-                };
-                Ok(Self::region(store_id))
+                Ok(Self::region())
             }
 
             async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {
@@ -310,11 +325,12 @@ mod test {
             }
 
             async fn invalidate_region_cache(&self, _ver_id: RegionVerId) {
-                self.invalidated.store(true, Ordering::SeqCst);
-                self.invalidation_count.fetch_add(1, Ordering::SeqCst);
+                self.invalidate_region_count.fetch_add(1, Ordering::SeqCst);
             }
 
-            async fn invalidate_store_cache(&self, _store_id: StoreId) {}
+            async fn invalidate_store_cache(&self, store_id: StoreId) {
+                self.invalidated_store_ids.lock().unwrap().push(store_id);
+            }
         }
 
         #[derive(Clone)]
@@ -378,11 +394,17 @@ mod test {
 
         let pd_client = Arc::new(FlakyStoreMappingPdClient {
             client: MockKvClient::with_dispatch_hook(move |_: &dyn Any| {
-                dispatch_count_clone.fetch_add(1, Ordering::SeqCst);
-                Ok(Box::new(MockOkResponse) as Box<dyn Any>)
+                if dispatch_count_clone.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Err(Error::GrpcAPI(tonic::Status::unavailable(
+                        "leader unavailable",
+                    )))
+                } else {
+                    Ok(Box::new(MockOkResponse) as Box<dyn Any>)
+                }
             }),
-            invalidated: AtomicBool::new(false),
-            invalidation_count: AtomicUsize::new(0),
+            mapped_store_ids: std::sync::Mutex::new(Vec::new()),
+            invalidate_region_count: AtomicUsize::new(0),
+            invalidated_store_ids: std::sync::Mutex::new(Vec::new()),
         });
 
         let request = MockKvRequest {
@@ -395,9 +417,76 @@ mod test {
 
         let response = plan.execute().await;
         assert!(response.is_ok());
-        assert_eq!(dispatch_count.load(Ordering::SeqCst), 1);
-        assert_eq!(shard_invoking_count.load(Ordering::SeqCst), 2);
-        assert_eq!(pd_client.invalidation_count.load(Ordering::SeqCst), 1);
+        assert_eq!(dispatch_count.load(Ordering::SeqCst), 2);
+        assert_eq!(shard_invoking_count.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            pd_client.mapped_store_ids.lock().unwrap().as_slice(),
+            &[41, 42, 43],
+            "a failed follower mapping must not hide the remaining healthy voter"
+        );
+        assert_eq!(pd_client.invalidate_region_count.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            pd_client.invalidated_store_ids.lock().unwrap().as_slice(),
+            &[41, 42],
+            "both the failed leader RPC and failed follower mapping invalidate their Store entries"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_all_mapping_errors_reload_stale_region() {
+        let old_region = fallback_region(&[44]);
+        let mut new_region = fallback_region(&[]);
+        let new_leader = metapb::Peer {
+            id: 3,
+            store_id: 45,
+            ..Default::default()
+        };
+        new_region.region.peers = vec![new_leader.clone()];
+        new_region.leader = Some(new_leader);
+
+        let region_invalidated = Arc::new(AtomicBool::new(false));
+        let locate_invalidated = region_invalidated.clone();
+        let invalidate_observer = region_invalidated.clone();
+        let mapping_attempts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let tracked_mapping_attempts = mapping_attempts.clone();
+        let client = MockKvClient::with_dispatch_hook(|_: &dyn Any| {
+            Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>)
+        });
+        let mapping_client = client.clone();
+        let pd_client = Arc::new(
+            MockPdClient::new(client)
+                .with_region_for_key_hook(move |_| {
+                    if locate_invalidated.load(Ordering::SeqCst) {
+                        Ok(new_region.clone())
+                    } else {
+                        Ok(old_region.clone())
+                    }
+                })
+                .with_map_region_to_store_hook(move |region| {
+                    let store_id = region.get_store_id()?;
+                    tracked_mapping_attempts.lock().unwrap().push(store_id);
+                    if store_id == 41 || store_id == 44 {
+                        Err(Error::GrpcAPI(tonic::Status::unavailable(
+                            "stale peer mapping failed",
+                        )))
+                    } else {
+                        Ok(RegionStore::new(region, Arc::new(mapping_client.clone())))
+                    }
+                })
+                .with_invalidate_region_hook(move |_| {
+                    invalidate_observer.store(true, Ordering::SeqCst);
+                }),
+        );
+
+        let response = execute_fallback_get(pd_client, Backoff::no_jitter_backoff(1, 1, 1)).await;
+
+        assert!(response.is_ok());
+        assert!(region_invalidated.load(Ordering::SeqCst));
+        assert_eq!(
+            mapping_attempts.lock().unwrap().as_slice(),
+            &[41, 44, 45],
+            "after every stale peer fails to map, retry must load the replacement Region"
+        );
     }
 
     #[tokio::test]
@@ -602,5 +691,557 @@ mod test {
         assert!(response.is_ok());
         assert_eq!(pd_client.invalidate_region_count.load(Ordering::SeqCst), 1);
         assert_eq!(pd_client.invalidate_store_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_unreachable_leader_falls_back_to_voter_without_replica_read() {
+        let mut region = RegionWithLeader::default();
+        region.region.id = 1;
+        region.region.region_epoch = Some(RegionEpoch {
+            conf_ver: 1,
+            version: 1,
+        });
+        let leader = metapb::Peer {
+            id: 1,
+            store_id: 41,
+            ..Default::default()
+        };
+        let learner = metapb::Peer {
+            id: 2,
+            store_id: 42,
+            role: metapb::PeerRole::Learner as i32,
+            ..Default::default()
+        };
+        let witness = metapb::Peer {
+            id: 3,
+            store_id: 43,
+            is_witness: true,
+            ..Default::default()
+        };
+        let follower = metapb::Peer {
+            id: 4,
+            store_id: 44,
+            ..Default::default()
+        };
+        region.region.peers = vec![leader.clone(), learner, witness, follower.clone()];
+        region.leader = Some(leader);
+
+        let accesses = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dispatch_accesses = accesses.clone();
+        let client = MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+            let context = fallback_get_context(request);
+            let store_id = context.peer.as_ref().expect("target peer").store_id;
+            dispatch_accesses
+                .lock()
+                .unwrap()
+                .push((store_id, context.replica_read));
+            if store_id == 41 {
+                Err(Error::GrpcAPI(tonic::Status::unavailable(
+                    "leader unavailable",
+                )))
+            } else {
+                Ok(Box::new(kvrpcpb::GetResponse {
+                    region_error: Some(crate::proto::errorpb::Error {
+                        not_leader: Some(crate::proto::errorpb::NotLeader {
+                            region_id: 1,
+                            leader: None,
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            }
+        });
+        let located_region = region.clone();
+        let pd_client = Arc::new(
+            MockPdClient::new(client).with_region_for_key_hook(move |_| Ok(located_region.clone())),
+        );
+        let response = execute_fallback_get(pd_client, Backoff::no_backoff()).await;
+
+        assert!(response.is_err());
+        assert_eq!(
+            accesses.lock().unwrap().as_slice(),
+            &[(41, false), (44, false)],
+            "leader is tried first; learner and witness are skipped; fallback stays a normal request"
+        );
+    }
+
+    fn fallback_region(follower_store_ids: &[StoreId]) -> RegionWithLeader {
+        let mut region = RegionWithLeader::default();
+        region.region.id = 1;
+        region.region.region_epoch = Some(RegionEpoch {
+            conf_ver: 1,
+            version: 1,
+        });
+        let leader = metapb::Peer {
+            id: 1,
+            store_id: 41,
+            ..Default::default()
+        };
+        region.region.peers.push(leader.clone());
+        region
+            .region
+            .peers
+            .extend(
+                follower_store_ids
+                    .iter()
+                    .enumerate()
+                    .map(|(index, store_id)| metapb::Peer {
+                        id: index as u64 + 2,
+                        store_id: *store_id,
+                        ..Default::default()
+                    }),
+            );
+        region.leader = Some(leader);
+        region
+    }
+
+    fn fallback_get_context(request: &dyn Any) -> &kvrpcpb::Context {
+        request
+            .downcast_ref::<kvrpcpb::GetRequest>()
+            .expect("get request")
+            .context
+            .as_ref()
+            .expect("request context")
+    }
+
+    async fn execute_fallback_get<PdC: crate::pd::PdClient>(
+        pd_client: Arc<PdC>,
+        backoff: Backoff,
+    ) -> Result<Vec<Result<kvrpcpb::GetResponse>>> {
+        PlanBuilder::new(
+            pd_client,
+            Keyspace::Disable,
+            kvrpcpb::GetRequest {
+                key: b"key".to_vec(),
+                ..Default::default()
+            },
+        )
+        .retry_multi_region(backoff)
+        .plan()
+        .execute()
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_not_leader_follower_does_not_hide_remaining_voters() {
+        let accesses = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dispatch_accesses = accesses.clone();
+        let client = MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+            let context = fallback_get_context(request);
+            let store_id = context.peer.as_ref().expect("target peer").store_id;
+            dispatch_accesses
+                .lock()
+                .unwrap()
+                .push((store_id, context.replica_read));
+            match store_id {
+                41 => Err(Error::GrpcAPI(tonic::Status::unavailable(
+                    "leader unavailable",
+                ))),
+                44 => Ok(Box::new(kvrpcpb::GetResponse {
+                    region_error: Some(crate::proto::errorpb::Error {
+                        not_leader: Some(crate::proto::errorpb::NotLeader {
+                            region_id: 1,
+                            leader: None,
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }) as Box<dyn Any>),
+                45 => Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>),
+                _ => unreachable!(),
+            }
+        });
+        let region = fallback_region(&[44, 45]);
+        let located_region = region.clone();
+        let updated_leader_store_id = Arc::new(AtomicU64::new(0));
+        let tracked_leader_store_id = updated_leader_store_id.clone();
+        let pd_client = Arc::new(
+            MockPdClient::new(client)
+                .with_region_for_key_hook(move |_| Ok(located_region.clone()))
+                .with_update_leader_hook(move |_, leader| {
+                    tracked_leader_store_id.store(leader.store_id, Ordering::SeqCst);
+                    Ok(())
+                }),
+        );
+
+        let response = execute_fallback_get(pd_client, Backoff::no_backoff()).await;
+
+        assert!(response.is_ok());
+        assert_eq!(
+            accesses.lock().unwrap().as_slice(),
+            &[(41, false), (44, false), (45, false)]
+        );
+        assert_eq!(updated_leader_store_id.load(Ordering::SeqCst), 45);
+    }
+
+    #[tokio::test]
+    async fn test_follower_leader_hint_is_ignored() {
+        let accesses = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dispatch_accesses = accesses.clone();
+        let client = MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+            let store_id = fallback_get_context(request)
+                .peer
+                .as_ref()
+                .expect("target peer")
+                .store_id;
+            dispatch_accesses.lock().unwrap().push(store_id);
+            if store_id == 41 {
+                return Err(Error::GrpcAPI(tonic::Status::unavailable(
+                    "leader unavailable",
+                )));
+            }
+
+            let leader = (store_id == 44).then_some(metapb::Peer {
+                id: 3,
+                store_id: 45,
+                ..Default::default()
+            });
+            Ok(Box::new(kvrpcpb::GetResponse {
+                region_error: Some(crate::proto::errorpb::Error {
+                    not_leader: Some(crate::proto::errorpb::NotLeader {
+                        region_id: 1,
+                        // Store 44 points at store 45, but fallback deliberately
+                        // ignores follower hints. Store 45 is tried naturally
+                        // and independently reports that it is not the leader.
+                        leader,
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }) as Box<dyn Any>)
+        });
+        let region = fallback_region(&[44, 45]);
+        let located_region = region.clone();
+        let update_leader_count = Arc::new(AtomicUsize::new(0));
+        let tracked_update_leader_count = update_leader_count.clone();
+        let pd_client = Arc::new(
+            MockPdClient::new(client)
+                .with_region_for_key_hook(move |_| Ok(located_region.clone()))
+                .with_update_leader_hook(move |_, _| {
+                    tracked_update_leader_count.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }),
+        );
+
+        let response = execute_fallback_get(pd_client, Backoff::no_jitter_backoff(1, 1, 1)).await;
+
+        assert!(matches!(
+            response,
+            Err(Error::GrpcAPI(status)) if status.code() == tonic::Code::Unavailable
+        ));
+        assert_eq!(
+            accesses.lock().unwrap().as_slice(),
+            &[41, 44, 45, 41, 44, 45]
+        );
+        assert_eq!(
+            update_leader_count.load(Ordering::SeqCst),
+            0,
+            "a fallback follower's leader hint must not update the cache"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_invalidating_routing_error_outweighs_fallback_server_busy() {
+        let accesses = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dispatch_accesses = accesses.clone();
+        let client = MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+            let store_id = fallback_get_context(request)
+                .peer
+                .as_ref()
+                .expect("target peer")
+                .store_id;
+            dispatch_accesses.lock().unwrap().push(store_id);
+            if store_id == 41 {
+                Err(Error::GrpcAPI(tonic::Status::unavailable(
+                    "cached leader unavailable",
+                )))
+            } else {
+                Ok(Box::new(kvrpcpb::GetResponse {
+                    region_error: Some(crate::proto::errorpb::Error {
+                        server_is_busy: Some(crate::proto::errorpb::ServerIsBusy::default()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            }
+        });
+        let region = fallback_region(&[44]);
+        let located_region = region.clone();
+        let pd_client = Arc::new(
+            MockPdClient::new(client).with_region_for_key_hook(move |_| Ok(located_region.clone())),
+        );
+
+        let response = execute_fallback_get(pd_client, Backoff::no_backoff()).await;
+
+        assert!(matches!(
+            response,
+            Err(Error::GrpcAPI(status)) if status.code() == tonic::Code::Unavailable
+        ));
+        assert_eq!(accesses.lock().unwrap().as_slice(), &[41, 44]);
+    }
+
+    #[tokio::test]
+    async fn test_fallback_not_leader_invalidates_stale_region() {
+        let accesses = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dispatch_accesses = accesses.clone();
+        let client = MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+            let store_id = fallback_get_context(request)
+                .peer
+                .as_ref()
+                .expect("target peer")
+                .store_id;
+            dispatch_accesses.lock().unwrap().push(store_id);
+            if store_id == 41 {
+                Err(Error::GrpcAPI(tonic::Status::deadline_exceeded(
+                    "cached leader timed out",
+                )))
+            } else {
+                Ok(Box::new(kvrpcpb::GetResponse {
+                    region_error: Some(crate::proto::errorpb::Error {
+                        not_leader: Some(crate::proto::errorpb::NotLeader {
+                            region_id: 1,
+                            leader: None,
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            }
+        });
+        let region = fallback_region(&[44]);
+        let located_region = region.clone();
+        let invalidate_count = Arc::new(AtomicUsize::new(0));
+        let tracked_invalidate_count = invalidate_count.clone();
+        let pd_client = Arc::new(
+            MockPdClient::new(client)
+                .with_region_for_key_hook(move |_| Ok(located_region.clone()))
+                .with_invalidate_region_hook(move |_| {
+                    tracked_invalidate_count.fetch_add(1, Ordering::SeqCst);
+                }),
+        );
+
+        let response = execute_fallback_get(pd_client, Backoff::no_backoff()).await;
+
+        assert!(matches!(response, Err(Error::LeaderNotFound { .. })));
+        assert_eq!(accesses.lock().unwrap().as_slice(), &[41, 44]);
+        assert_eq!(invalidate_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_nonzero_server_busy_reloads_cached_leader() {
+        let accesses = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dispatch_accesses = accesses.clone();
+        let leader_busy = Arc::new(AtomicBool::new(false));
+        let dispatch_leader_busy = leader_busy.clone();
+        let client = MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+            let context = fallback_get_context(request);
+            let store_id = context.peer.as_ref().expect("target peer").store_id;
+            dispatch_accesses
+                .lock()
+                .unwrap()
+                .push((store_id, context.replica_read));
+            if store_id == 41 {
+                dispatch_leader_busy.store(true, Ordering::SeqCst);
+                Ok(Box::new(kvrpcpb::GetResponse {
+                    region_error: Some(crate::proto::errorpb::Error {
+                        server_is_busy: Some(crate::proto::errorpb::ServerIsBusy {
+                            estimated_wait_ms: 500,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            } else {
+                Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>)
+            }
+        });
+        let initial_region = fallback_region(&[44]);
+        let mut updated_region = initial_region.clone();
+        updated_region.leader = updated_region
+            .region
+            .peers
+            .iter()
+            .find(|peer| peer.store_id == 44)
+            .cloned();
+        let pd_client = Arc::new(
+            MockPdClient::new(client).with_region_for_key_hook(move |_| {
+                if leader_busy.load(Ordering::SeqCst) {
+                    Ok(updated_region.clone())
+                } else {
+                    Ok(initial_region.clone())
+                }
+            }),
+        );
+
+        let response = execute_fallback_get(pd_client, Backoff::no_jitter_backoff(1, 1, 1)).await;
+
+        assert!(response.is_ok());
+        assert_eq!(
+            accesses.lock().unwrap().as_slice(),
+            &[(41, false), (44, false)],
+            "a nonzero busy response must re-read the shared leader cache"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_second_server_busy_zero_probes_followers_without_replica_read() {
+        let accesses = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dispatch_accesses = accesses.clone();
+        let client = MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+            let context = fallback_get_context(request);
+            let store_id = context.peer.as_ref().expect("target peer").store_id;
+            dispatch_accesses
+                .lock()
+                .unwrap()
+                .push((store_id, context.replica_read));
+            match store_id {
+                41 => Ok(Box::new(kvrpcpb::GetResponse {
+                    region_error: Some(crate::proto::errorpb::Error {
+                        server_is_busy: Some(crate::proto::errorpb::ServerIsBusy::default()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }) as Box<dyn Any>),
+                44 => Ok(Box::new(kvrpcpb::GetResponse {
+                    region_error: Some(crate::proto::errorpb::Error {
+                        not_leader: Some(crate::proto::errorpb::NotLeader {
+                            region_id: 1,
+                            leader: None,
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }) as Box<dyn Any>),
+                45 => Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>),
+                _ => unreachable!(),
+            }
+        });
+        let region = fallback_region(&[44, 45]);
+        let located_region = region.clone();
+        let updated_leader_store_id = Arc::new(AtomicU64::new(0));
+        let tracked_leader_store_id = updated_leader_store_id.clone();
+        let pd_client = Arc::new(
+            MockPdClient::new(client)
+                .with_region_for_key_hook(move |_| Ok(located_region.clone()))
+                .with_update_leader_hook(move |_, leader| {
+                    tracked_leader_store_id.store(leader.store_id, Ordering::SeqCst);
+                    Ok(())
+                }),
+        );
+
+        let response = execute_fallback_get(pd_client, Backoff::no_jitter_backoff(1, 1, 2)).await;
+
+        assert!(response.is_ok());
+        assert_eq!(
+            accesses.lock().unwrap().as_slice(),
+            &[(41, false), (41, false), (44, false), (45, false)],
+            "the same leader is retried once, then followers are probed with leader-read semantics"
+        );
+        assert_eq!(updated_leader_store_id.load(Ordering::SeqCst), 45);
+    }
+
+    #[tokio::test]
+    async fn test_server_busy_follower_probe_is_one_shot() {
+        let accesses = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dispatch_accesses = accesses.clone();
+        let leader_attempts = Arc::new(AtomicUsize::new(0));
+        let dispatch_leader_attempts = leader_attempts.clone();
+        let client = MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+            let context = fallback_get_context(request);
+            let store_id = context.peer.as_ref().expect("target peer").store_id;
+            dispatch_accesses
+                .lock()
+                .unwrap()
+                .push((store_id, context.replica_read));
+            if store_id == 41 {
+                if dispatch_leader_attempts.fetch_add(1, Ordering::SeqCst) < 3 {
+                    return Ok(Box::new(kvrpcpb::GetResponse {
+                        region_error: Some(crate::proto::errorpb::Error {
+                            server_is_busy: Some(crate::proto::errorpb::ServerIsBusy::default()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                return Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>);
+            }
+
+            Ok(Box::new(kvrpcpb::GetResponse {
+                region_error: Some(crate::proto::errorpb::Error {
+                    not_leader: Some(crate::proto::errorpb::NotLeader {
+                        region_id: 1,
+                        leader: None,
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }) as Box<dyn Any>)
+        });
+        let region = fallback_region(&[44, 45]);
+        let located_region = region.clone();
+        let pd_client = Arc::new(
+            MockPdClient::new(client).with_region_for_key_hook(move |_| Ok(located_region.clone())),
+        );
+
+        let response = execute_fallback_get(pd_client, Backoff::no_jitter_backoff(1, 1, 3)).await;
+
+        assert!(response.is_ok());
+        assert_eq!(
+            accesses.lock().unwrap().as_slice(),
+            &[
+                (41, false),
+                (41, false),
+                (44, false),
+                (45, false),
+                (41, false),
+                (41, false),
+            ],
+            "a fruitless probe restores the cached leader and is not fired again"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fallback_key_error_updates_leader_cache() {
+        let client = MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+            let store_id = fallback_get_context(request)
+                .peer
+                .as_ref()
+                .expect("target peer")
+                .store_id;
+            if store_id == 41 {
+                Err(Error::GrpcAPI(tonic::Status::unavailable(
+                    "leader unavailable",
+                )))
+            } else {
+                Ok(Box::new(kvrpcpb::GetResponse {
+                    error: Some(kvrpcpb::KeyError::default()),
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            }
+        });
+        let region = fallback_region(&[44]);
+        let located_region = region.clone();
+        let updated_leader_store_id = Arc::new(AtomicU64::new(0));
+        let tracked_leader_store_id = updated_leader_store_id.clone();
+        let pd_client = Arc::new(
+            MockPdClient::new(client)
+                .with_region_for_key_hook(move |_| Ok(located_region.clone()))
+                .with_update_leader_hook(move |_, leader| {
+                    tracked_leader_store_id.store(leader.store_id, Ordering::SeqCst);
+                    Ok(())
+                }),
+        );
+
+        let response = execute_fallback_get(pd_client, Backoff::no_backoff())
+            .await
+            .expect("key errors stay in the per-region result");
+
+        assert!(matches!(
+            response.as_slice(),
+            [Err(Error::MultipleKeyErrors(_))]
+        ));
+        assert_eq!(updated_leader_store_id.load(Ordering::SeqCst), 44);
     }
 }

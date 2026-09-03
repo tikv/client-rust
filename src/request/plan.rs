@@ -13,12 +13,14 @@ use log::warn;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio::time::sleep;
+use tonic::Code;
 
 use crate::backoff::Backoff;
 use crate::pd::PdClient;
 use crate::proto::errorpb;
 use crate::proto::errorpb::EpochNotMatch;
 use crate::proto::kvrpcpb;
+use crate::proto::metapb;
 use crate::proto::pdpb::Timestamp;
 use crate::region::StoreId;
 use crate::region::{RegionVerId, RegionWithLeader};
@@ -175,6 +177,182 @@ pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
     pub terminal_on_dispatch_error: bool,
 }
 
+struct CandidateResponse<R> {
+    response: R,
+    key_errors: Option<Vec<Error>>,
+    region_error: Option<errorpb::Error>,
+    region_store: RegionStore,
+    used_fallback: bool,
+}
+
+impl<R> CandidateResponse<R>
+where
+    R: HasKeyErrors + HasRegionError,
+{
+    fn new(mut response: R, region_store: RegionStore, used_fallback: bool) -> Self {
+        let key_errors = response.key_errors();
+        let region_error = response.region_error();
+        Self {
+            response,
+            key_errors,
+            region_error,
+            region_store,
+            used_fallback,
+        }
+    }
+
+    fn is_fallback_not_leader(&self) -> bool {
+        self.used_fallback
+            && self.key_errors.is_none()
+            && self
+                .region_error
+                .as_ref()
+                .is_some_and(|error| error.not_leader.is_some())
+    }
+
+    fn is_fallback_server_busy(&self) -> bool {
+        self.used_fallback
+            && self.key_errors.is_none()
+            && self
+                .region_error
+                .as_ref()
+                .is_some_and(|error| error.server_is_busy.is_some())
+    }
+
+    fn accepted_fallback_leader(&self) -> Option<metapb::Peer> {
+        if !self.used_fallback || self.region_error.is_some() {
+            return None;
+        }
+        self.region_store.region_with_leader.leader.clone()
+    }
+}
+
+enum CandidateRoundResult<R> {
+    Response(Box<CandidateResponse<R>>),
+    MapRegionToStoreError(Error),
+    RoutingError {
+        error: Error,
+        invalidate_region: bool,
+    },
+    OtherError(Error),
+}
+
+#[derive(Default)]
+struct CandidateState {
+    busy_leader_peer_id: Option<u64>,
+    busy_count: u8,
+    follower_probe_done: bool,
+}
+
+impl CandidateState {
+    const LEADER_BUSY_PROBE_THRESHOLD: u8 = 2;
+
+    fn record_leader_busy(&mut self, peer_id: u64, estimated_wait_ms: u32) {
+        if estimated_wait_ms != 0 || self.follower_probe_done {
+            return;
+        }
+        if self.busy_leader_peer_id != Some(peer_id) {
+            self.busy_leader_peer_id = Some(peer_id);
+            self.busy_count = 0;
+        }
+        self.busy_count = self.busy_count.saturating_add(1);
+    }
+
+    fn take_follower_probe(&mut self) -> bool {
+        if !self.follower_probe_done && self.busy_count >= Self::LEADER_BUSY_PROBE_THRESHOLD {
+            self.follower_probe_done = true;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+struct RetryContext<PdC> {
+    pd_client: Arc<PdC>,
+    permits: Arc<Semaphore>,
+    preserve_region_results: bool,
+    terminal_on_undetermined: bool,
+    terminal_on_dispatch_error: bool,
+}
+
+impl<PdC> Clone for RetryContext<PdC> {
+    fn clone(&self) -> Self {
+        Self {
+            pd_client: self.pd_client.clone(),
+            permits: self.permits.clone(),
+            preserve_region_results: self.preserve_region_results,
+            terminal_on_undetermined: self.terminal_on_undetermined,
+            terminal_on_dispatch_error: self.terminal_on_dispatch_error,
+        }
+    }
+}
+
+enum GrpcErrorAction {
+    TryNextPeer,
+    TryNextPeerAndInvalidate,
+    Return,
+}
+
+fn grpc_error_action(error: &Error) -> GrpcErrorAction {
+    match error {
+        // A transport setup error means this Store cannot currently be used.
+        Error::Grpc(_) => GrpcErrorAction::TryNextPeerAndInvalidate,
+        Error::GrpcAPI(status) if std::error::Error::source(status).is_some() => {
+            // Tonic maps lower-level I/O and HTTP/2 failures to Status, and
+            // keeps the transport error as its source. Its code is not always
+            // Unavailable (for example, an HTTP/2 failure can be Internal or
+            // ResourceExhausted), so inspect the source before the code.
+            GrpcErrorAction::TryNextPeerAndInvalidate
+        }
+        Error::GrpcAPI(status) => match status.code() {
+            // client-go retries a remote/keepalive cancellation after replacing
+            // the connection. Dropping a Rust request future cancels this whole
+            // task, so a Canceled status observed here came from the RPC side.
+            // Tonic can synthesize source-less Internal/Unknown statuses when
+            // an HTTP/2 stream ends before a complete response is decoded
+            // (for example "Missing response message"). Those are
+            // indistinguishable here from an application status, but treating
+            // them as terminal would miss the cold-region recovery path when
+            // the cached leader disconnects mid-response.
+            Code::Unavailable | Code::Cancelled | Code::Internal | Code::Unknown => {
+                GrpcErrorAction::TryNextPeerAndInvalidate
+            }
+            // A request deadline does not prove that the Store or Region route
+            // is stale. Try another replica, but preserve the shared caches.
+            Code::DeadlineExceeded => GrpcErrorAction::TryNextPeer,
+            // Application-level statuses (invalid arguments, auth failures,
+            // unsupported APIs, explicit server resource limits, etc.) cannot
+            // be healed by replaying the request on every replica. client-go
+            // uses a separate Store health RPC to distinguish this case; Rust
+            // has no equivalent liveness subsystem, so an explicit status with
+            // no transport source is the strongest available signal.
+            _ => GrpcErrorAction::Return,
+        },
+        _ => GrpcErrorAction::Return,
+    }
+}
+
+fn region_request_candidates(
+    region: &RegionWithLeader,
+    followers_only: bool,
+) -> impl Iterator<Item = &metapb::Peer> + '_ {
+    let leader_store_id = region.leader.as_ref().map(|leader| leader.store_id);
+    // A request to an unreachable cached leader cannot wake a cold Raft
+    // group. Lazily try each data-bearing voter after the cached leader
+    // before invalidating it and going back to PD. Learners and witnesses
+    // cannot campaign and are not useful for cold-region recovery.
+    region
+        .leader
+        .iter()
+        .filter(move |_| !followers_only)
+        .chain(region.region.peers.iter().filter(move |peer| {
+            !peer.is_witness
+                && peer.role != metapb::PeerRole::Learner as i32
+                && leader_store_id != Some(peer.store_id)
+        }))
+}
+
 impl<P: Plan + Shardable, PdC: PdClient> RetryableMultiRegion<P, PdC>
 where
     P::Result: HasKeyErrors + HasRegionError,
@@ -182,15 +360,14 @@ where
     // A plan may involve multiple shards
     #[async_recursion]
     async fn single_plan_handler(
-        pd_client: Arc<PdC>,
+        context: RetryContext<PdC>,
         current_plan: P,
         backoff: Backoff,
-        permits: Arc<Semaphore>,
-        preserve_region_results: bool,
-        terminal_on_undetermined: bool,
-        terminal_on_dispatch_error: bool,
     ) -> Result<<Self as Plan>::Result> {
-        let shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
+        let shards = current_plan
+            .shards(&context.pd_client)
+            .collect::<Vec<_>>()
+            .await;
         let shards_len = shards.len();
         debug!("single_plan_handler, shards: {}", shards_len);
         let mut join_set = JoinSet::new();
@@ -203,21 +380,17 @@ where
                 }
             };
             let clone = current_plan.clone_then_apply_shard(shard);
-            let pd_client = pd_client.clone();
+            let shard_context = context.clone();
             let backoff = backoff.clone();
-            let permits = permits.clone();
             join_set.spawn(async move {
                 (
                     idx,
                     Self::single_shard_handler(
-                        pd_client,
+                        shard_context,
                         clone,
                         region,
                         backoff,
-                        permits,
-                        preserve_region_results,
-                        terminal_on_undetermined,
-                        terminal_on_dispatch_error,
+                        CandidateState::default(),
                     )
                     .await,
                 )
@@ -226,7 +399,7 @@ where
 
         let results = collect_join_set_results(join_set, shards_len, "single_plan_handler").await?;
 
-        if preserve_region_results {
+        if context.preserve_region_results {
             Ok(results
                 .into_iter()
                 .flat_map_ok(|x| x)
@@ -263,17 +436,239 @@ where
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    #[async_recursion]
-    async fn single_shard_handler(
-        pd_client: Arc<PdC>,
-        mut plan: P,
+    async fn execute_candidate(
+        pd_client: &Arc<PdC>,
+        plan: &mut P,
+        region: &RegionWithLeader,
+        peer: &metapb::Peer,
+        original_leader_store_id: Option<StoreId>,
+        permits: &Semaphore,
+        terminal_on_dispatch_error: bool,
+    ) -> CandidateRoundResult<P::Result> {
+        let is_fallback = original_leader_store_id != Some(peer.store_id);
+        let mut candidate_region = region.clone();
+        candidate_region.leader = Some(peer.clone());
+
+        let region_store = match pd_client
+            .clone()
+            .map_region_to_store(candidate_region)
+            .await
+        {
+            Ok(region_store) => region_store,
+            Err(err) => {
+                debug!(
+                    "single_shard_handler::map_store, fallback: {}, error: {:?}",
+                    is_fallback, err
+                );
+                // Mapping includes opening the TiKV channel. Drop the Store
+                // entry so a later attempt can reload a changed address from
+                // PD instead of reconnecting to stale metadata indefinitely.
+                pd_client.invalidate_store_cache(peer.store_id).await;
+                return CandidateRoundResult::MapRegionToStoreError(err);
+            }
+        };
+        if let Err(error) = plan.apply_store(&region_store) {
+            // Applying a successfully mapped Store mutates the request. This is
+            // not a PD/connection lookup failure and trying another peer cannot
+            // repair an invalid request.
+            return CandidateRoundResult::OtherError(error);
+        }
+
+        // Fallback attempts are sequential inside one shard, so at most one
+        // concurrency permit is held at a time.
+        let permit = permits.acquire().await.unwrap();
+        let result = plan.execute().await;
+        drop(permit);
+
+        match result {
+            Ok(response) => CandidateRoundResult::Response(Box::new(CandidateResponse::new(
+                response,
+                region_store,
+                is_fallback,
+            ))),
+            Err(error) if is_grpc_error(&error) => {
+                debug!(
+                    "single_shard_handler:execute: grpc error, fallback: {}, error: {:?}",
+                    is_fallback, error
+                );
+                // A non-idempotent request (raw CAS) may have reached the
+                // server and must not be replayed, including on a follower.
+                if terminal_on_dispatch_error {
+                    pd_client.invalidate_region_cache(region.ver_id()).await;
+                    pd_client.invalidate_store_cache(peer.store_id).await;
+                    return CandidateRoundResult::OtherError(error);
+                }
+
+                match grpc_error_action(&error) {
+                    GrpcErrorAction::TryNextPeerAndInvalidate => {
+                        pd_client.invalidate_store_cache(peer.store_id).await;
+                        CandidateRoundResult::RoutingError {
+                            error,
+                            invalidate_region: true,
+                        }
+                    }
+                    GrpcErrorAction::TryNextPeer => CandidateRoundResult::RoutingError {
+                        error,
+                        invalidate_region: false,
+                    },
+                    GrpcErrorAction::Return => CandidateRoundResult::OtherError(error),
+                }
+            }
+            Err(error) => {
+                debug!("single_shard_handler:execute: error: {:?}", error);
+                CandidateRoundResult::OtherError(error)
+            }
+        }
+    }
+
+    async fn execute_candidate_round(
+        pd_client: &Arc<PdC>,
+        plan: &mut P,
+        region: &RegionWithLeader,
+        permits: &Semaphore,
+        terminal_on_dispatch_error: bool,
+        followers_only: bool,
+    ) -> CandidateRoundResult<P::Result> {
+        let original_leader_store_id = region.leader.as_ref().map(|peer| peer.store_id);
+        let mut last_map_region_to_store_error = None;
+        let mut last_routing_error = None;
+        let mut invalidate_region = false;
+        let mut saw_fallback_not_leader = false;
+        let mut last_server_busy_response = None;
+
+        for peer in region_request_candidates(region, followers_only) {
+            match Self::execute_candidate(
+                pd_client,
+                plan,
+                region,
+                peer,
+                original_leader_store_id,
+                permits,
+                terminal_on_dispatch_error,
+            )
+            .await
+            {
+                CandidateRoundResult::MapRegionToStoreError(error) => {
+                    // Mapping includes Store lookup and opening a TiKV channel.
+                    // One unavailable candidate must not hide a later healthy
+                    // voter, especially while waking a cold Region.
+                    last_map_region_to_store_error = Some(error);
+                }
+                CandidateRoundResult::RoutingError {
+                    error,
+                    invalidate_region: candidate_invalidates_region,
+                } => {
+                    // Preserve the fact that at least one mapped candidate had
+                    // a transport routing failure. A later mapping failure must
+                    // not hide the need to reload an exhausted Region route.
+                    invalidate_region |= candidate_invalidates_region;
+                    last_routing_error = Some(error);
+                }
+                CandidateRoundResult::Response(response) if response.is_fallback_not_leader() => {
+                    // A follower hint is unnecessary for the three-replica
+                    // cold-region path: keep walking the Region's voters. A
+                    // real new leader will accept its normal (non-replica-read)
+                    // request later in this same round.
+                    saw_fallback_not_leader = true;
+                }
+                CandidateRoundResult::Response(response) if response.is_fallback_server_busy() => {
+                    // A follower probe can itself be rejected at the read-pool
+                    // entrance. Keep trying other voters before restoring the
+                    // cached leader.
+                    last_server_busy_response = Some(response);
+                }
+                CandidateRoundResult::OtherError(error) => {
+                    return CandidateRoundResult::OtherError(error);
+                }
+                response @ CandidateRoundResult::Response(_) => return response,
+            }
+        }
+
+        if invalidate_region {
+            // A transport failure means the cached Region route may be stale.
+            // Do not let a later fallback ServerIsBusy response preserve that
+            // route: the follower may have rejected the request before
+            // validating Region membership.
+            if let Some(error) = last_routing_error.take() {
+                return CandidateRoundResult::RoutingError {
+                    error,
+                    invalidate_region: true,
+                };
+            }
+        }
+
+        if saw_fallback_not_leader && !followers_only {
+            // The cached peer list may be stale even though follower hints are
+            // deliberately ignored. Reload it after exhausting every voter.
+            return CandidateRoundResult::RoutingError {
+                error: Error::LeaderNotFound {
+                    region: region.ver_id(),
+                },
+                invalidate_region: true,
+            };
+        }
+
+        if let Some(response) = last_server_busy_response {
+            CandidateRoundResult::Response(response)
+        } else if let Some(error) = last_routing_error {
+            CandidateRoundResult::RoutingError {
+                error,
+                invalidate_region,
+            }
+        } else if let Some(error) = last_map_region_to_store_error {
+            CandidateRoundResult::MapRegionToStoreError(error)
+        } else {
+            CandidateRoundResult::RoutingError {
+                error: Error::LeaderNotFound {
+                    region: region.ver_id(),
+                },
+                invalidate_region: !followers_only,
+            }
+        }
+    }
+
+    async fn update_leader_after_fallback(
+        pd_client: &Arc<PdC>,
+        region_ver_id: &RegionVerId,
+        leader: Option<metapb::Peer>,
+    ) {
+        // A response without a Region error proves that a normal request was
+        // accepted by the fallback peer as leader. Update the cache before
+        // returning key-level errors, which are interpreted by higher layers.
+        if let Some(peer) = leader {
+            if let Err(error) = pd_client.update_leader(region_ver_id.clone(), peer).await {
+                debug!(
+                    "failed to update leader after follower fallback: {:?}",
+                    error
+                );
+            }
+        }
+    }
+
+    async fn retry_same_region(
+        context: RetryContext<PdC>,
+        plan: P,
         region: RegionWithLeader,
         mut backoff: Backoff,
-        permits: Arc<Semaphore>,
-        preserve_region_results: bool,
-        terminal_on_undetermined: bool,
-        terminal_on_dispatch_error: bool,
+        candidate_state: CandidateState,
+        error: Error,
+    ) -> Result<<Self as Plan>::Result> {
+        match backoff.next_delay_duration() {
+            Some(duration) => {
+                sleep(duration).await;
+                Self::single_shard_handler(context, plan, region, backoff, candidate_state).await
+            }
+            None => Err(error),
+        }
+    }
+
+    #[async_recursion]
+    async fn single_shard_handler(
+        context: RetryContext<PdC>,
+        mut plan: P,
+        region: RegionWithLeader,
+        backoff: Backoff,
+        mut candidate_state: CandidateState,
     ) -> Result<<Self as Plan>::Result> {
         let region_ver_id = region.ver_id();
         let store_id = region.get_store_id().ok();
@@ -281,159 +676,226 @@ where
             "single_shard_handler, region: {:?}, store: {:?}",
             region_ver_id, store_id
         );
-        let region_store = match pd_client
-            .clone()
-            .map_region_to_store(region)
-            .await
-            .and_then(|region_store| {
-                plan.apply_store(&region_store)?;
-                Ok(region_store)
-            }) {
-            Ok(region_store) => region_store,
-            Err(err) => {
-                debug!("single_shard_handler::sharding, error: {:?}", err);
-                return Self::handle_other_error(
-                    pd_client,
+
+        let followers_only = candidate_state.take_follower_probe();
+        let response = match Self::execute_candidate_round(
+            &context.pd_client,
+            &mut plan,
+            &region,
+            &context.permits,
+            context.terminal_on_dispatch_error,
+            followers_only,
+        )
+        .await
+        {
+            CandidateRoundResult::Response(response) => *response,
+            CandidateRoundResult::MapRegionToStoreError(error) if followers_only => {
+                return Self::retry_same_region(
+                    context,
+                    plan,
+                    region,
+                    backoff,
+                    candidate_state,
+                    error,
+                )
+                .await;
+            }
+            CandidateRoundResult::MapRegionToStoreError(error) => {
+                // Every candidate failed before dispatch while mapping its Store.
+                // The cached peer list may have been replaced completely, so
+                // reload the Region instead of retrying the same stale peers.
+                return Self::retry_after_routing_error(
+                    context,
                     plan,
                     region_ver_id,
-                    store_id,
                     backoff,
-                    permits,
-                    preserve_region_results,
-                    terminal_on_undetermined,
-                    terminal_on_dispatch_error,
-                    err,
+                    error,
                 )
                 .await;
             }
-        };
-
-        // limit concurrent requests
-        let permit = permits.acquire().await.unwrap();
-        let res = plan.execute().await;
-        drop(permit);
-
-        let mut resp = match res {
-            Ok(resp) => resp,
-            Err(e) if is_grpc_error(&e) => {
-                debug!("single_shard_handler:execute: grpc error: {:?}", e);
-                // See `terminal_on_dispatch_error`: a non-idempotent request (raw
-                // CAS) that may have reached the server must not be replayed — the
-                // error surfaces UNCHANGED for the caller to handle. Only the REPLAY
-                // is skipped: routing is refreshed exactly as `handle_other_error`
-                // would, because the failure may be a dead cached leader/store and
-                // later requests must not keep selecting it.
-                if terminal_on_dispatch_error {
-                    pd_client
-                        .invalidate_region_cache(region_store.region_with_leader.ver_id())
-                        .await;
-                    if let Ok(store_id) = region_store.region_with_leader.get_store_id() {
-                        pd_client.invalidate_store_cache(store_id).await;
-                    }
-                    return Err(e);
-                }
-                return Self::handle_other_error(
-                    pd_client,
+            CandidateRoundResult::OtherError(error) => return Err(error),
+            CandidateRoundResult::RoutingError {
+                error: Error::LeaderNotFound { .. },
+                ..
+            } if followers_only => {
+                // Every probed follower answered NotLeader. Ignore all hints
+                // and restore the cached leader without charging another
+                // backoff: the one-shot probe cannot fire again in this
+                // request, so the next leader error follows the normal path.
+                return Self::single_shard_handler(context, plan, region, backoff, candidate_state)
+                    .await;
+            }
+            CandidateRoundResult::RoutingError { error, .. } if followers_only => {
+                return Self::retry_same_region(
+                    context,
                     plan,
-                    region_store.region_with_leader.ver_id(),
-                    region_store.region_with_leader.get_store_id().ok(),
+                    region,
                     backoff,
-                    permits,
-                    preserve_region_results,
-                    terminal_on_undetermined,
-                    terminal_on_dispatch_error,
-                    e,
+                    candidate_state,
+                    error,
                 )
                 .await;
             }
-            Err(e) => {
-                debug!("single_shard_handler:execute: error: {:?}", e);
-                return Err(e);
+            CandidateRoundResult::RoutingError {
+                error,
+                invalidate_region: false,
+            } => {
+                return Self::retry_after_error(context, plan, backoff, error).await;
+            }
+            CandidateRoundResult::RoutingError {
+                error,
+                invalidate_region: true,
+            } => {
+                return Self::retry_after_routing_error(
+                    context,
+                    plan,
+                    region_ver_id,
+                    backoff,
+                    error,
+                )
+                .await;
             }
         };
 
-        if let Some(e) = resp.key_errors() {
-            debug!("single_shard_handler:execute: key errors: {:?}", e);
-            Ok(vec![Err(Error::MultipleKeyErrors(e))])
-        } else if let Some(e) = resp.region_error() {
-            debug!(
-                "single_shard_handler:execute: region error: {:?}, region: {:?}",
-                e, region_ver_id
-            );
-            // See `terminal_on_undetermined`: for CAS and commit points, an unknown
-            // apply outcome must surface on FIRST sight — a replay could contradict
-            // its own effect, and a later different error must not overwrite the
-            // uncertainty. The caller classifies (commit maps it to UndeterminedError).
-            if terminal_on_undetermined && e.undetermined_result.is_some() {
-                return Err(Error::RegionError(Box::new(e)));
-            }
-            match backoff.next_delay_duration() {
-                Some(duration) => {
-                    let region_error_resolved =
-                        handle_region_error(pd_client.clone(), e, region_store).await?;
-                    // don't sleep if we have resolved the region error
-                    if !region_error_resolved {
-                        sleep(duration).await;
-                    }
-                    Self::single_plan_handler(
-                        pd_client,
-                        plan,
-                        backoff,
-                        permits,
-                        preserve_region_results,
-                        terminal_on_undetermined,
-                        terminal_on_dispatch_error,
-                    )
-                    .await
+        Self::handle_candidate_response(
+            context,
+            plan,
+            region,
+            backoff,
+            candidate_state,
+            followers_only,
+            response,
+        )
+        .await
+    }
+
+    async fn handle_candidate_response(
+        context: RetryContext<PdC>,
+        plan: P,
+        region: RegionWithLeader,
+        backoff: Backoff,
+        candidate_state: CandidateState,
+        followers_only: bool,
+        response: CandidateResponse<P::Result>,
+    ) -> Result<<Self as Plan>::Result> {
+        let region_ver_id = region.ver_id();
+        let fallback_leader = response.accepted_fallback_leader();
+        Self::update_leader_after_fallback(&context.pd_client, &region_ver_id, fallback_leader)
+            .await;
+        let CandidateResponse {
+            response,
+            key_errors,
+            region_error,
+            region_store,
+            used_fallback,
+        } = response;
+
+        if let Some(error) = key_errors {
+            debug!("single_shard_handler:execute: key errors: {:?}", error);
+            return Ok(vec![Err(Error::MultipleKeyErrors(error))]);
+        }
+        let Some(error) = region_error else {
+            return Ok(vec![Ok(response)]);
+        };
+
+        if let Some(server_is_busy) = error.server_is_busy.as_ref() {
+            if !used_fallback && server_is_busy.estimated_wait_ms == 0 {
+                let mut candidate_state = candidate_state;
+                if let Some(peer) = region_store.region_with_leader.leader.as_ref() {
+                    candidate_state.record_leader_busy(peer.id, server_is_busy.estimated_wait_ms);
                 }
-                None => {
-                    warn!(
-                        "giving up after exhausting retries on region error, region: {:?}",
-                        region_ver_id
-                    );
-                    Err(Error::RegionError(Box::new(e)))
-                }
+                return Self::retry_same_region(
+                    context,
+                    plan,
+                    region,
+                    backoff,
+                    candidate_state,
+                    Error::RegionError(Box::new(error)),
+                )
+                .await;
             }
-        } else {
-            Ok(vec![Ok(resp)])
+
+            if followers_only {
+                // The one-shot probe was inconclusive. Restore the cached
+                // leader and resume the normal ServerIsBusy backoff path.
+                return Self::retry_same_region(
+                    context,
+                    plan,
+                    region,
+                    backoff,
+                    candidate_state,
+                    Error::RegionError(Box::new(error)),
+                )
+                .await;
+            }
+        }
+
+        Self::handle_region_response(context, plan, region.ver_id(), region_store, backoff, error)
+            .await
+    }
+
+    async fn handle_region_response(
+        context: RetryContext<PdC>,
+        plan: P,
+        region_ver_id: RegionVerId,
+        region_store: RegionStore,
+        mut backoff: Backoff,
+        error: errorpb::Error,
+    ) -> Result<<Self as Plan>::Result> {
+        debug!(
+            "single_shard_handler:execute: region error: {:?}, region: {:?}",
+            error, region_ver_id
+        );
+        // For CAS and commit points, an unknown apply outcome must surface on
+        // first sight: replaying could contradict its own effect, and a later
+        // different error must not overwrite the uncertainty.
+        if context.terminal_on_undetermined && error.undetermined_result.is_some() {
+            return Err(Error::RegionError(Box::new(error)));
+        }
+
+        match backoff.next_delay_duration() {
+            Some(duration) => {
+                let region_error_resolved =
+                    handle_region_error(context.pd_client.clone(), error, region_store).await?;
+                if !region_error_resolved {
+                    sleep(duration).await;
+                }
+                Self::single_plan_handler(context, plan, backoff).await
+            }
+            None => {
+                warn!(
+                    "giving up after exhausting retries on region error, region: {:?}",
+                    region_ver_id
+                );
+                Err(Error::RegionError(Box::new(error)))
+            }
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    async fn handle_other_error(
-        pd_client: Arc<PdC>,
+    async fn retry_after_routing_error(
+        context: RetryContext<PdC>,
         plan: P,
         region: RegionVerId,
-        store: Option<StoreId>,
-        mut backoff: Backoff,
-        permits: Arc<Semaphore>,
-        preserve_region_results: bool,
-        terminal_on_undetermined: bool,
-        terminal_on_dispatch_error: bool,
-        e: Error,
+        backoff: Backoff,
+        error: Error,
     ) -> Result<<Self as Plan>::Result> {
-        debug!("handle_other_error: {:?}", e);
-        pd_client.invalidate_region_cache(region).await;
-        if is_grpc_error(&e) {
-            if let Some(store_id) = store {
-                pd_client.invalidate_store_cache(store_id).await;
-            }
-        }
+        debug!("retry_after_routing_error: {:?}", error);
+        context.pd_client.invalidate_region_cache(region).await;
+        Self::retry_after_error(context, plan, backoff, error).await
+    }
+
+    async fn retry_after_error(
+        context: RetryContext<PdC>,
+        plan: P,
+        mut backoff: Backoff,
+        error: Error,
+    ) -> Result<<Self as Plan>::Result> {
         match backoff.next_delay_duration() {
             Some(duration) => {
                 sleep(duration).await;
-                Self::single_plan_handler(
-                    pd_client,
-                    plan,
-                    backoff,
-                    permits,
-                    preserve_region_results,
-                    terminal_on_undetermined,
-                    terminal_on_dispatch_error,
-                )
-                .await
+                Self::single_plan_handler(context, plan, backoff).await
             }
-            None => Err(e),
+            None => Err(error),
         }
     }
 }
@@ -490,10 +952,12 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
         // paths classify it via `is_undetermined_region_error`. Plans for which a
         // replay is unsafe never reach this arm — see `terminal_on_undetermined`.
         Ok(false)
-    } else if e.server_is_busy.is_some()
-        || e.raft_entry_too_large.is_some()
-        || e.max_timestamp_not_synced.is_some()
-    {
+    } else if e.server_is_busy.is_some() {
+        // ServerIsBusy is a definitive rejection, so retrying is safe. The
+        // cached leader remains valid; the caller applies the normal Region
+        // backoff and may run the one-shot follower probe for ServerIsBusy(0).
+        Ok(false)
+    } else if e.raft_entry_too_large.is_some() || e.max_timestamp_not_synced.is_some() {
         Err(Error::RegionError(Box::new(e)))
     } else {
         debug!(
@@ -573,16 +1037,14 @@ where
         // too many concurrent requests, TiKV is more likely to return a "TiKV
         // is busy" error
         let concurrency_permits = Arc::new(Semaphore::new(MULTI_REGION_CONCURRENCY));
-        Self::single_plan_handler(
-            self.pd_client.clone(),
-            self.inner.clone(),
-            self.backoff.clone(),
-            concurrency_permits.clone(),
-            self.preserve_region_results,
-            self.terminal_on_undetermined,
-            self.terminal_on_dispatch_error,
-        )
-        .await
+        let context = RetryContext {
+            pd_client: self.pd_client.clone(),
+            permits: concurrency_permits,
+            preserve_region_results: self.preserve_region_results,
+            terminal_on_undetermined: self.terminal_on_undetermined,
+            terminal_on_dispatch_error: self.terminal_on_dispatch_error,
+        };
+        Self::single_plan_handler(context, self.inner.clone(), self.backoff.clone()).await
     }
 }
 
@@ -1107,6 +1569,91 @@ mod test {
     use super::*;
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb::BatchGetResponse;
+
+    #[test]
+    fn grpc_statuses_are_classified_without_cache_churn_for_deadlines() {
+        #[derive(Debug)]
+        struct StatusWithSource(tonic::Status);
+
+        impl std::fmt::Display for StatusWithSource {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.0.fmt(formatter)
+            }
+        }
+
+        impl std::error::Error for StatusWithSource {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let unavailable = Error::GrpcAPI(tonic::Status::unavailable("down"));
+        assert!(matches!(
+            grpc_error_action(&unavailable),
+            GrpcErrorAction::TryNextPeerAndInvalidate
+        ));
+
+        let deadline = Error::GrpcAPI(tonic::Status::deadline_exceeded("slow"));
+        assert!(matches!(
+            grpc_error_action(&deadline),
+            GrpcErrorAction::TryNextPeer
+        ));
+
+        let invalid = Error::GrpcAPI(tonic::Status::invalid_argument("bad request"));
+        assert!(matches!(
+            grpc_error_action(&invalid),
+            GrpcErrorAction::Return
+        ));
+
+        let explicit_unknown = Error::GrpcAPI(tonic::Status::unknown("stream closed"));
+        assert!(matches!(
+            grpc_error_action(&explicit_unknown),
+            GrpcErrorAction::TryNextPeerAndInvalidate
+        ));
+
+        let source_less_internal =
+            Error::GrpcAPI(tonic::Status::internal("Missing response message."));
+        assert!(matches!(
+            grpc_error_action(&source_less_internal),
+            GrpcErrorAction::TryNextPeerAndInvalidate
+        ));
+
+        let explicit_resource_limit = Error::GrpcAPI(tonic::Status::resource_exhausted("limit"));
+        assert!(matches!(
+            grpc_error_action(&explicit_resource_limit),
+            GrpcErrorAction::Return
+        ));
+
+        let transport_status = tonic::Status::from_error(Box::new(StatusWithSource(
+            tonic::Status::resource_exhausted("http2 overload"),
+        )));
+        assert_eq!(transport_status.code(), Code::ResourceExhausted);
+        let transport_error = Error::GrpcAPI(transport_status);
+        assert!(matches!(
+            grpc_error_action(&transport_error),
+            GrpcErrorAction::TryNextPeerAndInvalidate
+        ));
+    }
+
+    #[test]
+    fn server_busy_probe_counts_only_zero_wait_for_the_same_leader() {
+        let mut state = CandidateState::default();
+        state.record_leader_busy(1, 0);
+        state.record_leader_busy(1, 10);
+        assert!(!state.take_follower_probe());
+
+        state.record_leader_busy(1, 0);
+        assert!(state.take_follower_probe());
+        assert!(!state.take_follower_probe(), "the probe is one-shot");
+
+        let mut state = CandidateState::default();
+        state.record_leader_busy(1, 0);
+        state.record_leader_busy(2, 0);
+        assert!(
+            !state.take_follower_probe(),
+            "a new leader must not inherit the old leader's busy count"
+        );
+    }
 
     #[derive(Clone)]
     struct ErrPlan;
