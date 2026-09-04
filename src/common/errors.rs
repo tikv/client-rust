@@ -117,6 +117,10 @@ pub enum Error {
     KvError { message: String },
     #[error("{}", message)]
     InternalError { message: String },
+    /// The server returned a response that violates a protocol invariant. Acting on such
+    /// a response could corrupt transaction state, so the operation is aborted instead.
+    #[error("protocol violation: {}", message)]
+    ProtocolViolation { message: String },
     #[error("{0}")]
     StringError(String),
     #[error("PessimisticLock error: {:?}", inner)]

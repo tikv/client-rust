@@ -20,6 +20,8 @@ use tikv_client::CheckLevel;
 use tikv_client::Config;
 use tikv_client::Result;
 use tikv_client::RetryOptions;
+use tikv_client::Timestamp;
+use tikv_client::TimestampExt;
 use tikv_client::TransactionClient;
 use tikv_client::TransactionOptions;
 
@@ -133,8 +135,12 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
     let client =
         TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
             .await?;
+    let write_start_ts = client.current_timestamp().await?;
     let keys = write_data(&client, true, true).await?;
-    assert_eq!(count_locks(&client).await?, keys.len());
+    assert_eq!(
+        count_locks_since(&client, &write_start_ts).await?,
+        keys.len()
+    );
 
     let safepoint = client.current_timestamp().await?;
     let options = ResolveLocksOptions {
@@ -147,6 +153,14 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
 
     assert_eq!(res.resolved_locks, keys.len());
     assert_eq!(count_locks(&client).await?, keys.len());
+
+    // Clean up the locks this case deliberately left behind, so later cases start
+    // from a clean cluster instead of tripping over them (#509).
+    fail::cfg("before-cleanup-locks", "off").unwrap();
+    client
+        .cleanup_locks(full_range, &safepoint, Default::default())
+        .await?;
+    assert_eq!(count_locks(&client).await?, 0);
 
     scenario.teardown();
     Ok(())
@@ -272,8 +286,12 @@ async fn txn_cleanup_range_async_commit_locks() -> Result<()> {
     let client =
         TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
             .await?;
+    let write_start_ts = client.current_timestamp().await?;
     let keys = write_data(&client, true, true).await?;
-    assert_eq!(count_locks(&client).await?, keys.len());
+    assert_eq!(
+        count_locks_since(&client, &write_start_ts).await?,
+        keys.len()
+    );
 
     info!("total keys' count {}", keys.len());
     let mut sorted_keys: Vec<Vec<u8>> = Vec::from_iter(keys.clone());
@@ -345,6 +363,62 @@ async fn txn_resolve_locks() -> Result<()> {
     assert!(live_locks.is_empty());
     assert_eq!(count_locks(&client).await?, 0);
     must_rollbacked(&client, keys).await;
+
+    scenario.teardown();
+    Ok(())
+}
+
+// Regression test for #528: an async-commit transaction can finish prewrite and
+// disappear before its secondary commit task starts. Once the lock TTL expires,
+// an ordinary read must recover the transaction from all secondary locks instead
+// of returning the same ResolveLockError forever.
+#[tokio::test]
+#[serial]
+async fn txn_read_recovers_expired_async_commit_locks() -> Result<()> {
+    init().await?;
+    let scenario = FailScenario::setup();
+
+    fail::cfg("after-prewrite", "return").unwrap();
+    defer! {{
+        fail::cfg("after-prewrite", "off").unwrap();
+    }}
+
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
+    // `init` deliberately splits the u32 keyspace when MULTI_REGION is set, so
+    // these endpoints exercise the sharded CheckSecondaryLocks collector in CI.
+    let primary = 1u32.to_be_bytes().to_vec();
+    let secondary = (u32::MAX - 1).to_be_bytes().to_vec();
+    let primary_value = b"recovered-primary-value".to_vec();
+    let secondary_value = b"recovered-secondary-value".to_vec();
+
+    let mut txn = client
+        .begin_with_options(
+            TransactionOptions::new_optimistic()
+                .use_async_commit()
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(CheckLevel::Warn),
+        )
+        .await?;
+    txn.put(primary.clone(), primary_value.clone()).await?;
+    txn.put(secondary.clone(), secondary_value.clone()).await?;
+    assert!(txn.commit().await.is_err());
+    fail::cfg("after-prewrite", "off").unwrap();
+
+    let ts = client.current_timestamp().await?;
+    assert!(!client.scan_locks(&ts, .., 1024).await?.is_empty());
+
+    // The default prewrite lock TTL is three seconds.
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+    let mut reader = client.begin_optimistic().await?;
+    assert_eq!(reader.get(primary).await?, Some(primary_value));
+    assert_eq!(reader.get(secondary).await?, Some(secondary_value));
+    reader.rollback().await?;
+
+    let ts = client.current_timestamp().await?;
+    assert_eq!(client.scan_locks(&ts, .., 1024).await?.len(), 0);
 
     scenario.teardown();
     Ok(())
@@ -555,6 +629,24 @@ async fn must_rollbacked(client: &TransactionClient, keys: HashSet<Vec<u8>>) {
 
 async fn count_locks(client: &TransactionClient) -> Result<usize> {
     count_locks_in_range(client, b"", b"").await
+}
+
+/// Count locks created at or after `since`, de-duplicated.
+///
+/// Unlike `count_locks`, this ignores locks left behind by earlier test cases — on a
+/// churning cluster (hundreds of tiny regions splitting and merging) such locks can
+/// disappear from one scan and re-appear in a later one, which made the bare
+/// `count_locks == keys.len()` assertion flaky (#509).
+async fn count_locks_since(client: &TransactionClient, since: &Timestamp) -> Result<usize> {
+    let ts = client.current_timestamp().await.unwrap();
+    let locks = client.scan_locks(&ts, .., 65536).await?;
+    let locks_set: HashSet<Vec<u8>> = HashSet::from_iter(
+        locks
+            .into_iter()
+            .filter(|l| l.lock_version >= since.version())
+            .map(|l| l.key),
+    );
+    Ok(locks_set.len())
 }
 
 async fn count_locks_in_range(
