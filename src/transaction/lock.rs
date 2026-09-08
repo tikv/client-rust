@@ -214,37 +214,40 @@ async fn resolve_lock_with_retry(
             Ok(_) => {
                 return Ok(ver_id);
             }
-            // Retry on region error
-            Err(Error::ExtractedErrors(mut errors)) => {
-                // ResolveLockResponse can have at most 1 error
-                match errors.pop() {
-                    Some(Error::RegionError(e)) => match backoff.next_delay_duration() {
-                        Some(duration) => {
-                            let region_error_resolved =
-                                handle_region_error(pd_client.clone(), *e, store.clone()).await?;
-                            if !region_error_resolved {
-                                sleep(duration).await;
-                            }
-                            continue;
+            // Retry on region error. `ResolveLockResponse` can have at most 1 error, and
+            // the variant now says which kind it is rather than requiring a type test on
+            // a popped element.
+            Err(Error::MultipleRegionErrors(mut errors)) => match errors.pop() {
+                Some(Error::RegionError(e)) => match backoff.next_delay_duration() {
+                    Some(duration) => {
+                        let region_error_resolved =
+                            handle_region_error(pd_client.clone(), *e, store.clone()).await?;
+                        if !region_error_resolved {
+                            sleep(duration).await;
                         }
-                        None => return Err(Error::RegionError(e)),
-                    },
-                    Some(Error::KeyError(key_err)) => {
-                        // Keyspace is not truncated here because we need full key info for logging.
-                        error!(
-                            "resolve_lock error, unexpected resolve err: {:?}, lock: {{key: {}, start_version: {}, commit_version: {}, is_txn_file: {}}}",
-                            key_err,
-                            format_key_for_log(key),
-                            start_version,
-                            commit_version,
-                            is_txn_file,
-                        );
-                        return Err(Error::KeyError(key_err));
+                        continue;
                     }
-                    Some(e) => return Err(e),
-                    None => unreachable!(),
+                    None => return Err(Error::RegionError(e)),
+                },
+                Some(e) => return Err(e),
+                None => unreachable!(),
+            },
+            Err(Error::MultipleKeyErrors(mut errors)) => match errors.pop() {
+                Some(Error::KeyError(key_err)) => {
+                    // Keyspace is not truncated here because we need full key info for logging.
+                    error!(
+                        "resolve_lock error, unexpected resolve err: {:?}, lock: {{key: {}, start_version: {}, commit_version: {}, is_txn_file: {}}}",
+                        key_err,
+                        format_key_for_log(key),
+                        start_version,
+                        commit_version,
+                        is_txn_file,
+                    );
+                    return Err(Error::KeyError(key_err));
                 }
-            }
+                Some(e) => return Err(e),
+                None => unreachable!(),
+            },
             Err(e) if is_grpc_error(&e) => match backoff.next_delay_duration() {
                 Some(duration) => {
                     pd_client.invalidate_region_cache(ver_id.clone()).await;
@@ -500,17 +503,26 @@ impl LockResolver {
             .plan();
         let mut status: TransactionStatus = match plan.execute().await {
             Ok(status) => status,
-            Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
-                Some(Error::KeyError(key_err)) => {
-                    if let Some(txn_not_found) = key_err.txn_not_found {
-                        return Err(Error::TxnNotFound(txn_not_found));
+            // Response key errors now reach us under exactly one variant, whichever
+            // shape the plan has: `single_shard_handler` and `ExtractError` both produce
+            // `MultipleKeyErrors`. Before the variants were split this arm had to accept
+            // two, because a collapsing merge decided which one surfaced — and matching
+            // only one left the lock-resolution heal path (`rollback_if_not_exist` after
+            // TTL expiry in `get_txn_status_from_lock`) unreachable, so an orphaned
+            // secondary lock poisoned its key forever.
+            Err(Error::MultipleKeyErrors(mut errors)) => {
+                match errors.pop() {
+                    Some(Error::KeyError(key_err)) => {
+                        if let Some(txn_not_found) = key_err.txn_not_found {
+                            return Err(Error::TxnNotFound(txn_not_found));
+                        }
+                        // TODO: handle primary mismatch error.
+                        return Err(Error::KeyError(key_err));
                     }
-                    // TODO: handle primary mismatch error.
-                    return Err(Error::KeyError(key_err));
+                    Some(err) => return Err(err),
+                    None => unreachable!(),
                 }
-                Some(err) => return Err(err),
-                None => unreachable!(),
-            },
+            }
             Err(err) => return Err(err),
         };
 
@@ -643,6 +655,7 @@ mod tests {
     use std::any::Any;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
+    use std::sync::Mutex;
 
     use fail::FailScenario;
     use serial_test::serial;
@@ -771,6 +784,80 @@ mod tests {
 
         assert!(live_locks.is_empty());
         assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 1);
+        assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 1);
+    }
+
+    /// An orphaned lock whose primary was never written: `CheckTxnStatus` answers
+    /// `txn_not_found`, which reaches us as `MultipleKeyErrors`. It must convert to
+    /// `Error::TxnNotFound` so that `get_txn_status_from_lock` retries with
+    /// `rollback_if_not_exist` and heals the key; failing to match that variant leaves
+    /// the lock unresolved forever.
+    #[tokio::test]
+    #[serial]
+    async fn test_resolve_locks_rolls_back_expired_lock_whose_primary_is_missing() {
+        let check_txn_status_reqs = Arc::new(Mutex::new(Vec::new()));
+        let resolve_lock_count = Arc::new(AtomicUsize::new(0));
+
+        let check_txn_status_reqs_captured = check_txn_status_reqs.clone();
+        let resolve_lock_count_captured = resolve_lock_count.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
+                    check_txn_status_reqs_captured
+                        .lock()
+                        .unwrap()
+                        .push(req.rollback_if_not_exist);
+
+                    // Until the client asks TiKV to roll back a missing primary, TiKV can
+                    // only report that it never saw the transaction.
+                    if !req.rollback_if_not_exist {
+                        let resp = kvrpcpb::CheckTxnStatusResponse {
+                            error: Some(kvrpcpb::KeyError {
+                                txn_not_found: Some(kvrpcpb::TxnNotFound {
+                                    start_ts: 1,
+                                    primary_key: vec![2],
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        };
+                        return Ok(Box::new(resp) as Box<dyn Any>);
+                    }
+
+                    // With rollback_if_not_exist set, TiKV writes the rollback tombstone.
+                    // commit_version 0 + lock_ttl 0 + no lock_info => RolledBack.
+                    let resp = kvrpcpb::CheckTxnStatusResponse {
+                        action: kvrpcpb::Action::LockNotExistRollback as i32,
+                        ..Default::default()
+                    };
+                    return Ok(Box::new(resp) as Box<dyn Any>);
+                }
+                if req.is::<kvrpcpb::ResolveLockRequest>() {
+                    resolve_lock_count_captured.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+
+        let mut lock = kvrpcpb::LockInfo::default();
+        lock.key = vec![1];
+        lock.primary_lock = vec![2]; // a primary that was never written
+        lock.lock_version = 1;
+        lock.lock_ttl = 0; // expired under MockPdClient's Timestamp::default()
+
+        let live_locks = resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable)
+            .await
+            .unwrap();
+
+        // The lock is gone, not left live.
+        assert!(live_locks.is_empty());
+        // Asked twice: once optimistically, then again escalating to a rollback.
+        assert_eq!(
+            *check_txn_status_reqs.lock().unwrap(),
+            vec![false, true],
+            "txn_not_found must escalate to rollback_if_not_exist"
+        );
         assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 1);
     }
 
