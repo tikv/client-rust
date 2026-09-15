@@ -16,6 +16,7 @@ use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::backoff::OPTIMISTIC_BACKOFF;
 use crate::kv::HexRepr;
 use crate::pd::PdClient;
+use crate::Key;
 
 use crate::proto::kvrpcpb;
 use crate::proto::kvrpcpb::TxnInfo;
@@ -23,7 +24,6 @@ use crate::proto::pdpb::Timestamp;
 use crate::region::RegionVerId;
 use crate::request::plan::handle_region_error;
 use crate::request::plan::is_grpc_error;
-use crate::request::Collect;
 use crate::request::CollectSingle;
 use crate::request::Keyspace;
 use crate::request::Plan;
@@ -32,6 +32,7 @@ use crate::timestamp::TimestampExt;
 use crate::transaction::requests;
 use crate::transaction::requests::new_check_secondary_locks_request;
 use crate::transaction::requests::new_check_txn_status_request;
+use crate::transaction::requests::CollectSecondaryLocks;
 use crate::transaction::requests::SecondaryLocksStatus;
 use crate::transaction::requests::TransactionStatus;
 use crate::transaction::requests::TransactionStatusKind;
@@ -78,6 +79,10 @@ pub(crate) fn reject_shared_locks(locks: &[kvrpcpb::LockInfo]) -> Result<()> {
 /// which means the key is finally either committed or rolled back, before we read the value of
 /// the key. We first use `CheckTxnStatus` to get the transaction's final status (committed or
 /// rolled back), then use `ResolveLock` to resolve the remaining locks in the transaction.
+///
+/// An expired async-commit lock needs an extra step in between: TiKV refuses to roll it back
+/// via `CheckTxnStatus`, so the transaction's final status is first recovered from all of its
+/// secondary locks (`CheckSecondaryLocks`), and then every lock of the transaction is resolved.
 pub async fn resolve_locks(
     locks: Vec<kvrpcpb::LockInfo>,
     timestamp: Timestamp,
@@ -91,10 +96,10 @@ pub async fn resolve_locks(
     let current_ts = ts.version();
 
     let mut live_locks = Vec::new();
+    // Final transaction statuses are cached in the resolver's context, so a transaction met
+    // through several locks is queried (or recovered) only once.
     let mut lock_resolver = LockResolver::new(ResolveLocksContext::default());
-
-    // records the commit version of each primary lock (representing the status of the transaction)
-    let mut commit_versions: HashMap<u64, u64> = HashMap::new();
+    // Regions already swept by ResolveLock, per transaction.
     let mut clean_regions: HashMap<u64, HashSet<RegionVerId>> = HashMap::new();
     // We must check txn status for *all* locks, not only TTL-expired ones.
     //
@@ -107,88 +112,125 @@ pub async fn resolve_locks(
     // This matches the client-go `LockResolver.ResolveLocksWithOpts` flow: query txn status for
     // each encountered lock, then resolve immediately when the status is final.
     for lock in locks {
-        let region_ver_id = pd_client
-            .region_for_key(&lock.key.clone().into())
+        let (commit_version, keys) = match lock_resolver
+            .action_for_lock(
+                &lock,
+                caller_start_ts,
+                current_ts,
+                pd_client.clone(),
+                keyspace,
+            )
             .await?
-            .ver_id();
-        // skip if the region is cleaned
-        if clean_regions
-            .get(&lock.lock_version)
-            .map(|regions| regions.contains(&region_ver_id))
-            .unwrap_or(false)
         {
-            continue;
-        }
-
-        let commit_version = match commit_versions.get(&lock.lock_version) {
-            Some(&commit_version) => Some(commit_version),
-            None => {
-                // TODO: handle primary mismatch error.
-                let status = lock_resolver
-                    .get_txn_status_from_lock(
-                        OPTIMISTIC_BACKOFF,
-                        &lock,
-                        caller_start_ts,
-                        current_ts,
-                        false,
-                        pd_client.clone(),
-                        keyspace,
-                    )
-                    .await?;
-                match &status.kind {
-                    TransactionStatusKind::Committed(ts) => {
-                        let commit_version = ts.version();
-                        commit_versions.insert(lock.lock_version, commit_version);
-                        Some(commit_version)
-                    }
-                    TransactionStatusKind::RolledBack => {
-                        commit_versions.insert(lock.lock_version, 0);
-                        Some(0)
-                    }
-                    TransactionStatusKind::Locked(_, lock_info) => {
-                        live_locks.push(lock_info.clone());
-                        None
-                    }
-                }
+            LockAction::Resolve {
+                commit_version,
+                keys,
+            } => (commit_version, keys),
+            LockAction::Live(primary_lock) => {
+                live_locks.push(primary_lock);
+                continue;
             }
+            LockAction::Done => continue,
         };
-
-        if let Some(commit_version) = commit_version {
-            let cleaned_region = resolve_lock_with_retry(
-                &lock.key,
+        let regions = clean_regions.entry(lock.lock_version).or_default();
+        for key in keys.iter().chain([&lock.key]) {
+            resolve_lock_with_retry(
+                key.into(),
                 lock.lock_version,
                 commit_version,
                 lock.is_txn_file,
                 pd_client.clone(),
                 keyspace,
                 OPTIMISTIC_BACKOFF,
+                regions,
             )
             .await?;
-            clean_regions
-                .entry(lock.lock_version)
-                .or_default()
-                .insert(cleaned_region);
         }
     }
     Ok(live_locks)
 }
 
+/// What `resolve_locks` has to do about one encountered lock.
+enum LockAction {
+    /// The transaction's fate is known: resolve its locks with `commit_version` (zero rolls
+    /// back) in the regions of `keys` and of the encountered lock itself.
+    Resolve {
+        commit_version: u64,
+        keys: Vec<Vec<u8>>,
+    },
+    /// The transaction is still alive; its primary lock is reported back to the caller.
+    Live(kvrpcpb::LockInfo),
+    /// The lock has been dealt with on its own and nothing else needs resolving.
+    Done,
+}
+
+impl LockAction {
+    /// The action for a transaction whose `CheckTxnStatus` answer is taken as is.
+    fn from_status(status: &TransactionStatus) -> Self {
+        match &status.kind {
+            TransactionStatusKind::Committed(ts) => LockAction::Resolve {
+                commit_version: ts.version(),
+                keys: Vec::new(),
+            },
+            TransactionStatusKind::RolledBack => LockAction::Resolve {
+                commit_version: 0,
+                keys: Vec::new(),
+            },
+            TransactionStatusKind::Locked(_, primary_lock) => {
+                LockAction::Live(primary_lock.clone())
+            }
+        }
+    }
+}
+
+/// Roll back one pessimistic lock, leaving the rest of its transaction alone.
+async fn pessimistic_rollback_lock(
+    lock: &kvrpcpb::LockInfo,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+) -> Result<()> {
+    let for_update_ts = if lock.lock_for_update_ts == 0 {
+        u64::MAX
+    } else {
+        lock.lock_for_update_ts
+    };
+    let req = requests::new_pessimistic_rollback_request(
+        vec![lock.key.clone()],
+        lock.lock_version,
+        for_update_ts,
+    );
+    let plan = crate::request::PlanBuilder::new(pd_client, keyspace, req)
+        .retry_multi_region(DEFAULT_REGION_BACKOFF)
+        .extract_error()
+        .plan();
+    plan.execute().await?;
+    Ok(())
+}
+
+/// Resolve every lock of transaction `start_version` in the region holding `key`, unless that
+/// region is already in `clean_regions`. ResolveLock sweeps the whole region, so one successful
+/// request per region is enough no matter how many of the transaction's keys point to it.
+#[allow(clippy::too_many_arguments)]
 async fn resolve_lock_with_retry(
-    #[allow(clippy::ptr_arg)] key: &Vec<u8>,
+    key: &Key,
     start_version: u64,
     commit_version: u64,
     is_txn_file: bool,
     pd_client: Arc<impl PdClient>,
     keyspace: Keyspace,
     mut backoff: Backoff,
-) -> Result<RegionVerId> {
+    clean_regions: &mut HashSet<RegionVerId>,
+) -> Result<()> {
     debug!("resolving locks with retry");
     let mut attempt = 0;
     loop {
         attempt += 1;
         debug!("resolving locks: attempt {}", attempt);
-        let store = pd_client.clone().store_for_key(key.into()).await?;
+        let store = pd_client.clone().store_for_key(key).await?;
         let ver_id = store.region_with_leader.ver_id();
+        if clean_regions.contains(&ver_id) {
+            return Ok(());
+        }
         let request =
             requests::new_resolve_lock_request(start_version, commit_version, is_txn_file);
         let plan_builder =
@@ -212,7 +254,8 @@ async fn resolve_lock_with_retry(
         let plan = plan_builder.extract_error().plan();
         match plan.execute().await {
             Ok(_) => {
-                return Ok(ver_id);
+                clean_regions.insert(ver_id);
+                return Ok(());
             }
             // Retry on region error
             Err(Error::ExtractedErrors(mut errors)) => {
@@ -320,6 +363,99 @@ impl LockResolver {
         Self { ctx }
     }
 
+    /// Decide what `resolve_locks` has to do about `lock`: query its transaction's status and,
+    /// for an expired async-commit transaction, recover that status from the secondary locks.
+    /// This is the per-lock decision of client-go's `LockResolver.resolveLocks`.
+    async fn action_for_lock(
+        &mut self,
+        lock: &kvrpcpb::LockInfo,
+        caller_start_ts: u64,
+        current_ts: u64,
+        pd_client: Arc<impl PdClient>,
+        keyspace: Keyspace,
+    ) -> Result<LockAction> {
+        let status = match self
+            .get_txn_status_from_lock(
+                OPTIMISTIC_BACKOFF,
+                lock,
+                caller_start_ts,
+                current_ts,
+                false,
+                pd_client.clone(),
+                keyspace,
+            )
+            .await
+        {
+            Ok(status) => status,
+            Err(Error::KeyError(key_err))
+                if key_err.primary_mismatch.is_some()
+                    && lock.lock_type == kvrpcpb::Op::PessimisticLock as i32 =>
+            {
+                // The encountered pessimistic lock points at a stale primary: the transaction
+                // changed its primary after writing this lock (pingcap/tidb#42937). Roll back
+                // only this stale lock — the transaction itself may still be alive, and a
+                // region-wide ResolveLock could roll back its other, legitimate locks.
+                pessimistic_rollback_lock(lock, pd_client, keyspace).await?;
+                return Ok(LockAction::Done);
+            }
+            Err(err) => return Err(err),
+        };
+
+        let primary_lock = match &status.kind {
+            TransactionStatusKind::Locked(_, primary_lock)
+                if status.is_expired && primary_lock.use_async_commit =>
+            {
+                primary_lock
+            }
+            _ => return Ok(LockAction::from_status(&status)),
+        };
+
+        // TiKV will not roll back an expired async-commit primary: the transaction's decision
+        // has to be recovered from its secondaries instead.
+        let secondary_status = self
+            .check_all_secondaries(
+                pd_client.clone(),
+                keyspace,
+                primary_lock.secondaries.clone(),
+                lock.lock_version,
+            )
+            .await?;
+        if secondary_status.fallback_2pc {
+            // A secondary fell back to plain 2PC, so the primary decides after all. Ask again,
+            // this time letting TiKV roll back the expired primary.
+            let status = self
+                .get_txn_status_from_lock(
+                    OPTIMISTIC_BACKOFF,
+                    lock,
+                    caller_start_ts,
+                    current_ts,
+                    true,
+                    pd_client,
+                    keyspace,
+                )
+                .await?;
+            return Ok(LockAction::from_status(&status));
+        }
+
+        let commit_version =
+            secondary_status.resolved_commit_version(primary_lock.min_commit_ts)?;
+        // The recovered status is final: cache it so further locks of this transaction skip
+        // the recovery, as client-go's `resolveAsyncCommitLock` does with `saveResolved`.
+        self.ctx
+            .save_resolved(
+                lock.lock_version,
+                Arc::new(TransactionStatus::from_commit_version(commit_version)),
+            )
+            .await;
+        // Every lock of the transaction is resolved, not only the encountered one.
+        let mut keys = primary_lock.secondaries.clone();
+        keys.push(primary_lock.key.clone());
+        Ok(LockAction::Resolve {
+            commit_version,
+            keys,
+        })
+    }
+
     /// _Cleanup_ the given locks. Returns whether all the given locks are resolved.
     ///
     /// Note: Will rollback RUNNING transactions. ONLY use in GC.
@@ -379,10 +515,7 @@ impl LockResolver {
                 debug!(
                     "secondary status, txn_id:{}, commit_ts:{:?}, min_commit_version:{}, fallback_2pc:{}",
                     txn_id,
-                    secondary_status
-                        .commit_ts
-                        .as_ref()
-                        .map_or(0, |ts| ts.version()),
+                    secondary_status.commit_ts,
                     secondary_status.min_commit_ts,
                     secondary_status.fallback_2pc,
                 );
@@ -404,11 +537,8 @@ impl LockResolver {
                         )
                         .await?;
                 } else {
-                    let commit_ts = if let Some(commit_ts) = &secondary_status.commit_ts {
-                        commit_ts.version()
-                    } else {
-                        secondary_status.min_commit_ts
-                    };
+                    let commit_ts =
+                        secondary_status.resolved_commit_version(lock_info.min_commit_ts)?;
                     txn_infos.insert(txn_id, (commit_ts, l.is_txn_file));
                     continue;
                 }
@@ -500,17 +630,20 @@ impl LockResolver {
             .plan();
         let mut status: TransactionStatus = match plan.execute().await {
             Ok(status) => status,
-            Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
-                Some(Error::KeyError(key_err)) => {
-                    if let Some(txn_not_found) = key_err.txn_not_found {
-                        return Err(Error::TxnNotFound(txn_not_found));
+            Err(Error::ExtractedErrors(mut errors)) | Err(Error::MultipleKeyErrors(mut errors)) => {
+                match errors.pop() {
+                    Some(Error::KeyError(key_err)) => {
+                        if let Some(txn_not_found) = key_err.txn_not_found {
+                            return Err(Error::TxnNotFound(txn_not_found));
+                        }
+                        // A PrimaryMismatch error propagates to `resolve_locks`, which rolls
+                        // back the stale pessimistic lock it was reported for.
+                        return Err(Error::KeyError(key_err));
                     }
-                    // TODO: handle primary mismatch error.
-                    return Err(Error::KeyError(key_err));
+                    Some(err) => return Err(err),
+                    None => unreachable!(),
                 }
-                Some(err) => return Err(err),
-                None => unreachable!(),
-            },
+            }
             Err(err) => return Err(err),
         };
 
@@ -532,9 +665,12 @@ impl LockResolver {
     ) -> Result<SecondaryLocksStatus> {
         let req = new_check_secondary_locks_request(keys, txn_id);
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, req)
+            .preserve_shard()
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
-            .merge(Collect)
+            .merge(CollectSecondaryLocks {
+                start_version: txn_id,
+            })
             .plan();
         plan.execute().await
     }
@@ -641,6 +777,8 @@ pub fn lock_until_expired_ms(lock_version: u64, ttl: u64, current: Timestamp) ->
 #[cfg(test)]
 mod tests {
     use std::any::Any;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::AtomicU64;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
 
@@ -651,6 +789,80 @@ mod tests {
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
     use crate::proto::errorpb;
+    use crate::proto::metapb;
+    use crate::region::RegionWithLeader;
+    use crate::request::EncodeKeyspace;
+    use crate::request::KeyMode;
+    use crate::Key;
+
+    /// A transaction ID whose lock is always expired under the mock PD clock:
+    /// `Timestamp::from_version` casts the version to `i64` before shifting, so
+    /// `u64::MAX` yields a physical time of -1 (production timestamp arithmetic, not
+    /// mock behavior), while `MockPdClient::get_timestamp` stands at physical 0 —
+    /// any positive TTL has therefore already lapsed.
+    const EXPIRED_TXN_VERSION: u64 = u64::MAX;
+
+    /// The async-commit recovery tests place these on both sides of the mock region
+    /// boundary (`MockPdClient::region1` ends at `[10]`), so a full recovery must
+    /// resolve two regions.
+    const PRIMARY_KEY: &[u8] = &[1]; // mock region 1
+    const SECONDARY_KEY: &[u8] = &[11]; // mock region 2
+
+    fn encoded(key: &[u8], keyspace: Keyspace) -> Vec<u8> {
+        Key::from(key.to_vec())
+            .encode_keyspace(keyspace, KeyMode::Txn)
+            .into()
+    }
+
+    /// The primary lock of an expired async-commit transaction — the shape returned
+    /// by `CheckTxnStatus` and encountered by readers.
+    fn async_commit_primary_lock(
+        primary_key: &[u8],
+        min_commit_ts: u64,
+        secondaries: Vec<Vec<u8>>,
+    ) -> kvrpcpb::LockInfo {
+        kvrpcpb::LockInfo {
+            key: primary_key.to_vec(),
+            primary_lock: primary_key.to_vec(),
+            lock_version: EXPIRED_TXN_VERSION,
+            lock_ttl: 1,
+            min_commit_ts,
+            use_async_commit: true,
+            secondaries,
+            ..Default::default()
+        }
+    }
+
+    /// A `CheckTxnStatusResponse` reporting the transaction still locked by `primary`.
+    fn still_locked_response(primary: kvrpcpb::LockInfo) -> kvrpcpb::CheckTxnStatusResponse {
+        kvrpcpb::CheckTxnStatusResponse {
+            lock_ttl: 1,
+            lock_info: Some(primary),
+            action: kvrpcpb::Action::NoAction as i32,
+            ..Default::default()
+        }
+    }
+
+    /// A still-live async-commit secondary lock.
+    fn async_commit_secondary_lock(key: &[u8], min_commit_ts: u64) -> kvrpcpb::LockInfo {
+        kvrpcpb::LockInfo {
+            key: key.to_vec(),
+            lock_version: EXPIRED_TXN_VERSION,
+            min_commit_ts,
+            use_async_commit: true,
+            ..Default::default()
+        }
+    }
+
+    /// A secondary lock that fell back from async commit to plain 2PC.
+    fn fallback_2pc_secondary_lock(key: &[u8]) -> kvrpcpb::LockInfo {
+        kvrpcpb::LockInfo {
+            key: key.to_vec(),
+            lock_version: EXPIRED_TXN_VERSION,
+            use_async_commit: false,
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn shared_locks_are_refused_never_misresolved() {
@@ -714,11 +926,20 @@ mod tests {
 
         let key = vec![1];
         let region1 = MockPdClient::region1();
-        let resolved_region =
-            resolve_lock_with_retry(&key, 1, 2, false, client.clone(), keyspace, backoff.clone())
-                .await
-                .unwrap();
-        assert_eq!(region1.ver_id(), resolved_region);
+        let mut clean_regions = HashSet::new();
+        resolve_lock_with_retry(
+            (&key).into(),
+            1,
+            2,
+            false,
+            client.clone(),
+            keyspace,
+            backoff.clone(),
+            &mut clean_regions,
+        )
+        .await
+        .unwrap();
+        assert_eq!(clean_regions, HashSet::from([region1.ver_id()]));
 
         // Test resolve lock over retry limit
         fail::cfg(
@@ -727,9 +948,18 @@ mod tests {
         )
         .unwrap();
         let key = vec![100];
-        resolve_lock_with_retry(&key, 3, 4, false, client, keyspace, backoff)
-            .await
-            .expect_err("should return error");
+        resolve_lock_with_retry(
+            (&key).into(),
+            3,
+            4,
+            false,
+            client,
+            keyspace,
+            backoff,
+            &mut clean_regions,
+        )
+        .await
+        .expect_err("should return error");
     }
 
     #[tokio::test]
@@ -772,6 +1002,484 @@ mod tests {
         assert!(live_locks.is_empty());
         assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 1);
         assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[rstest::rstest]
+    // With `Keyspace::Enable` every key gains the keyspace prefix, which places them
+    // all in mock region 2 — the recovery then resolves one region instead of two.
+    #[case(Keyspace::Disable, 2, &[PRIMARY_KEY])]
+    #[case(Keyspace::Enable { keyspace_id: 0 }, 1, &[PRIMARY_KEY])]
+    #[case(Keyspace::Disable, 2, &[SECONDARY_KEY, PRIMARY_KEY])]
+    #[case(Keyspace::Enable { keyspace_id: 0 }, 1, &[SECONDARY_KEY, PRIMARY_KEY])]
+    #[tokio::test]
+    #[serial]
+    async fn test_resolve_locks_recovers_expired_async_commit(
+        #[case] keyspace: Keyspace,
+        #[case] expected_resolved_regions: usize,
+        #[case] encountered_keys: &[&[u8]],
+    ) {
+        let primary_key = encoded(PRIMARY_KEY, keyspace);
+        let secondary_key = encoded(SECONDARY_KEY, keyspace);
+
+        let check_secondary_count = Arc::new(AtomicUsize::new(0));
+        let resolve_lock_count = Arc::new(AtomicUsize::new(0));
+        let resolved_commit_version = Arc::new(AtomicU64::new(0));
+
+        let check_secondary_count_captured = check_secondary_count.clone();
+        let resolve_lock_count_captured = resolve_lock_count.clone();
+        let resolved_commit_version_captured = resolved_commit_version.clone();
+        let primary_key_captured = primary_key.clone();
+        let secondary_key_captured = secondary_key.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
+                    assert_eq!(req.primary_key, primary_key_captured);
+                    return Ok(Box::new(still_locked_response(async_commit_primary_lock(
+                        &primary_key_captured,
+                        44,
+                        vec![secondary_key_captured.clone()],
+                    ))) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::CheckSecondaryLocksRequest>() {
+                    check_secondary_count_captured.fetch_add(1, Ordering::SeqCst);
+                    // The secondaries listed in the primary lock are already encoded and
+                    // must be sent verbatim — re-encoding them would corrupt the keys.
+                    assert_eq!(req.keys, vec![secondary_key_captured.clone()]);
+                    let resp = kvrpcpb::CheckSecondaryLocksResponse {
+                        locks: vec![async_commit_secondary_lock(&secondary_key_captured, 43)],
+                        ..Default::default()
+                    };
+                    return Ok(Box::new(resp) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::ResolveLockRequest>() {
+                    resolve_lock_count_captured.fetch_add(1, Ordering::SeqCst);
+                    resolved_commit_version_captured.store(req.commit_version, Ordering::SeqCst);
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+
+        let locks = encountered_keys
+            .iter()
+            .map(|key| kvrpcpb::LockInfo {
+                key: encoded(key, keyspace),
+                primary_lock: primary_key.clone(),
+                lock_version: EXPIRED_TXN_VERSION,
+                lock_ttl: 1,
+                use_async_commit: true,
+                ..Default::default()
+            })
+            .collect();
+
+        let live_locks = resolve_locks(locks, Timestamp::default(), client, keyspace)
+            .await
+            .unwrap();
+
+        assert!(live_locks.is_empty());
+        assert_eq!(check_secondary_count.load(Ordering::SeqCst), 1);
+        // Every region the transaction wrote to must be resolved, exactly once each.
+        assert_eq!(
+            resolve_lock_count.load(Ordering::SeqCst),
+            expected_resolved_regions
+        );
+        // The secondary's min_commit_ts (43) is below the primary's (44): the recovered
+        // commit version must be the maximum across ALL locks, i.e. the primary's.
+        assert_eq!(resolved_commit_version.load(Ordering::SeqCst), 44);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_resolve_locks_recovers_missing_async_secondary_as_rollback() {
+        let check_secondary_count = Arc::new(AtomicUsize::new(0));
+        let resolve_lock_count = Arc::new(AtomicUsize::new(0));
+        let resolved_commit_version = Arc::new(AtomicU64::new(u64::MAX));
+
+        let check_secondary_count_captured = check_secondary_count.clone();
+        let resolve_lock_count_captured = resolve_lock_count.clone();
+        let resolved_commit_version_captured = resolved_commit_version.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if req.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::new(still_locked_response(async_commit_primary_lock(
+                        PRIMARY_KEY,
+                        42,
+                        vec![SECONDARY_KEY.to_vec()],
+                    ))) as Box<dyn Any>);
+                }
+                if req.is::<kvrpcpb::CheckSecondaryLocksRequest>() {
+                    check_secondary_count_captured.fetch_add(1, Ordering::SeqCst);
+                    // The requested secondary is absent and commit_ts is zero: TiKV has
+                    // established a rollback tombstone, so the transaction must roll back.
+                    return Ok(
+                        Box::<kvrpcpb::CheckSecondaryLocksResponse>::default() as Box<dyn Any>
+                    );
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::ResolveLockRequest>() {
+                    resolve_lock_count_captured.fetch_add(1, Ordering::SeqCst);
+                    resolved_commit_version_captured.store(req.commit_version, Ordering::SeqCst);
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+
+        let lock = async_commit_primary_lock(PRIMARY_KEY, 42, vec![SECONDARY_KEY.to_vec()]);
+
+        let live_locks = resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable)
+            .await
+            .unwrap();
+
+        assert!(live_locks.is_empty());
+        assert_eq!(check_secondary_count.load(Ordering::SeqCst), 1);
+        // The rollback must reach every region the transaction wrote to: the
+        // secondary's region and the primary's.
+        assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 2);
+        assert_eq!(resolved_commit_version.load(Ordering::SeqCst), 0);
+    }
+
+    #[rstest::rstest]
+    #[case(55, 0)]
+    #[case(0, 0)]
+    #[case(0, 1000)]
+    #[tokio::test]
+    #[serial]
+    async fn test_resolve_locks_falls_back_to_2pc_with_real_current_ts(
+        #[case] commit_version: u64,
+        #[case] lock_ttl: u64,
+    ) {
+        let check_txn_status_count = Arc::new(AtomicUsize::new(0));
+        let force_sync_count = Arc::new(AtomicUsize::new(0));
+        let resolve_lock_count = Arc::new(AtomicUsize::new(0));
+        let resolved_commit_version = Arc::new(AtomicU64::new(0));
+
+        let check_txn_status_count_captured = check_txn_status_count.clone();
+        let force_sync_count_captured = force_sync_count.clone();
+        let resolve_lock_count_captured = resolve_lock_count.clone();
+        let resolved_commit_version_captured = resolved_commit_version.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
+                    check_txn_status_count_captured.fetch_add(1, Ordering::SeqCst);
+                    if req.force_sync_commit {
+                        force_sync_count_captured.fetch_add(1, Ordering::SeqCst);
+                        assert_ne!(req.current_ts, u64::MAX);
+                        return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                            commit_version,
+                            lock_ttl,
+                            lock_info: (lock_ttl != 0).then(|| kvrpcpb::LockInfo {
+                                key: PRIMARY_KEY.to_vec(),
+                                primary_lock: PRIMARY_KEY.to_vec(),
+                                lock_version: EXPIRED_TXN_VERSION,
+                                lock_ttl,
+                                ..Default::default()
+                            }),
+                            action: kvrpcpb::Action::NoAction as i32,
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    return Ok(Box::new(still_locked_response(async_commit_primary_lock(
+                        PRIMARY_KEY,
+                        42,
+                        vec![SECONDARY_KEY.to_vec()],
+                    ))) as Box<dyn Any>);
+                }
+                if req.is::<kvrpcpb::CheckSecondaryLocksRequest>() {
+                    return Ok(Box::new(kvrpcpb::CheckSecondaryLocksResponse {
+                        locks: vec![fallback_2pc_secondary_lock(SECONDARY_KEY)],
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::ResolveLockRequest>() {
+                    resolve_lock_count_captured.fetch_add(1, Ordering::SeqCst);
+                    resolved_commit_version_captured.store(req.commit_version, Ordering::SeqCst);
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+
+        let lock = async_commit_primary_lock(PRIMARY_KEY, 42, vec![SECONDARY_KEY.to_vec()]);
+
+        let live_locks = resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable)
+            .await
+            .unwrap();
+
+        assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 2);
+        assert_eq!(force_sync_count.load(Ordering::SeqCst), 1);
+        if lock_ttl == 0 {
+            assert!(live_locks.is_empty());
+            // After the fallback the transaction is plain 2PC: only the encountered lock's
+            // region is resolved, as client-go does.
+            assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                resolved_commit_version.load(Ordering::SeqCst),
+                commit_version
+            );
+        } else {
+            assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 0);
+            assert_eq!(live_locks.len(), 1);
+            assert_eq!(live_locks[0].lock_ttl, lock_ttl);
+            assert!(!live_locks[0].use_async_commit);
+        }
+    }
+
+    /// A region error on `CheckSecondaryLocks` makes the plan re-shard against fresh
+    /// region boundaries. Every retried sub-request must be paired with its OWN keys
+    /// (`preserve_shard` + `Collect::merge` contract): pairing a stale shard would make
+    /// the shorter per-region lock lists below look like missing locks and roll back a
+    /// committable transaction.
+    #[tokio::test]
+    #[serial]
+    async fn test_check_secondary_locks_reshards_on_region_error() {
+        // The transaction spans primary [1] and secondaries [2] and [3]. Every key
+        // starts out in one region; after the simulated split, [2] and [3] live in two.
+        fn mock_region(id: u64, start_key: Vec<u8>, end_key: Vec<u8>) -> RegionWithLeader {
+            let mut region = RegionWithLeader::default();
+            region.region.id = id;
+            region.region.start_key = start_key;
+            region.region.end_key = end_key;
+            region.region.region_epoch = Some(metapb::RegionEpoch {
+                conf_ver: 0,
+                version: 1,
+            });
+            region.leader = Some(metapb::Peer {
+                store_id: 41,
+                ..Default::default()
+            });
+            region
+        }
+
+        let split = Arc::new(AtomicBool::new(false));
+        let check_secondary_count = Arc::new(AtomicUsize::new(0));
+        let resolve_lock_count = Arc::new(AtomicUsize::new(0));
+        let resolved_commit_version = Arc::new(AtomicU64::new(u64::MAX));
+
+        let split_in_dispatch = split.clone();
+        let check_secondary_count_captured = check_secondary_count.clone();
+        let resolve_lock_count_captured = resolve_lock_count.clone();
+        let resolved_commit_version_captured = resolved_commit_version.clone();
+        let split_in_region_hook = split.clone();
+        let client = Arc::new(
+            MockPdClient::new(MockKvClient::with_dispatch_hook(move |req: &dyn Any| {
+                if req.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::new(still_locked_response(async_commit_primary_lock(
+                        &[1],
+                        40,
+                        vec![vec![2], vec![3]],
+                    ))) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::CheckSecondaryLocksRequest>() {
+                    check_secondary_count_captured.fetch_add(1, Ordering::SeqCst);
+                    if req.keys == vec![vec![2], vec![3]] {
+                        // First attempt, before the split: fail the whole shard.
+                        split_in_dispatch.store(true, Ordering::SeqCst);
+                        let resp = kvrpcpb::CheckSecondaryLocksResponse {
+                            region_error: Some(errorpb::Error::default()),
+                            ..Default::default()
+                        };
+                        return Ok(Box::new(resp) as Box<dyn Any>);
+                    }
+                    let min_commit_ts = match req.keys.as_slice() {
+                        [key] if key.as_slice() == [2] => 41,
+                        [key] if key.as_slice() == [3] => 42,
+                        keys => panic!("unexpected CheckSecondaryLocks shard: {:?}", keys),
+                    };
+                    let resp = kvrpcpb::CheckSecondaryLocksResponse {
+                        locks: vec![async_commit_secondary_lock(&req.keys[0], min_commit_ts)],
+                        ..Default::default()
+                    };
+                    return Ok(Box::new(resp) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::ResolveLockRequest>() {
+                    resolve_lock_count_captured.fetch_add(1, Ordering::SeqCst);
+                    resolved_commit_version_captured.store(req.commit_version, Ordering::SeqCst);
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            }))
+            .with_region_for_key_hook(move |key: &Key| {
+                let key: &[u8] = key.into();
+                if !split_in_region_hook.load(Ordering::SeqCst) {
+                    Ok(mock_region(1, vec![], vec![10]))
+                } else if key < &[3][..] {
+                    Ok(mock_region(1, vec![], vec![3]))
+                } else {
+                    Ok(mock_region(4, vec![3], vec![10]))
+                }
+            }),
+        );
+
+        let lock = async_commit_primary_lock(&[1], 40, vec![vec![2], vec![3]]);
+
+        let live_locks = resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable)
+            .await
+            .unwrap();
+
+        assert!(live_locks.is_empty());
+        // One failed pre-split request plus one per post-split region.
+        assert_eq!(check_secondary_count.load(Ordering::SeqCst), 3);
+        // Both locks survived, so the transaction must COMMIT at the maximum
+        // min_commit_ts (42) — a stale shard pairing would have inferred a missing
+        // lock instead and rolled the transaction back (commit version 0).
+        assert_eq!(resolved_commit_version.load(Ordering::SeqCst), 42);
+        assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_resolve_locks_retries_expired_missing_primary_with_rollback() {
+        let check_txn_status_count = Arc::new(AtomicUsize::new(0));
+        let resolve_lock_count = Arc::new(AtomicUsize::new(0));
+
+        let check_txn_status_count_captured = check_txn_status_count.clone();
+        let resolve_lock_count_captured = resolve_lock_count.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
+                    check_txn_status_count_captured.fetch_add(1, Ordering::SeqCst);
+                    if !req.rollback_if_not_exist {
+                        return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                            error: Some(kvrpcpb::KeyError {
+                                txn_not_found: Some(kvrpcpb::TxnNotFound {
+                                    start_ts: req.lock_ts,
+                                    primary_key: req.primary_key.clone(),
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    return Ok(Box::<kvrpcpb::CheckTxnStatusResponse>::default() as Box<dyn Any>);
+                }
+                if req.is::<kvrpcpb::ResolveLockRequest>() {
+                    resolve_lock_count_captured.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+
+        let lock = kvrpcpb::LockInfo {
+            key: vec![1],
+            primary_lock: vec![2],
+            lock_version: EXPIRED_TXN_VERSION,
+            lock_ttl: 1,
+            ..Default::default()
+        };
+
+        let live_locks = resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable)
+            .await
+            .unwrap();
+
+        assert!(live_locks.is_empty());
+        assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 2);
+        assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 1);
+    }
+
+    /// A pessimistic lock whose recorded primary is stale (the transaction changed its
+    /// primary, pingcap/tidb#42937) makes TiKV answer CheckTxnStatus with PrimaryMismatch.
+    /// Only that stale lock may be rolled back — the transaction itself may still be alive,
+    /// so a region-wide ResolveLock is out of the question: each stale lock gets its own
+    /// single-key PessimisticRollback, and a second stale lock of the same transaction in
+    /// the same region must NOT be skipped or swept along.
+    #[tokio::test]
+    #[serial]
+    async fn test_resolve_locks_rolls_back_stale_pessimistic_lock_on_primary_mismatch() {
+        let rolled_back_keys = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let rolled_back_keys_captured = rolled_back_keys.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if req.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        error: Some(kvrpcpb::KeyError {
+                            primary_mismatch: Some(kvrpcpb::PrimaryMismatch {
+                                lock_info: Some(kvrpcpb::LockInfo::default()),
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::PessimisticRollbackRequest>() {
+                    assert_eq!(req.start_version, EXPIRED_TXN_VERSION);
+                    assert_eq!(req.for_update_ts, u64::MAX);
+                    assert_eq!(req.keys.len(), 1, "rollback must target a single key");
+                    rolled_back_keys_captured
+                        .lock()
+                        .unwrap()
+                        .push(req.keys[0].clone());
+                    return Ok(
+                        Box::<kvrpcpb::PessimisticRollbackResponse>::default() as Box<dyn Any>
+                    );
+                }
+                if req.is::<kvrpcpb::ResolveLockRequest>() {
+                    panic!("must not sweep a region for a stale pessimistic lock");
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+
+        let make_lock = |key: u8| kvrpcpb::LockInfo {
+            key: vec![key],
+            primary_lock: vec![9],
+            lock_version: EXPIRED_TXN_VERSION,
+            lock_ttl: 1,
+            lock_type: kvrpcpb::Op::PessimisticLock as i32,
+            ..Default::default()
+        };
+        // Two stale pessimistic locks of the same transaction in the same mock region.
+        let locks = vec![make_lock(1), make_lock(2)];
+
+        let live_locks = resolve_locks(locks, Timestamp::default(), client, Keyspace::Disable)
+            .await
+            .unwrap();
+
+        assert!(live_locks.is_empty());
+        assert_eq!(
+            *rolled_back_keys.lock().unwrap(),
+            vec![vec![1], vec![2]],
+            "each stale lock must be rolled back individually"
+        );
+    }
+
+    /// A PrimaryMismatch for a non-pessimistic lock is unexpected (client-go treats it as an
+    /// error too) and must propagate instead of rolling anything back.
+    #[tokio::test]
+    #[serial]
+    async fn test_resolve_locks_propagates_primary_mismatch_for_non_pessimistic_lock() {
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if req.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        error: Some(kvrpcpb::KeyError {
+                            primary_mismatch: Some(kvrpcpb::PrimaryMismatch {
+                                lock_info: Some(kvrpcpb::LockInfo::default()),
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if req.is::<kvrpcpb::ResolveLockRequest>() {
+                    panic!("must not resolve a lock on unexpected primary mismatch");
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+
+        let lock = kvrpcpb::LockInfo {
+            key: PRIMARY_KEY.to_vec(),
+            primary_lock: vec![2],
+            lock_version: EXPIRED_TXN_VERSION,
+            lock_ttl: 1,
+            ..Default::default()
+        };
+
+        let result =
+            resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable).await;
+        assert!(matches!(result, Err(Error::KeyError(_))));
     }
 
     #[test]
