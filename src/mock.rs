@@ -18,6 +18,7 @@ use crate::proto::keyspacepb;
 use crate::proto::metapb::RegionEpoch;
 use crate::proto::metapb::{self};
 use crate::region::RegionId;
+use crate::region::RegionVerId;
 use crate::region::RegionWithLeader;
 use crate::store::KvConnect;
 use crate::store::RegionStore;
@@ -72,9 +73,26 @@ pub struct MockKvConnect;
 
 pub struct MockCluster;
 
+#[allow(clippy::type_complexity)]
 #[derive(new)]
 pub struct MockPdClient {
     client: MockKvClient,
+    /// Optional override for `map_region_to_store`.
+    #[new(default)]
+    map_region_to_store_hook:
+        Option<Arc<dyn Fn(RegionWithLeader) -> Result<RegionStore> + Send + Sync + 'static>>,
+    /// Optional override for `region_for_key`, e.g. to simulate PD failing to
+    /// locate a region for a key.
+    #[new(default)]
+    region_for_key_hook:
+        Option<Arc<dyn Fn(&Key) -> Result<RegionWithLeader> + Send + Sync + 'static>>,
+    /// Optional observer/override for leader cache updates.
+    #[new(default)]
+    update_leader_hook:
+        Option<Arc<dyn Fn(RegionVerId, metapb::Peer) -> Result<()> + Send + Sync + 'static>>,
+    /// Optional observer for region cache invalidations.
+    #[new(default)]
+    invalidate_region_hook: Option<Arc<dyn Fn(RegionVerId) + Send + Sync + 'static>>,
 }
 
 #[async_trait]
@@ -101,9 +119,41 @@ impl KvConnect for MockKvConnect {
 
 impl MockPdClient {
     pub fn default() -> MockPdClient {
-        MockPdClient {
-            client: MockKvClient::default(),
-        }
+        MockPdClient::new(MockKvClient::default())
+    }
+
+    pub fn with_map_region_to_store_hook<F>(mut self, hook: F) -> MockPdClient
+    where
+        F: Fn(RegionWithLeader) -> Result<RegionStore> + Send + Sync + 'static,
+    {
+        self.map_region_to_store_hook = Some(Arc::new(hook));
+        self
+    }
+
+    /// Override `region_for_key` with a custom hook, leaving the rest of the
+    /// mock's behavior untouched.
+    pub fn with_region_for_key_hook<F>(mut self, hook: F) -> MockPdClient
+    where
+        F: Fn(&Key) -> Result<RegionWithLeader> + Send + Sync + 'static,
+    {
+        self.region_for_key_hook = Some(Arc::new(hook));
+        self
+    }
+
+    pub fn with_update_leader_hook<F>(mut self, hook: F) -> MockPdClient
+    where
+        F: Fn(RegionVerId, metapb::Peer) -> Result<()> + Send + Sync + 'static,
+    {
+        self.update_leader_hook = Some(Arc::new(hook));
+        self
+    }
+
+    pub fn with_invalidate_region_hook<F>(mut self, hook: F) -> MockPdClient
+    where
+        F: Fn(RegionVerId) + Send + Sync + 'static,
+    {
+        self.invalidate_region_hook = Some(Arc::new(hook));
+        self
     }
 
     pub fn region1() -> RegionWithLeader {
@@ -169,10 +219,16 @@ impl PdClient for MockPdClient {
     type KvClient = MockKvClient;
 
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
+        if let Some(hook) = &self.map_region_to_store_hook {
+            return hook(region);
+        }
         Ok(RegionStore::new(region, Arc::new(self.client.clone())))
     }
 
     async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
+        if let Some(hook) = &self.region_for_key_hook {
+            return hook(key);
+        }
         let bytes: &[_] = key.into();
         let region = if bytes.is_empty() || bytes < &[10][..] {
             Self::region1()
@@ -208,13 +264,20 @@ impl PdClient for MockPdClient {
 
     async fn update_leader(
         &self,
-        _ver_id: crate::region::RegionVerId,
-        _leader: metapb::Peer,
+        ver_id: crate::region::RegionVerId,
+        leader: metapb::Peer,
     ) -> Result<()> {
-        todo!()
+        match &self.update_leader_hook {
+            Some(hook) => hook(ver_id, leader),
+            None => todo!(),
+        }
     }
 
-    async fn invalidate_region_cache(&self, _ver_id: crate::region::RegionVerId) {}
+    async fn invalidate_region_cache(&self, ver_id: crate::region::RegionVerId) {
+        if let Some(hook) = &self.invalidate_region_hook {
+            hook(ver_id);
+        }
+    }
 
     async fn invalidate_store_cache(&self, _store_id: crate::region::StoreId) {}
 

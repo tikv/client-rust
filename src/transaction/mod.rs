@@ -20,6 +20,7 @@ pub use transaction::CheckLevel;
 #[doc(hidden)]
 pub use transaction::HeartbeatOption;
 pub use transaction::Mutation;
+pub use transaction::Scanner;
 pub use transaction::Transaction;
 pub use transaction::TransactionOptions;
 
@@ -28,6 +29,7 @@ mod client;
 mod lock;
 pub mod lowering;
 mod requests;
+pub(crate) use lock::reject_shared_locks;
 pub use lock::LockResolver;
 pub use lock::ResolveLocksContext;
 pub use lock::ResolveLocksOptions;

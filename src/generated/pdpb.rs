@@ -595,6 +595,10 @@ pub struct RegionHeartbeatRequest {
     /// It's counted on size of user key & value (excluding metadata fields), before compression, and latest versions only.
     #[prost(uint64, tag = "19")]
     pub approximate_columnar_kv_size: u64,
+    /// Approximate size of row-based key-value pairs stored in the IA tier for billing.
+    /// It is a subset of approximate_kv_size and follows the same size accounting rules.
+    #[prost(uint64, tag = "22")]
+    pub approximate_ia_kv_size: u64,
     /// BucketMeta is the bucket version and keys of this region if TiKV enabled the bucket feature
     #[prost(message, optional, tag = "20")]
     pub bucket_meta: ::core::option::Option<super::metapb::BucketMeta>,
@@ -1553,6 +1557,14 @@ pub struct GetGcStateRequest {
     pub keyspace_scope: ::core::option::Option<KeyspaceScope>,
     #[prost(bool, tag = "3")]
     pub exclude_gc_barriers: bool,
+    /// Include all stored global GC barriers in the response.
+    ///
+    /// This uses an include flag, unlike exclude_gc_barriers, because proto3 bool
+    /// fields default to false. GetGCState historically omitted global GC
+    /// barriers, so false preserves both the existing response and the
+    /// no-extra-read path.
+    #[prost(bool, tag = "4")]
+    pub include_global_gc_barriers: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1568,6 +1580,37 @@ pub struct GcState {
     #[prost(message, repeated, tag = "5")]
     pub gc_barriers: ::prost::alloc::vec::Vec<GcBarrierInfo>,
 }
+/// GCStateChange describes a change to a keyspace's effective GC state.
+/// GCState values sent by WatchGCStates omit gc_barriers because barriers are
+/// internal inputs used by PD to calculate effective safe points; the stream
+/// reports only changes to the resulting effective state.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GcStateChange {
+    #[prost(oneof = "gc_state_change::Change", tags = "1, 2")]
+    pub change: ::core::option::Option<gc_state_change::Change>,
+}
+/// Nested message and enum types in `GCStateChange`.
+pub mod gc_state_change {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Change {
+        /// Insert or replace the complete GC state of this keyspace.
+        #[prost(message, tag = "1")]
+        Upsert(super::GcState),
+        /// Remove this keyspace from the client's materialized GC-state view.
+        /// This does not necessarily mean the keyspace metadata was physically deleted.
+        #[prost(message, tag = "2")]
+        Removed(super::KeyspaceScope),
+    }
+}
+/// GlobalGCBarriersInfo carries presence independently from the barrier list.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GlobalGcBarriersInfo {
+    #[prost(message, repeated, tag = "1")]
+    pub barriers: ::prost::alloc::vec::Vec<GlobalGcBarrierInfo>,
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetGcStateResponse {
@@ -1575,6 +1618,11 @@ pub struct GetGcStateResponse {
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(message, optional, tag = "2")]
     pub gc_state: ::core::option::Option<GcState>,
+    /// Absent when globals were not requested or the server does not support
+    /// this extension. Present-empty when the request was fulfilled but no
+    /// global GC barriers are stored.
+    #[prost(message, optional, tag = "3")]
+    pub global_gc_barriers: ::core::option::Option<GlobalGcBarriersInfo>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1595,6 +1643,30 @@ pub struct GetAllKeyspacesGcStatesResponse {
     pub gc_states: ::prost::alloc::vec::Vec<GcState>,
     #[prost(message, repeated, tag = "3")]
     pub global_gc_barriers: ::prost::alloc::vec::Vec<GlobalGcBarrierInfo>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WatchGcStatesRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<RequestHeader>,
+    /// If false, when the stream is established, the server first sends the current
+    /// GC states of all keyspaces.
+    #[prost(bool, tag = "2")]
+    pub skip_loading_initial: bool,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WatchGcStatesResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<ResponseHeader>,
+    /// Clients apply changes in order within this response and across successive
+    /// responses on the stream. A client must not observe an older state for a
+    /// keyspace after a newer update. After disconnection, the client reconnects
+    /// and reloads the initial state. The stream omits GC barrier details and does
+    /// not emit changes for barrier-only updates. If a barrier update changes an
+    /// effective GC state, the resulting state change is emitted.
+    #[prost(message, repeated, tag = "2")]
+    pub changes: ::prost::alloc::vec::Vec<GcStateChange>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -3204,6 +3276,28 @@ pub mod pd_client {
             req.extensions_mut()
                 .insert(GrpcMethod::new("pdpb.PD", "GetAllKeyspacesGCStates"));
             self.inner.unary(req, path, codec).await
+        }
+        pub async fn watch_gc_states(
+            &mut self,
+            request: impl tonic::IntoRequest<super::WatchGcStatesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::WatchGcStatesResponse>>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/pdpb.PD/WatchGCStates");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("pdpb.PD", "WatchGCStates"));
+            self.inner.server_streaming(req, path, codec).await
         }
         pub async fn sync_regions(
             &mut self,

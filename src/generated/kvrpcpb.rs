@@ -1453,6 +1453,12 @@ pub struct KeyError {
     /// TxnLockNotFound indicates the txn lock is not found.
     #[prost(message, optional, tag = "12")]
     pub txn_lock_not_found: ::core::option::Option<TxnLockNotFound>,
+    /// LockUpgradeConflict indicates a shared-lock upgrade protocol conflict.
+    #[prost(message, optional, tag = "13")]
+    pub lock_upgrade_conflict: ::core::option::Option<LockUpgradeConflict>,
+    /// SharedLockLost deterministically confirms that the transaction's shared-lock ownership was lost.
+    #[prost(message, optional, tag = "14")]
+    pub shared_lock_lost: ::core::option::Option<SharedLockLost>,
     /// Extra information for error debugging
     #[prost(message, optional, tag = "100")]
     pub debug_info: ::core::option::Option<DebugInfo>,
@@ -1532,6 +1538,70 @@ pub mod write_conflict {
             }
         }
     }
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LockUpgradeConflict {
+    #[prost(bytes = "vec", tag = "1")]
+    pub key: ::prost::alloc::vec::Vec<u8>,
+    #[prost(uint64, tag = "2")]
+    pub start_ts: u64,
+    #[prost(uint64, tag = "3")]
+    pub owner_start_ts: u64,
+    #[prost(enumeration = "lock_upgrade_conflict::Reason", tag = "4")]
+    pub reason: i32,
+}
+/// Nested message and enum types in `LockUpgradeConflict`.
+pub mod lock_upgrade_conflict {
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum Reason {
+        Unknown = 0,
+        DuplicateInFlight = 1,
+        SecondUpgrader = 2,
+    }
+    impl Reason {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                Reason::Unknown => "Unknown",
+                Reason::DuplicateInFlight => "DuplicateInFlight",
+                Reason::SecondUpgrader => "SecondUpgrader",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "Unknown" => Some(Self::Unknown),
+                "DuplicateInFlight" => Some(Self::DuplicateInFlight),
+                "SecondUpgrader" => Some(Self::SecondUpgrader),
+                _ => None,
+            }
+        }
+    }
+}
+/// SharedLockLost means the pending upgrade did not acquire the exclusive lock.
+/// The transaction must not continue, but rollback remains valid.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SharedLockLost {
+    #[prost(bytes = "vec", tag = "1")]
+    pub key: ::prost::alloc::vec::Vec<u8>,
+    #[prost(uint64, tag = "2")]
+    pub start_ts: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

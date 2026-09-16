@@ -156,6 +156,15 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     }
 }
 
+/// Named flags for [`PlanBuilder::make_retry_multi_region`]: passed positionally,
+/// three same-typed bools would let a transposed call site compile silently.
+#[derive(Default)]
+struct RetryFlags {
+    preserve_region_results: bool,
+    terminal_on_undetermined: bool,
+    terminal_on_dispatch_error: bool,
+}
+
 impl<PdC: PdClient, P: Plan + Shardable> PlanBuilder<PdC, P, NoTarget>
 where
     P::Result: HasKeyErrors + HasRegionError,
@@ -165,7 +174,7 @@ where
         self,
         backoff: Backoff,
     ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC>, Targetted> {
-        self.make_retry_multi_region(backoff, false)
+        self.make_retry_multi_region(backoff, RetryFlags::default())
     }
 
     /// Preserve all results, even some of them are Err.
@@ -174,13 +183,55 @@ where
         self,
         backoff: Backoff,
     ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC>, Targetted> {
-        self.make_retry_multi_region(backoff, true)
+        self.make_retry_multi_region(
+            backoff,
+            RetryFlags {
+                preserve_region_results: true,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Like [`Self::retry_multi_region`], but an `errorpb.UndeterminedResult` is
+    /// terminal on first sight. For commit points (primary commit; async/1PC
+    /// prewrite) — see `RetryableMultiRegion::terminal_on_undetermined`.
+    pub fn retry_multi_region_terminal_on_undetermined(
+        self,
+        backoff: Backoff,
+    ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC>, Targetted> {
+        self.make_retry_multi_region(
+            backoff,
+            RetryFlags {
+                terminal_on_undetermined: true,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Like [`Self::retry_multi_region_terminal_on_undetermined`], and additionally
+    /// a DISPATCH-stage gRPC error is terminal. For the request whose replay is not
+    /// idempotent with respect to its own result (raw CAS): a lost response is as
+    /// ambiguous as an undetermined apply outcome, and a replay could contradict the
+    /// first attempt's own effect. Sharding/connection errors still retry — see
+    /// `RetryableMultiRegion::terminal_on_dispatch_error`.
+    pub fn retry_multi_region_terminal_on_ambiguous_outcome(
+        self,
+        backoff: Backoff,
+    ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC>, Targetted> {
+        self.make_retry_multi_region(
+            backoff,
+            RetryFlags {
+                terminal_on_undetermined: true,
+                terminal_on_dispatch_error: true,
+                ..Default::default()
+            },
+        )
     }
 
     fn make_retry_multi_region(
         self,
         backoff: Backoff,
-        preserve_region_results: bool,
+        flags: RetryFlags,
     ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC>, Targetted> {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
@@ -188,7 +239,9 @@ where
                 inner: self.plan,
                 pd_client: self.pd_client,
                 backoff,
-                preserve_region_results,
+                preserve_region_results: flags.preserve_region_results,
+                terminal_on_undetermined: flags.terminal_on_undetermined,
+                terminal_on_dispatch_error: flags.terminal_on_dispatch_error,
             },
             phantom: PhantomData,
         }

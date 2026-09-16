@@ -85,11 +85,40 @@ impl SecurityManager {
     where
         Factory: FnOnce(Channel) -> Client,
     {
+        self.connect_inner(addr, None, factory).await
+    }
+
+    /// Connect with an explicit TCP connection timeout.
+    pub(crate) async fn connect_with_timeout<Factory, Client>(
+        &self,
+        addr: &str,
+        timeout: Duration,
+        factory: Factory,
+    ) -> Result<Client>
+    where
+        Factory: FnOnce(Channel) -> Client,
+    {
+        self.connect_inner(addr, Some(timeout), factory).await
+    }
+
+    async fn connect_inner<Factory, Client>(
+        &self,
+        addr: &str,
+        timeout: Option<Duration>,
+        factory: Factory,
+    ) -> Result<Client>
+    where
+        Factory: FnOnce(Channel) -> Client,
+    {
         info!("connect to rpc server at endpoint: {:?}", addr);
         let channel = if self.tls_configured() {
             self.tls_channel(addr).await?
         } else {
             self.default_channel(addr).await?
+        };
+        let channel = match timeout {
+            Some(timeout) => channel.connect_timeout(timeout),
+            None => channel,
         };
         let ch = channel.connect().await?;
 

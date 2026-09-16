@@ -50,6 +50,10 @@ pub struct GroupTagRecordItem {
     pub logical_read_bytes: u64,
     #[prost(uint64, tag = "8")]
     pub logical_write_bytes: u64,
+    /// RocksDB block reads used for downstream read_iops relative attribution.
+    /// This is not a device-level IOPS measurement.
+    #[prost(uint64, tag = "9")]
+    pub rocksdb_block_read_count: u64,
 }
 /// RegionRecord is a set of resource usage data grouped by region.
 #[allow(clippy::derive_partial_eq_without_eq)]

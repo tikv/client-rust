@@ -35,7 +35,7 @@ impl KvConnect for TikvConnect {
 
     async fn connect(&self, address: &str) -> Result<KvRpcClient> {
         self.security_mgr
-            .connect(address, move |channel| {
+            .connect_with_timeout(address, self.timeout, move |channel| {
                 TikvClient::new(channel)
                     .max_decoding_message_size(self.grpc_max_decoding_message_size)
                     .accept_compressed(CompressionEncoding::Gzip)
