@@ -100,6 +100,7 @@ pub struct Error {
     #[prost(string, tag = "2")]
     pub message: ::prost::alloc::string::String,
 }
+/// This message intentionally omits namespace/keyspace-related fields because API v2 never supported keyspaces when routing TSO requests through the PD API server.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TsoRequest {
@@ -256,6 +257,7 @@ pub struct GetAllStoresResponse {
 pub struct GetRegionRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// Physical key bytes used for Region lookup.
     #[prost(bytes = "vec", tag = "2")]
     pub region_key: ::prost::alloc::vec::Vec<u8>,
     #[prost(bool, tag = "3")]
@@ -302,10 +304,10 @@ pub struct QueryRegionRequest {
     /// The region IDs to query.
     #[prost(uint64, repeated, tag = "3")]
     pub ids: ::prost::alloc::vec::Vec<u64>,
-    /// The region keys to query.
+    /// Physical key bytes to query.
     #[prost(bytes = "vec", repeated, tag = "4")]
     pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
-    /// The previous region keys to query.
+    /// Previous physical key bytes to query.
     #[prost(bytes = "vec", repeated, tag = "5")]
     pub prev_keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
@@ -347,12 +349,13 @@ pub struct RegionResponse {
 pub struct ScanRegionsRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// Physical start key bytes.
     #[prost(bytes = "vec", tag = "2")]
     pub start_key: ::prost::alloc::vec::Vec<u8>,
     /// no limit when limit \<= 0.
     #[prost(int32, tag = "3")]
     pub limit: i32,
-    /// end_key is +inf when it is empty.
+    /// Physical end key bytes. end_key is +inf when it is empty.
     #[prost(bytes = "vec", tag = "4")]
     pub end_key: ::prost::alloc::vec::Vec<u8>,
 }
@@ -391,9 +394,10 @@ pub struct ScanRegionsResponse {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KeyRange {
+    /// Physical start key bytes.
     #[prost(bytes = "vec", tag = "1")]
     pub start_key: ::prost::alloc::vec::Vec<u8>,
-    /// end_key is +inf when it is empty.
+    /// Physical end key bytes. end_key is +inf when it is empty.
     #[prost(bytes = "vec", tag = "2")]
     pub end_key: ::prost::alloc::vec::Vec<u8>,
 }
@@ -404,7 +408,7 @@ pub struct BatchScanRegionsRequest {
     pub header: ::core::option::Option<RequestHeader>,
     #[prost(bool, tag = "2")]
     pub need_buckets: bool,
-    /// the given ranges must be in order.
+    /// Physical key ranges. The given ranges must be in order.
     #[prost(message, repeated, tag = "3")]
     pub ranges: ::prost::alloc::vec::Vec<KeyRange>,
     /// limit the total number of regions to scan.
@@ -591,6 +595,10 @@ pub struct RegionHeartbeatRequest {
     /// It's counted on size of user key & value (excluding metadata fields), before compression, and latest versions only.
     #[prost(uint64, tag = "19")]
     pub approximate_columnar_kv_size: u64,
+    /// Approximate size of row-based key-value pairs stored in the IA tier for billing.
+    /// It is a subset of approximate_kv_size and follows the same size accounting rules.
+    #[prost(uint64, tag = "22")]
+    pub approximate_ia_kv_size: u64,
     /// BucketMeta is the bucket version and keys of this region if TiKV enabled the bucket feature
     #[prost(message, optional, tag = "20")]
     pub bucket_meta: ::core::option::Option<super::metapb::BucketMeta>,
@@ -629,6 +637,7 @@ pub struct Merge {
 pub struct SplitRegion {
     #[prost(enumeration = "CheckPolicy", tag = "1")]
     pub policy: i32,
+    /// Physical split key bytes.
     #[prost(bytes = "vec", repeated, tag = "2")]
     pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
@@ -928,11 +937,15 @@ pub struct DfsStatScope {
     #[prost(bool, tag = "1")]
     pub is_global: bool,
     /// The keyspace of this statistic. Ignore when is_global is true.
+    /// NOTE: This field is only meaningful for V1/V2 compatibility. V3 should use keyspace_identities.
     #[prost(uint32, tag = "2")]
     pub keyspace_id: u32,
     /// The component that provides the statistic.
     #[prost(string, tag = "3")]
     pub component: ::prost::alloc::string::String,
+    /// V3 multi-keyspace statistic scope. Ignore when is_global is true.
+    #[prost(message, repeated, tag = "4")]
+    pub keyspace_identities: ::prost::alloc::vec::Vec<super::apipb::KeyspaceIdentity>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1198,8 +1211,21 @@ pub struct UpdateServiceGcSafePointResponse {
 pub struct GetGcSafePointV2Request {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
-    #[prost(uint32, tag = "2")]
-    pub keyspace_id: u32,
+    #[prost(oneof = "get_gc_safe_point_v2_request::Keyspace", tags = "2, 3")]
+    pub keyspace: ::core::option::Option<get_gc_safe_point_v2_request::Keyspace>,
+}
+/// Nested message and enum types in `GetGCSafePointV2Request`.
+pub mod get_gc_safe_point_v2_request {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "3")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1221,12 +1247,25 @@ pub struct WatchGcSafePointV2Request {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SafePointEvent {
-    #[prost(uint32, tag = "1")]
-    pub keyspace_id: u32,
     #[prost(uint64, tag = "2")]
     pub safe_point: u64,
     #[prost(enumeration = "EventType", tag = "3")]
     pub r#type: i32,
+    #[prost(oneof = "safe_point_event::Keyspace", tags = "1, 4")]
+    pub keyspace: ::core::option::Option<safe_point_event::Keyspace>,
+}
+/// Nested message and enum types in `SafePointEvent`.
+pub mod safe_point_event {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "1")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity served by this event.
+        #[prost(message, tag = "4")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1243,10 +1282,23 @@ pub struct WatchGcSafePointV2Response {
 pub struct UpdateGcSafePointV2Request {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
-    #[prost(uint32, tag = "2")]
-    pub keyspace_id: u32,
     #[prost(uint64, tag = "3")]
     pub safe_point: u64,
+    #[prost(oneof = "update_gc_safe_point_v2_request::Keyspace", tags = "2, 4")]
+    pub keyspace: ::core::option::Option<update_gc_safe_point_v2_request::Keyspace>,
+}
+/// Nested message and enum types in `UpdateGCSafePointV2Request`.
+pub mod update_gc_safe_point_v2_request {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "4")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1261,8 +1313,6 @@ pub struct UpdateGcSafePointV2Response {
 pub struct UpdateServiceSafePointV2Request {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
-    #[prost(uint32, tag = "2")]
-    pub keyspace_id: u32,
     #[prost(bytes = "vec", tag = "3")]
     pub service_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(uint64, tag = "4")]
@@ -1274,6 +1324,21 @@ pub struct UpdateServiceSafePointV2Request {
     /// cluster garbage collection.
     #[prost(int64, tag = "5")]
     pub ttl: i64,
+    #[prost(oneof = "update_service_safe_point_v2_request::Keyspace", tags = "2, 6")]
+    pub keyspace: ::core::option::Option<update_service_safe_point_v2_request::Keyspace>,
+}
+/// Nested message and enum types in `UpdateServiceSafePointV2Request`.
+pub mod update_service_safe_point_v2_request {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "6")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1296,10 +1361,23 @@ pub struct GetAllGcSafePointV2Request {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GcSafePointV2 {
-    #[prost(uint32, tag = "1")]
-    pub keyspace_id: u32,
     #[prost(uint64, tag = "2")]
     pub gc_safe_point: u64,
+    #[prost(oneof = "gc_safe_point_v2::Keyspace", tags = "1, 3")]
+    pub keyspace: ::core::option::Option<gc_safe_point_v2::Keyspace>,
+}
+/// Nested message and enum types in `GCSafePointV2`.
+pub mod gc_safe_point_v2 {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "1")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "3")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1311,15 +1389,26 @@ pub struct GetAllGcSafePointV2Response {
     #[prost(int64, tag = "3")]
     pub revision: i64,
 }
-/// A wrapper over keyspace_id.
-/// When a field is not specified in proto3, its value will be regarded as 0; however, keyspace_id = 0 is regarded as a valid keyspace (which
-/// is the "DEFAULT" keyspace). To distinguish unspecified keyspace (NullKeyspace, 0xffffffff) and the default keyspace in some APIs as well
-/// as preventing potential misuse, we wrap the keyspace_id into a message type which is nullable.
+/// A wrapper over keyspace scope.
+/// keyspace_id is kept for V1/V2 compatibility. V3 should use keyspace_identity and reject
+/// missing/invalid namespace or keyspace IDs in tenant-scoped requests.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KeyspaceScope {
-    #[prost(uint32, tag = "1")]
-    pub keyspace_id: u32,
+    #[prost(oneof = "keyspace_scope::Keyspace", tags = "1, 2")]
+    pub keyspace: ::core::option::Option<keyspace_scope::Keyspace>,
+}
+/// Nested message and enum types in `KeyspaceScope`.
+pub mod keyspace_scope {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        #[prost(uint32, tag = "1")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "2")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1468,6 +1557,14 @@ pub struct GetGcStateRequest {
     pub keyspace_scope: ::core::option::Option<KeyspaceScope>,
     #[prost(bool, tag = "3")]
     pub exclude_gc_barriers: bool,
+    /// Include all stored global GC barriers in the response.
+    ///
+    /// This uses an include flag, unlike exclude_gc_barriers, because proto3 bool
+    /// fields default to false. GetGCState historically omitted global GC
+    /// barriers, so false preserves both the existing response and the
+    /// no-extra-read path.
+    #[prost(bool, tag = "4")]
+    pub include_global_gc_barriers: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1483,6 +1580,37 @@ pub struct GcState {
     #[prost(message, repeated, tag = "5")]
     pub gc_barriers: ::prost::alloc::vec::Vec<GcBarrierInfo>,
 }
+/// GCStateChange describes a change to a keyspace's effective GC state.
+/// GCState values sent by WatchGCStates omit gc_barriers because barriers are
+/// internal inputs used by PD to calculate effective safe points; the stream
+/// reports only changes to the resulting effective state.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GcStateChange {
+    #[prost(oneof = "gc_state_change::Change", tags = "1, 2")]
+    pub change: ::core::option::Option<gc_state_change::Change>,
+}
+/// Nested message and enum types in `GCStateChange`.
+pub mod gc_state_change {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Change {
+        /// Insert or replace the complete GC state of this keyspace.
+        #[prost(message, tag = "1")]
+        Upsert(super::GcState),
+        /// Remove this keyspace from the client's materialized GC-state view.
+        /// This does not necessarily mean the keyspace metadata was physically deleted.
+        #[prost(message, tag = "2")]
+        Removed(super::KeyspaceScope),
+    }
+}
+/// GlobalGCBarriersInfo carries presence independently from the barrier list.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GlobalGcBarriersInfo {
+    #[prost(message, repeated, tag = "1")]
+    pub barriers: ::prost::alloc::vec::Vec<GlobalGcBarrierInfo>,
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetGcStateResponse {
@@ -1490,6 +1618,11 @@ pub struct GetGcStateResponse {
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(message, optional, tag = "2")]
     pub gc_state: ::core::option::Option<GcState>,
+    /// Absent when globals were not requested or the server does not support
+    /// this extension. Present-empty when the request was fulfilled but no
+    /// global GC barriers are stored.
+    #[prost(message, optional, tag = "3")]
+    pub global_gc_barriers: ::core::option::Option<GlobalGcBarriersInfo>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1510,6 +1643,30 @@ pub struct GetAllKeyspacesGcStatesResponse {
     pub gc_states: ::prost::alloc::vec::Vec<GcState>,
     #[prost(message, repeated, tag = "3")]
     pub global_gc_barriers: ::prost::alloc::vec::Vec<GlobalGcBarrierInfo>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WatchGcStatesRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<RequestHeader>,
+    /// If false, when the stream is established, the server first sends the current
+    /// GC states of all keyspaces.
+    #[prost(bool, tag = "2")]
+    pub skip_loading_initial: bool,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WatchGcStatesResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<ResponseHeader>,
+    /// Clients apply changes in order within this response and across successive
+    /// responses on the stream. A client must not observe an older state for a
+    /// keyspace after a newer update. After disconnection, the client reconnects
+    /// and reloads the initial state. The stream omits GC barrier details and does
+    /// not emit changes for barrier-only updates. If a barrier update changes an
+    /// effective GC state, the resulting state change is emitted.
+    #[prost(message, repeated, tag = "2")]
+    pub changes: ::prost::alloc::vec::Vec<GcStateChange>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1620,6 +1777,7 @@ pub struct SyncMaxTsResponse {
 pub struct SplitRegionsRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// Physical split key bytes.
     #[prost(bytes = "vec", repeated, tag = "2")]
     pub split_keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
     #[prost(uint64, tag = "3")]
@@ -1640,6 +1798,7 @@ pub struct SplitRegionsResponse {
 pub struct SplitAndScatterRegionsRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// Physical split key bytes.
     #[prost(bytes = "vec", repeated, tag = "2")]
     pub split_keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
     #[prost(string, tag = "3")]
@@ -3117,6 +3276,28 @@ pub mod pd_client {
             req.extensions_mut()
                 .insert(GrpcMethod::new("pdpb.PD", "GetAllKeyspacesGCStates"));
             self.inner.unary(req, path, codec).await
+        }
+        pub async fn watch_gc_states(
+            &mut self,
+            request: impl tonic::IntoRequest<super::WatchGcStatesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::WatchGcStatesResponse>>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/pdpb.PD/WatchGCStates");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("pdpb.PD", "WatchGCStates"));
+            self.inner.server_streaming(req, path, codec).await
         }
         pub async fn sync_regions(
             &mut self,
