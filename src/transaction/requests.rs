@@ -46,6 +46,7 @@ use crate::timestamp::TimestampExt;
 use crate::transaction::requests::kvrpcpb::prewrite_request::PessimisticAction;
 use crate::transaction::HasLocks;
 use crate::util::iter::FlatMapOkIterExt;
+use crate::Error;
 use crate::KvPair;
 use crate::Result;
 use crate::Value;
@@ -779,41 +780,77 @@ impl Merge<kvrpcpb::CheckSecondaryLocksResponse> for Collect {
     type Out = SecondaryLocksStatus;
 
     fn merge(&self, input: Vec<Result<kvrpcpb::CheckSecondaryLocksResponse>>) -> Result<Self::Out> {
-        let mut out = SecondaryLocksStatus {
-            commit_ts: None,
-            min_commit_ts: 0,
-            fallback_2pc: false,
-        };
+        let mut out = SecondaryLocksStatus::default();
+        // TiKV answers each request (one region) in one of three ways: every key is
+        // still locked (`locks` has one lock per key), a key is committed (`commit_ts`
+        // is set), or a key is rolled back or was never locked, in which case TiKV writes
+        // a rollback record for it and answers with no locks and no `commit_ts`.
         for resp in input {
             let resp = resp?;
+            if let Some(commit_ts) = Timestamp::try_from_version(resp.commit_ts) {
+                match &out.commit_ts {
+                    Some(seen) if *seen != commit_ts => {
+                        return Err(Error::StringError(format!(
+                            "async commit recovery found secondaries committed at {} and {}",
+                            seen.version(),
+                            commit_ts.version()
+                        )));
+                    }
+                    _ => out.commit_ts = Some(commit_ts),
+                }
+            } else if resp.locks.is_empty() {
+                out.rolled_back = true;
+            }
             for lock in resp.locks.into_iter() {
                 if !lock.use_async_commit {
                     out.fallback_2pc = true;
-                    return Ok(out);
                 }
                 out.min_commit_ts = cmp::max(out.min_commit_ts, lock.min_commit_ts);
             }
-            out.commit_ts = match (
-                out.commit_ts.take(),
-                Timestamp::try_from_version(resp.commit_ts),
-            ) {
-                (Some(a), Some(b)) => {
-                    assert_eq!(a, b);
-                    Some(a)
-                }
-                (Some(a), None) => Some(a),
-                (None, Some(b)) => Some(b),
-                (None, None) => None,
-            };
+        }
+        if let (true, Some(commit_ts)) = (out.rolled_back, &out.commit_ts) {
+            return Err(Error::StringError(format!(
+                "async commit recovery found secondaries both committed (at {}) and rolled back",
+                commit_ts.version()
+            )));
         }
         Ok(out)
     }
 }
 
+/// The merged answer of `CheckSecondaryLocks` for one transaction.
+#[derive(Debug, Clone, Default)]
 pub struct SecondaryLocksStatus {
+    /// Some secondary is committed, at this timestamp.
     pub commit_ts: Option<Timestamp>,
+    /// The largest `min_commit_ts` of the secondary locks still present.
     pub min_commit_ts: u64,
+    /// Some secondary lock is not an async-commit lock (the transaction fell back to
+    /// two-phase commit in its region), so the primary decides the outcome.
     pub fallback_2pc: bool,
+    /// Some secondary is rolled back, or was never locked and now never can be.
+    pub rolled_back: bool,
+}
+
+impl SecondaryLocksStatus {
+    /// The outcome of an async-commit transaction whose primary lock is still present
+    /// with `primary_min_commit_ts`, following the async commit protocol (client-go's
+    /// `checkAllSecondaries`): committed at the committed secondary's timestamp; rolled
+    /// back (`Some(0)`) if a secondary is rolled back; otherwise, when every secondary is
+    /// still locked, committed at the largest `min_commit_ts` of all its locks. `None`
+    /// means a lock is not an async-commit lock: resolve the primary with
+    /// `force_sync_commit` instead.
+    pub fn async_commit_version(&self, primary_min_commit_ts: u64) -> Option<u64> {
+        if let Some(commit_ts) = &self.commit_ts {
+            Some(commit_ts.version())
+        } else if self.rolled_back {
+            Some(0)
+        } else if self.fallback_2pc {
+            None
+        } else {
+            Some(cmp::max(self.min_commit_ts, primary_min_commit_ts))
+        }
+    }
 }
 
 pair_locks!(kvrpcpb::BatchGetResponse);
