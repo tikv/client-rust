@@ -3,8 +3,6 @@
 //! Low-level mechanisms for obtaining timestamps from PD or the TSO
 //! microservice.
 
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -37,20 +35,57 @@ const MAX_BATCH_SIZE: usize = 64;
 /// TODO: This value should be adjustable.
 const MAX_PENDING_COUNT: usize = 1 << 16;
 
+// Bound retained connections while allowing in-flight requests to finish after eviction.
+const MAX_CACHED_API_V3_ORACLES: usize = 64;
+
 struct TimestampRequest {
     sender: oneshot::Sender<Timestamp>,
 }
 
-#[derive(Clone)]
 struct ApiV3TimestampOracle {
     request_tx: mpsc::Sender<TimestampRequest>,
+    task: tokio::task::JoinHandle<Result<()>>,
+}
+
+impl Drop for ApiV3TimestampOracle {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+#[derive(Default)]
+struct ApiV3OracleCache {
+    entries: VecDeque<((u32, u32), Arc<ApiV3TimestampOracle>)>,
+}
+
+impl ApiV3OracleCache {
+    fn get(&mut self, key: (u32, u32)) -> Option<Arc<ApiV3TimestampOracle>> {
+        let index = self
+            .entries
+            .iter()
+            .position(|(identity, _)| *identity == key)?;
+        let entry = self.entries.remove(index).unwrap();
+        if entry.1.request_tx.is_closed() {
+            return None;
+        }
+        let oracle = entry.1.clone();
+        self.entries.push_back(entry);
+        Some(oracle)
+    }
+
+    fn insert(&mut self, key: (u32, u32), oracle: Arc<ApiV3TimestampOracle>) {
+        if self.entries.len() == MAX_CACHED_API_V3_ORACLES {
+            self.entries.pop_front();
+        }
+        self.entries.push_back((key, oracle));
+    }
 }
 
 struct ApiV3TimestampOracles {
     cluster_id: u64,
     pd_client: PdClient<Channel>,
     security_mgr: Arc<SecurityManager>,
-    oracles: Mutex<HashMap<(u32, u32), ApiV3TimestampOracle>>,
+    oracles: Mutex<ApiV3OracleCache>,
 }
 
 /// The timestamp oracle (TSO) which provides monotonically increasing timestamps.
@@ -80,7 +115,7 @@ impl TimestampOracle {
                 cluster_id,
                 pd_client: pd_client.clone(),
                 security_mgr,
-                oracles: Mutex::new(HashMap::new()),
+                oracles: Mutex::new(ApiV3OracleCache::default()),
             }),
         })
     }
@@ -94,21 +129,23 @@ impl TimestampOracle {
         identity: Option<apipb::KeyspaceIdentity>,
     ) -> Result<Timestamp> {
         debug!("getting current timestamp");
-        let request_tx = match identity {
-            Some(identity) => {
-                self.api_v3_oracles
-                    .get_or_create(identity)
-                    .await?
-                    .request_tx
-            }
-            None => self.legacy_request_tx,
+        let oracle = match identity {
+            Some(identity) => Some(self.api_v3_oracles.get_or_create(identity).await?),
+            None => None,
         };
+        let request_tx = oracle
+            .as_ref()
+            .map(|oracle| oracle.request_tx.clone())
+            .unwrap_or(self.legacy_request_tx);
         let (sender, response) = oneshot::channel();
         request_tx
             .send(TimestampRequest { sender })
             .await
             .map_err(|_| internal_err!("TimestampRequest channel is closed"))?;
-        Ok(response.await?)
+        let result = response.await;
+        // Keep the stream alive through the response even if its cache entry was evicted.
+        drop(oracle);
+        Ok(result?)
     }
 }
 
@@ -116,18 +153,19 @@ impl ApiV3TimestampOracles {
     async fn get_or_create(
         &self,
         identity: apipb::KeyspaceIdentity,
-    ) -> Result<ApiV3TimestampOracle> {
+    ) -> Result<Arc<ApiV3TimestampOracle>> {
         let key = (identity.namespace_id, identity.keyspace_id);
-        if let Some(oracle) = self.oracles.lock().await.get(&key).cloned() {
+        if let Some(oracle) = self.oracles.lock().await.get(key) {
             return Ok(oracle);
         }
 
-        let oracle = self.connect(identity).await?;
+        let oracle = Arc::new(self.connect(identity).await?);
         let mut oracles = self.oracles.lock().await;
-        Ok(match oracles.entry(key) {
-            Entry::Occupied(entry) => entry.get().clone(),
-            Entry::Vacant(entry) => entry.insert(oracle).clone(),
-        })
+        if let Some(existing) = oracles.get(key) {
+            return Ok(existing);
+        }
+        oracles.insert(key, oracle.clone());
+        Ok(oracle)
     }
 
     async fn connect(&self, identity: apipb::KeyspaceIdentity) -> Result<ApiV3TimestampOracle> {
@@ -167,7 +205,7 @@ impl ApiV3TimestampOracles {
                         .await?;
                     let callee_id = callee_id(&primary_url);
                     let (request_tx, request_rx) = mpsc::channel(MAX_BATCH_SIZE);
-                    tokio::spawn(run_api_v3_tso(
+                    let task = tokio::spawn(run_api_v3_tso(
                         self.cluster_id,
                         keyspace_group_id,
                         callee_id,
@@ -175,7 +213,7 @@ impl ApiV3TimestampOracles {
                         tso_client,
                         request_rx,
                     ));
-                    return Ok(ApiV3TimestampOracle { request_tx });
+                    return Ok(ApiV3TimestampOracle { request_tx, task });
                 }
                 Err(error) => last_error = Some(error),
             }
@@ -281,7 +319,7 @@ async fn run_api_v3_tso(
     mut tso_client: tsopb::tso_client::TsoClient<Channel>,
     request_rx: mpsc::Receiver<TimestampRequest>,
 ) -> Result<()> {
-    let pending_requests = Arc::new(Mutex::new(VecDeque::with_capacity(MAX_PENDING_COUNT)));
+    let pending_requests = Arc::new(Mutex::new(VecDeque::new()));
     let sending_future_waker = Arc::new(AtomicWaker::new());
     let request_stream = ApiV3TsoRequestStream {
         cluster_id,
@@ -465,6 +503,71 @@ fn allocate_timestamps(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn idle_oracle() -> Arc<ApiV3TimestampOracle> {
+        let (request_tx, mut request_rx) = mpsc::channel::<TimestampRequest>(1);
+        let task = tokio::spawn(async move {
+            while let Some(request) = request_rx.recv().await {
+                let _ = request.sender.send(Timestamp::default());
+            }
+            Ok(())
+        });
+        Arc::new(ApiV3TimestampOracle { request_tx, task })
+    }
+
+    #[tokio::test]
+    async fn api_v3_cache_evicts_least_recently_used_stream() {
+        let mut cache = ApiV3OracleCache::default();
+        let first = idle_oracle();
+        let second = idle_oracle();
+        let first_task = first.task.abort_handle();
+        let second_task = second.task.abort_handle();
+        cache.insert((7, 1), first);
+        cache.insert((19, 1), second);
+        for id in 2..MAX_CACHED_API_V3_ORACLES as u32 {
+            cache.insert((7, id), idle_oracle());
+        }
+        drop(cache.get((7, 1)).unwrap());
+        cache.insert((7, 100), idle_oracle());
+        tokio::task::yield_now().await;
+        assert_eq!(cache.entries.len(), MAX_CACHED_API_V3_ORACLES);
+        assert!(!first_task.is_finished());
+        assert!(second_task.is_finished());
+        assert!(cache.get((19, 1)).is_none());
+    }
+
+    #[tokio::test]
+    async fn api_v3_eviction_keeps_inflight_request_alive() {
+        let mut cache = ApiV3OracleCache::default();
+        let (request_tx, mut request_rx) = mpsc::channel::<TimestampRequest>(1);
+        let (release, ready) = oneshot::channel();
+        let task = tokio::spawn(async move {
+            let request = request_rx.recv().await.unwrap();
+            ready.await.unwrap();
+            let _ = request.sender.send(Timestamp::default());
+            futures::future::pending::<()>().await;
+            Ok(())
+        });
+        let task_handle = task.abort_handle();
+        let active = Arc::new(ApiV3TimestampOracle { request_tx, task });
+        cache.insert((7, 1), active.clone());
+        let (sender, response) = oneshot::channel();
+        active
+            .request_tx
+            .send(TimestampRequest { sender })
+            .await
+            .unwrap();
+        for id in 2..=MAX_CACHED_API_V3_ORACLES as u32 + 1 {
+            cache.insert((7, id), idle_oracle());
+        }
+        assert!(cache.get((7, 1)).is_none());
+        assert!(!task_handle.is_finished());
+        release.send(()).unwrap();
+        response.await.unwrap();
+        drop(active);
+        tokio::task::yield_now().await;
+        assert!(task_handle.is_finished());
+    }
 
     #[tokio::test]
     async fn api_v3_tso_request_stream_batches_and_includes_identity() {
