@@ -215,6 +215,14 @@ impl Client {
         Ok(Client { pd, keyspace })
     }
 
+    /// Returns a client for an exact API V3 identity, sharing the PD connection and region cache.
+    pub fn with_keyspace_identity(&self, namespace_id: u32, keyspace_id: u32) -> Result<Client> {
+        Ok(Client {
+            pd: self.pd.clone(),
+            keyspace: Keyspace::api_v3(namespace_id, keyspace_id)?,
+        })
+    }
+
     /// Create a transactional [`Client`] that uses API V2 without adding or removing any API V2
     /// keyspace/key-mode prefix, with a custom configuration.
     ///

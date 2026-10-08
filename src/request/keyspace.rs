@@ -11,7 +11,7 @@ use crate::{BoundRange, KvPair};
 pub const RAW_KEY_PREFIX: u8 = b'r';
 pub const TXN_KEY_PREFIX: u8 = b'x';
 pub const KEYSPACE_PREFIX_LEN: usize = 4;
-pub const API_V3_PREFIX_LEN: usize = KEYSPACE_PREFIX_LEN;
+pub const API_V3_PREFIX_LEN: usize = 8;
 pub const API_V3_MAX_KEYSPACE_ID: u32 = 0xFF_FFFF;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -104,13 +104,13 @@ impl Keyspace {
 
     pub fn v3_route_prefix(&self, key_mode: KeyMode) -> Option<[u8; API_V3_PREFIX_LEN]> {
         let Keyspace::ApiV3 {
-            namespace_id: _,
+            namespace_id,
             keyspace_id,
         } = *self
         else {
             return None;
         };
-        Some(api_v3_keyspace_prefix(keyspace_id, key_mode))
+        Some(api_v3_keyspace_prefix(namespace_id, keyspace_id, key_mode))
     }
 
     pub fn encode_route_key(&self, key: &Key, key_mode: KeyMode) -> Key {
@@ -184,13 +184,13 @@ impl Keyspace {
 
     fn v3_route_range_end(&self, key_mode: KeyMode) -> Option<Vec<u8>> {
         let Keyspace::ApiV3 {
-            namespace_id: _,
+            namespace_id,
             keyspace_id,
         } = *self
         else {
             return None;
         };
-        let start = u32::from_be_bytes(api_v3_keyspace_prefix(keyspace_id, key_mode));
+        let start = u64::from_be_bytes(api_v3_keyspace_prefix(namespace_id, keyspace_id, key_mode));
         Some(start.wrapping_add(1).to_be_bytes().to_vec())
     }
 }
@@ -441,18 +441,20 @@ fn keyspace_prefix(keyspace_id: u32, key_mode: KeyMode) -> [u8; KEYSPACE_PREFIX_
     prefix
 }
 
-fn api_v3_keyspace_prefix(keyspace_id: u32, key_mode: KeyMode) -> [u8; API_V3_PREFIX_LEN] {
+fn api_v3_keyspace_prefix(
+    namespace_id: u32,
+    keyspace_id: u32,
+    key_mode: KeyMode,
+) -> [u8; API_V3_PREFIX_LEN] {
     debug_assert!(keyspace_id <= API_V3_MAX_KEYSPACE_ID);
-    let keyspace_bytes = keyspace_id.to_be_bytes();
-    [
-        match key_mode {
-            KeyMode::Raw => RAW_KEY_PREFIX,
-            KeyMode::Txn => TXN_KEY_PREFIX,
-        },
-        keyspace_bytes[1],
-        keyspace_bytes[2],
-        keyspace_bytes[3],
-    ]
+    let mut prefix = [0; API_V3_PREFIX_LEN];
+    prefix[0] = match key_mode {
+        KeyMode::Raw => RAW_KEY_PREFIX,
+        KeyMode::Txn => TXN_KEY_PREFIX,
+    };
+    prefix[1..5].copy_from_slice(&namespace_id.to_be_bytes());
+    prefix[5..].copy_from_slice(&keyspace_id.to_be_bytes()[1..]);
+    prefix
 }
 
 fn prepend_bytes<const N: usize>(vec: &mut Vec<u8>, prefix: &[u8; N]) {
@@ -666,25 +668,31 @@ mod tests {
 
         assert_eq!(
             keyspace.encode_route_key(&Key::from(vec![b'k']), KeyMode::Raw),
-            Key::from(vec![b'r', 5, 6, 7, b'k'])
+            Key::from(vec![b'r', 1, 2, 3, 4, 5, 6, 7, b'k'])
         );
         assert_eq!(
             keyspace.encode_route_key(&Key::from(vec![b'k']), KeyMode::Txn),
-            Key::from(vec![b'x', 5, 6, 7, b'k'])
+            Key::from(vec![b'x', 1, 2, 3, 4, 5, 6, 7, b'k'])
         );
 
         let route_range =
             keyspace.encode_route_range(Key::from(vec![b'a']), Key::from(vec![b'z']), KeyMode::Txn);
-        assert_eq!(route_range.0, Key::from(vec![b'x', 5, 6, 7, b'a']));
-        assert_eq!(route_range.1, Key::from(vec![b'x', 5, 6, 7, b'z']));
+        assert_eq!(
+            route_range.0,
+            Key::from(vec![b'x', 1, 2, 3, 4, 5, 6, 7, b'a'])
+        );
+        assert_eq!(
+            route_range.1,
+            Key::from(vec![b'x', 1, 2, 3, 4, 5, 6, 7, b'z'])
+        );
         assert_eq!(
             keyspace.decode_route_range(route_range.0, route_range.1, KeyMode::Txn),
             (Key::from(vec![b'a']), Key::from(vec![b'z']))
         );
 
         let whole_range = keyspace.encode_route_range(Key::EMPTY, Key::EMPTY, KeyMode::Txn);
-        assert_eq!(whole_range.0, Key::from(vec![b'x', 5, 6, 7]));
-        assert_eq!(whole_range.1, Key::from(vec![b'x', 5, 6, 8]));
+        assert_eq!(whole_range.0, Key::from(vec![b'x', 1, 2, 3, 4, 5, 6, 7]));
+        assert_eq!(whole_range.1, Key::from(vec![b'x', 1, 2, 3, 4, 5, 6, 8]));
         assert_eq!(
             keyspace.decode_route_range(whole_range.0, whole_range.1, KeyMode::Txn),
             (Key::EMPTY, Key::EMPTY)
@@ -693,12 +701,36 @@ mod tests {
         let last_keyspace = Keyspace::api_v3(u32::MAX, API_V3_MAX_KEYSPACE_ID).unwrap();
         let last_whole_range =
             last_keyspace.encode_route_range(Key::EMPTY, Key::EMPTY, KeyMode::Txn);
-        assert_eq!(last_whole_range.0, Key::from(vec![b'x', 0xff, 0xff, 0xff]));
-        assert_eq!(last_whole_range.1, Key::from(vec![b'y', 0, 0, 0]));
+        assert_eq!(
+            last_whole_range.0,
+            Key::from(vec![b'x', 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff])
+        );
+        assert_eq!(
+            last_whole_range.1,
+            Key::from(vec![b'y', 0, 0, 0, 0, 0, 0, 0])
+        );
         assert_eq!(
             last_keyspace.decode_route_range(last_whole_range.0, last_whole_range.1, KeyMode::Txn),
             (Key::EMPTY, Key::EMPTY)
         );
+    }
+
+    #[test]
+    fn test_api_v3_namespace_isolation_and_range_carry() {
+        let first = Keyspace::api_v3(1, 7).unwrap();
+        let second = Keyspace::api_v3(2, 7).unwrap();
+        let logical = Key::from(vec![b'x', 0, 0, 0, 1, 0, 0, 7]);
+        let first_key = first.encode_route_key(&logical, KeyMode::Txn);
+        let second_key = second.encode_route_key(&logical, KeyMode::Txn);
+        assert_ne!(first_key, second_key);
+        assert_eq!(first_key.0.len(), 16);
+        assert_eq!(
+            first.decode_route_range(first_key.clone(), first_key, KeyMode::Txn),
+            (logical.clone(), logical)
+        );
+        let last = Keyspace::api_v3(1, API_V3_MAX_KEYSPACE_ID).unwrap();
+        let range = last.encode_route_range(Key::EMPTY, Key::EMPTY, KeyMode::Txn);
+        assert_eq!(range.1, Key::from(vec![b'x', 0, 0, 0, 2, 0, 0, 0]));
     }
 
     #[test]
