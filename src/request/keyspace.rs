@@ -209,6 +209,8 @@ pub(crate) fn keyspace_meta_identity(
 pub(crate) fn keyspace_meta_legacy_id(keyspace: &keyspacepb::KeyspaceMeta) -> Option<u32> {
     match keyspace.keyspace {
         Some(keyspacepb::keyspace_meta::Keyspace::Id(id)) => Some(id),
+        // Legacy PD uses a proto3 scalar, so keyspace ID zero is omitted on the wire.
+        None => Some(0),
         _ => None,
     }
 }
@@ -477,6 +479,35 @@ fn pretruncate_bytes<const N: usize>(vec: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_legacy_keyspace_metadata_wire_compatibility() {
+        use prost::Message;
+
+        // Legacy proto3 metadata for DEFAULT omits the scalar ID zero.
+        let default = keyspacepb::KeyspaceMeta::decode(&b"\x12\x07DEFAULT"[..]).unwrap();
+        assert_eq!(keyspace_meta_legacy_id(&default), Some(0));
+        assert_eq!(keyspace_meta_identity(&default), None);
+
+        let nonzero = keyspacepb::KeyspaceMeta::decode(&b"\x08\x2a\x12\x04test"[..]).unwrap();
+        assert_eq!(keyspace_meta_legacy_id(&nonzero), Some(42));
+
+        let scoped = keyspacepb::KeyspaceMeta {
+            keyspace: Some(keyspacepb::keyspace_meta::Keyspace::KeyspaceIdentity(
+                apipb::KeyspaceIdentity {
+                    namespace_id: 7,
+                    keyspace_id: 0,
+                },
+            )),
+            ..Default::default()
+        };
+        let decoded = keyspacepb::KeyspaceMeta::decode(scoped.encode_to_vec().as_slice()).unwrap();
+        assert_eq!(keyspace_meta_legacy_id(&decoded), None);
+        assert_eq!(
+            keyspace_meta_identity(&decoded),
+            keyspace_meta_identity(&scoped)
+        );
+    }
 
     #[test]
     fn test_keyspace_prefix() {
