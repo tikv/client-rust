@@ -365,6 +365,9 @@ impl Client {
     /// 1. resolving all locks with timestamp <= `safepoint`
     /// 2. updating PD's known safepoint
     ///
+    /// API V3 clients update only their namespace/keyspace safe point. Other
+    /// client modes retain the legacy global safe point behavior.
+    ///
     /// This is a simplified version of [GC in TiDB](https://docs.pingcap.com/tidb/stable/garbage-collection-overview).
     /// We skip the second step "delete ranges" which is an optimization for TiDB.
     pub async fn gc(&self, safepoint: Timestamp) -> Result<bool> {
@@ -380,7 +383,7 @@ impl Client {
         let res: bool = self
             .pd
             .clone()
-            .update_safepoint(safepoint.version())
+            .update_safepoint_with_identity(safepoint.version(), self.keyspace.v3_identity())
             .await?;
         if !res {
             info!(

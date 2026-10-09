@@ -103,6 +103,26 @@ impl Cluster {
         req.send(&mut self.client, timeout).await
     }
 
+    pub async fn update_safepoint_with_identity(
+        &mut self,
+        safepoint: u64,
+        identity: Option<apipb::KeyspaceIdentity>,
+        timeout: Duration,
+    ) -> Result<bool> {
+        let Some(identity) = identity else {
+            return self
+                .update_safepoint(safepoint, timeout)
+                .await
+                .map(|resp| resp.new_safe_point == safepoint);
+        };
+        let mut req = pd_request!(self.id, pdpb::UpdateGcSafePointV2Request);
+        req.safe_point = safepoint;
+        req.keyspace =
+            Some(pdpb::update_gc_safe_point_v2_request::Keyspace::KeyspaceIdentity(identity));
+        let resp = req.send(&mut self.client, timeout).await?;
+        Ok(resp.new_safe_point == safepoint)
+    }
+
     pub async fn load_keyspace(
         &mut self,
         keyspace: &str,
@@ -464,6 +484,16 @@ impl PdMessage for pdpb::UpdateGcSafePointRequest {
 }
 
 #[async_trait]
+impl PdMessage for pdpb::UpdateGcSafePointV2Request {
+    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Response = pdpb::UpdateGcSafePointV2Response;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.update_gc_safe_point_v2(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
 impl PdMessage for keyspacepb::LoadKeyspaceRequest {
     type Client = keyspacepb::keyspace_client::KeyspaceClient<Channel>;
     type Response = keyspacepb::LoadKeyspaceResponse;
@@ -511,6 +541,12 @@ impl PdResponse for pdpb::UpdateGcSafePointResponse {
     }
 }
 
+impl PdResponse for pdpb::UpdateGcSafePointV2Response {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.header.as_ref().unwrap()
+    }
+}
+
 impl PdResponse for keyspacepb::LoadKeyspaceResponse {
     fn header(&self) -> &pdpb::ResponseHeader {
         self.header.as_ref().unwrap()
@@ -522,3 +558,6 @@ impl PdResponse for keyspacepb::LookupKeyspaceResponse {
         self.header.as_ref().unwrap()
     }
 }
+
+#[cfg(test)]
+mod gc_tests;

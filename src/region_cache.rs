@@ -367,6 +367,14 @@ mod test {
             todo!()
         }
 
+        async fn update_safepoint_with_identity(
+            self: Arc<Self>,
+            _safepoint: u64,
+            _identity: Option<crate::proto::apipb::KeyspaceIdentity>,
+        ) -> Result<bool> {
+            unimplemented!()
+        }
+
         async fn load_keyspace(&self, _keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
             unimplemented!()
         }
