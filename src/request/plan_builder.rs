@@ -49,7 +49,7 @@ impl PlanBuilderPhase for Targetted {}
 
 impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
     pub fn new(pd_client: Arc<PdC>, keyspace: Keyspace, mut request: Req) -> Self {
-        request.set_api_version(keyspace.api_version());
+        request.set_keyspace(keyspace);
         PlanBuilder {
             pd_client,
             plan: Dispatch {

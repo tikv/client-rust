@@ -645,6 +645,21 @@ mod tests {
             unreachable!("scanner tests do not load keyspaces")
         }
 
+        async fn lookup_keyspaces(
+            &self,
+            _keyspace: &str,
+        ) -> crate::Result<Vec<keyspacepb::KeyspaceMeta>> {
+            unreachable!("scanner tests do not look up keyspaces")
+        }
+
+        async fn lookup_keyspace(
+            &self,
+            _keyspace: &str,
+            _namespace_id: u32,
+        ) -> crate::Result<keyspacepb::KeyspaceMeta> {
+            unreachable!("scanner tests do not look up keyspaces")
+        }
+
         async fn update_leader(
             &self,
             _ver_id: RegionVerId,

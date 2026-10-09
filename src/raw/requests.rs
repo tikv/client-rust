@@ -18,12 +18,12 @@ use crate::request::Process;
 use crate::request::RangeRequest;
 use crate::request::Shardable;
 use crate::request::SingleKey;
-use crate::request::{Batchable, Collect};
+use crate::request::{Batchable, Collect, KeyMode, Keyspace};
 use crate::shardable_key;
 use crate::shardable_keys;
 use crate::shardable_range;
-use crate::store::region_stream_for_keys;
-use crate::store::region_stream_for_ranges;
+use crate::store::region_stream_for_keys_with_keyspace;
+use crate::store::region_stream_for_ranges_with_keyspace;
 use crate::store::RegionStore;
 use crate::store::Request;
 use crate::transaction::HasLocks;
@@ -56,7 +56,7 @@ impl KvRequest for kvrpcpb::RawGetRequest {
     type Response = kvrpcpb::RawGetResponse;
 }
 
-shardable_key!(kvrpcpb::RawGetRequest);
+shardable_key!(kvrpcpb::RawGetRequest, KeyMode::Raw);
 collect_single!(kvrpcpb::RawGetResponse);
 
 impl SingleKey for kvrpcpb::RawGetRequest {
@@ -93,7 +93,7 @@ impl KvRequest for kvrpcpb::RawBatchGetRequest {
     type Response = kvrpcpb::RawBatchGetResponse;
 }
 
-shardable_keys!(kvrpcpb::RawBatchGetRequest);
+shardable_keys!(kvrpcpb::RawBatchGetRequest, KeyMode::Raw);
 
 impl Merge<kvrpcpb::RawBatchGetResponse> for Collect {
     type Out = Vec<KvPair>;
@@ -121,7 +121,7 @@ impl KvRequest for kvrpcpb::RawGetKeyTtlRequest {
     type Response = kvrpcpb::RawGetKeyTtlResponse;
 }
 
-shardable_key!(kvrpcpb::RawGetKeyTtlRequest);
+shardable_key!(kvrpcpb::RawGetKeyTtlRequest, KeyMode::Raw);
 collect_single!(kvrpcpb::RawGetKeyTtlResponse);
 
 impl SingleKey for kvrpcpb::RawGetKeyTtlRequest {
@@ -164,7 +164,7 @@ impl KvRequest for kvrpcpb::RawPutRequest {
     type Response = kvrpcpb::RawPutResponse;
 }
 
-shardable_key!(kvrpcpb::RawPutRequest);
+shardable_key!(kvrpcpb::RawPutRequest, KeyMode::Raw);
 collect_single!(kvrpcpb::RawPutResponse);
 impl SingleKey for kvrpcpb::RawPutRequest {
     fn key(&self) -> &Vec<u8> {
@@ -214,17 +214,22 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
             .map(|(kv, ttl)| KvPairTTL(kv, ttl))
             .collect();
         kv_ttl.sort_by(|a, b| a.0.key.cmp(&b.0.key));
-        region_stream_for_keys(kv_ttl.into_iter(), pd_client.clone())
-            .flat_map(|result| match result {
-                Ok((keys, region)) => stream::iter(kvrpcpb::RawBatchPutRequest::batches(
-                    keys,
-                    RAW_KV_REQUEST_BATCH_SIZE,
-                ))
-                .map(move |batch| Ok((batch, region.clone())))
-                .boxed(),
-                Err(e) => stream::iter(Err(e)).boxed(),
-            })
-            .boxed()
+        region_stream_for_keys_with_keyspace(
+            kv_ttl.into_iter(),
+            pd_client.clone(),
+            Keyspace::from_context(&self.context),
+            KeyMode::Raw,
+        )
+        .flat_map(|result| match result {
+            Ok((keys, region)) => stream::iter(kvrpcpb::RawBatchPutRequest::batches(
+                keys,
+                RAW_KV_REQUEST_BATCH_SIZE,
+            ))
+            .map(move |batch| Ok((batch, region.clone())))
+            .boxed(),
+            Err(e) => stream::iter(Err(e)).boxed(),
+        })
+        .boxed()
     }
 
     fn apply_shard(&mut self, shard: Self::Shard) {
@@ -267,7 +272,7 @@ impl KvRequest for kvrpcpb::RawDeleteRequest {
     type Response = kvrpcpb::RawDeleteResponse;
 }
 
-shardable_key!(kvrpcpb::RawDeleteRequest);
+shardable_key!(kvrpcpb::RawDeleteRequest, KeyMode::Raw);
 collect_single!(kvrpcpb::RawDeleteResponse);
 impl SingleKey for kvrpcpb::RawDeleteRequest {
     fn key(&self) -> &Vec<u8> {
@@ -307,17 +312,22 @@ impl Shardable for kvrpcpb::RawBatchDeleteRequest {
     ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
         let mut keys = self.keys.clone();
         keys.sort();
-        region_stream_for_keys(keys.into_iter(), pd_client.clone())
-            .flat_map(|result| match result {
-                Ok((keys, region)) => stream::iter(kvrpcpb::RawBatchDeleteRequest::batches(
-                    keys,
-                    RAW_KV_REQUEST_BATCH_SIZE,
-                ))
-                .map(move |batch| Ok((batch, region.clone())))
-                .boxed(),
-                Err(e) => stream::iter(Err(e)).boxed(),
-            })
-            .boxed()
+        region_stream_for_keys_with_keyspace(
+            keys.into_iter(),
+            pd_client.clone(),
+            Keyspace::from_context(&self.context),
+            KeyMode::Raw,
+        )
+        .flat_map(|result| match result {
+            Ok((keys, region)) => stream::iter(kvrpcpb::RawBatchDeleteRequest::batches(
+                keys,
+                RAW_KV_REQUEST_BATCH_SIZE,
+            ))
+            .map(move |batch| Ok((batch, region.clone())))
+            .boxed(),
+            Err(e) => stream::iter(Err(e)).boxed(),
+        })
+        .boxed()
     }
 
     fn apply_shard(&mut self, shard: Self::Shard) {
@@ -359,7 +369,7 @@ impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
 }
 
 range_request!(kvrpcpb::RawDeleteRangeRequest);
-shardable_range!(kvrpcpb::RawDeleteRangeRequest);
+shardable_range!(kvrpcpb::RawDeleteRangeRequest, KeyMode::Raw);
 
 pub fn new_raw_scan_request(
     start_key: Vec<u8>,
@@ -390,7 +400,7 @@ impl KvRequest for kvrpcpb::RawScanRequest {
 }
 
 range_request!(kvrpcpb::RawScanRequest);
-shardable_range!(kvrpcpb::RawScanRequest);
+shardable_range!(kvrpcpb::RawScanRequest, KeyMode::Raw);
 
 impl Merge<kvrpcpb::RawScanResponse> for Collect {
     type Out = Vec<KvPair>;
@@ -429,7 +439,12 @@ impl Shardable for kvrpcpb::RawBatchScanRequest {
         &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
-        region_stream_for_ranges(self.ranges.clone(), pd_client.clone())
+        region_stream_for_ranges_with_keyspace(
+            self.ranges.clone(),
+            pd_client.clone(),
+            Keyspace::from_context(&self.context),
+            KeyMode::Raw,
+        )
     }
 
     fn apply_shard(&mut self, shard: Self::Shard) {
@@ -473,7 +488,7 @@ impl KvRequest for kvrpcpb::RawCasRequest {
     type Response = kvrpcpb::RawCasResponse;
 }
 
-shardable_key!(kvrpcpb::RawCasRequest);
+shardable_key!(kvrpcpb::RawCasRequest, KeyMode::Raw);
 collect_single!(kvrpcpb::RawCasResponse);
 impl SingleKey for kvrpcpb::RawCasRequest {
     fn key(&self) -> &Vec<u8> {
@@ -544,6 +559,10 @@ impl Request for RawCoprocessorRequest {
     fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {
         self.inner.set_api_version(api_version);
     }
+
+    fn set_keyspace(&mut self, keyspace: Keyspace) {
+        self.inner.set_keyspace(keyspace);
+    }
 }
 
 impl KvRequest for RawCoprocessorRequest {
@@ -557,7 +576,12 @@ impl Shardable for RawCoprocessorRequest {
         &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
-        region_stream_for_ranges(self.inner.ranges.clone(), pd_client.clone())
+        region_stream_for_ranges_with_keyspace(
+            self.inner.ranges.clone(),
+            pd_client.clone(),
+            Keyspace::from_context(&self.inner.context),
+            KeyMode::Raw,
+        )
     }
 
     fn apply_shard(&mut self, shard: Self::Shard) {
@@ -662,8 +686,335 @@ mod test {
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb;
-    use crate::request::Keyspace;
     use crate::request::Plan;
+    use crate::request::{CollectError, CollectSingle, Keyspace};
+
+    fn assert_api_v3_test_context(ctx: &kvrpcpb::Context) {
+        assert_eq!(ctx.api_version, kvrpcpb::ApiVersion::V3 as i32);
+        let Some(kvrpcpb::context::Keyspace::KeyspaceIdentity(identity)) = ctx.keyspace.as_ref()
+        else {
+            panic!("expected V3 keyspace identity");
+        };
+        assert_eq!(identity.namespace_id, 1);
+        assert_eq!(identity.keyspace_id, 7);
+        assert_eq!(ctx.region_id, 2);
+        assert_eq!(ctx.peer.as_ref().unwrap().store_id, 42);
+    }
+
+    #[tokio::test]
+    async fn test_api_v3_raw_get_routes_with_physical_key_but_sends_user_key() -> Result<()> {
+        let seen = Arc::new(Mutex::new(false));
+        let seen_in_hook = seen.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let req: &kvrpcpb::RawGetRequest = req.downcast_ref().unwrap();
+                assert_eq!(req.key, vec![1]);
+                let ctx = req.context.as_ref().unwrap();
+                assert_api_v3_test_context(ctx);
+                *seen_in_hook.lock().unwrap() = true;
+                Ok(Box::new(kvrpcpb::RawGetResponse {
+                    value: vec![9],
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+
+        let req = new_raw_get_request(vec![1], None);
+        let plan = crate::request::PlanBuilder::new(client, Keyspace::api_v3(1, 7).unwrap(), req)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectSingle)
+            .plan();
+        let resp = plan.execute().await?;
+
+        assert_eq!(resp.value, vec![9]);
+        assert!(*seen.lock().unwrap());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_api_v3_raw_get_key_ttl_routes_with_physical_key_but_sends_user_key() -> Result<()>
+    {
+        let seen = Arc::new(Mutex::new(false));
+        let seen_in_hook = seen.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let req: &kvrpcpb::RawGetKeyTtlRequest = req.downcast_ref().unwrap();
+                assert_eq!(req.key, vec![1]);
+                assert_api_v3_test_context(req.context.as_ref().unwrap());
+                *seen_in_hook.lock().unwrap() = true;
+                Ok(Box::new(kvrpcpb::RawGetKeyTtlResponse {
+                    ttl: 3000,
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+
+        let req = new_raw_get_key_ttl_request(vec![1], None);
+        let plan = crate::request::PlanBuilder::new(client, Keyspace::api_v3(1, 7).unwrap(), req)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectSingle)
+            .plan();
+        let resp = plan.execute().await?;
+
+        assert_eq!(resp.ttl, 3000);
+        assert!(*seen.lock().unwrap());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_api_v3_raw_put_routes_with_physical_key_but_sends_user_key() -> Result<()> {
+        let seen = Arc::new(Mutex::new(false));
+        let seen_in_hook = seen.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let req: &kvrpcpb::RawPutRequest = req.downcast_ref().unwrap();
+                assert_eq!(req.key, vec![1]);
+                assert_eq!(req.value, vec![9]);
+                assert_api_v3_test_context(req.context.as_ref().unwrap());
+                *seen_in_hook.lock().unwrap() = true;
+                Ok(Box::new(kvrpcpb::RawPutResponse::default()) as Box<dyn Any>)
+            },
+        )));
+
+        let req = new_raw_put_request(vec![1], vec![9], 3000, None, false);
+        let plan = crate::request::PlanBuilder::new(client, Keyspace::api_v3(1, 7).unwrap(), req)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectSingle)
+            .plan();
+        let _ = plan.execute().await?;
+
+        assert!(*seen.lock().unwrap());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_api_v3_raw_batch_put_routes_with_physical_key_but_sends_user_keys() -> Result<()>
+    {
+        let seen = Arc::new(Mutex::new(false));
+        let seen_in_hook = seen.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let req: &kvrpcpb::RawBatchPutRequest = req.downcast_ref().unwrap();
+                assert_eq!(req.pairs.len(), 1);
+                assert_eq!(req.pairs[0].key, vec![1]);
+                assert_eq!(req.pairs[0].value, vec![9]);
+                assert_eq!(req.ttls, vec![3000]);
+                assert_api_v3_test_context(req.context.as_ref().unwrap());
+                *seen_in_hook.lock().unwrap() = true;
+                Ok(Box::new(kvrpcpb::RawBatchPutResponse::default()) as Box<dyn Any>)
+            },
+        )));
+
+        let req = new_raw_batch_put_request(
+            vec![kvrpcpb::KvPair {
+                key: vec![1],
+                value: vec![9],
+                ..Default::default()
+            }],
+            vec![3000],
+            None,
+            false,
+        );
+        let plan = crate::request::PlanBuilder::new(client, Keyspace::api_v3(1, 7).unwrap(), req)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectError)
+            .plan();
+        let resp = plan.execute().await?;
+
+        assert_eq!(resp.len(), 1);
+        assert!(*seen.lock().unwrap());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_api_v3_raw_delete_routes_with_physical_key_but_sends_user_key() -> Result<()> {
+        let seen = Arc::new(Mutex::new(false));
+        let seen_in_hook = seen.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let req: &kvrpcpb::RawDeleteRequest = req.downcast_ref().unwrap();
+                assert_eq!(req.key, vec![1]);
+                assert_api_v3_test_context(req.context.as_ref().unwrap());
+                *seen_in_hook.lock().unwrap() = true;
+                Ok(Box::new(kvrpcpb::RawDeleteResponse::default()) as Box<dyn Any>)
+            },
+        )));
+
+        let req = new_raw_delete_request(vec![1], None, false);
+        let plan = crate::request::PlanBuilder::new(client, Keyspace::api_v3(1, 7).unwrap(), req)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectSingle)
+            .plan();
+        let _ = plan.execute().await?;
+
+        assert!(*seen.lock().unwrap());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_api_v3_raw_batch_delete_routes_with_physical_key_but_sends_user_keys(
+    ) -> Result<()> {
+        let seen = Arc::new(Mutex::new(false));
+        let seen_in_hook = seen.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let req: &kvrpcpb::RawBatchDeleteRequest = req.downcast_ref().unwrap();
+                assert_eq!(req.keys, vec![vec![1]]);
+                assert_api_v3_test_context(req.context.as_ref().unwrap());
+                *seen_in_hook.lock().unwrap() = true;
+                Ok(Box::new(kvrpcpb::RawBatchDeleteResponse::default()) as Box<dyn Any>)
+            },
+        )));
+
+        let req = new_raw_batch_delete_request(vec![vec![1]], None);
+        let plan = crate::request::PlanBuilder::new(client, Keyspace::api_v3(1, 7).unwrap(), req)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectError)
+            .plan();
+        let resp = plan.execute().await?;
+
+        assert_eq!(resp.len(), 1);
+        assert!(*seen.lock().unwrap());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_api_v3_raw_delete_range_routes_with_physical_key_but_sends_user_range(
+    ) -> Result<()> {
+        let seen = Arc::new(Mutex::new(false));
+        let seen_in_hook = seen.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let req: &kvrpcpb::RawDeleteRangeRequest = req.downcast_ref().unwrap();
+                assert_eq!(req.start_key, vec![1]);
+                assert_eq!(req.end_key, vec![2]);
+                assert_api_v3_test_context(req.context.as_ref().unwrap());
+                *seen_in_hook.lock().unwrap() = true;
+                Ok(Box::new(kvrpcpb::RawDeleteRangeResponse::default()) as Box<dyn Any>)
+            },
+        )));
+
+        let req = new_raw_delete_range_request(vec![1], vec![2], None);
+        let plan = crate::request::PlanBuilder::new(client, Keyspace::api_v3(1, 7).unwrap(), req)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectError)
+            .plan();
+        let resp = plan.execute().await?;
+
+        assert_eq!(resp.len(), 1);
+        assert!(*seen.lock().unwrap());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_api_v3_raw_scan_routes_with_physical_key_but_sends_user_range() -> Result<()> {
+        let seen = Arc::new(Mutex::new(false));
+        let seen_in_hook = seen.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let req: &kvrpcpb::RawScanRequest = req.downcast_ref().unwrap();
+                assert_eq!(req.start_key, vec![1]);
+                assert_eq!(req.end_key, vec![2]);
+                assert_api_v3_test_context(req.context.as_ref().unwrap());
+                *seen_in_hook.lock().unwrap() = true;
+                Ok(Box::new(kvrpcpb::RawScanResponse {
+                    kvs: vec![kvrpcpb::KvPair {
+                        key: vec![1],
+                        value: vec![9],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+
+        let req = new_raw_scan_request(vec![1], vec![2], 10, false, false, None);
+        let plan = crate::request::PlanBuilder::new(client, Keyspace::api_v3(1, 7).unwrap(), req)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(Collect)
+            .plan();
+        let resp = plan.execute().await?;
+
+        assert_eq!(resp, vec![KvPair::new(vec![1], vec![9])]);
+        assert!(*seen.lock().unwrap());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_api_v3_raw_batch_scan_routes_with_physical_key_but_sends_user_ranges(
+    ) -> Result<()> {
+        let seen = Arc::new(Mutex::new(false));
+        let seen_in_hook = seen.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let req: &kvrpcpb::RawBatchScanRequest = req.downcast_ref().unwrap();
+                assert_eq!(req.ranges.len(), 1);
+                assert_eq!(req.ranges[0].start_key, vec![1]);
+                assert_eq!(req.ranges[0].end_key, vec![2]);
+                assert_api_v3_test_context(req.context.as_ref().unwrap());
+                *seen_in_hook.lock().unwrap() = true;
+                Ok(Box::new(kvrpcpb::RawBatchScanResponse {
+                    kvs: vec![kvrpcpb::KvPair {
+                        key: vec![1],
+                        value: vec![9],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+
+        let req = new_raw_batch_scan_request(
+            vec![kvrpcpb::KeyRange {
+                start_key: vec![1],
+                end_key: vec![2],
+            }],
+            10,
+            false,
+            None,
+        );
+        let plan = crate::request::PlanBuilder::new(client, Keyspace::api_v3(1, 7).unwrap(), req)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(Collect)
+            .plan();
+        let resp = plan.execute().await?;
+
+        assert_eq!(resp, vec![KvPair::new(vec![1], vec![9])]);
+        assert!(*seen.lock().unwrap());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_api_v3_raw_cas_routes_with_physical_key_but_sends_user_key() -> Result<()> {
+        let seen = Arc::new(Mutex::new(false));
+        let seen_in_hook = seen.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let req: &kvrpcpb::RawCasRequest = req.downcast_ref().unwrap();
+                assert_eq!(req.key, vec![1]);
+                assert_eq!(req.value, vec![9]);
+                assert_eq!(req.previous_value, vec![8]);
+                assert_api_v3_test_context(req.context.as_ref().unwrap());
+                *seen_in_hook.lock().unwrap() = true;
+                Ok(Box::new(kvrpcpb::RawCasResponse {
+                    succeed: true,
+                    previous_value: vec![8],
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+
+        let req = new_cas_request(vec![1], vec![9], Some(vec![8]), None);
+        let plan = crate::request::PlanBuilder::new(client, Keyspace::api_v3(1, 7).unwrap(), req)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(CollectSingle)
+            .plan();
+        let resp = plan.execute().await?;
+
+        assert!(resp.succeed);
+        assert!(*seen.lock().unwrap());
+        Ok(())
+    }
 
     #[rstest::rstest]
     #[case(Keyspace::Disable)]

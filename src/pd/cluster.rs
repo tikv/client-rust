@@ -15,6 +15,7 @@ use tonic::Request;
 
 use super::timestamp::TimestampOracle;
 use crate::internal_err;
+use crate::proto::apipb;
 use crate::proto::keyspacepb;
 use crate::proto::pdpb;
 use crate::Error;
@@ -85,6 +86,13 @@ impl Cluster {
         self.tso.clone().get_timestamp().await
     }
 
+    pub async fn get_timestamp_with_identity(
+        &self,
+        identity: Option<apipb::KeyspaceIdentity>,
+    ) -> Result<Timestamp> {
+        self.tso.clone().get_timestamp_with_identity(identity).await
+    }
+
     pub async fn update_safepoint(
         &mut self,
         safepoint: u64,
@@ -93,6 +101,26 @@ impl Cluster {
         let mut req = pd_request!(self.id, pdpb::UpdateGcSafePointRequest);
         req.safe_point = safepoint;
         req.send(&mut self.client, timeout).await
+    }
+
+    pub async fn update_safepoint_with_identity(
+        &mut self,
+        safepoint: u64,
+        identity: Option<apipb::KeyspaceIdentity>,
+        timeout: Duration,
+    ) -> Result<bool> {
+        let Some(identity) = identity else {
+            return self
+                .update_safepoint(safepoint, timeout)
+                .await
+                .map(|resp| resp.new_safe_point == safepoint);
+        };
+        let mut req = pd_request!(self.id, pdpb::UpdateGcSafePointV2Request);
+        req.safe_point = safepoint;
+        req.keyspace =
+            Some(pdpb::update_gc_safe_point_v2_request::Keyspace::KeyspaceIdentity(identity));
+        let resp = req.send(&mut self.client, timeout).await?;
+        Ok(resp.new_safe_point == safepoint)
     }
 
     pub async fn load_keyspace(
@@ -107,6 +135,43 @@ impl Cluster {
             .keyspace
             .ok_or_else(|| Error::KeyspaceNotFound(keyspace.to_owned()))?;
         Ok(keyspace)
+    }
+
+    pub async fn lookup_keyspace(
+        &mut self,
+        keyspace: &str,
+        namespace_id: u32,
+        timeout: Duration,
+    ) -> Result<keyspacepb::KeyspaceMeta> {
+        let mut req = pd_request!(self.id, keyspacepb::LoadKeyspaceRequest);
+        req.name = keyspace.to_string();
+        req.namespace = Some(keyspacepb::NamespaceRef {
+            namespace: Some(keyspacepb::namespace_ref::Namespace::NamespaceId(
+                namespace_id,
+            )),
+        });
+        let resp = req.send(&mut self.keyspace_client, timeout).await?;
+        resp.keyspace
+            .ok_or_else(|| Error::KeyspaceNotFound(keyspace.to_owned()))
+    }
+
+    pub async fn lookup_keyspaces(
+        &mut self,
+        keyspace: &str,
+        timeout: Duration,
+    ) -> Result<Vec<keyspacepb::KeyspaceMeta>> {
+        let mut req = pd_request!(self.id, keyspacepb::LookupKeyspaceRequest);
+        req.name = keyspace.to_string();
+        let resp = req.send(&mut self.keyspace_client, timeout).await?;
+        if resp
+            .header
+            .as_ref()
+            .and_then(|h| h.error.as_ref())
+            .is_some()
+        {
+            return Err(Error::KeyspaceNotFound(keyspace.to_owned()));
+        }
+        Ok(resp.keyspaces)
     }
 }
 
@@ -128,7 +193,7 @@ impl Connection {
         let members = self.validate_endpoints(endpoints, timeout).await?;
         let (client, keyspace_client, members) = self.try_connect_leader(&members, timeout).await?;
         let id = members.header.as_ref().unwrap().cluster_id;
-        let tso = TimestampOracle::new(id, &client)?;
+        let tso = TimestampOracle::new(id, &client, self.security_mgr.clone())?;
         let cluster = Cluster {
             id,
             client,
@@ -145,7 +210,7 @@ impl Connection {
         let start = Instant::now();
         let (client, keyspace_client, members) =
             self.try_connect_leader(&cluster.members, timeout).await?;
-        let tso = TimestampOracle::new(cluster.id, &client)?;
+        let tso = TimestampOracle::new(cluster.id, &client, self.security_mgr.clone())?;
         *cluster = Cluster {
             id: cluster.id,
             client,
@@ -419,12 +484,32 @@ impl PdMessage for pdpb::UpdateGcSafePointRequest {
 }
 
 #[async_trait]
+impl PdMessage for pdpb::UpdateGcSafePointV2Request {
+    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Response = pdpb::UpdateGcSafePointV2Response;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.update_gc_safe_point_v2(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
 impl PdMessage for keyspacepb::LoadKeyspaceRequest {
     type Client = keyspacepb::keyspace_client::KeyspaceClient<Channel>;
     type Response = keyspacepb::LoadKeyspaceResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
         Ok(client.load_keyspace(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
+impl PdMessage for keyspacepb::LookupKeyspaceRequest {
+    type Client = keyspacepb::keyspace_client::KeyspaceClient<Channel>;
+    type Response = keyspacepb::LookupKeyspaceResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.lookup_keyspace(req).await?.into_inner())
     }
 }
 
@@ -456,8 +541,23 @@ impl PdResponse for pdpb::UpdateGcSafePointResponse {
     }
 }
 
+impl PdResponse for pdpb::UpdateGcSafePointV2Response {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.header.as_ref().unwrap()
+    }
+}
+
 impl PdResponse for keyspacepb::LoadKeyspaceResponse {
     fn header(&self) -> &pdpb::ResponseHeader {
         self.header.as_ref().unwrap()
     }
 }
+
+impl PdResponse for keyspacepb::LookupKeyspaceResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.header.as_ref().unwrap()
+    }
+}
+
+#[cfg(test)]
+mod gc_tests;

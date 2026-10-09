@@ -14,6 +14,7 @@ use crate::kv::codec;
 use crate::pd::retry::RetryClientTrait;
 use crate::pd::Cluster;
 use crate::pd::RetryClient;
+use crate::proto::apipb;
 use crate::proto::keyspacepb;
 use crate::proto::kvrpcpb;
 use crate::proto::metapb;
@@ -65,9 +66,39 @@ pub trait PdClient: Send + Sync + 'static {
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp>;
 
+    async fn get_timestamp_with_identity(
+        self: Arc<Self>,
+        identity: Option<apipb::KeyspaceIdentity>,
+    ) -> Result<Timestamp> {
+        let _ = identity;
+        self.get_timestamp().await
+    }
+
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
 
+    /// Updates only the supplied V3 identity, without falling back to global GC.
+    async fn update_safepoint_with_identity(
+        self: Arc<Self>,
+        safepoint: u64,
+        identity: Option<apipb::KeyspaceIdentity>,
+    ) -> Result<bool> {
+        if identity.is_some() {
+            return Err(crate::internal_err!(
+                "scoped GC safe point updates are not supported by this PD client"
+            ));
+        }
+        self.update_safepoint(safepoint).await
+    }
+
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta>;
+
+    async fn lookup_keyspaces(&self, keyspace: &str) -> Result<Vec<keyspacepb::KeyspaceMeta>>;
+
+    async fn lookup_keyspace(
+        &self,
+        keyspace: &str,
+        namespace_id: u32,
+    ) -> Result<keyspacepb::KeyspaceMeta>;
 
     /// In transactional API, `key` is in raw format
     async fn store_for_key(self: Arc<Self>, key: &Key) -> Result<RegionStore> {
@@ -261,8 +292,26 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         self.pd.clone().get_timestamp().await
     }
 
+    async fn get_timestamp_with_identity(
+        self: Arc<Self>,
+        identity: Option<apipb::KeyspaceIdentity>,
+    ) -> Result<Timestamp> {
+        self.pd.clone().get_timestamp_with_identity(identity).await
+    }
+
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
         self.pd.clone().update_safepoint(safepoint).await
+    }
+
+    async fn update_safepoint_with_identity(
+        self: Arc<Self>,
+        safepoint: u64,
+        identity: Option<apipb::KeyspaceIdentity>,
+    ) -> Result<bool> {
+        self.pd
+            .clone()
+            .update_safepoint_with_identity(safepoint, identity)
+            .await
     }
 
     async fn update_leader(&self, ver_id: RegionVerId, leader: metapb::Peer) -> Result<()> {
@@ -282,6 +331,18 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
         self.pd.load_keyspace(keyspace).await
+    }
+
+    async fn lookup_keyspaces(&self, keyspace: &str) -> Result<Vec<keyspacepb::KeyspaceMeta>> {
+        self.pd.lookup_keyspaces(keyspace).await
+    }
+
+    async fn lookup_keyspace(
+        &self,
+        keyspace: &str,
+        namespace_id: u32,
+    ) -> Result<keyspacepb::KeyspaceMeta> {
+        self.pd.lookup_keyspace(keyspace, namespace_id).await
     }
 }
 

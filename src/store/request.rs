@@ -9,6 +9,7 @@ use tonic::IntoRequest;
 
 use crate::proto::kvrpcpb;
 use crate::proto::tikvpb::tikv_client::TikvClient;
+use crate::request::Keyspace;
 use crate::store::RegionWithLeader;
 use crate::Error;
 use crate::Result;
@@ -24,6 +25,9 @@ pub trait Request: Any + Sync + Send + 'static {
     fn as_any(&self) -> &dyn Any;
     fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()>;
     fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion);
+    fn set_keyspace(&mut self, keyspace: Keyspace) {
+        self.set_api_version(keyspace.api_version());
+    }
 }
 
 macro_rules! impl_request {
@@ -67,6 +71,30 @@ macro_rules! impl_request {
             fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {
                 let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
                 ctx.api_version = api_version.into();
+            }
+
+            fn set_keyspace(&mut self, keyspace: Keyspace) {
+                let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
+                ctx.api_version = keyspace.api_version().into();
+                match keyspace {
+                    Keyspace::Enable { keyspace_id } => {
+                        ctx.keyspace = Some(kvrpcpb::context::Keyspace::KeyspaceId(keyspace_id));
+                    }
+                    Keyspace::ApiV3 {
+                        namespace_id,
+                        keyspace_id,
+                    } => {
+                        ctx.keyspace = Some(kvrpcpb::context::Keyspace::KeyspaceIdentity(
+                            crate::proto::apipb::KeyspaceIdentity {
+                                namespace_id,
+                                keyspace_id,
+                            },
+                        ));
+                    }
+                    _ => {
+                        ctx.keyspace = None;
+                    }
+                }
             }
         }
     };
