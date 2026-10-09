@@ -76,6 +76,20 @@ pub trait PdClient: Send + Sync + 'static {
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
 
+    /// Updates only the supplied V3 identity, without falling back to global GC.
+    async fn update_safepoint_with_identity(
+        self: Arc<Self>,
+        safepoint: u64,
+        identity: Option<apipb::KeyspaceIdentity>,
+    ) -> Result<bool> {
+        if identity.is_some() {
+            return Err(crate::internal_err!(
+                "scoped GC safe point updates are not supported by this PD client"
+            ));
+        }
+        self.update_safepoint(safepoint).await
+    }
+
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta>;
 
     async fn lookup_keyspaces(&self, keyspace: &str) -> Result<Vec<keyspacepb::KeyspaceMeta>>;
@@ -287,6 +301,17 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
         self.pd.clone().update_safepoint(safepoint).await
+    }
+
+    async fn update_safepoint_with_identity(
+        self: Arc<Self>,
+        safepoint: u64,
+        identity: Option<apipb::KeyspaceIdentity>,
+    ) -> Result<bool> {
+        self.pd
+            .clone()
+            .update_safepoint_with_identity(safepoint, identity)
+            .await
     }
 
     async fn update_leader(&self, ver_id: RegionVerId, leader: metapb::Peer) -> Result<()> {

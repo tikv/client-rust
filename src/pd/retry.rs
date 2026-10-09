@@ -53,6 +53,12 @@ pub trait RetryClientTrait {
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
 
+    async fn update_safepoint_with_identity(
+        self: Arc<Self>,
+        safepoint: u64,
+        identity: Option<apipb::KeyspaceIdentity>,
+    ) -> Result<bool>;
+
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta>;
 
     async fn lookup_keyspaces(&self, keyspace: &str) -> Result<Vec<keyspacepb::KeyspaceMeta>>;
@@ -222,6 +228,18 @@ impl RetryClientTrait for RetryClient<Cluster> {
                 .update_safepoint(safepoint, self.timeout)
                 .await
                 .map(|resp| resp.new_safe_point == safepoint)
+        })
+    }
+
+    async fn update_safepoint_with_identity(
+        self: Arc<Self>,
+        safepoint: u64,
+        identity: Option<apipb::KeyspaceIdentity>,
+    ) -> Result<bool> {
+        retry_mut!(self, "update_gc_safepoint_with_identity", |cluster| async {
+            cluster
+                .update_safepoint_with_identity(safepoint, identity.clone(), self.timeout)
+                .await
         })
     }
 
