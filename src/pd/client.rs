@@ -2,12 +2,13 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures::prelude::*;
 use futures::stream::BoxStream;
-use log::info;
-use tokio::sync::RwLock;
+use log::{info, warn};
+use tokio::sync::{Mutex, OnceCell, RwLock};
 
 use crate::compat::stream_fn;
 use crate::kv::codec;
@@ -25,6 +26,7 @@ use crate::region_cache::RegionCache;
 use crate::store::KvConnect;
 use crate::store::RegionStore;
 use crate::store::TikvConnect;
+use crate::store::TxnProtocolVersionRange;
 use crate::store::{KvClient, Store};
 use crate::BoundRange;
 use crate::Config;
@@ -81,6 +83,15 @@ pub trait PdClient: Send + Sync + 'static {
     }
 
     async fn all_stores(&self) -> Result<Vec<Store>>;
+
+    /// Conditionally force a Store metadata reload. Implementations coalesce
+    /// concurrent callers and may suppress attempts during a short cooldown.
+    async fn reload_store(
+        self: Arc<Self>,
+        _store_id: StoreId,
+    ) -> Result<Option<TxnProtocolVersionRange>> {
+        Ok(None)
+    }
 
     fn group_keys_by_region<K, K2>(
         self: Arc<Self>,
@@ -217,6 +228,38 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     kv_client_cache: Arc<RwLock<HashMap<String, KvC::KvClient>>>,
     enable_codec: bool,
     region_cache: RegionCache<RetryClient<Cl>>,
+    store_reloads: Mutex<HashMap<StoreId, StoreReload>>,
+}
+
+#[derive(Clone)]
+struct StoreReload {
+    started_at: Instant,
+    result: Arc<OnceCell<bool>>,
+}
+
+const STORE_RELOAD_COOLDOWN: Duration = Duration::from_secs(1);
+
+async fn store_reload_slot(
+    reloads: &Mutex<HashMap<StoreId, StoreReload>>,
+    store_id: StoreId,
+) -> StoreReload {
+    let mut reloads = reloads.lock().await;
+    match reloads.get(&store_id) {
+        Some(existing)
+            if existing.result.get().is_none()
+                || existing.started_at.elapsed() < STORE_RELOAD_COOLDOWN =>
+        {
+            existing.clone()
+        }
+        _ => {
+            let reload = StoreReload {
+                started_at: Instant::now(),
+                result: Arc::new(OnceCell::new()),
+            };
+            reloads.insert(store_id, reload.clone());
+            reload
+        }
+    }
 }
 
 #[async_trait]
@@ -227,7 +270,12 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         let store_id = region.get_store_id()?;
         let store = self.region_cache.get_store_by_id(store_id).await?;
         let kv_client = self.kv_client(&store.address).await?;
-        Ok(RegionStore::new(region, Arc::new(kv_client)))
+        Ok(RegionStore::with_metadata(
+            region,
+            store_id,
+            TxnProtocolVersionRange::from(&store),
+            Arc::new(kv_client),
+        ))
     }
 
     async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
@@ -252,9 +300,41 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         let mut stores = Vec::with_capacity(pb_stores.len());
         for store in pb_stores {
             let client = self.kv_client(&store.address).await?;
-            stores.push(Store::new(Arc::new(client)));
+            stores.push(Store::with_metadata(
+                store.id,
+                TxnProtocolVersionRange::from(&store),
+                Arc::new(client),
+            ));
         }
         Ok(stores)
+    }
+
+    async fn reload_store(
+        self: Arc<Self>,
+        store_id: StoreId,
+    ) -> Result<Option<TxnProtocolVersionRange>> {
+        let reload = store_reload_slot(&self.store_reloads, store_id).await;
+
+        let refreshed = *reload
+            .result
+            .get_or_init(|| async {
+                match self.region_cache.reload_store_by_id(store_id).await {
+                    Ok(_) => {
+                        warn!("reloaded Store {} after transaction protocol incompatibility", store_id);
+                        true
+                    }
+                    Err(error) => {
+                        warn!("failed to reload Store {} after transaction protocol incompatibility: {:?}", store_id, error);
+                        false
+                    }
+                }
+            })
+            .await;
+        if !refreshed {
+            return Ok(None);
+        }
+        let store = self.region_cache.get_store_by_id(store_id).await?;
+        Ok(Some(TxnProtocolVersionRange::from(&store)))
     }
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
@@ -337,6 +417,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             kv_connect: kv_connect(security_mgr),
             enable_codec,
             region_cache: RegionCache::new(pd),
+            store_reloads: Mutex::new(HashMap::new()),
         })
     }
 
@@ -383,6 +464,26 @@ pub mod test {
     use crate::pd::RetryClient;
     use crate::store::KvConnect;
     use crate::Config;
+
+    #[tokio::test]
+    async fn store_reload_slots_are_single_flight_with_attempt_cooldown() {
+        let reloads = Mutex::new(HashMap::new());
+        let first = store_reload_slot(&reloads, 42).await;
+        let concurrent = store_reload_slot(&reloads, 42).await;
+        assert!(Arc::ptr_eq(&first.result, &concurrent.result));
+
+        first.result.set(true).unwrap();
+        reloads.lock().await.get_mut(&42).unwrap().started_at =
+            Instant::now() - STORE_RELOAD_COOLDOWN;
+        let next_attempt = store_reload_slot(&reloads, 42).await;
+        assert!(!Arc::ptr_eq(&first.result, &next_attempt.result));
+
+        let in_flight = store_reload_slot(&reloads, 43).await;
+        reloads.lock().await.get_mut(&43).unwrap().started_at =
+            Instant::now() - STORE_RELOAD_COOLDOWN;
+        let late_waiter = store_reload_slot(&reloads, 43).await;
+        assert!(Arc::ptr_eq(&in_flight.result, &late_waiter.result));
+    }
 
     #[tokio::test]
     async fn test_kv_client_caching() {

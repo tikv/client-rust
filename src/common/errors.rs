@@ -14,6 +14,8 @@ use crate::BoundRange;
 /// future release even if the wire format is compatible.
 #[doc(inline)]
 pub use crate::proto::errorpb::Error as ProtoRegionError;
+#[doc(inline)]
+pub use crate::proto::errorpb::IncompatibleRequest as ProtoIncompatibleRequest;
 
 /// Protobuf-generated per-key error returned by TiKV.
 ///
@@ -78,6 +80,9 @@ pub enum Error {
     /// Errors caused by changes of region information
     #[error("Region error: {0:?}")]
     RegionError(Box<ProtoRegionError>),
+    /// The target Store cannot safely interpret this transaction RPC.
+    #[error("Incompatible transaction request: {0:?}")]
+    IncompatibleRequest(Box<ProtoIncompatibleRequest>),
     /// Whether the transaction is committed or not is undetermined
     #[error("Whether the transaction is committed or not is undetermined")]
     UndeterminedError(Box<Error>),
@@ -136,9 +141,54 @@ Use the async TransactionClient instead, or create and use SyncTransactionClient
     NestedRuntimeError(String),
 }
 
+/// Priority of direct RPC errors when several responses must be combined.
+/// Lower values win; callers retain their own wrapping and cleanup contracts.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum ErrorPriority {
+    Undetermined,
+    Incompatible,
+    Ordinary,
+}
+
+impl ProtoRegionError {
+    pub(crate) fn priority(&self) -> ErrorPriority {
+        if self.undetermined_result.is_some() {
+            ErrorPriority::Undetermined
+        } else if self.incompatible_request.is_some() {
+            ErrorPriority::Incompatible
+        } else {
+            ErrorPriority::Ordinary
+        }
+    }
+}
+
+impl Error {
+    pub(crate) fn priority(&self) -> ErrorPriority {
+        match self {
+            Self::RegionError(region) => region.priority(),
+            Self::IncompatibleRequest(_) => ErrorPriority::Incompatible,
+            _ => ErrorPriority::Ordinary,
+        }
+    }
+}
+
+pub(crate) fn is_grpc_error(error: &Error) -> bool {
+    matches!(error, Error::GrpcAPI(_) | Error::Grpc(_))
+}
+
+pub(crate) fn is_undetermined_region_error(error: &Error) -> bool {
+    matches!(error, Error::RegionError(_)) && error.priority() == ErrorPriority::Undetermined
+}
+
 impl From<ProtoRegionError> for Error {
     fn from(e: ProtoRegionError) -> Error {
-        Error::RegionError(Box::new(e))
+        if e.priority() == ErrorPriority::Undetermined {
+            Error::RegionError(Box::new(e))
+        } else if let Some(incompatible) = e.incompatible_request {
+            Error::IncompatibleRequest(Box::new(incompatible))
+        } else {
+            Error::RegionError(Box::new(e))
+        }
     }
 }
 

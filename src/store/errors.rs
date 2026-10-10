@@ -5,6 +5,9 @@ use crate::Error;
 
 // Those that can have a single region error
 pub trait HasRegionError {
+    /// Check for a region error without consuming or modifying the response.
+    fn has_region_error(&self) -> bool;
+
     fn region_error(&mut self) -> Option<crate::proto::errorpb::Error>;
 }
 
@@ -26,6 +29,10 @@ impl<T: HasRegionError> HasRegionErrors for T {
 macro_rules! has_region_error {
     ($type:ty) => {
         impl HasRegionError for $type {
+            fn has_region_error(&self) -> bool {
+                self.region_error.is_some()
+            }
+
             fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
                 self.region_error.take().map(|e| e.into())
             }
@@ -186,6 +193,11 @@ impl<T: HasKeyErrors> HasKeyErrors for Vec<T> {
 }
 
 impl<T: HasRegionError, E> HasRegionError for Result<T, E> {
+    fn has_region_error(&self) -> bool {
+        self.as_ref()
+            .is_ok_and(|response| response.has_region_error())
+    }
+
     fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
         self.as_mut().ok().and_then(|t| t.region_error())
     }
@@ -216,9 +228,34 @@ fn extract_errors(
 #[cfg(test)]
 mod test {
     use super::HasKeyErrors;
+    use super::HasRegionError;
     use crate::common::Error;
     use crate::internal_err;
     use crate::proto::kvrpcpb;
+
+    #[test]
+    fn region_error_query_is_non_destructive_and_forwarded() {
+        let error = crate::proto::errorpb::Error {
+            message: "preserve me".into(),
+            ..Default::default()
+        };
+        let response = kvrpcpb::GetResponse {
+            region_error: Some(error.clone()),
+            value: b"value".to_vec(),
+            ..Default::default()
+        };
+        let mut wrapped =
+            crate::request::plan::ResponseWithShard(Ok::<_, Error>(response.clone()), 7);
+        assert!(wrapped.has_region_error());
+        assert!(wrapped.has_region_error());
+        assert_eq!(wrapped.0.as_ref().unwrap(), &response);
+        assert_eq!(wrapped.region_error(), Some(error));
+        assert!(!wrapped.has_region_error());
+        assert_eq!(wrapped.0.as_ref().unwrap().value, b"value");
+
+        let failed: Result<kvrpcpb::GetResponse, Error> = Err(Error::Unimplemented);
+        assert!(!failed.has_region_error());
+    }
     #[test]
     fn result_haslocks() {
         let mut resp: Result<_, Error> = Ok(kvrpcpb::CommitResponse::default());
