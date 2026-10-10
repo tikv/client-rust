@@ -790,6 +790,9 @@ impl<PdC: PdClient> Client<PdC> {
                 current_limit -= kvs.len() as u32;
                 result.append(&mut kvs);
             }
+            if next_key.is_empty() {
+                break;
+            }
             if end_key.clone().is_some_and(|ek| ek <= next_key) {
                 break;
             } else {
@@ -918,6 +921,7 @@ struct ScanInnerArgs {
 #[cfg(test)]
 mod tests {
     use std::any::Any;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
     use super::*;
@@ -925,6 +929,66 @@ mod tests {
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb;
     use crate::Result;
+
+    #[rstest::rstest]
+    #[case::forward(false)]
+    #[case::reverse(true)]
+    #[tokio::test]
+    async fn scan_with_keyspace_stops_after_final_region(#[case] reverse: bool) -> Result<()> {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let dispatched = request_count.clone();
+        let keyspace = Keyspace::Enable { keyspace_id: 0 };
+        // An open-ended keyspace scan has an encoded upper bound, but the final
+        // region has an empty end key.
+        let encoded_key: Vec<u8> = Key::from(vec![251])
+            .encode_keyspace(keyspace, KeyMode::Raw)
+            .into();
+        let mut final_region = MockPdClient::region3();
+        final_region.region.start_key.clear();
+        let pd_client = Arc::new(
+            MockPdClient::new(MockKvClient::with_dispatch_hook(move |req: &dyn Any| {
+                let req = req.downcast_ref::<kvrpcpb::RawScanRequest>().unwrap();
+                assert_eq!(
+                    dispatched.fetch_add(1, Ordering::SeqCst),
+                    0,
+                    "scan issued another request"
+                );
+                assert_eq!(req.reverse, reverse);
+                if reverse {
+                    assert!(!req.start_key.is_empty());
+                    assert_eq!(req.end_key, encoded_key);
+                } else {
+                    assert_eq!(req.start_key, encoded_key);
+                    assert!(!req.end_key.is_empty());
+                }
+                Ok(Box::new(kvrpcpb::RawScanResponse {
+                    kvs: vec![kvrpcpb::KvPair {
+                        key: encoded_key.clone(),
+                        value: vec![42],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            }))
+            .with_region_for_key_hook(move |_| Ok(final_region.clone())),
+        );
+        let client = Client {
+            rpc: pd_client,
+            cf: None,
+            backoff: DEFAULT_REGION_BACKOFF,
+            atomic: false,
+            keyspace,
+        };
+
+        let pairs = if reverse {
+            client.scan_reverse(vec![251].., 2).await?
+        } else {
+            client.scan(vec![251].., 2).await?
+        };
+        assert_eq!(pairs, vec![KvPair(vec![251].into(), vec![42])]);
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_batch_put_with_ttl() -> Result<()> {
