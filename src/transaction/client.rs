@@ -15,11 +15,11 @@ use crate::request::EncodeKeyspace;
 use crate::request::KeyMode;
 use crate::request::Keyspace;
 use crate::request::Plan;
+use crate::request::PlanContext;
 use crate::timestamp::TimestampExt;
 use crate::transaction::lock::ResolveLocksOptions;
 use crate::transaction::lowering::new_scan_lock_request;
 use crate::transaction::lowering::new_unsafe_destroy_range_request;
-use crate::transaction::resolve_locks;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::Snapshot;
 use crate::transaction::Transaction;
@@ -56,14 +56,14 @@ const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
 /// awaited to execute.
 pub struct Client {
     pd: Arc<PdRpcClient>,
-    keyspace: Keyspace,
+    plan_context: PlanContext,
 }
 
 impl Clone for Client {
     fn clone(&self) -> Self {
         Self {
             pd: self.pd.clone(),
-            keyspace: self.keyspace,
+            plan_context: self.plan_context,
         }
     }
 }
@@ -125,7 +125,12 @@ impl Client {
             }
             None => Keyspace::Disable,
         };
-        Ok(Client { pd, keyspace })
+        Ok(Client {
+            pd,
+            plan_context: PlanContext::new(keyspace)
+                .with_request_origin(config.request_origin)
+                .with_default_txn_protocol_version(config.default_txn_protocol_version),
+        })
     }
 
     /// Create a transactional [`Client`] that uses API V2 without adding or removing any API V2
@@ -147,7 +152,9 @@ impl Client {
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?);
         Ok(Client {
             pd,
-            keyspace: Keyspace::ApiV2NoPrefix,
+            plan_context: PlanContext::new(Keyspace::ApiV2NoPrefix)
+                .with_request_origin(config.request_origin)
+                .with_default_txn_protocol_version(config.default_txn_protocol_version),
         })
     }
 
@@ -299,14 +306,17 @@ impl Client {
         // scan all locks with ts <= safepoint
         let ctx = ResolveLocksContext::default();
         let backoff = Backoff::equal_jitter_backoff(100, 10000, 50);
-        let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
+        let range = range
+            .into()
+            .encode_keyspace(self.plan_context.keyspace(), KeyMode::Txn);
         let req = new_scan_lock_request(range, safepoint, options.batch_size);
-        let plan = crate::request::PlanBuilder::new(self.pd.clone(), self.keyspace, req)
-            .cleanup_locks(ctx.clone(), options, backoff, self.keyspace)
-            .retry_multi_region(DEFAULT_REGION_BACKOFF)
-            .extract_error()
-            .merge(crate::request::Collect)
-            .plan();
+        let plan =
+            crate::request::PlanBuilder::new_with_context(self.pd.clone(), req, self.plan_context)
+                .cleanup_locks(ctx.clone(), options, backoff)
+                .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                .extract_error()
+                .merge(crate::request::Collect)
+                .plan();
         plan.execute().await
     }
 
@@ -319,13 +329,19 @@ impl Client {
     ) -> Result<Vec<ProtoLockInfo>> {
         use crate::request::TruncateKeyspace;
 
-        let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
+        let range = range
+            .into()
+            .encode_keyspace(self.plan_context.keyspace(), KeyMode::Txn);
         let req = new_scan_lock_request(range, safepoint, batch_size);
-        let plan = crate::request::PlanBuilder::new(self.pd.clone(), self.keyspace, req)
-            .retry_multi_region(DEFAULT_REGION_BACKOFF)
-            .merge(crate::request::Collect)
-            .plan();
-        Ok(plan.execute().await?.truncate_keyspace(self.keyspace))
+        let plan =
+            crate::request::PlanBuilder::new_with_context(self.pd.clone(), req, self.plan_context)
+                .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                .merge(crate::request::Collect)
+                .plan();
+        Ok(plan
+            .execute()
+            .await?
+            .truncate_keyspace(self.plan_context.keyspace()))
     }
 
     /// Resolves the given locks and returns any that remain live.
@@ -343,14 +359,14 @@ impl Client {
 
         let mut live_locks = locks;
         loop {
-            let resolved_locks = resolve_locks(
-                live_locks.encode_keyspace(self.keyspace, KeyMode::Txn),
+            let resolved_locks = crate::transaction::lock::resolve_locks_with_context(
+                live_locks.encode_keyspace(self.plan_context.keyspace(), KeyMode::Txn),
                 timestamp.clone(),
                 self.pd.clone(),
-                self.keyspace,
+                self.plan_context,
             )
             .await?;
-            live_locks = resolved_locks.truncate_keyspace(self.keyspace);
+            live_locks = resolved_locks.truncate_keyspace(self.plan_context.keyspace());
             if live_locks.is_empty() {
                 return Ok(live_locks);
             }
@@ -372,16 +388,19 @@ impl Client {
     ///
     /// This interface is intended for special scenarios that resemble operations like "drop table" or "drop database" in TiDB.
     pub async fn unsafe_destroy_range(&self, range: impl Into<BoundRange>) -> Result<()> {
-        let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
+        let range = range
+            .into()
+            .encode_keyspace(self.plan_context.keyspace(), KeyMode::Txn);
         let req = new_unsafe_destroy_range_request(range);
-        let plan = crate::request::PlanBuilder::new(self.pd.clone(), self.keyspace, req)
-            .all_stores(DEFAULT_STORE_BACKOFF)
-            .merge(crate::request::Collect)
-            .plan();
+        let plan =
+            crate::request::PlanBuilder::new_with_context(self.pd.clone(), req, self.plan_context)
+                .all_stores(DEFAULT_STORE_BACKOFF)
+                .merge(crate::request::Collect)
+                .plan();
         plan.execute().await
     }
 
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
-        Transaction::new(timestamp, self.pd.clone(), options, self.keyspace)
+        Transaction::new_with_context(timestamp, self.pd.clone(), options, self.plan_context)
     }
 }

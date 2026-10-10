@@ -166,6 +166,11 @@ impl<C: RetryClientTrait> RegionCache<C> {
         Ok(store)
     }
 
+    /// Reload Store metadata from PD without invalidating its RPC connection.
+    pub async fn reload_store_by_id(&self, id: StoreId) -> Result<Store> {
+        self.read_through_store_by_id(id).await
+    }
+
     pub async fn add_region(&self, region: RegionWithLeader) {
         // FIXME: will it be the performance bottleneck?
         let mut cache = self.region_cache.write().await;
@@ -306,6 +311,7 @@ mod test {
     #[derive(Default)]
     struct MockRetryClient {
         pub regions: Mutex<HashMap<RegionId, RegionWithLeader>>,
+        pub stores: Mutex<HashMap<crate::region::StoreId, metapb::Store>>,
         pub get_region_count: AtomicU64,
     }
 
@@ -343,13 +349,18 @@ mod test {
 
         async fn get_store(
             self: Arc<Self>,
-            _id: crate::region::StoreId,
+            id: crate::region::StoreId,
         ) -> Result<crate::proto::metapb::Store> {
-            todo!()
+            self.stores
+                .lock()
+                .await
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| Error::StringError(format!("MockRetryClient: store {id} not found")))
         }
 
         async fn get_all_stores(self: Arc<Self>) -> Result<Vec<crate::proto::metapb::Store>> {
-            todo!()
+            Ok(self.stores.lock().await.values().cloned().collect())
         }
 
         async fn get_timestamp(self: Arc<Self>) -> Result<crate::proto::pdpb::Timestamp> {
@@ -440,6 +451,35 @@ mod test {
             102
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn invalid_store_range_remains_visible_on_both_read_paths() -> Result<()> {
+        let retry_client = Arc::new(MockRetryClient::default());
+        let store = metapb::Store {
+            id: 42,
+            txn_protocol_version_range: Some(metapb::TxnProtocolVersionRange { min: 2, max: 1 }),
+            ..Default::default()
+        };
+        retry_client
+            .stores
+            .lock()
+            .await
+            .insert(store.id, store.clone());
+        let cache = RegionCache::new(retry_client);
+
+        let by_id = cache.get_store_by_id(store.id).await?;
+        let all = cache.read_through_all_stores().await?;
+
+        assert_eq!(
+            by_id.txn_protocol_version_range,
+            store.txn_protocol_version_range
+        );
+        assert_eq!(
+            all[0].txn_protocol_version_range,
+            store.txn_protocol_version_range
+        );
         Ok(())
     }
 

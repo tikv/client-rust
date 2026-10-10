@@ -6,6 +6,8 @@ use std::sync::Arc;
 use super::plan::PreserveShard;
 use super::Keyspace;
 use crate::backoff::Backoff;
+use crate::config::RequestOrigin;
+use crate::config::DEFAULT_TXN_PROTOCOL_VERSION;
 use crate::pd::PdClient;
 use crate::request::plan::{CleanupLocks, RetryableAllStores};
 use crate::request::shard::HasNextBatch;
@@ -35,8 +37,61 @@ use crate::Timestamp;
 /// Builder type for plans (see that module for more).
 pub struct PlanBuilder<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> {
     pd_client: Arc<PdC>,
+    context: PlanContext,
     plan: P,
     phantom: PhantomData<Ph>,
+}
+
+/// Immutable client state required to prepare and execute a request plan.
+///
+/// Transaction protocol metadata is ignored for requests classified as raw.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PlanContext {
+    keyspace: Keyspace,
+    request_origin: RequestOrigin,
+    default_txn_protocol_version: u32,
+}
+
+impl PlanContext {
+    pub(crate) fn new(keyspace: Keyspace) -> Self {
+        Self {
+            keyspace,
+            request_origin: RequestOrigin::Unknown,
+            default_txn_protocol_version: DEFAULT_TXN_PROTOCOL_VERSION,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn with_keyspace(mut self, keyspace: Keyspace) -> Self {
+        self.keyspace = keyspace;
+        self
+    }
+
+    /// Set the process origin attached to transaction RPCs.
+    #[must_use]
+    pub(crate) fn with_request_origin(mut self, request_origin: RequestOrigin) -> Self {
+        self.request_origin = request_origin;
+        self
+    }
+
+    /// Set the highest transaction protocol version this client can understand.
+    #[must_use]
+    pub(crate) fn with_default_txn_protocol_version(mut self, version: u32) -> Self {
+        self.default_txn_protocol_version = version;
+        self
+    }
+
+    pub(crate) fn keyspace(&self) -> Keyspace {
+        self.keyspace
+    }
+
+    pub(crate) fn default_txn_protocol_version(&self) -> u32 {
+        self.default_txn_protocol_version
+    }
+
+    pub(crate) fn request_origin(&self) -> RequestOrigin {
+        self.request_origin
+    }
 }
 
 /// Used to ensure that a plan has a designated target or targets, a target is
@@ -48,13 +103,23 @@ pub struct Targetted;
 impl PlanBuilderPhase for Targetted {}
 
 impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
-    pub fn new(pd_client: Arc<PdC>, keyspace: Keyspace, mut request: Req) -> Self {
-        request.set_api_version(keyspace.api_version());
+    pub fn new(pd_client: Arc<PdC>, keyspace: Keyspace, request: Req) -> Self {
+        Self::new_with_context(pd_client, request, PlanContext::new(keyspace))
+    }
+
+    pub(crate) fn new_with_context(
+        pd_client: Arc<PdC>,
+        mut request: Req,
+        context: PlanContext,
+    ) -> Self {
+        request.set_api_version(context.keyspace.api_version());
         PlanBuilder {
-            pd_client,
+            pd_client: pd_client.clone(),
+            context,
             plan: Dispatch {
                 request,
                 kv_client: None,
+                context,
             },
             phantom: PhantomData,
         }
@@ -75,19 +140,19 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         self,
         timestamp: Timestamp,
         backoff: Backoff,
-        keyspace: Keyspace,
     ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
     where
-        P::Result: HasLocks,
+        P::Result: HasLocks + HasRegionError,
     {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
+            context: self.context,
             plan: ResolveLock {
                 inner: self.plan,
                 timestamp,
                 backoff,
                 pd_client: self.pd_client,
-                keyspace,
+                context: self.context,
             },
             phantom: PhantomData,
         }
@@ -98,7 +163,6 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         ctx: ResolveLocksContext,
         options: ResolveLocksOptions,
         backoff: Backoff,
-        keyspace: Keyspace,
     ) -> PlanBuilder<PdC, CleanupLocks<P, PdC>, Ph>
     where
         P: Shardable + NextBatch,
@@ -106,6 +170,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
+            context: self.context,
             plan: CleanupLocks {
                 inner: self.plan,
                 ctx,
@@ -113,7 +178,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 store: None,
                 backoff,
                 pd_client: self.pd_client,
-                keyspace,
+                context: self.context,
             },
             phantom: PhantomData,
         }
@@ -128,6 +193,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
+            context: self.context,
             plan: MergeResponse {
                 inner: self.plan,
                 merge,
@@ -147,6 +213,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
+            context: self.context,
             plan: ProcessResponse {
                 inner: self.plan,
                 processor: DefaultProcessor,
@@ -235,9 +302,11 @@ where
     ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC>, Targetted> {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
+            context: self.context,
             plan: RetryableMultiRegion {
                 inner: self.plan,
                 pd_client: self.pd_client,
+                context: self.context,
                 backoff,
                 preserve_region_results: flags.preserve_region_results,
                 terminal_on_undetermined: flags.terminal_on_undetermined,
@@ -254,7 +323,7 @@ impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
         self,
         store: RegionStore,
     ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
-        set_single_region_store(self.plan, store, self.pd_client)
+        set_single_region_store(self.plan, store, self.pd_client, self.context)
     }
 }
 
@@ -268,9 +337,11 @@ where
     ) -> PlanBuilder<PdC, RetryableAllStores<P, PdC>, Targetted> {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
+            context: self.context,
             plan: RetryableAllStores {
                 inner: self.plan,
                 pd_client: self.pd_client,
+                context: self.context,
                 backoff,
             },
             phantom: PhantomData,
@@ -285,6 +356,7 @@ where
     pub fn preserve_shard(self) -> PlanBuilder<PdC, PreserveShard<P>, NoTarget> {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
+            context: self.context,
             plan: PreserveShard {
                 inner: self.plan,
                 shard: None,
@@ -301,6 +373,7 @@ where
     pub fn extract_error(self) -> PlanBuilder<PdC, ExtractError<P>, Targetted> {
         PlanBuilder {
             pd_client: self.pd_client,
+            context: self.context,
             plan: ExtractError { inner: self.plan },
             phantom: self.phantom,
         }
@@ -311,12 +384,19 @@ fn set_single_region_store<PdC: PdClient, R: KvRequest>(
     mut plan: Dispatch<R>,
     store: RegionStore,
     pd_client: Arc<PdC>,
+    context: PlanContext,
 ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
+    plan.request.prepare_txn_rpc(
+        store.txn_protocol_version_range,
+        context.default_txn_protocol_version(),
+        context.request_origin().as_proto(),
+    )?;
     plan.request.set_leader(&store.region_with_leader)?;
     plan.kv_client = Some(store.client);
     Ok(PlanBuilder {
         plan,
         pd_client,
+        context,
         phantom: PhantomData,
     })
 }
@@ -325,4 +405,47 @@ fn set_single_region_store<PdC: PdClient, R: KvRequest>(
 pub trait SingleKey {
     #[allow(clippy::ptr_arg)]
     fn key(&self) -> &Vec<u8>;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::config::RequestOrigin;
+    use crate::mock::{MockKvClient, MockPdClient};
+    use crate::proto::kvrpcpb;
+    use crate::store::TxnProtocolVersionRange;
+
+    #[tokio::test]
+    async fn context_metadata_is_applied_to_single_region_transaction_requests() {
+        let context = PlanContext::new(Keyspace::Disable)
+            .with_request_origin(RequestOrigin::TiFlash)
+            .with_default_txn_protocol_version(1);
+        let request = kvrpcpb::GetRequest {
+            context: Some(kvrpcpb::Context::default()),
+            ..Default::default()
+        };
+        let store = RegionStore::with_metadata(
+            MockPdClient::region1(),
+            1,
+            TxnProtocolVersionRange { min: 0, max: 2 },
+            Arc::new(MockKvClient::default()),
+        );
+
+        let builder = PlanBuilder::new_with_context(
+            Arc::new(MockPdClient::new(MockKvClient::default())),
+            request,
+            context,
+        )
+        .single_region_with_store(store)
+        .await
+        .unwrap();
+        let request_context = builder.plan.request.context.as_ref().unwrap();
+        assert_eq!(request_context.txn_protocol_version, 1);
+        assert_eq!(
+            request_context.request_origin,
+            kvrpcpb::RequestOrigin::TiFlash as i32
+        );
+    }
 }

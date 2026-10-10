@@ -3,8 +3,33 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::{Error, Result};
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
+
+/// Identifies the process issuing transaction RPCs for compatibility auditing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RequestOrigin {
+    #[default]
+    Unknown,
+    TiDb,
+    TiCdc,
+    Br,
+    TiFlash,
+}
+
+impl RequestOrigin {
+    pub(crate) fn as_proto(self) -> i32 {
+        use crate::proto::kvrpcpb::RequestOrigin as ProtoOrigin;
+        match self {
+            Self::Unknown => ProtoOrigin::Unknown as i32,
+            Self::TiDb => ProtoOrigin::TiDb as i32,
+            Self::TiCdc => ProtoOrigin::TiCdc as i32,
+            Self::Br => ProtoOrigin::Br as i32,
+            Self::TiFlash => ProtoOrigin::TiFlash as i32,
+        }
+    }
+}
 
 /// The configuration for either a [`RawClient`](crate::RawClient) or a
 /// [`TransactionClient`](crate::TransactionClient).
@@ -26,10 +51,17 @@ pub struct Config {
     pub timeout: Duration,
     pub grpc_max_decoding_message_size: usize,
     pub keyspace: Option<String>,
+    #[serde(skip)]
+    pub(crate) default_txn_protocol_version: u32,
+    #[serde(skip)]
+    pub(crate) request_origin: RequestOrigin,
 }
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 const DEFAULT_GRPC_MAX_DECODING_MESSAGE_SIZE: usize = 4 * 1024 * 1024; // 4MB
+pub(crate) const MAX_SUPPORTED_TXN_PROTOCOL_VERSION: u32 =
+    crate::proto::kvrpcpb::TxnProtocolVersion::TxnVerSupportIncompatibleErrorHandling as u32;
+pub(crate) const DEFAULT_TXN_PROTOCOL_VERSION: u32 = MAX_SUPPORTED_TXN_PROTOCOL_VERSION;
 
 impl Default for Config {
     fn default() -> Self {
@@ -40,11 +72,32 @@ impl Default for Config {
             timeout: DEFAULT_REQUEST_TIMEOUT,
             grpc_max_decoding_message_size: DEFAULT_GRPC_MAX_DECODING_MESSAGE_SIZE,
             keyspace: None,
+            default_txn_protocol_version: DEFAULT_TXN_PROTOCOL_VERSION,
+            request_origin: RequestOrigin::Unknown,
         }
     }
 }
 
 impl Config {
+    /// Set the highest transaction protocol version this client can understand.
+    pub fn with_default_txn_protocol_version(mut self, version: u32) -> Result<Self> {
+        let max = MAX_SUPPORTED_TXN_PROTOCOL_VERSION;
+        if version > max {
+            return Err(Error::StringError(format!(
+                "unsupported transaction protocol version {version}; maximum is {max}"
+            )));
+        }
+        self.default_txn_protocol_version = version;
+        Ok(self)
+    }
+
+    /// Set the process origin attached to transaction RPCs.
+    #[must_use]
+    pub fn with_request_origin(mut self, origin: RequestOrigin) -> Self {
+        self.request_origin = origin;
+        self
+    }
+
     /// Set the certificate authority, certificate, and key locations for clients.
     ///
     /// By default, this client will use an insecure connection over instead of one protected by
@@ -116,5 +169,35 @@ impl Config {
     pub fn with_keyspace(mut self, keyspace: &str) -> Self {
         self.keyspace = Some(keyspace.to_owned());
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transaction_protocol_version_is_bounded() {
+        assert_eq!(Config::default().default_txn_protocol_version, 1);
+        assert_eq!(
+            Config::default()
+                .with_default_txn_protocol_version(0)
+                .unwrap()
+                .default_txn_protocol_version,
+            0
+        );
+        assert!(Config::default()
+            .with_default_txn_protocol_version(2)
+            .is_err());
+    }
+
+    #[test]
+    fn compatibility_fields_are_not_deserialized() {
+        let config: Config = serde_json::from_str(
+            r#"{"default-txn-protocol-version":0,"request-origin":"TiFlash"}"#,
+        )
+        .unwrap();
+        assert_eq!(config.default_txn_protocol_version, 1);
+        assert_eq!(config.request_origin, RequestOrigin::Unknown);
     }
 }

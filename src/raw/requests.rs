@@ -544,6 +544,20 @@ impl Request for RawCoprocessorRequest {
     fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {
         self.inner.set_api_version(api_version);
     }
+
+    fn txn_protocol_requirement(&self) -> crate::store::TxnProtocolRequirement {
+        crate::store::TxnProtocolRequirement::NotTransaction
+    }
+
+    fn prepare_txn_rpc(
+        &mut self,
+        range: crate::store::TxnProtocolVersionRange,
+        default_version: u32,
+        request_origin: i32,
+    ) -> Result<()> {
+        self.inner
+            .prepare_txn_rpc(range, default_version, request_origin)
+    }
 }
 
 impl KvRequest for RawCoprocessorRequest {

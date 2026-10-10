@@ -17,16 +17,18 @@ use crate::backoff::OPTIMISTIC_BACKOFF;
 use crate::kv::HexRepr;
 use crate::pd::PdClient;
 
+use crate::common::is_grpc_error;
 use crate::proto::kvrpcpb;
 use crate::proto::kvrpcpb::TxnInfo;
 use crate::proto::pdpb::Timestamp;
 use crate::region::RegionVerId;
 use crate::request::plan::handle_region_error;
-use crate::request::plan::is_grpc_error;
 use crate::request::Collect;
 use crate::request::CollectSingle;
 use crate::request::Keyspace;
 use crate::request::Plan;
+use crate::request::PlanContext;
+use crate::store::reload_txn_protocol_range;
 use crate::store::RegionStore;
 use crate::timestamp::TimestampExt;
 use crate::transaction::requests;
@@ -78,12 +80,13 @@ pub(crate) fn reject_shared_locks(locks: &[kvrpcpb::LockInfo]) -> Result<()> {
 /// which means the key is finally either committed or rolled back, before we read the value of
 /// the key. We first use `CheckTxnStatus` to get the transaction's final status (committed or
 /// rolled back), then use `ResolveLock` to resolve the remaining locks in the transaction.
-pub async fn resolve_locks(
+pub(crate) async fn resolve_locks_with_context(
     locks: Vec<kvrpcpb::LockInfo>,
     timestamp: Timestamp,
     pd_client: Arc<impl PdClient>,
-    keyspace: Keyspace,
+    plan_context: PlanContext,
 ) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
+    let keyspace = plan_context.keyspace();
     debug!("resolving locks");
     reject_shared_locks(&locks)?;
     let ts = pd_client.clone().get_timestamp().await?;
@@ -91,7 +94,8 @@ pub async fn resolve_locks(
     let current_ts = ts.version();
 
     let mut live_locks = Vec::new();
-    let mut lock_resolver = LockResolver::new(ResolveLocksContext::default());
+    let mut lock_resolver =
+        LockResolver::new_with_context(ResolveLocksContext::default(), plan_context);
 
     // records the commit version of each primary lock (representing the status of the transaction)
     let mut commit_versions: HashMap<u64, u64> = HashMap::new();
@@ -160,7 +164,7 @@ pub async fn resolve_locks(
                 commit_version,
                 lock.is_txn_file,
                 pd_client.clone(),
-                keyspace,
+                plan_context,
                 OPTIMISTIC_BACKOFF,
             )
             .await?;
@@ -179,7 +183,7 @@ async fn resolve_lock_with_retry(
     commit_version: u64,
     is_txn_file: bool,
     pd_client: Arc<impl PdClient>,
-    keyspace: Keyspace,
+    plan_context: PlanContext,
     mut backoff: Backoff,
 ) -> Result<RegionVerId> {
     debug!("resolving locks with retry");
@@ -191,24 +195,28 @@ async fn resolve_lock_with_retry(
         let ver_id = store.region_with_leader.ver_id();
         let request =
             requests::new_resolve_lock_request(start_version, commit_version, is_txn_file);
-        let plan_builder =
-            match crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
-                .single_region_with_store(store.clone())
-                .await
-            {
-                Ok(plan_builder) => plan_builder,
-                Err(Error::LeaderNotFound { region }) => {
-                    pd_client.invalidate_region_cache(region.clone()).await;
-                    match backoff.next_delay_duration() {
-                        Some(duration) => {
-                            sleep(duration).await;
-                            continue;
-                        }
-                        None => return Err(Error::LeaderNotFound { region }),
+        let requirement = crate::store::Request::txn_protocol_requirement(&request);
+        let plan_builder = match crate::request::PlanBuilder::new_with_context(
+            pd_client.clone(),
+            request,
+            plan_context,
+        )
+        .single_region_with_store(store.clone())
+        .await
+        {
+            Ok(plan_builder) => plan_builder,
+            Err(Error::LeaderNotFound { region }) => {
+                pd_client.invalidate_region_cache(region.clone()).await;
+                match backoff.next_delay_duration() {
+                    Some(duration) => {
+                        sleep(duration).await;
+                        continue;
                     }
+                    None => return Err(Error::LeaderNotFound { region }),
                 }
-                Err(err) => return Err(err),
-            };
+            }
+            Err(err) => return Err(err),
+        };
         let plan = plan_builder.extract_error().plan();
         match plan.execute().await {
             Ok(_) => {
@@ -256,6 +264,23 @@ async fn resolve_lock_with_retry(
                 }
                 None => return Err(e),
             },
+            Err(Error::IncompatibleRequest(incompatible)) => {
+                if reload_txn_protocol_range(
+                    pd_client.clone(),
+                    store.store_id,
+                    store.txn_protocol_version_range,
+                    plan_context.default_txn_protocol_version(),
+                    requirement,
+                    &incompatible,
+                    &mut backoff,
+                )
+                .await
+                .is_some()
+                {
+                    continue;
+                }
+                return Err(Error::IncompatibleRequest(incompatible));
+            }
             Err(e) => return Err(e),
         }
     }
@@ -313,11 +338,22 @@ impl ResolveLocksContext {
 
 pub struct LockResolver {
     ctx: ResolveLocksContext,
+    plan_context: PlanContext,
 }
 
 impl LockResolver {
     pub fn new(ctx: ResolveLocksContext) -> Self {
-        Self { ctx }
+        Self::new_with_context(ctx, PlanContext::new(Keyspace::Disable))
+    }
+
+    pub(crate) fn new_with_context(ctx: ResolveLocksContext, plan_context: PlanContext) -> Self {
+        Self { ctx, plan_context }
+    }
+
+    /// The public resolver API accepts a keyspace per call. Keep its RPC context
+    /// in sync with that keyspace at the single conversion point.
+    fn context_for(&self, keyspace: Keyspace) -> PlanContext {
+        self.plan_context.with_keyspace(keyspace)
     }
 
     /// _Cleanup_ the given locks. Returns whether all the given locks are resolved.
@@ -492,12 +528,16 @@ impl LockResolver {
             resolving_pessimistic_lock,
             is_txn_file,
         );
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, req)
-            .retry_multi_region(DEFAULT_REGION_BACKOFF)
-            .merge(CollectSingle)
-            .extract_error()
-            .post_process_default()
-            .plan();
+        let plan = crate::request::PlanBuilder::new_with_context(
+            pd_client.clone(),
+            req,
+            self.context_for(keyspace),
+        )
+        .retry_multi_region(DEFAULT_REGION_BACKOFF)
+        .merge(CollectSingle)
+        .extract_error()
+        .post_process_default()
+        .plan();
         let mut status: TransactionStatus = match plan.execute().await {
             Ok(status) => status,
             Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
@@ -531,11 +571,15 @@ impl LockResolver {
         txn_id: u64,
     ) -> Result<SecondaryLocksStatus> {
         let req = new_check_secondary_locks_request(keys, txn_id);
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, req)
-            .retry_multi_region(DEFAULT_REGION_BACKOFF)
-            .extract_error()
-            .merge(Collect)
-            .plan();
+        let plan = crate::request::PlanBuilder::new_with_context(
+            pd_client.clone(),
+            req,
+            self.context_for(keyspace),
+        )
+        .retry_multi_region(DEFAULT_REGION_BACKOFF)
+        .extract_error()
+        .merge(Collect)
+        .plan();
         plan.execute().await
     }
 
@@ -543,18 +587,46 @@ impl LockResolver {
         &mut self,
         pd_client: Arc<impl PdClient>,
         keyspace: Keyspace,
-        store: RegionStore,
+        mut store: RegionStore,
         txn_infos: Vec<TxnInfo>,
     ) -> Result<RegionVerId> {
         let ver_id = store.region_with_leader.ver_id();
-        let request = requests::new_batch_resolve_lock_request(txn_infos.clone());
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
+        let mut backoff = DEFAULT_REGION_BACKOFF;
+        let plan_context = self.context_for(keyspace);
+        loop {
+            let request = requests::new_batch_resolve_lock_request(txn_infos.clone());
+            let requirement = crate::store::Request::txn_protocol_requirement(&request);
+            let plan = crate::request::PlanBuilder::new_with_context(
+                pd_client.clone(),
+                request,
+                plan_context,
+            )
             .single_region_with_store(store.clone())
             .await?
             .extract_error()
             .plan();
-        let _ = plan.execute().await?;
-        Ok(ver_id)
+            match plan.execute().await {
+                Ok(_) => return Ok(ver_id),
+                Err(Error::IncompatibleRequest(incompatible)) => {
+                    if let Some(range) = reload_txn_protocol_range(
+                        pd_client.clone(),
+                        store.store_id,
+                        store.txn_protocol_version_range,
+                        plan_context.default_txn_protocol_version(),
+                        requirement,
+                        &incompatible,
+                        &mut backoff,
+                    )
+                    .await
+                    {
+                        store.txn_protocol_version_range = range;
+                        continue;
+                    }
+                    return Err(Error::IncompatibleRequest(incompatible));
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -652,6 +724,77 @@ mod tests {
     use crate::mock::MockPdClient;
     use crate::proto::errorpb;
 
+    #[rstest::rstest]
+    #[case(crate::mock::ReloadOutcome::Changed)]
+    #[case(crate::mock::ReloadOutcome::Unchanged)]
+    #[tokio::test]
+    async fn lock_admission_reload_reselects_before_resending(
+        #[values(false, true)] batch: bool,
+        #[case] outcome: crate::mock::ReloadOutcome,
+    ) {
+        let versions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = versions.clone();
+        let incompatible = crate::mock::upper_admission_rejection();
+        let rejection = incompatible.clone();
+        let client = MockKvClient::with_dispatch_hook(move |request| {
+            let request = request
+                .downcast_ref::<kvrpcpb::ResolveLockRequest>()
+                .unwrap();
+            let version = request.context.as_ref().unwrap().txn_protocol_version;
+            recorded.lock().unwrap().push(version);
+            Ok(Box::new(kvrpcpb::ResolveLockResponse {
+                region_error: (version == 1).then_some(errorpb::Error {
+                    incompatible_request: Some(rejection.clone()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }) as Box<dyn Any>)
+        });
+        let fixture = crate::mock::ProtocolTestClient::new(client, outcome);
+        let context = PlanContext::new(Keyspace::Disable);
+        let result = if batch {
+            let store = fixture
+                .pd_client
+                .clone()
+                .store_for_key(&vec![1].into())
+                .await
+                .unwrap();
+            LockResolver::new_with_context(ResolveLocksContext::default(), context)
+                .batch_resolve_locks(
+                    fixture.pd_client,
+                    Keyspace::Disable,
+                    store,
+                    vec![TxnInfo {
+                        txn: 1,
+                        status: 2,
+                        ..Default::default()
+                    }],
+                )
+                .await
+        } else {
+            resolve_lock_with_retry(
+                &vec![1],
+                1,
+                2,
+                false,
+                fixture.pd_client,
+                context,
+                Backoff::no_jitter_backoff(0, 0, 1),
+            )
+            .await
+        };
+        if matches!(outcome, crate::mock::ReloadOutcome::Changed) {
+            assert!(result.is_ok());
+            assert_eq!(*versions.lock().unwrap(), vec![1, 0]);
+        } else {
+            assert!(
+                matches!(result, Err(Error::IncompatibleRequest(error)) if *error == incompatible)
+            );
+            assert_eq!(*versions.lock().unwrap(), vec![1]);
+        }
+        assert_eq!(*fixture.reloads.lock().unwrap(), vec![41]);
+    }
+
     #[test]
     fn shared_locks_are_refused_never_misresolved() {
         let plain = kvrpcpb::LockInfo {
@@ -679,6 +822,45 @@ mod tests {
             ..Default::default()
         };
         assert!(reject_shared_locks(&[by_op]).is_err());
+    }
+
+    #[tokio::test]
+    async fn public_lock_resolver_uses_the_passed_keyspace() {
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |req: &dyn Any| {
+                let req = req
+                    .downcast_ref::<kvrpcpb::CheckTxnStatusRequest>()
+                    .expect("expected CheckTxnStatusRequest");
+                assert_eq!(
+                    req.context.as_ref().unwrap().api_version,
+                    kvrpcpb::ApiVersion::V2 as i32
+                );
+                Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                    commit_version: 2,
+                    action: kvrpcpb::Action::NoAction as i32,
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let mut resolver = LockResolver::new(ResolveLocksContext::default());
+
+        let status = resolver
+            .check_txn_status(
+                client,
+                Keyspace::Enable { keyspace_id: 7 },
+                1,
+                vec![1],
+                0,
+                0,
+                false,
+                false,
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(&status.kind, TransactionStatusKind::Committed(_)));
     }
 
     #[rstest::rstest]
@@ -714,10 +896,17 @@ mod tests {
 
         let key = vec![1];
         let region1 = MockPdClient::region1();
-        let resolved_region =
-            resolve_lock_with_retry(&key, 1, 2, false, client.clone(), keyspace, backoff.clone())
-                .await
-                .unwrap();
+        let resolved_region = resolve_lock_with_retry(
+            &key,
+            1,
+            2,
+            false,
+            client.clone(),
+            PlanContext::new(keyspace),
+            backoff.clone(),
+        )
+        .await
+        .unwrap();
         assert_eq!(region1.ver_id(), resolved_region);
 
         // Test resolve lock over retry limit
@@ -727,9 +916,17 @@ mod tests {
         )
         .unwrap();
         let key = vec![100];
-        resolve_lock_with_retry(&key, 3, 4, false, client, keyspace, backoff)
-            .await
-            .expect_err("should return error");
+        resolve_lock_with_retry(
+            &key,
+            3,
+            4,
+            false,
+            client,
+            PlanContext::new(keyspace),
+            backoff,
+        )
+        .await
+        .expect_err("should return error");
     }
 
     #[tokio::test]
@@ -765,9 +962,14 @@ mod tests {
         lock.lock_version = 1;
         lock.lock_ttl = 100; // not expired under MockPdClient's Timestamp::default()
 
-        let live_locks = resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable)
-            .await
-            .unwrap();
+        let live_locks = resolve_locks_with_context(
+            vec![lock],
+            Timestamp::default(),
+            client,
+            PlanContext::new(Keyspace::Disable),
+        )
+        .await
+        .unwrap();
 
         assert!(live_locks.is_empty());
         assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 1);
