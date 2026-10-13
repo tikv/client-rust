@@ -14,6 +14,7 @@ use crate::request::Plan;
 use crate::request::ResolveLock;
 use crate::store::RegionStore;
 use crate::store::Request;
+use crate::store::TxnProtocolRequirement;
 use crate::Result;
 use std::fmt::Debug;
 
@@ -34,6 +35,10 @@ macro_rules! impl_inner_shardable {
 
         fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
             self.inner.apply_store(store)
+        }
+
+        fn txn_protocol_requirement(&self) -> TxnProtocolRequirement {
+            self.inner.txn_protocol_requirement()
         }
     };
 }
@@ -59,6 +64,10 @@ pub trait Shardable {
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()>;
+
+    fn txn_protocol_requirement(&self) -> TxnProtocolRequirement {
+        TxnProtocolRequirement::NotTransaction
+    }
 }
 
 pub trait Batchable {
@@ -120,12 +129,22 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         Dispatch {
             request: self.request.clone_then_apply_shard(shard),
             kv_client: self.kv_client.clone(),
+            context: self.context,
         }
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
         self.kv_client = Some(store.client.clone());
+        self.request.prepare_txn_rpc(
+            store.txn_protocol_version_range,
+            self.context.default_txn_protocol_version(),
+            self.context.request_origin().as_proto(),
+        )?;
         self.request.apply_store(store)
+    }
+
+    fn txn_protocol_requirement(&self) -> TxnProtocolRequirement {
+        Request::txn_protocol_requirement(&self.request)
     }
 }
 
@@ -153,6 +172,10 @@ impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
         self.inner.apply_store(store)
     }
+
+    fn txn_protocol_requirement(&self) -> TxnProtocolRequirement {
+        self.inner.txn_protocol_requirement()
+    }
 }
 
 impl<P: Plan + Shardable, PdC: PdClient> Shardable for ResolveLock<P, PdC> {
@@ -176,6 +199,10 @@ impl<P: Plan + Shardable, PdC: PdClient> Shardable for CleanupLocks<P, PdC> {
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
         self.store = Some(store.clone());
         self.inner.apply_store(store)
+    }
+
+    fn txn_protocol_requirement(&self) -> TxnProtocolRequirement {
+        self.inner.txn_protocol_requirement()
     }
 }
 
@@ -207,6 +234,10 @@ macro_rules! shardable_key {
             fn apply_store(&mut self, store: &$crate::store::RegionStore) -> $crate::Result<()> {
                 self.set_leader(&store.region_with_leader)
             }
+
+            fn txn_protocol_requirement(&self) -> $crate::store::TxnProtocolRequirement {
+                $crate::store::Request::txn_protocol_requirement(self)
+            }
         }
     };
 }
@@ -236,6 +267,10 @@ macro_rules! shardable_keys {
 
             fn apply_store(&mut self, store: &$crate::store::RegionStore) -> $crate::Result<()> {
                 self.set_leader(&store.region_with_leader)
+            }
+
+            fn txn_protocol_requirement(&self) -> $crate::store::TxnProtocolRequirement {
+                $crate::store::Request::txn_protocol_requirement(self)
             }
         }
     };
@@ -301,6 +336,10 @@ macro_rules! shardable_range {
 
             fn apply_store(&mut self, store: &$crate::store::RegionStore) -> $crate::Result<()> {
                 self.set_leader(&store.region_with_leader)
+            }
+
+            fn txn_protocol_requirement(&self) -> $crate::store::TxnProtocolRequirement {
+                $crate::store::Request::txn_protocol_requirement(self)
             }
         }
     };

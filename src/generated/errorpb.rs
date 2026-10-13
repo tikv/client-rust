@@ -98,10 +98,31 @@ pub struct EpochNotMatch {
     #[prost(message, repeated, tag = "1")]
     pub current_regions: ::prost::alloc::vec::Vec<super::metapb::Region>,
 }
+/// A transaction protocol compatibility rejection.
+/// The compatible range is inclusive: admission reports the store's global range;
+/// feature checks report \[required feature version, store's maximum version\].
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct IncompatibleRequest {
+    #[prost(enumeration = "IncompatibleRequestReason", tag = "1")]
+    pub reason: i32,
+    /// Diagnostic text; clients must use structured fields for control flow.
+    #[prost(string, tag = "2")]
+    pub message: ::prost::alloc::string::String,
+    /// The request's declaration; missing and explicit zero both mean legacy.
+    #[prost(uint32, tag = "3")]
+    pub provided_txn_protocol_version: u32,
+    #[prost(uint32, tag = "4")]
+    pub min_compatible_txn_protocol_version: u32,
+    #[prost(uint32, tag = "5")]
+    pub max_compatible_txn_protocol_version: u32,
+}
 /// ServerIsBusy is the error variant that tells the server is too busy to response.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ServerIsBusy {
+    /// "txn_protocol_incompatible" is a legacy fallback for IncompatibleRequest,
+    /// not an overload signal.
     #[prost(string, tag = "1")]
     pub reason: ::prost::alloc::string::String,
     /// The suggested backoff time
@@ -274,4 +295,46 @@ pub struct Error {
     /// UndeterminedResult is the error variant that tells the result is not determined yet.
     #[prost(message, optional, tag = "22")]
     pub undetermined_result: ::core::option::Option<UndeterminedResult>,
+    /// A compatibility rejection with no usable business result.
+    /// For a zero declaration, also set server_is_busy.reason to
+    /// "txn_protocol_incompatible"; omit that fallback for nonzero declarations.
+    /// Clients must handle this error before fallback or ordinary retry logic.
+    /// A client may reselect and resend only when the reason is version out of range,
+    /// the returned range is valid, and provided > max. The selected version must
+    /// satisfy the request's requirements. Such admission rejections must have no
+    /// transaction side effects. All other incompatibilities are terminal.
+    #[prost(message, optional, tag = "23")]
+    pub incompatible_request: ::core::option::Option<IncompatibleRequest>,
+}
+/// Reasons for rejecting an incompatible transaction protocol request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum IncompatibleRequestReason {
+    Unknown = 0,
+    /// The declared version is outside the compatible range returned in the error.
+    TxnProtocolVersionOutOfRange = 1,
+}
+impl IncompatibleRequestReason {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            IncompatibleRequestReason::Unknown => "IncompatibleRequestReasonUnknown",
+            IncompatibleRequestReason::TxnProtocolVersionOutOfRange => {
+                "IncompatibleRequestReasonTxnProtocolVersionOutOfRange"
+            }
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "IncompatibleRequestReasonUnknown" => Some(Self::Unknown),
+            "IncompatibleRequestReasonTxnProtocolVersionOutOfRange" => {
+                Some(Self::TxnProtocolVersionOutOfRange)
+            }
+            _ => None,
+        }
+    }
 }

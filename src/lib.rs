@@ -123,6 +123,8 @@ pub use common::security::SecurityManager;
 #[doc(inline)]
 pub use common::Error;
 #[doc(inline)]
+pub use common::ProtoIncompatibleRequest;
+#[doc(inline)]
 pub use common::ProtoKeyError;
 #[doc(inline)]
 pub use common::ProtoRegionError;
@@ -130,6 +132,8 @@ pub use common::ProtoRegionError;
 pub use common::Result;
 #[doc(inline)]
 pub use config::Config;
+#[doc(inline)]
+pub use config::RequestOrigin;
 
 #[doc(inline)]
 pub use crate::backoff::Backoff;

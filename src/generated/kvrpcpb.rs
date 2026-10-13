@@ -1290,11 +1290,7 @@ pub struct Context {
     /// Some information used for resource control.
     #[prost(message, optional, tag = "28")]
     pub resource_control_context: ::core::option::Option<ResourceControlContext>,
-    /// The declared origin of the request. TiDB server requests set this to TIDB.
-    /// This field is client-provided metadata; consumers should rely on it only when
-    /// the caller is authenticated/authorized by the transport or deployment boundary.
-    /// UNKNOWN means the origin is unset or not recognized by this protocol version.
-    /// Other components should add dedicated enum variants when they need origin-specific behavior.
+    /// Declared process/product origin; see RequestOrigin.
     #[prost(enumeration = "RequestOrigin", tag = "29")]
     pub request_origin: i32,
     /// The keyspace that the request is sent to.
@@ -1328,6 +1324,13 @@ pub struct Context {
     /// This field is set by client-go based on an extractor function provided by TiDB.
     #[prost(uint64, tag = "37")]
     pub trace_control_flags: u64,
+    /// Transaction protocol version declared for this request; see TxnProtocolVersion.
+    /// Missing or zero means legacy. Any nonzero value promises structured
+    /// IncompatibleRequest handling. BatchCommands declares this per inner request.
+    /// This is a compatibility declaration, not a binary version or authorization.
+    /// Keep uint32 so future version values remain representable.
+    #[prost(uint32, tag = "39")]
+    pub txn_protocol_version: u32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1390,9 +1393,8 @@ pub struct LockInfo {
     /// When lock_type is SharedLock, this describes transactions holding the shared lock.
     /// Important: when lock_type is SharedLock, all shared locks must use shared_lock_infos;
     /// DO NOT read from the wrapper LockInfo.
-    /// TODO(slock): tidb should send requests with a feature flag to indicate whether it
-    /// supports shared locks, so that tikv can fail the requests from old tidb versions
-    /// when needed.
+    /// Before returning a shared lock wrapper, the server must check the caller's
+    /// txn_protocol_version and return IncompatibleRequest if support is insufficient.
     #[prost(message, repeated, tag = "12")]
     pub shared_lock_infos: ::prost::alloc::vec::Vec<LockInfo>,
     /// Reserved for file based transaction.
@@ -2503,11 +2505,18 @@ impl CommitRole {
         }
     }
 }
+/// Client-provided process/product identity for auditing, not authentication or
+/// authorization. TiDB includes embedded BR; standalone BR uses RequestOriginBR.
+/// Audit unknown values without mapping them to a known origin or rejecting
+/// requests solely because of their origin in the initial rollout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum RequestOrigin {
     Unknown = 0,
     TiDb = 1,
+    TiCdc = 2,
+    Br = 3,
+    TiFlash = 4,
 }
 impl RequestOrigin {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -2518,6 +2527,9 @@ impl RequestOrigin {
         match self {
             RequestOrigin::Unknown => "RequestOriginUnknown",
             RequestOrigin::TiDb => "RequestOriginTiDB",
+            RequestOrigin::TiCdc => "RequestOriginTiCDC",
+            RequestOrigin::Br => "RequestOriginBR",
+            RequestOrigin::TiFlash => "RequestOriginTiFlash",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -2525,6 +2537,9 @@ impl RequestOrigin {
         match value {
             "RequestOriginUnknown" => Some(Self::Unknown),
             "RequestOriginTiDB" => Some(Self::TiDb),
+            "RequestOriginTiCDC" => Some(Self::TiCdc),
+            "RequestOriginBR" => Some(Self::Br),
+            "RequestOriginTiFlash" => Some(Self::TiFlash),
             _ => None,
         }
     }
@@ -2602,6 +2617,47 @@ impl ApiVersion {
             "V1" => Some(Self::V1),
             "V1TTL" => Some(Self::V1ttl),
             "V2" => Some(Self::V2),
+            _ => None,
+        }
+    }
+}
+/// Transaction protocol version registry. Each version includes all earlier
+/// semantics. Keep values stable; new versions require joint review by TiKV,
+/// TiDB and relevant client owners. This registry sets neither client defaults
+/// nor the store's admission range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum TxnProtocolVersion {
+    /// No promise to handle IncompatibleRequest.
+    TxnVerLegacy = 0,
+    /// Handles IncompatibleRequest according to its error contract.
+    TxnVerSupportIncompatibleErrorHandling = 1,
+    /// Also supports shared wrapper parsing and expansion, nested lock information
+    /// preservation, and shared-lock pagination and resolve semantics.
+    TxnVerSupportSharedLock = 2,
+}
+impl TxnProtocolVersion {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            TxnProtocolVersion::TxnVerLegacy => "TXN_VER_LEGACY",
+            TxnProtocolVersion::TxnVerSupportIncompatibleErrorHandling => {
+                "TXN_VER_SUPPORT_INCOMPATIBLE_ERROR_HANDLING"
+            }
+            TxnProtocolVersion::TxnVerSupportSharedLock => "TXN_VER_SUPPORT_SHARED_LOCK",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "TXN_VER_LEGACY" => Some(Self::TxnVerLegacy),
+            "TXN_VER_SUPPORT_INCOMPATIBLE_ERROR_HANDLING" => {
+                Some(Self::TxnVerSupportIncompatibleErrorHandling)
+            }
+            "TXN_VER_SUPPORT_SHARED_LOCK" => Some(Self::TxnVerSupportSharedLock),
             _ => None,
         }
     }

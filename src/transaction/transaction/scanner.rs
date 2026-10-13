@@ -11,19 +11,21 @@ use tokio::time::sleep;
 use super::Transaction;
 use super::TransactionStatus;
 use crate::backoff::Backoff;
+use crate::common::is_grpc_error;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::pdpb::Timestamp;
 use crate::region::RegionWithLeader;
 use crate::request::plan::handle_region_error;
-use crate::request::plan::is_grpc_error;
 use crate::request::EncodeKeyspace;
 use crate::request::KeyMode;
 use crate::request::Keyspace;
 use crate::request::Plan;
 use crate::request::PlanBuilder;
+use crate::request::PlanContext;
 use crate::request::RetryOptions;
 use crate::request::TruncateKeyspace;
+use crate::store::reload_txn_protocol_range;
 use crate::store::HasKeyErrors;
 use crate::store::HasRegionError;
 use crate::transaction::buffer::MutationIterator;
@@ -129,7 +131,7 @@ struct MutationCursor<'a> {
 struct RemoteScanner<PdC: PdClient> {
     status: Arc<AtomicU8>,
     pd_client: Arc<PdC>,
-    keyspace: Keyspace,
+    plan_context: PlanContext,
     timestamp: Timestamp,
     retry_options: RetryOptions,
     end: Option<Key>,
@@ -146,7 +148,7 @@ impl<'a, PdC: PdClient> Scanner<'a, PdC> {
         let range_empty = end
             .as_ref()
             .is_some_and(|end| !end.is_empty() && &start >= end);
-        let keyspace = txn.keyspace;
+        let keyspace = txn.plan_context.keyspace();
         let remote = RemoteScanner::new(txn, start.clone(), end.clone(), range_empty);
         let mutations = if range_empty {
             None
@@ -262,7 +264,7 @@ impl<PdC: PdClient> RemoteScanner<PdC> {
         RemoteScanner {
             status: txn.status.clone(),
             pd_client: txn.rpc.clone(),
-            keyspace: txn.keyspace,
+            plan_context: txn.plan_context,
             timestamp: txn.timestamp.clone(),
             retry_options: txn.options.retry_options.clone(),
             end,
@@ -320,7 +322,7 @@ impl<PdC: PdClient> RemoteScanner<PdC> {
     /// page starts at the region's end key.
     async fn fetch_remote_page(&mut self) -> Result<Vec<KvPair>> {
         self.check_allow_operation()?;
-        let keyspace = self.keyspace;
+        let keyspace = self.plan_context.keyspace();
         let mut region_backoff = self.retry_options.region_backoff.clone();
 
         loop {
@@ -378,15 +380,19 @@ impl<PdC: PdClient> RemoteScanner<PdC> {
                 false,
                 false,
             );
-            let plan = match PlanBuilder::new(self.pd_client.clone(), keyspace, request)
-                .single_region_with_store(region_store.clone())
-                .await
+            let requirement = crate::store::Request::txn_protocol_requirement(&request);
+            let plan = match PlanBuilder::new_with_context(
+                self.pd_client.clone(),
+                request,
+                self.plan_context,
+            )
+            .single_region_with_store(region_store.clone())
+            .await
             {
                 Ok(builder) => builder
                     .resolve_lock(
                         self.timestamp.clone(),
                         self.retry_options.lock_backoff.clone(),
-                        keyspace,
                     )
                     .plan(),
                 Err(error) => {
@@ -407,8 +413,27 @@ impl<PdC: PdClient> RemoteScanner<PdC> {
             };
 
             if let Some(region_error) = response.region_error() {
+                if region_error.undetermined_result.is_none() {
+                    if let Some(incompatible) = region_error.incompatible_request.as_ref() {
+                        if reload_txn_protocol_range(
+                            self.pd_client.clone(),
+                            region_store.store_id,
+                            region_store.txn_protocol_version_range,
+                            self.plan_context.default_txn_protocol_version(),
+                            requirement,
+                            incompatible,
+                            &mut region_backoff,
+                        )
+                        .await
+                        .is_some()
+                        {
+                            continue;
+                        }
+                        return Err(Error::IncompatibleRequest(Box::new(incompatible.clone())));
+                    }
+                }
                 let Some(delay) = region_backoff.next_delay_duration() else {
-                    return Err(Error::RegionError(Box::new(region_error)));
+                    return Err(Error::from(region_error));
                 };
                 let retry_immediately =
                     handle_region_error(self.pd_client.clone(), region_error, region_store).await?;
@@ -454,6 +479,9 @@ impl<PdC: PdClient> RemoteScanner<PdC> {
         backoff: &mut Backoff,
         error: Error,
     ) -> Result<()> {
+        if matches!(error, Error::IncompatibleRequest(_)) {
+            return Err(error);
+        }
         self.pd_client
             .invalidate_region_cache(region.ver_id())
             .await;
@@ -519,6 +547,7 @@ mod tests {
     use crate::request::Keyspace;
     use crate::store::RegionStore;
     use crate::store::Store;
+    use crate::store::TxnProtocolVersionRange;
     use crate::Key;
     use crate::KvPair;
 
@@ -550,6 +579,105 @@ mod tests {
             Err(crate::Error::StringError(message))
                 if message == "scanner iterator is invalid"
         ));
+    }
+
+    #[rstest::rstest]
+    #[case(crate::mock::ReloadOutcome::Changed)]
+    #[case(crate::mock::ReloadOutcome::Unchanged)]
+    #[tokio::test]
+    async fn scanner_admission_reload_reselects_before_resending(
+        #[case] outcome: crate::mock::ReloadOutcome,
+    ) {
+        let versions = Arc::new(Mutex::new(Vec::new()));
+        let recorded = versions.clone();
+        let incompatible = crate::mock::upper_admission_rejection();
+        let rejection = incompatible.clone();
+        let client = MockKvClient::with_dispatch_hook(move |request| {
+            let request = request.downcast_ref::<kvrpcpb::ScanRequest>().unwrap();
+            let version = request.context.as_ref().unwrap().txn_protocol_version;
+            recorded.lock().unwrap().push(version);
+            Ok(Box::new(kvrpcpb::ScanResponse {
+                error: (version == 1).then_some(kvrpcpb::KeyError {
+                    locked: Some(kvrpcpb::LockInfo {
+                        key: b"k".to_vec(),
+                        primary_lock: b"k".to_vec(),
+                        lock_version: 1,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                region_error: (version == 1).then_some(errorpb::Error {
+                    incompatible_request: Some(rejection.clone()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }) as Box<dyn Any>)
+        });
+        let fixture = crate::mock::ProtocolTestClient::new(client, outcome);
+        let mut txn = Transaction::new(
+            Timestamp::default(),
+            fixture.pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        let result = txn.scanner("k".to_owned()..="z".to_owned()).await;
+        if matches!(outcome, crate::mock::ReloadOutcome::Changed) {
+            assert!(result.is_ok());
+            assert_eq!(*versions.lock().unwrap(), vec![1, 0]);
+        } else {
+            assert!(
+                matches!(result, Err(crate::Error::IncompatibleRequest(error)) if *error == incompatible)
+            );
+            assert_eq!(*versions.lock().unwrap(), vec![1]);
+        }
+        assert_eq!(*fixture.reloads.lock().unwrap(), vec![42]);
+    }
+
+    #[rstest::rstest]
+    #[case(false)]
+    #[case(true)]
+    #[tokio::test]
+    async fn scanner_region_error_bypasses_lock_resolution(#[case] undetermined: bool) {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let recorded = attempts.clone();
+        let original = errorpb::Error {
+            message: "original scan region error".into(),
+            undetermined_result: undetermined.then_some(Default::default()),
+            epoch_not_match: (!undetermined).then_some(Default::default()),
+            ..Default::default()
+        };
+        let rejection = original.clone();
+        let client = MockKvClient::with_dispatch_hook(move |request| {
+            assert!(
+                request.is::<kvrpcpb::ScanRequest>(),
+                "region errors must bypass auxiliary RPCs"
+            );
+            recorded.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(kvrpcpb::ScanResponse {
+                region_error: Some(rejection.clone()),
+                error: Some(kvrpcpb::KeyError {
+                    locked: Some(kvrpcpb::LockInfo {
+                        key: b"k".to_vec(),
+                        primary_lock: b"k".to_vec(),
+                        lock_version: 1,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }) as Box<dyn Any>)
+        });
+        let mut txn = Transaction::new(
+            Timestamp::default(),
+            Arc::new(MockPdClient::new(client)),
+            TransactionOptions::new_optimistic()
+                .read_only()
+                .no_resolve_regions(),
+            Keyspace::Disable,
+        );
+        assert!(matches!(txn.scanner("k".to_owned()..="z".to_owned()).await,
+            Err(crate::Error::RegionError(error)) if *error == original));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
     fn scanner_test_region(
@@ -656,6 +784,46 @@ mod tests {
         async fn invalidate_region_cache(&self, _ver_id: RegionVerId) {}
 
         async fn invalidate_store_cache(&self, _store_id: u64) {}
+    }
+
+    #[tokio::test]
+    async fn scanner_returns_local_incompatibility_without_retrying() {
+        let mappings = Arc::new(AtomicUsize::new(0));
+        let invalidations = Arc::new(AtomicUsize::new(0));
+        let kv_client = MockKvClient::with_dispatch_hook(|_req: &dyn Any| {
+            panic!("an incompatible request must not be dispatched");
+        });
+        let mapped_client = kv_client.clone();
+        let mapped_count = mappings.clone();
+        let invalidated_count = invalidations.clone();
+        let pd_client = Arc::new(
+            MockPdClient::new(kv_client)
+                .with_map_region_to_store_hook(move |region| {
+                    mapped_count.fetch_add(1, Ordering::SeqCst);
+                    Ok(RegionStore::with_metadata(
+                        region.clone(),
+                        region.get_store_id().unwrap(),
+                        TxnProtocolVersionRange { min: 2, max: 1 },
+                        Arc::new(mapped_client.clone()),
+                    ))
+                })
+                .with_invalidate_region_hook(move |_| {
+                    invalidated_count.fetch_add(1, Ordering::SeqCst);
+                }),
+        );
+        let mut txn = Transaction::new(
+            Timestamp::default(),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+
+        assert!(matches!(
+            txn.scanner("k".to_owned()..="z".to_owned()).await,
+            Err(crate::Error::IncompatibleRequest(_))
+        ));
+        assert_eq!(mappings.load(Ordering::SeqCst), 1);
+        assert_eq!(invalidations.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

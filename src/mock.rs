@@ -6,7 +6,9 @@
 //! the system, in particular without requiring a TiKV or PD server, or RPC layer.
 
 use std::any::Any;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use async_trait::async_trait;
 use derive_new::new;
@@ -23,6 +25,7 @@ use crate::region::RegionWithLeader;
 use crate::store::KvConnect;
 use crate::store::RegionStore;
 use crate::store::Request;
+use crate::store::TxnProtocolVersionRange;
 use crate::store::{KvClient, Store};
 use crate::Config;
 use crate::Error;
@@ -73,6 +76,75 @@ pub struct MockKvConnect;
 
 pub struct MockCluster;
 
+/// Outcomes used to exercise admission retry, rather than just the selector.
+#[derive(Clone, Copy, Debug)]
+pub enum ReloadOutcome {
+    Changed,
+    Unchanged,
+    Invalid,
+    Missing,
+    Failed,
+}
+
+pub fn upper_admission_rejection() -> crate::proto::errorpb::IncompatibleRequest {
+    crate::proto::errorpb::IncompatibleRequest {
+        reason: crate::proto::errorpb::IncompatibleRequestReason::TxnProtocolVersionOutOfRange
+            as i32,
+        message: "store protocol range changed".into(),
+        provided_txn_protocol_version: 1,
+        min_compatible_txn_protocol_version: 0,
+        max_compatible_txn_protocol_version: 0,
+    }
+}
+
+/// Models a PD reload updating the metadata read by later routing attempts.
+pub struct ProtocolTestClient {
+    pub pd_client: Arc<MockPdClient>,
+    pub reloads: Arc<Mutex<Vec<u64>>>,
+}
+
+impl ProtocolTestClient {
+    pub fn new(client: MockKvClient, outcome: ReloadOutcome) -> Self {
+        let range = Arc::new(Mutex::new(HashMap::<u64, TxnProtocolVersionRange>::new()));
+        let mapped_range = range.clone();
+        let mapped_client = client.clone();
+        let reloads = Arc::new(Mutex::new(Vec::new()));
+        let tracked_reloads = reloads.clone();
+        let pd_client = Arc::new(
+            MockPdClient::new(client)
+                .with_map_region_to_store_hook(move |region| {
+                    let store_id = region.get_store_id()?;
+                    Ok(RegionStore::with_metadata(
+                        region,
+                        store_id,
+                        mapped_range
+                            .lock()
+                            .unwrap()
+                            .get(&store_id)
+                            .copied()
+                            .unwrap_or(TxnProtocolVersionRange { min: 0, max: 1 }),
+                        Arc::new(mapped_client.clone()),
+                    ))
+                })
+                .with_reload_store_hook(move |store_id| {
+                    tracked_reloads.lock().unwrap().push(store_id);
+                    let new_range = match outcome {
+                        ReloadOutcome::Changed => TxnProtocolVersionRange { min: 0, max: 0 },
+                        ReloadOutcome::Unchanged => TxnProtocolVersionRange { min: 0, max: 1 },
+                        ReloadOutcome::Invalid => TxnProtocolVersionRange { min: 2, max: 1 },
+                        ReloadOutcome::Missing => return Ok(None),
+                        ReloadOutcome::Failed => {
+                            return Err(Error::StringError("PD unavailable".into()))
+                        }
+                    };
+                    range.lock().unwrap().insert(store_id, new_range);
+                    Ok(Some(new_range))
+                }),
+        );
+        Self { pd_client, reloads }
+    }
+}
+
 #[allow(clippy::type_complexity)]
 #[derive(new)]
 pub struct MockPdClient {
@@ -93,6 +165,10 @@ pub struct MockPdClient {
     /// Optional observer for region cache invalidations.
     #[new(default)]
     invalidate_region_hook: Option<Arc<dyn Fn(RegionVerId) + Send + Sync + 'static>>,
+    /// Optional override for conditional Store metadata reloads.
+    #[new(default)]
+    reload_store_hook:
+        Option<Arc<dyn Fn(u64) -> Result<Option<TxnProtocolVersionRange>> + Send + Sync + 'static>>,
 }
 
 #[async_trait]
@@ -153,6 +229,14 @@ impl MockPdClient {
         F: Fn(RegionVerId) + Send + Sync + 'static,
     {
         self.invalidate_region_hook = Some(Arc::new(hook));
+        self
+    }
+
+    pub fn with_reload_store_hook<F>(mut self, hook: F) -> MockPdClient
+    where
+        F: Fn(u64) -> Result<Option<TxnProtocolVersionRange>> + Send + Sync + 'static,
+    {
+        self.reload_store_hook = Some(Arc::new(hook));
         self
     }
 
@@ -252,6 +336,16 @@ impl PdClient for MockPdClient {
 
     async fn all_stores(&self) -> Result<Vec<Store>> {
         Ok(vec![Store::new(Arc::new(self.client.clone()))])
+    }
+
+    async fn reload_store(
+        self: Arc<Self>,
+        store_id: u64,
+    ) -> Result<Option<TxnProtocolVersionRange>> {
+        match &self.reload_store_hook {
+            Some(hook) => hook(store_id),
+            None => Ok(None),
+        }
     }
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {

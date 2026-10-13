@@ -46,6 +46,7 @@ use crate::timestamp::TimestampExt;
 use crate::transaction::requests::kvrpcpb::prewrite_request::PessimisticAction;
 use crate::transaction::HasLocks;
 use crate::util::iter::FlatMapOkIterExt;
+use crate::Error;
 use crate::KvPair;
 use crate::Result;
 use crate::Value;
@@ -457,9 +458,19 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
         >,
     ) -> Result<Self::Out> {
         if input.iter().any(Result::is_err) {
-            let (success, mut errors): (Vec<_>, Vec<_>) =
-                input.into_iter().partition(Result::is_ok);
-            let first_err = errors.pop().unwrap();
+            let (success, errors): (Vec<_>, Vec<_>) = input.into_iter().partition(Result::is_ok);
+            let mut errors = errors
+                .into_iter()
+                .map(Result::unwrap_err)
+                .collect::<Vec<_>>();
+            let selected_error = errors
+                .iter()
+                .enumerate()
+                .filter(|(_, error)| error.priority() != crate::common::ErrorPriority::Ordinary)
+                .min_by_key(|(_, error)| error.priority())
+                .map(|(index, _)| index)
+                .unwrap_or(errors.len() - 1);
+            let error = errors.swap_remove(selected_error);
             let success_keys = success
                 .into_iter()
                 .map(Result::unwrap)
@@ -468,7 +479,7 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
                 })
                 .collect();
             Err(PessimisticLockError {
-                inner: Box::new(first_err.unwrap_err()),
+                inner: Box::new(error),
                 success_keys,
             })
         } else {
@@ -874,7 +885,9 @@ impl KvRequest for kvrpcpb::UnsafeDestroyRangeRequest {
 }
 
 impl StoreRequest for kvrpcpb::UnsafeDestroyRangeRequest {
-    fn apply_store(&mut self, _store: &Store) {}
+    fn apply_store(&mut self, _store: &Store) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl HasLocks for kvrpcpb::UnsafeDestroyRangeResponse {}
@@ -883,8 +896,20 @@ impl Merge<kvrpcpb::UnsafeDestroyRangeResponse> for Collect {
     type Out = ();
 
     fn merge(&self, input: Vec<Result<kvrpcpb::UnsafeDestroyRangeResponse>>) -> Result<Self::Out> {
-        let _: Vec<kvrpcpb::UnsafeDestroyRangeResponse> =
-            input.into_iter().collect::<Result<Vec<_>>>()?;
+        let mut selected_error: Option<Error> = None;
+        for result in input {
+            if let Err(error) = result {
+                if selected_error
+                    .as_ref()
+                    .is_none_or(|selected| error.priority() < selected.priority())
+                {
+                    selected_error = Some(error);
+                }
+            }
+        }
+        if let Some(error) = selected_error {
+            return Err(error);
+        }
         Ok(())
     }
 }
@@ -898,6 +923,63 @@ mod tests {
     use crate::request::CollectWithShard;
     use crate::request::ResponseWithShard;
     use crate::KvPair;
+
+    #[rstest::rstest]
+    #[case(crate::common::ErrorPriority::Undetermined)]
+    #[case(crate::common::ErrorPriority::Incompatible)]
+    #[case(crate::common::ErrorPriority::Ordinary)]
+    fn merges_preserve_priority_and_pessimistic_success_keys(
+        #[case] priority: crate::common::ErrorPriority,
+    ) {
+        use crate::common::ErrorPriority;
+        use crate::Error;
+        let errors = || {
+            let mut errors = vec![Error::StringError("first ordinary".into())];
+            if priority != ErrorPriority::Ordinary {
+                errors.push(Error::IncompatibleRequest(Box::new(
+                    crate::mock::upper_admission_rejection(),
+                )));
+            }
+            if priority == ErrorPriority::Undetermined {
+                errors.push(Error::from(crate::proto::errorpb::Error {
+                    undetermined_result: Some(Default::default()),
+                    ..Default::default()
+                }));
+            }
+            errors.push(Error::StringError("last ordinary".into()));
+            errors
+        };
+        let mut input = errors().into_iter().map(Err).collect::<Vec<_>>();
+        input.push(Ok(ResponseWithShard(
+            kvrpcpb::PessimisticLockResponse::default(),
+            vec![kvrpcpb::Mutation {
+                key: b"cleanup-me".to_vec(),
+                ..Default::default()
+            }],
+        )));
+        match CollectWithShard.merge(input).unwrap_err() {
+            PessimisticLockError {
+                inner,
+                success_keys,
+            } => {
+                assert_eq!(inner.priority(), priority);
+                assert_eq!(success_keys, vec![b"cleanup-me".to_vec()]);
+                if priority == ErrorPriority::Ordinary {
+                    assert!(
+                        matches!(*inner, Error::StringError(message) if message == "last ordinary")
+                    );
+                }
+            }
+            other => panic!("wrong wrapper: {other:?}"),
+        }
+        let input: Vec<crate::Result<kvrpcpb::UnsafeDestroyRangeResponse>> =
+            errors().into_iter().map(Err).collect();
+        let error = crate::request::Collect.merge(input).unwrap_err();
+        assert_eq!(error.priority(), priority);
+        if priority == ErrorPriority::Ordinary {
+            assert!(matches!(error, Error::StringError(message) if message == "first ordinary"));
+        }
+    }
 
     #[tokio::test]
     async fn test_merge_pessimistic_lock_response() {
