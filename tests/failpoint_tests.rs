@@ -535,6 +535,40 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
     Ok(())
 }
 
+/// A reader resolves the locks of an async-commit transaction whose writer failed after
+/// its prewrite, once the primary lock has expired, instead of waiting for GC's
+/// `cleanup_locks`. Every key is locked, so the transaction is committed.
+#[tokio::test]
+#[serial]
+async fn txn_read_resolves_expired_async_commit_locks() -> Result<()> {
+    init().await?;
+    let scenario = FailScenario::setup();
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
+
+    let keys = {
+        fail::cfg("after-prewrite", "return").unwrap();
+        defer! {
+            fail::cfg("after-prewrite", "off").unwrap()
+        }
+        write_data(&client, true, true).await?
+    };
+    assert_eq!(count_locks(&client).await?, keys.len());
+
+    // Let the primary locks expire (the default lock TTL is 3 s).
+    tokio::time::sleep(Duration::from_millis(3500)).await;
+
+    phase!(
+        "read the keys through the expired async-commit locks",
+        must_committed(&client, keys.clone()).await
+    );
+    assert_eq!(count_locks(&client).await?, 0);
+
+    scenario.teardown();
+    Ok(())
+}
+
 async fn must_committed(client: &TransactionClient, keys: HashSet<Vec<u8>>) {
     let ts = client.current_timestamp().await.unwrap();
     let mut snapshot = client.snapshot(ts, TransactionOptions::default());

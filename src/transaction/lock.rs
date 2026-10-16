@@ -135,23 +135,73 @@ pub async fn resolve_locks(
                         keyspace,
                     )
                     .await?;
-                match &status.kind {
-                    TransactionStatusKind::Committed(ts) => {
-                        let commit_version = ts.version();
-                        commit_versions.insert(lock.lock_version, commit_version);
-                        Some(commit_version)
-                    }
-                    TransactionStatusKind::RolledBack => {
-                        commit_versions.insert(lock.lock_version, 0);
-                        Some(0)
+                let commit_version = match &status.kind {
+                    TransactionStatusKind::Committed(ts) => Some(ts.version()),
+                    TransactionStatusKind::RolledBack => Some(0),
+                    // An expired async-commit primary: CheckTxnStatus never rolls it back,
+                    // because the transaction may already be committed through its
+                    // secondaries. Decide the outcome from the secondaries, as client-go's
+                    // `resolveAsyncCommitLock` does, instead of waiting on a lock that only
+                    // GC would ever clear.
+                    TransactionStatusKind::Locked(_, primary)
+                        if status.is_expired && primary.use_async_commit =>
+                    {
+                        let resolved = lock_resolver
+                            .resolve_expired_async_commit(
+                                &lock,
+                                primary,
+                                caller_start_ts,
+                                current_ts,
+                                pd_client.clone(),
+                                keyspace,
+                            )
+                            .await?;
+                        match resolved {
+                            Ok(commit_version) => {
+                                // Resolve the primary too, so later readers of this
+                                // transaction find its final status at once.
+                                let cleaned_region = resolve_lock_with_retry(
+                                    &primary.key,
+                                    lock.lock_version,
+                                    commit_version,
+                                    lock.is_txn_file,
+                                    pd_client.clone(),
+                                    keyspace,
+                                    OPTIMISTIC_BACKOFF,
+                                )
+                                .await?;
+                                clean_regions
+                                    .entry(lock.lock_version)
+                                    .or_default()
+                                    .insert(cleaned_region);
+                                Some(commit_version)
+                            }
+                            Err(live_lock) => {
+                                live_locks.push(live_lock);
+                                None
+                            }
+                        }
                     }
                     TransactionStatusKind::Locked(_, lock_info) => {
                         live_locks.push(lock_info.clone());
                         None
                     }
+                };
+                if let Some(commit_version) = commit_version {
+                    commit_versions.insert(lock.lock_version, commit_version);
                 }
+                commit_version
             }
         };
+
+        // The primary's region may be the one just resolved above.
+        if clean_regions
+            .get(&lock.lock_version)
+            .map(|regions| regions.contains(&region_ver_id))
+            .unwrap_or(false)
+        {
+            continue;
+        }
 
         if let Some(commit_version) = commit_version {
             let cleaned_region = resolve_lock_with_retry(
@@ -368,49 +418,31 @@ impl LockResolver {
             // If the transaction uses async commit, check_txn_status will reject rolling back the primary lock.
             // Then we need to check the secondary locks to determine the final status of the transaction.
             if let TransactionStatusKind::Locked(_, lock_info) = &status.kind {
-                let secondary_status = self
-                    .check_all_secondaries(
-                        pd_client.clone(),
-                        keyspace,
-                        lock_info.secondaries.clone(),
-                        txn_id,
-                    )
-                    .await?;
-                debug!(
-                    "secondary status, txn_id:{}, commit_ts:{:?}, min_commit_version:{}, fallback_2pc:{}",
-                    txn_id,
-                    secondary_status
-                        .commit_ts
-                        .as_ref()
-                        .map_or(0, |ts| ts.version()),
-                    secondary_status.min_commit_ts,
-                    secondary_status.fallback_2pc,
-                );
-
-                if secondary_status.fallback_2pc {
-                    debug!("fallback to 2pc, txn_id:{}, check_txn_status again", txn_id);
-                    status = self
-                        .check_txn_status(
-                            pd_client.clone(),
-                            keyspace,
-                            txn_id,
-                            l.primary_lock,
-                            0,
-                            u64::MAX,
-                            true,
-                            true,
-                            l.lock_type == kvrpcpb::Op::PessimisticLock as i32,
-                            l.is_txn_file,
-                        )
-                        .await?;
-                } else {
-                    let commit_ts = if let Some(commit_ts) = &secondary_status.commit_ts {
-                        commit_ts.version()
-                    } else {
-                        secondary_status.min_commit_ts
-                    };
-                    txn_infos.insert(txn_id, (commit_ts, l.is_txn_file));
-                    continue;
+                match self
+                    .async_commit_version(pd_client.clone(), keyspace, lock_info)
+                    .await?
+                {
+                    Some(commit_ts) => {
+                        txn_infos.insert(txn_id, (commit_ts, l.is_txn_file));
+                        continue;
+                    }
+                    None => {
+                        debug!("fallback to 2pc, txn_id:{}, check_txn_status again", txn_id);
+                        status = self
+                            .check_txn_status(
+                                pd_client.clone(),
+                                keyspace,
+                                txn_id,
+                                l.primary_lock,
+                                0,
+                                u64::MAX,
+                                true,
+                                true,
+                                l.lock_type == kvrpcpb::Op::PessimisticLock as i32,
+                                l.is_txn_file,
+                            )
+                            .await?;
+                    }
                 }
             }
 
@@ -471,7 +503,12 @@ impl LockResolver {
         is_txn_file: bool,
     ) -> Result<Arc<TransactionStatus>> {
         if let Some(txn_status) = self.ctx.get_resolved(txn_id).await {
-            return Ok(txn_status);
+            // A cached "locked" status answers a plain check only: forcing sync commit
+            // exists to get a different answer for an expired async-commit lock.
+            let locked = matches!(txn_status.kind, TransactionStatusKind::Locked(..));
+            if !(force_sync_commit && locked) {
+                return Ok(txn_status);
+            }
         }
 
         // CheckTxnStatus may meet the following cases:
@@ -537,6 +574,74 @@ impl LockResolver {
             .merge(Collect)
             .plan();
         plan.execute().await
+    }
+
+    /// The outcome of the async-commit transaction whose primary lock is `primary`,
+    /// decided from its secondary locks (see
+    /// [`SecondaryLocksStatus::async_commit_version`]): its commit version, 0 if it is
+    /// rolled back, or `None` if it has to be resolved as a two-phase commit.
+    async fn async_commit_version(
+        &mut self,
+        pd_client: Arc<impl PdClient>,
+        keyspace: Keyspace,
+        primary: &kvrpcpb::LockInfo,
+    ) -> Result<Option<u64>> {
+        let txn_id = primary.lock_version;
+        let secondaries = if primary.secondaries.is_empty() {
+            SecondaryLocksStatus::default()
+        } else {
+            self.check_all_secondaries(pd_client, keyspace, primary.secondaries.clone(), txn_id)
+                .await?
+        };
+        let version = secondaries.async_commit_version(primary.min_commit_ts);
+        debug!(
+            "async commit secondaries, txn_id:{}, status:{:?}, primary min_commit_ts:{}, outcome:{:?}",
+            txn_id, secondaries, primary.min_commit_ts, version
+        );
+        Ok(version)
+    }
+
+    /// Resolves the status of the transaction of `lock` whose primary, `primary`, is an
+    /// expired async-commit lock. Returns its commit version (0 if it is rolled back), or
+    /// the lock that is still live when the transaction fell back to two-phase commit and
+    /// its primary is not expired after all.
+    async fn resolve_expired_async_commit(
+        &mut self,
+        lock: &kvrpcpb::LockInfo,
+        primary: &kvrpcpb::LockInfo,
+        caller_start_ts: u64,
+        current_ts: u64,
+        pd_client: Arc<impl PdClient>,
+        keyspace: Keyspace,
+    ) -> Result<std::result::Result<u64, kvrpcpb::LockInfo>> {
+        if let Some(commit_version) = self
+            .async_commit_version(pd_client.clone(), keyspace, primary)
+            .await?
+        {
+            return Ok(Ok(commit_version));
+        }
+        // A lock of the transaction is not an async-commit lock: the primary decides,
+        // as in two-phase commit.
+        debug!(
+            "fallback to 2pc, txn_id:{}, check_txn_status with force_sync_commit",
+            lock.lock_version
+        );
+        let status = self
+            .get_txn_status_from_lock(
+                OPTIMISTIC_BACKOFF,
+                lock,
+                caller_start_ts,
+                current_ts,
+                true,
+                pd_client,
+                keyspace,
+            )
+            .await?;
+        Ok(match &status.kind {
+            TransactionStatusKind::Committed(ts) => Ok(ts.version()),
+            TransactionStatusKind::RolledBack => Ok(0),
+            TransactionStatusKind::Locked(_, lock_info) => Err(lock_info.clone()),
+        })
     }
 
     async fn batch_resolve_locks(
@@ -772,6 +877,253 @@ mod tests {
         assert!(live_locks.is_empty());
         assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 1);
         assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 1);
+    }
+
+    /// What the fake TiKV saw while `resolve_locks` handled one lock of an async-commit
+    /// transaction (start ts 5, primary key [1] in region 1, secondaries [20] in region 2
+    /// and [251, 0] in region 3).
+    #[derive(Debug, Default)]
+    struct AsyncCommitRun {
+        live_locks: usize,
+        /// `force_sync_commit` of each CheckTxnStatus.
+        check_txn_status: Vec<bool>,
+        check_secondary_locks: usize,
+        /// (region id, commit version) of each ResolveLock.
+        resolved: Vec<(u64, u64)>,
+    }
+
+    const TXN: u64 = 5;
+
+    fn async_commit_lock(key: Vec<u8>, min_commit_ts: u64) -> kvrpcpb::LockInfo {
+        kvrpcpb::LockInfo {
+            primary_lock: vec![1],
+            lock_version: TXN,
+            key,
+            lock_ttl: 3000,
+            use_async_commit: true,
+            min_commit_ts,
+            ..Default::default()
+        }
+    }
+
+    /// Runs `resolve_locks` on the secondary lock at [20]. The primary lock answered by
+    /// CheckTxnStatus has `primary_ttl` (0: expired under the mock's clock) and
+    /// `min_commit_ts` 11; `secondaries` answers CheckSecondaryLocks for the keys of one
+    /// region, and `forced` answers a CheckTxnStatus with `force_sync_commit`.
+    async fn resolve_async_commit_lock(
+        primary_ttl: u64,
+        secondaries: impl Fn(&[Vec<u8>]) -> kvrpcpb::CheckSecondaryLocksResponse + Send + Sync + 'static,
+        forced: kvrpcpb::CheckTxnStatusResponse,
+    ) -> AsyncCommitRun {
+        let seen = Arc::new(std::sync::Mutex::new(AsyncCommitRun::default()));
+        let captured = seen.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let mut seen = captured.lock().unwrap();
+                if let Some(req) = req.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
+                    assert_eq!(req.primary_key, vec![1]);
+                    seen.check_txn_status.push(req.force_sync_commit);
+                    if req.force_sync_commit {
+                        return Ok(Box::new(forced.clone()) as Box<dyn Any>);
+                    }
+                    let mut primary = async_commit_lock(vec![1], 11);
+                    primary.secondaries = vec![vec![20], vec![251, 0]];
+                    let resp = kvrpcpb::CheckTxnStatusResponse {
+                        lock_ttl: primary_ttl,
+                        lock_info: Some(primary),
+                        action: kvrpcpb::Action::NoAction as i32,
+                        ..Default::default()
+                    };
+                    return Ok(Box::new(resp) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::CheckSecondaryLocksRequest>() {
+                    assert_eq!(req.start_version, TXN);
+                    seen.check_secondary_locks += 1;
+                    return Ok(Box::new(secondaries(&req.keys)) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::ResolveLockRequest>() {
+                    assert_eq!(req.start_version, TXN);
+                    let region = req.context.as_ref().unwrap().region_id;
+                    seen.resolved.push((region, req.commit_version));
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+
+        let live_locks = resolve_locks(
+            vec![async_commit_lock(vec![20], 10)],
+            Timestamp::default(),
+            client,
+            Keyspace::Disable,
+        )
+        .await
+        .unwrap();
+        let mut run = std::mem::take(&mut *seen.lock().unwrap());
+        run.live_locks = live_locks.len();
+        run.resolved.sort_unstable();
+        run
+    }
+
+    fn locked(keys: &[Vec<u8>], min_commit_ts: u64) -> kvrpcpb::CheckSecondaryLocksResponse {
+        kvrpcpb::CheckSecondaryLocksResponse {
+            locks: keys
+                .iter()
+                .map(|key| async_commit_lock(key.clone(), min_commit_ts))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    fn unused_forced() -> kvrpcpb::CheckTxnStatusResponse {
+        kvrpcpb::CheckTxnStatusResponse::default()
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn expired_async_commit_with_every_secondary_locked_commits_at_the_max_min_commit_ts() {
+        let run = resolve_async_commit_lock(
+            0,
+            |keys| {
+                if keys[0] == [20] {
+                    locked(keys, 10)
+                } else {
+                    locked(keys, 12)
+                }
+            },
+            unused_forced(),
+        )
+        .await;
+        assert_eq!(run.live_locks, 0);
+        assert_eq!(run.check_txn_status, vec![false]);
+        assert_eq!(run.check_secondary_locks, 2);
+        // The primary (region 1) and the lock that was read (region 2), at
+        // max(10, 12, primary's 11).
+        assert_eq!(run.resolved, vec![(1, 12), (2, 12)]);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn expired_async_commit_with_a_rolled_back_secondary_is_rolled_back() {
+        let run = resolve_async_commit_lock(
+            0,
+            |keys| {
+                if keys[0] == [20] {
+                    locked(keys, 10)
+                } else {
+                    // TiKV wrote a rollback for the missing lock: no locks, no commit_ts.
+                    kvrpcpb::CheckSecondaryLocksResponse::default()
+                }
+            },
+            unused_forced(),
+        )
+        .await;
+        assert_eq!(run.live_locks, 0);
+        assert_eq!(run.resolved, vec![(1, 0), (2, 0)]);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn expired_async_commit_with_a_committed_secondary_commits_at_its_ts() {
+        let run = resolve_async_commit_lock(
+            0,
+            |keys| {
+                if keys[0] == [20] {
+                    locked(keys, 10)
+                } else {
+                    kvrpcpb::CheckSecondaryLocksResponse {
+                        commit_ts: 15,
+                        ..Default::default()
+                    }
+                }
+            },
+            unused_forced(),
+        )
+        .await;
+        assert_eq!(run.live_locks, 0);
+        assert_eq!(run.resolved, vec![(1, 15), (2, 15)]);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn async_commit_that_fell_back_to_2pc_is_resolved_by_its_primary() {
+        let run = resolve_async_commit_lock(
+            0,
+            |keys| {
+                let mut resp = locked(keys, 10);
+                if keys[0] == [20] {
+                    resp.locks[0].use_async_commit = false;
+                }
+                resp
+            },
+            kvrpcpb::CheckTxnStatusResponse {
+                action: kvrpcpb::Action::TtlExpireRollback as i32,
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(run.live_locks, 0);
+        assert_eq!(run.check_txn_status, vec![false, true]);
+        assert_eq!(run.resolved, vec![(1, 0), (2, 0)]);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn unexpired_async_commit_primary_stays_live() {
+        let run = resolve_async_commit_lock(100, |_| panic!("not expired"), unused_forced()).await;
+        assert_eq!(run.live_locks, 1);
+        assert_eq!(run.check_secondary_locks, 0);
+        assert!(run.resolved.is_empty());
+    }
+
+    #[test]
+    fn secondary_locks_status_decides_the_async_commit_outcome() {
+        let all_locked = SecondaryLocksStatus {
+            min_commit_ts: 12,
+            ..Default::default()
+        };
+        assert_eq!(all_locked.async_commit_version(11), Some(12));
+        assert_eq!(all_locked.async_commit_version(13), Some(13));
+        let rolled_back = SecondaryLocksStatus {
+            min_commit_ts: 12,
+            rolled_back: true,
+            ..Default::default()
+        };
+        assert_eq!(rolled_back.async_commit_version(11), Some(0));
+        let committed = SecondaryLocksStatus {
+            commit_ts: Some(Timestamp::from_version(15)),
+            fallback_2pc: true,
+            ..Default::default()
+        };
+        assert_eq!(committed.async_commit_version(11), Some(15));
+        let fallback = SecondaryLocksStatus {
+            min_commit_ts: 12,
+            fallback_2pc: true,
+            ..Default::default()
+        };
+        assert_eq!(fallback.async_commit_version(11), None);
+    }
+
+    #[test]
+    fn merging_secondary_locks_refuses_contradictions() {
+        use crate::request::Collect;
+        use crate::request::Merge;
+        let committed = |ts| {
+            Ok(kvrpcpb::CheckSecondaryLocksResponse {
+                commit_ts: ts,
+                ..Default::default()
+            })
+        };
+        let rolled_back = || Ok(kvrpcpb::CheckSecondaryLocksResponse::default());
+
+        let merged = Collect
+            .merge(vec![Ok(locked(&[vec![20]], 10)), rolled_back()])
+            .unwrap();
+        assert!(merged.rolled_back && merged.commit_ts.is_none());
+        assert!(Collect.merge(vec![committed(15), rolled_back()]).is_err());
+        assert!(Collect.merge(vec![committed(15), committed(16)]).is_err());
+        let merged = Collect.merge(vec![committed(15), committed(15)]).unwrap();
+        assert_eq!(merged.commit_ts.unwrap().version(), 15);
     }
 
     #[test]
