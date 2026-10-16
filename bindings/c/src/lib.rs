@@ -1,4 +1,4 @@
-// Copyright (c) 2026 PingCAP, Inc.
+// Copyright 2026 TiKV Project Authors. Licensed under Apache-2.0.
 
 #![allow(non_camel_case_types)]
 

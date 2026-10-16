@@ -1,4 +1,4 @@
-// Copyright (c) 2026 PingCAP, Inc.
+// Copyright 2026 TiKV Project Authors. Licensed under Apache-2.0.
 
 #ifndef TIKV_CLIENT_ASYNC_C_H
 #define TIKV_CLIENT_ASYNC_C_H
