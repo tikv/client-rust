@@ -21,7 +21,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::ptr;
 use std::slice;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use futures::FutureExt;
@@ -55,22 +55,6 @@ pub struct tikv_async_raw_mutation_t {
 #[derive(Clone, Copy)]
 pub struct tikv_async_raw_mutations_t {
     pub ptr: *const tikv_async_raw_mutation_t,
-    pub len: usize,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct tikv_async_raw_mutation_with_ttl_t {
-    pub op: tikv_async_raw_mutation_op_t,
-    pub key: tikv_slice_t,
-    pub value: tikv_slice_t,
-    pub ttl_secs: u64,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct tikv_async_raw_mutations_with_ttl_t {
-    pub ptr: *const tikv_async_raw_mutation_with_ttl_t,
     pub len: usize,
 }
 
@@ -108,7 +92,6 @@ pub enum tikv_status_t {
     TIKV_STATUS_INVALID_ARGUMENT = 2,
     TIKV_STATUS_PANIC = 3,
     TIKV_STATUS_REJECTED = 4,
-    TIKV_STATUS_CANCELLED = 5,
 }
 
 #[repr(C)]
@@ -159,9 +142,7 @@ pub struct tikv_metrics_snapshot_t {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RequestKind {
     Put,
-    PutWithTtl,
     Get,
-    GetKeyTtl,
     Delete,
     DeleteRange,
     Scan,
@@ -174,9 +155,7 @@ impl RequestKind {
     fn name(self) -> &'static str {
         match self {
             Self::Put => "put",
-            Self::PutWithTtl => "put_with_ttl",
             Self::Get => "get",
-            Self::GetKeyTtl => "get_key_ttl",
             Self::Delete => "delete",
             Self::DeleteRange => "delete_range",
             Self::Scan => "scan",
@@ -207,13 +186,13 @@ impl MutationOp {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum OwnedMutation {
-    Put(KvPair, u64),
+    Put(KvPair),
     Delete(Key),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum WriteBatchRun {
-    Put(Vec<(KvPair, u64)>),
+    Put(Vec<KvPair>),
     Delete(Vec<Key>),
 }
 
@@ -221,7 +200,6 @@ enum WriteBatchRun {
 enum RequestOutput {
     Unit,
     Get(Option<Vec<u8>>),
-    KeyTtl(Option<u64>),
     Pairs(Vec<KvPair>),
 }
 
@@ -264,16 +242,14 @@ struct DrainState {
 
 struct ClientLifecycle {
     accepting: AtomicBool,
-    cancel_inflight: AtomicBool,
     drain: Mutex<DrainState>,
     drain_ready: Condvar,
-    requests: Mutex<Vec<usize>>,
 }
 
 struct AsyncClientCore {
     runtime: tokio::runtime::Runtime,
     client: RawClient,
-    lifecycle: ClientLifecycle,
+    lifecycle: Arc<ClientLifecycle>,
 }
 
 struct AsyncClientHandle {
@@ -282,20 +258,16 @@ struct AsyncClientHandle {
 
 struct CompletionState {
     complete: bool,
-    callback_running: bool,
-    callback_done: bool,
     completion_status: Option<tikv_status_t>,
     error_message: Option<CString>,
     output: Option<RequestOutput>,
     output_taken: bool,
-    cancel_requested: bool,
 }
 
 struct RequestState {
     kind: RequestKind,
     completion: Mutex<CompletionState>,
-    ready: Condvar,
-    client: Weak<AsyncClientCore>,
+    lifecycle: Arc<ClientLifecycle>,
     callback: Option<tikv_async_completion_cb>,
     userdata: *mut c_void,
     retain_count: AtomicUsize,
@@ -419,36 +391,32 @@ fn release_request(request: *mut RequestState) {
     }
 }
 
-fn inflight_add(core: &AsyncClientCore) {
-    let mut drain = core
-        .lifecycle
+fn inflight_add(lifecycle: &ClientLifecycle) {
+    let mut drain = lifecycle
         .drain
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     drain.inflight += 1;
 }
 
-fn inflight_done(core: &AsyncClientCore) {
-    let mut drain = core
-        .lifecycle
+fn inflight_done(lifecycle: &ClientLifecycle) {
+    let mut drain = lifecycle
         .drain
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     drain.inflight -= 1;
     if drain.inflight == 0 {
-        core.lifecycle.drain_ready.notify_all();
+        lifecycle.drain_ready.notify_all();
     }
 }
 
-fn wait_drain(core: &AsyncClientCore) {
-    let mut drain = core
-        .lifecycle
+fn wait_drain(lifecycle: &ClientLifecycle) {
+    let mut drain = lifecycle
         .drain
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     while drain.inflight != 0 {
-        drain = core
-            .lifecycle
+        drain = lifecycle
             .drain_ready
             .wait(drain)
             .unwrap_or_else(|poisoned| poisoned.into_inner());

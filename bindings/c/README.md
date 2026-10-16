@@ -18,13 +18,17 @@ The build produces `target/debug/libtikv_client_rust_c.a` and a shared library
 
 ## API overview
 
-The C ABI supports raw put, put with TTL, get, get-key-TTL, delete,
-delete-range, forward and reverse scan, mixed put/delete batches, and
-batch-get. Submitting a request copies its input buffers before returning.
+The C ABI supports raw put, get, delete, delete-range, forward and reverse
+scan, mixed put/delete batches, and batch-get. Submitting a request copies its
+input buffers before returning.
 An accepted request returns a handle and eventually invokes its completion
 callback on a Rust runtime worker thread. The callback may read the result or
-destroy the request handle. Each returned buffer, error, and snapshot has a
-matching destroy function in the headers.
+destroy the request handle. Destroy each request exactly once, either in its
+callback or after synchronizing with the callback to observe completion; do not
+destroy a pending request. A callback can run before submit returns, so the
+returned handle must not be used if the callback already destroyed it.
+Each returned buffer, error, and snapshot has a matching destroy function in the
+headers.
 
 `tikv_async_client_new` leaves the gRPC response decoding limit unlimited for
 compatibility. Use
@@ -32,11 +36,11 @@ compatibility. Use
 bytes. Passing zero to the latter uses the Rust client's default (currently
 4 MiB).
 
-Cancellation is best effort. The underlying TiKV operation may already have
-executed when cancellation is requested; in particular, cancelling a write
-does not roll it back. `tikv_async_client_drain` waits for accepted callbacks
-to finish. Do not call drain or client destruction from a callback belonging
-to the same client.
+`tikv_async_client_shutdown_begin` rejects new submissions and lets accepted
+requests finish normally. `tikv_async_client_destroy` begins shutdown, waits for
+all accepted callbacks to return, and releases the client. Stop other calls using
+the client handle before destroying it. Do not destroy a client from one of its
+own callbacks.
 
 An empty reverse-scan start key is unsupported by the underlying client.
 Mixed write batches preserve the order of adjacent put and delete phases, but

@@ -2,13 +2,14 @@
 
 #include "tikv_client_async_c.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 typedef struct request_latch_t {
-  volatile int done;
+  atomic_int done;
   tikv_status_t status;
 } request_latch_t;
 
@@ -51,14 +52,14 @@ static void completion_cb(tikv_async_request_t *request,
                           void *userdata) {
   request_latch_t *latch = (request_latch_t *)userdata;
   latch->status = final_status;
-  latch->done = 1;
+  atomic_store_explicit(&latch->done, 1, memory_order_release);
   (void)request;
 }
 
 static int wait_latch_ok(const char *label,
                          tikv_async_request_t *request,
                          request_latch_t *latch) {
-  while (!latch->done) {
+  while (!atomic_load_explicit(&latch->done, memory_order_acquire)) {
     struct timespec delay;
     delay.tv_sec = 0;
     delay.tv_nsec = 10 * 1000 * 1000;
@@ -88,25 +89,21 @@ int main(int argc, char **argv) {
   const tikv_slice_t value_a_v2 = slice_from_cstr("value-a-v2");
   const tikv_slice_t value_b = slice_from_cstr("value-b");
 
-  const tikv_async_raw_mutation_with_ttl_t write_items_buf[] = {
+  const tikv_async_raw_mutation_t write_items_buf[] = {
       {.op = TIKV_ASYNC_RAW_MUTATION_OP_PUT,
        .key = key_a,
-       .value = value_a_v1,
-       .ttl_secs = 0},
+       .value = value_a_v1},
       {.op = TIKV_ASYNC_RAW_MUTATION_OP_PUT,
        .key = key_b,
-       .value = value_b,
-       .ttl_secs = 0},
+       .value = value_b},
       {.op = TIKV_ASYNC_RAW_MUTATION_OP_DELETE,
        .key = key_a,
-       .value = {NULL, 0},
-       .ttl_secs = 0},
+       .value = {NULL, 0}},
       {.op = TIKV_ASYNC_RAW_MUTATION_OP_PUT,
        .key = key_a,
-       .value = value_a_v2,
-       .ttl_secs = 0},
+       .value = value_a_v2},
   };
-  const tikv_async_raw_mutations_with_ttl_t write_items = {
+  const tikv_async_raw_mutations_t write_items = {
       .ptr = write_items_buf,
       .len = sizeof(write_items_buf) / sizeof(write_items_buf[0]),
   };
@@ -156,18 +153,18 @@ int main(int argc, char **argv) {
   if (!expect_ok("delete_range_submit before batch_write", status, error) ||
       !wait_latch_ok("wait delete_range_submit before batch_write", reset,
                      &reset_latch)) {
-    tikv_async_request_destroy(reset);
     tikv_async_client_destroy(client);
+    tikv_async_request_destroy(reset);
     return 1;
   }
   tikv_async_request_destroy(reset);
 
-  status = tikv_async_raw_batch_write_with_ttl_submit(
+  status = tikv_async_raw_batch_write_submit(
       client, write_items, completion_cb, &batch_write_latch, &batch_write, &error);
   if (!expect_ok("batch_write_submit", status, error) ||
       !wait_latch_ok("wait batch_write_submit", batch_write, &batch_write_latch)) {
-    tikv_async_request_destroy(batch_write);
     tikv_async_client_destroy(client);
+    tikv_async_request_destroy(batch_write);
     return 1;
   }
   tikv_async_request_destroy(batch_write);
@@ -181,8 +178,8 @@ int main(int argc, char **argv) {
   status = tikv_async_raw_scan_submit(
       client, scan_start, scan_end, 16, completion_cb, &scan_latch, &scan, &error);
   if (!expect_ok("scan_submit", status, error)) {
-    tikv_async_request_destroy(batch_get);
     tikv_async_client_destroy(client);
+    tikv_async_request_destroy(batch_get);
     return 1;
   }
   status = tikv_async_raw_scan_reverse_submit(client,
@@ -194,9 +191,9 @@ int main(int argc, char **argv) {
                                               &reverse_scan,
                                               &error);
   if (!expect_ok("scan_reverse_submit", status, error)) {
+    tikv_async_client_destroy(client);
     tikv_async_request_destroy(batch_get);
     tikv_async_request_destroy(scan);
-    tikv_async_client_destroy(client);
     return 1;
   }
 
@@ -204,20 +201,20 @@ int main(int argc, char **argv) {
       !wait_latch_ok("wait scan_submit", scan, &scan_latch) ||
       !wait_latch_ok("wait scan_reverse_submit", reverse_scan,
                      &reverse_scan_latch)) {
+    tikv_async_client_destroy(client);
     tikv_async_request_destroy(batch_get);
     tikv_async_request_destroy(scan);
     tikv_async_request_destroy(reverse_scan);
-    tikv_async_client_destroy(client);
     return 1;
   }
 
   tikv_kv_pairs_t pairs = {0};
   status = tikv_async_request_take_batch_get_result(batch_get, &pairs, &error);
   if (!expect_ok("take batch_get_result", status, error)) {
+    tikv_async_client_destroy(client);
     tikv_async_request_destroy(batch_get);
     tikv_async_request_destroy(scan);
     tikv_async_request_destroy(reverse_scan);
-    tikv_async_client_destroy(client);
     return 1;
   }
   printf("async batch_get returned %zu pairs\n", pairs.len);
@@ -235,9 +232,9 @@ int main(int argc, char **argv) {
   pairs.len = 0;
   status = tikv_async_request_take_scan_result(scan, &pairs, &error);
   if (!expect_ok("take scan_result", status, error)) {
+    tikv_async_client_destroy(client);
     tikv_async_request_destroy(scan);
     tikv_async_request_destroy(reverse_scan);
-    tikv_async_client_destroy(client);
     return 1;
   }
   printf("async scan returned %zu pairs\n", pairs.len);
@@ -255,8 +252,8 @@ int main(int argc, char **argv) {
   pairs.len = 0;
   status = tikv_async_request_take_scan_result(reverse_scan, &pairs, &error);
   if (!expect_ok("take reverse_scan_result", status, error)) {
-    tikv_async_request_destroy(reverse_scan);
     tikv_async_client_destroy(client);
+    tikv_async_request_destroy(reverse_scan);
     return 1;
   }
   printf("async reverse scan returned %zu pairs\n", pairs.len);
@@ -274,8 +271,8 @@ int main(int argc, char **argv) {
       client, cleanup_items, completion_cb, &cleanup_latch, &cleanup, &error);
   if (!expect_ok("cleanup batch_write_submit", status, error) ||
       !wait_latch_ok("wait cleanup batch_write_submit", cleanup, &cleanup_latch)) {
-    tikv_async_request_destroy(cleanup);
     tikv_async_client_destroy(client);
+    tikv_async_request_destroy(cleanup);
     return 1;
   }
   tikv_async_request_destroy(cleanup);
@@ -290,8 +287,8 @@ int main(int argc, char **argv) {
                                       &error);
   if (!expect_ok("final scan_submit", status, error) ||
       !wait_latch_ok("wait final scan_submit", final_scan, &final_scan_latch)) {
-    tikv_async_request_destroy(final_scan);
     tikv_async_client_destroy(client);
+    tikv_async_request_destroy(final_scan);
     return 1;
   }
 
@@ -299,21 +296,16 @@ int main(int argc, char **argv) {
   pairs.len = 0;
   status = tikv_async_request_take_scan_result(final_scan, &pairs, &error);
   if (!expect_ok("take final scan_result", status, error)) {
-    tikv_async_request_destroy(final_scan);
     tikv_async_client_destroy(client);
+    tikv_async_request_destroy(final_scan);
     return 1;
   }
   printf("async scan after cleanup returned %zu pairs\n", pairs.len);
   tikv_kv_pairs_destroy(pairs);
   tikv_async_request_destroy(final_scan);
 
-  status = tikv_async_client_shutdown_begin(client, false, &error);
+  status = tikv_async_client_shutdown_begin(client, &error);
   if (!expect_ok("shutdown_begin", status, error)) {
-    tikv_async_client_destroy(client);
-    return 1;
-  }
-  status = tikv_async_client_drain(client, &error);
-  if (!expect_ok("drain", status, error)) {
     tikv_async_client_destroy(client);
     return 1;
   }

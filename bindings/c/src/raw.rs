@@ -25,31 +25,7 @@ pub(crate) fn slice_mutations_to_owned(
             match op {
                 MutationOp::Put => {
                     let value = slice_to_vec(mutation.value, &format!("mutations[{index}].value"))?;
-                    Ok(OwnedMutation::Put(KvPair::new(key, value), 0))
-                }
-                MutationOp::Delete => Ok(OwnedMutation::Delete(key)),
-            }
-        })
-        .collect()
-}
-
-pub(crate) fn slice_mutations_with_ttl_to_owned(
-    raw: tikv_async_raw_mutations_with_ttl_t,
-) -> FfiResult<Vec<OwnedMutation>> {
-    let mutations = slices_to_vec(raw.ptr, raw.len, "mutations")?;
-    mutations
-        .iter()
-        .enumerate()
-        .map(|(index, mutation)| {
-            let op = MutationOp::from_ffi(mutation.op, &format!("mutations[{index}]"))?;
-            let key = slice_to_key(mutation.key, &format!("mutations[{index}].key"))?;
-            match op {
-                MutationOp::Put => {
-                    let value = slice_to_vec(mutation.value, &format!("mutations[{index}].value"))?;
-                    Ok(OwnedMutation::Put(
-                        KvPair::new(key, value),
-                        mutation.ttl_secs,
-                    ))
+                    Ok(OwnedMutation::Put(KvPair::new(key, value)))
                 }
                 MutationOp::Delete => Ok(OwnedMutation::Delete(key)),
             }
@@ -65,7 +41,7 @@ pub(crate) fn build_write_batch_runs(mutations: Vec<OwnedMutation>) -> Vec<Write
 
     for mutation in mutations {
         match mutation {
-            OwnedMutation::Put(pair, ttl_secs) => {
+            OwnedMutation::Put(pair) => {
                 if !delete_keys.is_empty() {
                     runs.push(WriteBatchRun::Delete(mem::take(&mut delete_keys)));
                 }
@@ -76,7 +52,7 @@ pub(crate) fn build_write_batch_runs(mutations: Vec<OwnedMutation>) -> Vec<Write
                     put_keys.clear();
                 }
                 put_keys.insert(key);
-                put_pairs.push((pair, ttl_secs));
+                put_pairs.push(pair);
             }
             OwnedMutation::Delete(key) => {
                 if !put_pairs.is_empty() {
@@ -108,14 +84,13 @@ fn slice_to_range(start_key: tikv_slice_t, end_key: tikv_slice_t) -> FfiResult<B
     Ok(BoundRange::from((start, end)))
 }
 
-async fn submit_put_batch(client: &RawClient, puts: Vec<(KvPair, u64)>) -> FfiResult<()> {
+async fn submit_put_batch(client: &RawClient, puts: Vec<KvPair>) -> FfiResult<()> {
     if puts.is_empty() {
         return Ok(());
     }
 
-    let (pairs, ttls): (Vec<_>, Vec<_>) = puts.into_iter().unzip();
     client
-        .batch_put_with_ttl(pairs, ttls)
+        .batch_put(puts)
         .await
         .map_err(|error| FfiError::error(error.to_string()))?;
     Ok(())
@@ -183,46 +158,6 @@ pub extern "C" fn tikv_async_raw_put_submit(
 }
 
 #[no_mangle]
-pub extern "C" fn tikv_async_raw_put_with_ttl_submit(
-    client: *const tikv_async_client_t,
-    key: tikv_slice_t,
-    value: tikv_slice_t,
-    ttl_secs: u64,
-    completion: Option<tikv_async_completion_cb>,
-    userdata: *mut c_void,
-    out_request: *mut *mut tikv_async_request_t,
-    out_error: *mut *mut tikv_error_t,
-) -> tikv_status_t {
-    if !out_request.is_null() {
-        unsafe { *out_request = ptr::null_mut() };
-    }
-
-    match run_ffi(out_error, || {
-        let key = slice_to_key(key, "key")?;
-        let value = slice_to_vec(value, "value")?;
-        submit_common(
-            client,
-            RequestKind::PutWithTtl,
-            completion,
-            userdata,
-            out_request,
-            move |client| {
-                Ok(boxed_future(async move {
-                    client
-                        .put_with_ttl(key, value, ttl_secs)
-                        .await
-                        .map_err(|error| FfiError::error(error.to_string()))?;
-                    Ok(RequestOutput::Unit)
-                }))
-            },
-        )
-    }) {
-        Ok(()) => tikv_status_t::TIKV_STATUS_OK,
-        Err(status) => status,
-    }
-}
-
-#[no_mangle]
 pub extern "C" fn tikv_async_raw_get_submit(
     client: *const tikv_async_client_t,
     key: tikv_slice_t,
@@ -250,43 +185,6 @@ pub extern "C" fn tikv_async_raw_get_submit(
                         .await
                         .map_err(|error| FfiError::error(error.to_string()))?;
                     Ok(RequestOutput::Get(value))
-                }))
-            },
-        )
-    }) {
-        Ok(()) => tikv_status_t::TIKV_STATUS_OK,
-        Err(status) => status,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn tikv_async_raw_get_key_ttl_submit(
-    client: *const tikv_async_client_t,
-    key: tikv_slice_t,
-    completion: Option<tikv_async_completion_cb>,
-    userdata: *mut c_void,
-    out_request: *mut *mut tikv_async_request_t,
-    out_error: *mut *mut tikv_error_t,
-) -> tikv_status_t {
-    if !out_request.is_null() {
-        unsafe { *out_request = ptr::null_mut() };
-    }
-
-    match run_ffi(out_error, || {
-        let key = slice_to_key(key, "key")?;
-        submit_common(
-            client,
-            RequestKind::GetKeyTtl,
-            completion,
-            userdata,
-            out_request,
-            move |client| {
-                Ok(boxed_future(async move {
-                    let ttl = client
-                        .get_key_ttl_secs(key)
-                        .await
-                        .map_err(|error| FfiError::error(error.to_string()))?;
-                    Ok(RequestOutput::KeyTtl(ttl))
                 }))
             },
         )
@@ -469,40 +367,6 @@ pub extern "C" fn tikv_async_raw_batch_write_submit(
 
     match run_ffi(out_error, || {
         let runs = build_write_batch_runs(slice_mutations_to_owned(mutations)?);
-        submit_common(
-            client,
-            RequestKind::BatchWrite,
-            completion,
-            userdata,
-            out_request,
-            move |client| {
-                Ok(boxed_future(async move {
-                    execute_write_batch(client, runs).await?;
-                    Ok(RequestOutput::Unit)
-                }))
-            },
-        )
-    }) {
-        Ok(()) => tikv_status_t::TIKV_STATUS_OK,
-        Err(status) => status,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn tikv_async_raw_batch_write_with_ttl_submit(
-    client: *const tikv_async_client_t,
-    mutations: tikv_async_raw_mutations_with_ttl_t,
-    completion: Option<tikv_async_completion_cb>,
-    userdata: *mut c_void,
-    out_request: *mut *mut tikv_async_request_t,
-    out_error: *mut *mut tikv_error_t,
-) -> tikv_status_t {
-    if !out_request.is_null() {
-        unsafe { *out_request = ptr::null_mut() };
-    }
-
-    match run_ffi(out_error, || {
-        let runs = build_write_batch_runs(slice_mutations_with_ttl_to_owned(mutations)?);
         submit_common(
             client,
             RequestKind::BatchWrite,

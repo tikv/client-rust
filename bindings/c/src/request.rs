@@ -23,46 +23,26 @@ fn ensure_request_kind(request: &RequestState, expected: RequestKind) -> FfiResu
 
 fn make_request_state(
     kind: RequestKind,
-    core: &Arc<AsyncClientCore>,
+    lifecycle: &Arc<ClientLifecycle>,
     callback: tikv_async_completion_cb,
     userdata: *mut c_void,
 ) -> *mut RequestState {
-    inflight_add(core);
+    inflight_add(lifecycle);
     let request = Box::new(RequestState {
         kind,
         completion: Mutex::new(CompletionState {
             complete: false,
-            callback_running: false,
-            callback_done: false,
             completion_status: None,
             error_message: None,
             output: None,
             output_taken: false,
-            cancel_requested: false,
         }),
-        ready: Condvar::new(),
-        client: Arc::downgrade(core),
+        lifecycle: Arc::clone(lifecycle),
         callback: Some(callback),
         userdata,
         retain_count: AtomicUsize::new(1),
     });
-    let request_ptr = Box::into_raw(request);
-    let mut requests = core
-        .lifecycle
-        .requests
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    requests.push(request_ptr as usize);
-    request_ptr
-}
-
-fn remove_request_from_client(core: &AsyncClientCore, request_ptr: *mut RequestState) {
-    let mut requests = core
-        .lifecycle
-        .requests
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    requests.retain(|entry| *entry != request_ptr as usize);
+    Box::into_raw(request)
 }
 
 fn finalize_request(
@@ -71,65 +51,44 @@ fn finalize_request(
     output: Option<RequestOutput>,
     error_message: Option<String>,
 ) {
-    let (callback, userdata) = {
+    let (callback, userdata, lifecycle) = {
         let request = unsafe { &*request_ptr };
         let mut completion = lock_completion(request);
         completion.complete = true;
-        completion.callback_running = true;
         completion.completion_status = Some(status);
         completion.output = output;
         completion.error_message =
             error_message.and_then(|message| CString::new(message.replace('\0', " ")).ok());
-        request.ready.notify_all();
-        (request.callback, request.userdata)
+        (
+            request.callback,
+            request.userdata,
+            Arc::clone(&request.lifecycle),
+        )
     };
 
-    retain_request(request_ptr);
     if let Some(callback) = callback {
         callback(request_ptr as *mut tikv_async_request_t, status, userdata);
     }
 
-    let request = unsafe { &*request_ptr };
-    {
-        let mut completion = lock_completion(request);
-        completion.callback_running = false;
-        completion.callback_done = true;
-        request.ready.notify_all();
-    }
-
-    if let Some(core) = request.client.upgrade() {
-        remove_request_from_client(&core, request_ptr);
-        inflight_done(&core);
-    }
-
+    // The worker reference keeps the state alive if the callback destroys it.
     release_request(request_ptr);
-    release_request(request_ptr);
+    inflight_done(&lifecycle);
 }
 
-fn spawn_request<F>(core: Arc<AsyncClientCore>, request_ptr: *mut RequestState, future: F)
+fn spawn_request<F>(
+    handle: &Handle,
+    request_ptr: *mut RequestState,
+    future: F,
+) -> tokio::task::JoinHandle<()>
 where
     F: std::future::Future<Output = FfiResult<RequestOutput>> + Send + 'static,
 {
-    let handle: Handle = core.runtime.handle().clone();
-    let keepalive = Arc::clone(&core);
     let request_addr = request_ptr as usize;
 
     handle.spawn(async move {
         let result = AssertUnwindSafe(future).catch_unwind().await;
         let request_ptr = request_addr as *mut RequestState;
-        let cancelled = {
-            let request = unsafe { &*request_ptr };
-            let completion = lock_completion(request);
-            completion.cancel_requested
-                || keepalive.lifecycle.cancel_inflight.load(Ordering::Acquire)
-        };
-
         let (status, output, error_message) = match result {
-            Ok(Ok(_)) if cancelled => (
-                tikv_status_t::TIKV_STATUS_CANCELLED,
-                None,
-                Some("request cancelled".to_owned()),
-            ),
             Ok(Ok(output)) => (tikv_status_t::TIKV_STATUS_OK, Some(output), None),
             Ok(Err(error)) => (error.status, None, Some(error.message)),
             Err(payload) => (
@@ -140,8 +99,7 @@ where
         };
 
         finalize_request(request_ptr, status, output, error_message);
-        drop(keepalive);
-    });
+    })
 }
 
 pub(crate) fn submit_common<F>(
@@ -164,20 +122,11 @@ where
     let handle = client_ref(client)?;
     ensure_accepting(&handle.core)?;
 
-    let request_ptr = make_request_state(kind, &handle.core, completion, userdata);
-    let future = match build_future(handle.core.client.clone()) {
-        Ok(future) => future,
-        Err(error) => {
-            remove_request_from_client(&handle.core, request_ptr);
-            inflight_done(&handle.core);
-            release_request(request_ptr);
-            return Err(error);
-        }
-    };
+    let future = build_future(handle.core.client.clone())?;
+    let request_ptr = make_request_state(kind, &handle.core.lifecycle, completion, userdata);
 
     if !handle.core.lifecycle.accepting.load(Ordering::Acquire) {
-        remove_request_from_client(&handle.core, request_ptr);
-        inflight_done(&handle.core);
+        inflight_done(&handle.core.lifecycle);
         release_request(request_ptr);
         return Err(FfiError::rejected(
             "client is shutting down and rejects new requests",
@@ -188,18 +137,7 @@ where
     unsafe {
         *out_request = request_ptr as *mut tikv_async_request_t;
     }
-    spawn_request(Arc::clone(&handle.core), request_ptr, future);
-
-    if handle
-        .core
-        .lifecycle
-        .cancel_inflight
-        .load(Ordering::Acquire)
-    {
-        let request = unsafe { &*request_ptr };
-        let mut completion = lock_completion(request);
-        completion.cancel_requested = true;
-    }
+    spawn_request(handle.core.runtime.handle(), request_ptr, future);
 
     Ok(())
 }
@@ -222,71 +160,6 @@ fn take_request_output<'a>(
         return Err(FfiError::invalid_argument("request result already taken"));
     }
     Ok(completion)
-}
-
-#[no_mangle]
-pub extern "C" fn tikv_async_request_cancel(
-    request: *mut tikv_async_request_t,
-    out_cancel_requested: *mut bool,
-    out_error: *mut *mut tikv_error_t,
-) -> tikv_status_t {
-    if out_cancel_requested.is_null() {
-        clear_error_slot(out_error);
-        set_error_slot(
-            out_error,
-            "out_cancel_requested must not be null".to_owned(),
-        );
-        return tikv_status_t::TIKV_STATUS_INVALID_ARGUMENT;
-    }
-
-    unsafe {
-        *out_cancel_requested = false;
-    }
-
-    match run_ffi(out_error, || {
-        let request = request_ref(request)?;
-        let mut completion = lock_completion(request);
-        if completion.complete || completion.cancel_requested {
-            return Ok(());
-        }
-        completion.cancel_requested = true;
-        unsafe {
-            *out_cancel_requested = true;
-        }
-        Ok(())
-    }) {
-        Ok(()) => tikv_status_t::TIKV_STATUS_OK,
-        Err(status) => status,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn tikv_async_request_is_complete(
-    request: *const tikv_async_request_t,
-    out_complete: *mut bool,
-    out_error: *mut *mut tikv_error_t,
-) -> tikv_status_t {
-    if out_complete.is_null() {
-        clear_error_slot(out_error);
-        set_error_slot(out_error, "out_complete must not be null".to_owned());
-        return tikv_status_t::TIKV_STATUS_INVALID_ARGUMENT;
-    }
-
-    unsafe {
-        *out_complete = false;
-    }
-
-    match run_ffi(out_error, || {
-        let request = request_ref(request)?;
-        let completion = lock_completion(request);
-        unsafe {
-            *out_complete = completion.complete;
-        }
-        Ok(())
-    }) {
-        Ok(()) => tikv_status_t::TIKV_STATUS_OK,
-        Err(status) => status,
-    }
 }
 
 #[no_mangle]
@@ -387,56 +260,6 @@ pub extern "C" fn tikv_async_request_take_get_result(
 }
 
 #[no_mangle]
-pub extern "C" fn tikv_async_request_take_get_key_ttl_result(
-    request: *const tikv_async_request_t,
-    out_ttl_secs: *mut u64,
-    out_found: *mut bool,
-    out_error: *mut *mut tikv_error_t,
-) -> tikv_status_t {
-    if out_ttl_secs.is_null() || out_found.is_null() {
-        clear_error_slot(out_error);
-        set_error_slot(
-            out_error,
-            "out_ttl_secs and out_found must not be null".to_owned(),
-        );
-        return tikv_status_t::TIKV_STATUS_INVALID_ARGUMENT;
-    }
-
-    unsafe {
-        *out_ttl_secs = 0;
-        *out_found = false;
-    }
-
-    match run_ffi(out_error, || {
-        let request = request_ref(request)?;
-        let mut completion = take_request_output(request, RequestKind::GetKeyTtl)?;
-        match completion.output.as_mut().expect("successful request") {
-            RequestOutput::KeyTtl(ttl) => {
-                let ttl = ttl.take();
-                unsafe {
-                    match ttl {
-                        Some(ttl) => {
-                            *out_ttl_secs = ttl;
-                            *out_found = true;
-                        }
-                        None => {
-                            *out_ttl_secs = 0;
-                            *out_found = false;
-                        }
-                    }
-                }
-                completion.output_taken = true;
-                Ok(())
-            }
-            _ => Err(FfiError::error("internal get_key_ttl result mismatch")),
-        }
-    }) {
-        Ok(()) => tikv_status_t::TIKV_STATUS_OK,
-        Err(status) => status,
-    }
-}
-
-#[no_mangle]
 pub extern "C" fn tikv_async_request_take_scan_result(
     request: *const tikv_async_request_t,
     out_pairs: *mut tikv_kv_pairs_t,
@@ -521,4 +344,167 @@ pub extern "C" fn tikv_async_request_destroy(request: *mut tikv_async_request_t)
         return;
     }
     release_request(request_ptr(request));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    fn lifecycle() -> Arc<ClientLifecycle> {
+        Arc::new(ClientLifecycle {
+            accepting: AtomicBool::new(true),
+            drain: Mutex::new(DrainState { inflight: 0 }),
+            drain_ready: Condvar::new(),
+        })
+    }
+
+    struct CompletionReport {
+        status: tikv_status_t,
+        status_access: tikv_status_t,
+        queried_status: tikv_status_t,
+        message: Option<String>,
+    }
+
+    extern "C" fn destroy_in_callback(
+        request: *mut tikv_async_request_t,
+        status: tikv_status_t,
+        userdata: *mut c_void,
+    ) {
+        let sender = unsafe { &*(userdata as *const mpsc::Sender<CompletionReport>) };
+        let mut queried_status = tikv_status_t::TIKV_STATUS_ERROR;
+        let status_access =
+            tikv_async_request_completion_status(request, &mut queried_status, ptr::null_mut());
+        let message = tikv_async_request_error_message(request);
+        let message = if message.is_null() {
+            None
+        } else {
+            Some(
+                unsafe { CStr::from_ptr(message) }
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        };
+        tikv_async_request_destroy(request);
+        let _ = sender.send(CompletionReport {
+            status,
+            status_access,
+            queried_status,
+            message,
+        });
+    }
+
+    #[test]
+    fn accepted_requests_complete_once_and_allow_destruction_in_callback() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let lifecycle = lifecycle();
+        let (sender, receiver) = mpsc::channel::<CompletionReport>();
+        let outcomes = [
+            (
+                boxed_future(async { Ok(RequestOutput::Unit) }),
+                tikv_status_t::TIKV_STATUS_OK,
+                None,
+            ),
+            (
+                boxed_future(async { Err(FfiError::error("operation failed")) }),
+                tikv_status_t::TIKV_STATUS_ERROR,
+                Some("operation failed"),
+            ),
+            (
+                boxed_future(async { panic!("operation panicked") }),
+                tikv_status_t::TIKV_STATUS_PANIC,
+                Some("panic across FFI boundary: operation panicked"),
+            ),
+        ];
+        for (future, expected_status, expected_message) in outcomes {
+            let request = make_request_state(
+                RequestKind::Put,
+                &lifecycle,
+                destroy_in_callback,
+                &sender as *const _ as *mut c_void,
+            );
+            retain_request(request);
+            let task = spawn_request(runtime.handle(), request, future);
+            let report = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+            wait_drain(&lifecycle);
+            runtime.block_on(task).unwrap();
+            assert_eq!(report.status, expected_status);
+            assert_eq!(report.status_access, tikv_status_t::TIKV_STATUS_OK);
+            assert_eq!(report.queried_status, expected_status);
+            assert_eq!(report.message.as_deref(), expected_message);
+            assert!(matches!(
+                receiver.try_recv(),
+                Err(mpsc::TryRecvError::Empty)
+            ));
+            assert_eq!(Arc::strong_count(&lifecycle), 1);
+        }
+    }
+
+    struct BlockingCallback {
+        entered: mpsc::Sender<tikv_status_t>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    extern "C" fn blocking_callback(
+        request: *mut tikv_async_request_t,
+        status: tikv_status_t,
+        userdata: *mut c_void,
+    ) {
+        let callback = unsafe { &*(userdata as *const BlockingCallback) };
+        let _ = callback.entered.send(status);
+        let _ = callback.release.lock().unwrap().recv();
+        tikv_async_request_destroy(request);
+    }
+
+    #[test]
+    fn shutdown_drain_waits_for_pending_operation_and_callback() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let lifecycle = lifecycle();
+        let (entered_sender, entered_receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::channel();
+        let callback = BlockingCallback {
+            entered: entered_sender,
+            release: Mutex::new(release_receiver),
+        };
+        let (finish_sender, finish_receiver) = futures::channel::oneshot::channel();
+        let request = make_request_state(
+            RequestKind::Put,
+            &lifecycle,
+            blocking_callback,
+            &callback as *const _ as *mut c_void,
+        );
+        retain_request(request);
+        let task = spawn_request(runtime.handle(), request, async move {
+            finish_receiver.await.unwrap();
+            Ok(RequestOutput::Unit)
+        });
+        lifecycle.accepting.store(false, Ordering::Release);
+        let (drain_started_sender, drain_started_receiver) = mpsc::channel();
+        let (drained_sender, drained_receiver) = mpsc::channel();
+        let drain_lifecycle = Arc::clone(&lifecycle);
+        let drain_thread = std::thread::spawn(move || {
+            let _ = drain_started_sender.send(());
+            wait_drain(&drain_lifecycle);
+            let _ = drained_sender.send(());
+        });
+        drain_started_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let before_completion = drained_receiver.recv_timeout(Duration::from_millis(50));
+        finish_sender.send(()).unwrap();
+        let callback_status = entered_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let during_callback = drained_receiver.recv_timeout(Duration::from_millis(50));
+        release_sender.send(()).unwrap();
+        drained_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        drain_thread.join().unwrap();
+        runtime.block_on(task).unwrap();
+        assert_eq!(before_completion, Err(mpsc::RecvTimeoutError::Timeout));
+        assert_eq!(during_callback, Err(mpsc::RecvTimeoutError::Timeout));
+        assert_eq!(callback_status, tikv_status_t::TIKV_STATUS_OK);
+        assert_eq!(Arc::strong_count(&lifecycle), 1);
+    }
 }

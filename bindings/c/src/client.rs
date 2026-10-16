@@ -76,13 +76,11 @@ fn new_client_handle(
         core: Arc::new(AsyncClientCore {
             runtime,
             client,
-            lifecycle: ClientLifecycle {
+            lifecycle: Arc::new(ClientLifecycle {
                 accepting: AtomicBool::new(true),
-                cancel_inflight: AtomicBool::new(false),
                 drain: Mutex::new(DrainState { inflight: 0 }),
                 drain_ready: Condvar::new(),
-                requests: Mutex::new(Vec::new()),
-            },
+            }),
         }),
     })
 }
@@ -143,7 +141,6 @@ pub extern "C" fn tikv_async_client_new_with_grpc_max_decoding_message_size(
 #[no_mangle]
 pub extern "C" fn tikv_async_client_shutdown_begin(
     client: *mut tikv_async_client_t,
-    cancel_inflight: bool,
     out_error: *mut *mut tikv_error_t,
 ) -> tikv_status_t {
     match run_ffi(out_error, || {
@@ -153,40 +150,6 @@ pub extern "C" fn tikv_async_client_shutdown_begin(
             .lifecycle
             .accepting
             .store(false, Ordering::Release);
-        if cancel_inflight {
-            handle
-                .core
-                .lifecycle
-                .cancel_inflight
-                .store(true, Ordering::Release);
-            let requests = handle
-                .core
-                .lifecycle
-                .requests
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .clone();
-            for request_addr in requests {
-                let request = unsafe { &*(request_addr as *const RequestState) };
-                let mut completion = lock_completion(request);
-                completion.cancel_requested = true;
-            }
-        }
-        Ok(())
-    }) {
-        Ok(()) => tikv_status_t::TIKV_STATUS_OK,
-        Err(status) => status,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn tikv_async_client_drain(
-    client: *const tikv_async_client_t,
-    out_error: *mut *mut tikv_error_t,
-) -> tikv_status_t {
-    match run_ffi(out_error, || {
-        let handle = client_ref(client)?;
-        wait_drain(&handle.core);
         Ok(())
     }) {
         Ok(()) => tikv_status_t::TIKV_STATUS_OK,
@@ -205,22 +168,5 @@ pub extern "C" fn tikv_async_client_destroy(client: *mut tikv_async_client_t) {
         .lifecycle
         .accepting
         .store(false, Ordering::Release);
-    handle
-        .core
-        .lifecycle
-        .cancel_inflight
-        .store(true, Ordering::Release);
-    let requests = handle
-        .core
-        .lifecycle
-        .requests
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-    for request_addr in requests {
-        let request = unsafe { &*(request_addr as *const RequestState) };
-        let mut completion = lock_completion(request);
-        completion.cancel_requested = true;
-    }
-    wait_drain(&handle.core);
+    wait_drain(&handle.core.lifecycle);
 }

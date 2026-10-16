@@ -2,9 +2,7 @@
 
 use super::*;
 use crate::client::{build_config, parse_pd_endpoints};
-use crate::raw::{
-    build_write_batch_runs, slice_mutations_to_owned, slice_mutations_with_ttl_to_owned,
-};
+use crate::raw::{build_write_batch_runs, slice_mutations_to_owned};
 
 extern "C" fn noop_completion(
     _request: *mut tikv_async_request_t,
@@ -18,16 +16,16 @@ fn synthetic_request(kind: RequestKind, output: RequestOutput) -> *mut tikv_asyn
         kind,
         completion: Mutex::new(CompletionState {
             complete: true,
-            callback_running: false,
-            callback_done: true,
             completion_status: Some(tikv_status_t::TIKV_STATUS_OK),
             error_message: None,
             output: Some(output),
             output_taken: false,
-            cancel_requested: false,
         }),
-        ready: Condvar::new(),
-        client: Weak::new(),
+        lifecycle: Arc::new(ClientLifecycle {
+            accepting: AtomicBool::new(true),
+            drain: Mutex::new(DrainState { inflight: 0 }),
+            drain_ready: Condvar::new(),
+        }),
         callback: Some(noop_completion),
         userdata: ptr::null_mut(),
         retain_count: AtomicUsize::new(1),
@@ -154,22 +152,22 @@ fn metrics_snapshot_collects_supported_counter_and_histogram() {
 #[test]
 fn write_batch_runs_preserve_put_delete_phase_order() {
     let runs = build_write_batch_runs(vec![
-        OwnedMutation::Put(KvPair::new(b"a".to_vec(), b"v1".to_vec()), 10),
-        OwnedMutation::Put(KvPair::new(b"b".to_vec(), b"v2".to_vec()), 0),
+        OwnedMutation::Put(KvPair::new(b"a".to_vec(), b"v1".to_vec())),
+        OwnedMutation::Put(KvPair::new(b"b".to_vec(), b"v2".to_vec())),
         OwnedMutation::Delete(Key::from(b"c".to_vec())),
         OwnedMutation::Delete(Key::from(b"d".to_vec())),
-        OwnedMutation::Put(KvPair::new(b"e".to_vec(), b"v3".to_vec()), 30),
+        OwnedMutation::Put(KvPair::new(b"e".to_vec(), b"v3".to_vec())),
     ]);
 
     assert_eq!(
         runs,
         vec![
             WriteBatchRun::Put(vec![
-                (KvPair::new(b"a".to_vec(), b"v1".to_vec()), 10),
-                (KvPair::new(b"b".to_vec(), b"v2".to_vec()), 0),
+                KvPair::new(b"a".to_vec(), b"v1".to_vec()),
+                KvPair::new(b"b".to_vec(), b"v2".to_vec()),
             ]),
             WriteBatchRun::Delete(vec![Key::from(b"c".to_vec()), Key::from(b"d".to_vec())]),
-            WriteBatchRun::Put(vec![(KvPair::new(b"e".to_vec(), b"v3".to_vec()), 30,)]),
+            WriteBatchRun::Put(vec![KvPair::new(b"e".to_vec(), b"v3".to_vec())]),
         ]
     );
 }
@@ -177,98 +175,64 @@ fn write_batch_runs_preserve_put_delete_phase_order() {
 #[test]
 fn write_batch_splits_repeated_put_keys() {
     let runs = build_write_batch_runs(vec![
-        OwnedMutation::Put(KvPair::new(b"a".to_vec(), b"v1".to_vec()), 10),
-        OwnedMutation::Put(KvPair::new(b"b".to_vec(), b"v2".to_vec()), 20),
-        OwnedMutation::Put(KvPair::new(b"a".to_vec(), b"v3".to_vec()), 30),
+        OwnedMutation::Put(KvPair::new(b"a".to_vec(), b"v1".to_vec())),
+        OwnedMutation::Put(KvPair::new(b"b".to_vec(), b"v2".to_vec())),
+        OwnedMutation::Put(KvPair::new(b"a".to_vec(), b"v3".to_vec())),
     ]);
 
     assert_eq!(
         runs,
         vec![
             WriteBatchRun::Put(vec![
-                (KvPair::new(b"a".to_vec(), b"v1".to_vec()), 10),
-                (KvPair::new(b"b".to_vec(), b"v2".to_vec()), 20),
+                KvPair::new(b"a".to_vec(), b"v1".to_vec()),
+                KvPair::new(b"b".to_vec(), b"v2".to_vec()),
             ]),
-            WriteBatchRun::Put(vec![(KvPair::new(b"a".to_vec(), b"v3".to_vec()), 30,)]),
+            WriteBatchRun::Put(vec![KvPair::new(b"a".to_vec(), b"v3".to_vec())]),
         ]
     );
 }
 
 #[test]
-fn ffi_mutations_copy_put_ttl_and_ignore_delete_ttl() {
-    let put_key = b"put-key";
-    let put_value = b"put-value";
-    let delete_key = b"delete-key";
+fn ffi_mutations_copy_inputs_and_ignore_delete_value() {
+    let mut key = b"put-key".to_vec();
+    let mut value = b"put-value".to_vec();
     let mutations = [
-        tikv_async_raw_mutation_with_ttl_t {
+        tikv_async_raw_mutation_t {
             op: TIKV_ASYNC_RAW_MUTATION_OP_PUT,
             key: tikv_slice_t {
-                ptr: put_key.as_ptr(),
-                len: put_key.len(),
+                ptr: key.as_ptr(),
+                len: key.len(),
             },
             value: tikv_slice_t {
-                ptr: put_value.as_ptr(),
-                len: put_value.len(),
+                ptr: value.as_ptr(),
+                len: value.len(),
             },
-            ttl_secs: 42,
         },
-        tikv_async_raw_mutation_with_ttl_t {
+        tikv_async_raw_mutation_t {
             op: TIKV_ASYNC_RAW_MUTATION_OP_DELETE,
             key: tikv_slice_t {
-                ptr: delete_key.as_ptr(),
-                len: delete_key.len(),
+                ptr: key.as_ptr(),
+                len: key.len(),
             },
             value: tikv_slice_t {
                 ptr: ptr::null(),
-                len: 0,
+                len: usize::MAX,
             },
-            ttl_secs: u64::MAX,
         },
     ];
-
-    let owned = slice_mutations_with_ttl_to_owned(tikv_async_raw_mutations_with_ttl_t {
-        ptr: mutations.as_ptr(),
-        len: mutations.len(),
-    })
-    .unwrap();
-
-    assert_eq!(
-        owned,
-        vec![
-            OwnedMutation::Put(KvPair::new(put_key.to_vec(), put_value.to_vec()), 42,),
-            OwnedMutation::Delete(Key::from(delete_key.to_vec())),
-        ]
-    );
-}
-
-#[test]
-fn legacy_ffi_mutations_default_put_ttl_to_zero() {
-    let key = b"legacy-key";
-    let value = b"legacy-value";
-    let mutations = [tikv_async_raw_mutation_t {
-        op: TIKV_ASYNC_RAW_MUTATION_OP_PUT,
-        key: tikv_slice_t {
-            ptr: key.as_ptr(),
-            len: key.len(),
-        },
-        value: tikv_slice_t {
-            ptr: value.as_ptr(),
-            len: value.len(),
-        },
-    }];
-
     let owned = slice_mutations_to_owned(tikv_async_raw_mutations_t {
         ptr: mutations.as_ptr(),
         len: mutations.len(),
     })
     .unwrap();
-
+    key.fill(0);
+    value.fill(0);
     assert_eq!(
         owned,
-        vec![OwnedMutation::Put(
-            KvPair::new(key.to_vec(), value.to_vec()),
-            0,
-        )]
+        vec![
+            OwnedMutation::Put(KvPair::new(b"put-key".to_vec(), b"put-value".to_vec())),
+            OwnedMutation::Delete(Key::from(b"put-key".to_vec())),
+        ]
     );
 }
 
@@ -300,62 +264,6 @@ fn request_get_result_transfers_owned_bytes_once() {
 }
 
 #[test]
-fn request_get_key_ttl_result_distinguishes_found_states() {
-    for (ttl, expected_found, expected_ttl) in
-        [(Some(42), true, 42), (Some(0), true, 0), (None, false, 0)]
-    {
-        let request = synthetic_request(RequestKind::GetKeyTtl, RequestOutput::KeyTtl(ttl));
-
-        let mut error = ptr::null_mut();
-        let mut out_ttl_secs = u64::MAX;
-        let mut out_found = false;
-        let status = tikv_async_request_take_get_key_ttl_result(
-            request,
-            &mut out_ttl_secs,
-            &mut out_found,
-            &mut error,
-        );
-        assert_eq!(status, tikv_status_t::TIKV_STATUS_OK);
-        assert!(error.is_null());
-        assert_eq!(out_found, expected_found);
-        assert_eq!(out_ttl_secs, expected_ttl);
-
-        let status = tikv_async_request_take_get_key_ttl_result(
-            request,
-            &mut out_ttl_secs,
-            &mut out_found,
-            &mut error,
-        );
-        assert_eq!(status, tikv_status_t::TIKV_STATUS_INVALID_ARGUMENT);
-        assert!(!error.is_null());
-        tikv_error_destroy(error);
-        tikv_async_request_destroy(request);
-    }
-}
-
-#[test]
-fn request_get_key_ttl_result_rejects_wrong_request_kind() {
-    let request = synthetic_request(RequestKind::Get, RequestOutput::Get(None));
-    let mut error = ptr::null_mut();
-    let mut out_ttl_secs = u64::MAX;
-    let mut out_found = true;
-
-    let status = tikv_async_request_take_get_key_ttl_result(
-        request,
-        &mut out_ttl_secs,
-        &mut out_found,
-        &mut error,
-    );
-
-    assert_eq!(status, tikv_status_t::TIKV_STATUS_INVALID_ARGUMENT);
-    assert!(!error.is_null());
-    assert_eq!(out_ttl_secs, 0);
-    assert!(!out_found);
-    tikv_error_destroy(error);
-    tikv_async_request_destroy(request);
-}
-
-#[test]
 fn request_batch_get_result_transfers_pairs_once() {
     let request = synthetic_request(
         RequestKind::BatchGet,
@@ -379,41 +287,5 @@ fn request_batch_get_result_transfers_pairs_once() {
     assert_eq!(status, tikv_status_t::TIKV_STATUS_INVALID_ARGUMENT);
     assert!(!error.is_null());
     tikv_error_destroy(error);
-    tikv_async_request_destroy(request);
-}
-
-#[test]
-fn request_cancel_is_idempotent() {
-    let request = Box::into_raw(Box::new(RequestState {
-        kind: RequestKind::Put,
-        completion: Mutex::new(CompletionState {
-            complete: false,
-            callback_running: false,
-            callback_done: false,
-            completion_status: None,
-            error_message: None,
-            output: None,
-            output_taken: false,
-            cancel_requested: false,
-        }),
-        ready: Condvar::new(),
-        client: Weak::new(),
-        callback: Some(noop_completion),
-        userdata: ptr::null_mut(),
-        retain_count: AtomicUsize::new(1),
-    })) as *mut tikv_async_request_t;
-
-    let mut error = ptr::null_mut();
-    let mut cancel_requested = false;
-    let status = tikv_async_request_cancel(request, &mut cancel_requested, &mut error);
-    assert_eq!(status, tikv_status_t::TIKV_STATUS_OK);
-    assert!(error.is_null());
-    assert!(cancel_requested);
-
-    let status = tikv_async_request_cancel(request, &mut cancel_requested, &mut error);
-    assert_eq!(status, tikv_status_t::TIKV_STATUS_OK);
-    assert!(error.is_null());
-    assert!(!cancel_requested);
-
     tikv_async_request_destroy(request);
 }

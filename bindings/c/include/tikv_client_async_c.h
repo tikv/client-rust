@@ -18,7 +18,7 @@ extern "C" {
  *
  * - Expose a natural async ABI: submit + completion callback.
  * - Copy every cross-async-boundary input before submit returns.
- * - Make shutdown/drain/cancel semantics explicit and defensive.
+ * - Make shutdown and request ownership explicit.
  *
  * Threading model:
  *
@@ -30,7 +30,7 @@ extern "C" {
  * Completion contract:
  *
  * - Every request accepted by a submit function triggers exactly one completion
- *   callback, including cancellation and shutdown-triggered cancellation.
+ *   callback, including during client shutdown.
  * - A submit function returning non-`TIKV_STATUS_OK` means the request was not
  *   accepted and no completion callback will run.
  *
@@ -38,26 +38,24 @@ extern "C" {
  *
  * - Submit success returns a request handle.
  * - The request handle remains valid until `tikv_async_request_destroy`.
- * - It is valid to destroy the request handle before the callback fires; Rust
- *   keeps the internal state alive until the callback returns.
+ * - Destroy the request handle exactly once, either in its completion callback
+ *   or after the caller has synchronized with the callback to observe completion.
+ *   Do not destroy a pending request before its callback starts.
+ * - A callback may run before the submit function returns. If the callback
+ *   destroys the handle, the caller must not use the returned handle.
  * - Result accessors may be called only after completion.
  * - Returned buffers and errors are Rust-owned and must be released with the
  *   matching destroy helper from this header.
  *
  * Client shutdown contract:
  *
- * - `tikv_async_client_shutdown_begin` immediately rejects new submit calls.
- * - `tikv_async_client_shutdown_begin(..., false, ...)` lets in-flight requests
- *   finish normally.
- * - `tikv_async_client_shutdown_begin(..., true, ...)` requests cancellation of
- *   every in-flight request; each accepted request still completes through its
- *   callback with `TIKV_STATUS_CANCELLED`.
- * - `tikv_async_client_drain` blocks until every accepted in-flight request has
- *   finished its callback.
- * - `tikv_async_client_destroy` performs shutdown-begin with cancellation,
- *   drains, and then releases the client.
- * - Do not call `tikv_async_client_drain` or `tikv_async_client_destroy` from a
- *   completion callback belonging to the same client, or you may deadlock.
+ * - `tikv_async_client_shutdown_begin` immediately rejects new submit calls and
+ *   lets accepted requests finish normally.
+ * - `tikv_async_client_destroy` begins shutdown, waits for all accepted requests
+ *   to finish their callbacks, and then releases the client.
+ * - Do not call `tikv_async_client_destroy` from a completion callback belonging
+ *   to the same client, or you may deadlock.
+ * - Before destroying a client, stop all other calls using its handle.
  */
 
 typedef struct tikv_async_client_t tikv_async_client_t;
@@ -94,25 +92,6 @@ typedef struct tikv_async_raw_mutations_t {
   size_t len;
 } tikv_async_raw_mutations_t;
 
-/*
- * TTL-capable mutation used by
- * `tikv_async_raw_batch_write_with_ttl_submit`.
- *
- * `ttl_secs` is a relative TTL in seconds and is used only for PUT. A value of
- * 0 disables TTL for the key. DELETE ignores both `value` and `ttl_secs`.
- */
-typedef struct tikv_async_raw_mutation_with_ttl_t {
-  tikv_async_raw_mutation_op_t op;
-  tikv_slice_t key;
-  tikv_slice_t value;
-  uint64_t ttl_secs;
-} tikv_async_raw_mutation_with_ttl_t;
-
-typedef struct tikv_async_raw_mutations_with_ttl_t {
-  const tikv_async_raw_mutation_with_ttl_t *ptr;
-  size_t len;
-} tikv_async_raw_mutations_with_ttl_t;
-
 typedef struct tikv_owned_bytes_t {
   uint8_t *ptr;
   size_t len;
@@ -133,8 +112,7 @@ typedef enum tikv_status_t {
   TIKV_STATUS_ERROR = 1,
   TIKV_STATUS_INVALID_ARGUMENT = 2,
   TIKV_STATUS_PANIC = 3,
-  TIKV_STATUS_REJECTED = 4,
-  TIKV_STATUS_CANCELLED = 5
+  TIKV_STATUS_REJECTED = 4
 } tikv_status_t;
 
 /*
@@ -145,12 +123,10 @@ typedef enum tikv_status_t {
  * - `TIKV_STATUS_OK`: request succeeded.
  * - `TIKV_STATUS_ERROR`: request failed; inspect
  *   `tikv_async_request_error_message`.
- * - `TIKV_STATUS_CANCELLED`: request was cancelled explicitly or by client
- *   shutdown; inspect `tikv_async_request_error_message` for details.
  * - `TIKV_STATUS_PANIC`: Rust caught a panic while executing the request.
  *
- * The callback may call request result accessors, `tikv_async_request_cancel`
- * (which becomes a no-op after completion), and `tikv_async_request_destroy`.
+ * The callback may call request result accessors and
+ * `tikv_async_request_destroy`.
  */
 typedef void (*tikv_async_completion_cb)(tikv_async_request_t *request,
                                          tikv_status_t final_status,
@@ -194,23 +170,10 @@ tikv_status_t tikv_async_client_new_with_grpc_max_decoding_message_size(
  * rejected with `TIKV_STATUS_REJECTED`, and no callback is scheduled for those
  * rejected submits.
  *
- * If `cancel_inflight` is true, every currently accepted in-flight request is
- * asked to stop and will complete through its callback with
- * `TIKV_STATUS_CANCELLED`.
+ * Accepted requests finish normally and retain their operation status.
  */
 tikv_status_t tikv_async_client_shutdown_begin(tikv_async_client_t *client,
-                                               bool cancel_inflight,
                                                tikv_error_t **out_error);
-
-/*
- * Wait until every accepted in-flight request has finished its callback.
- *
- * This function may be called before or after shutdown begins.
- * If shutdown has not yet begun, it only waits for the currently in-flight set;
- * it does not prevent new submissions racing from other threads.
- */
-tikv_status_t tikv_async_client_drain(const tikv_async_client_t *client,
-                                      tikv_error_t **out_error);
 
 /*
  * Submit a raw put.
@@ -230,25 +193,6 @@ tikv_status_t tikv_async_raw_put_submit(const tikv_async_client_t *client,
                                         tikv_error_t **out_error);
 
 /*
- * Submit a raw put with a relative TTL in seconds.
- *
- * `ttl_secs == 0` disables TTL for the key. TiKV must be configured to support
- * RawKV TTL before callers submit a non-zero value.
- *
- * Submit success has the same copy and completion guarantees as
- * `tikv_async_raw_put_submit`.
- */
-tikv_status_t tikv_async_raw_put_with_ttl_submit(
-    const tikv_async_client_t *client,
-    tikv_slice_t key,
-    tikv_slice_t value,
-    uint64_t ttl_secs,
-    tikv_async_completion_cb completion,
-    void *userdata,
-    tikv_async_request_t **out_request,
-    tikv_error_t **out_error);
-
-/*
  * Submit a raw get.
  *
  * On success, completion with `TIKV_STATUS_OK` makes the value available
@@ -260,20 +204,6 @@ tikv_status_t tikv_async_raw_get_submit(const tikv_async_client_t *client,
                                         void *userdata,
                                         tikv_async_request_t **out_request,
                                         tikv_error_t **out_error);
-
-/*
- * Submit a request for the remaining RawKV TTL of a key.
- *
- * On success, completion with `TIKV_STATUS_OK` makes the result available
- * through `tikv_async_request_take_get_key_ttl_result`.
- */
-tikv_status_t tikv_async_raw_get_key_ttl_submit(
-    const tikv_async_client_t *client,
-    tikv_slice_t key,
-    tikv_async_completion_cb completion,
-    void *userdata,
-    tikv_async_request_t **out_request,
-    tikv_error_t **out_error);
 
 /*
  * Submit a raw delete.
@@ -364,29 +294,6 @@ tikv_status_t tikv_async_raw_batch_write_submit(
     tikv_error_t **out_error);
 
 /*
- * Submit a TTL-capable mixed raw write batch.
- *
- * This is the ABI-compatible TTL counterpart of
- * `tikv_async_raw_batch_write_submit`. Each PUT may carry its own relative TTL
- * in `ttl_secs`; PUTs with `ttl_secs == 0` keep the existing non-TTL behavior.
- * DELETE ignores `ttl_secs`.
- *
- * The implementation maps PUT runs to `client-rust`
- * `batch_put_with_ttl` and DELETE runs to `batch_delete`, preserving mutation
- * phase order and later-write-wins behavior for repeated keys.
- *
- * TiKV must be configured to support RawKV TTL before callers submit a
- * non-zero TTL.
- */
-tikv_status_t tikv_async_raw_batch_write_with_ttl_submit(
-    const tikv_async_client_t *client,
-    tikv_async_raw_mutations_with_ttl_t mutations,
-    tikv_async_completion_cb completion,
-    void *userdata,
-    tikv_async_request_t **out_request,
-    tikv_error_t **out_error);
-
-/*
  * Submit a raw batch-get.
  *
  * TiKV raw batch-get returns only existing entries and does not preserve the
@@ -404,30 +311,6 @@ tikv_status_t tikv_async_raw_batch_get_submit(const tikv_async_client_t *client,
 /*
  * Request lifecycle helpers.
  */
-
-/*
- * Ask an accepted request to cancel.
- *
- * This function is best-effort and idempotent.
- *
- * - `*out_cancel_requested == true` means this call newly requested
- *   cancellation.
- * - `*out_cancel_requested == false` means the request had already completed or
- *   cancellation had already been requested earlier.
- *
- * If the request was still pending, its completion callback still runs exactly
- * once with `TIKV_STATUS_CANCELLED`.
- */
-tikv_status_t tikv_async_request_cancel(tikv_async_request_t *request,
-                                        bool *out_cancel_requested,
-                                        tikv_error_t **out_error);
-
-/*
- * Return whether the request has completed.
- */
-tikv_status_t tikv_async_request_is_complete(const tikv_async_request_t *request,
-                                             bool *out_complete,
-                                             tikv_error_t **out_error);
 
 /*
  * Return the terminal request status.
@@ -460,19 +343,6 @@ tikv_status_t tikv_async_request_take_get_result(
     bool *out_found,
     tikv_error_t **out_error);
 
-/*
- * Take a get-key-TTL result.
- *
- * `*out_found == false` means the key does not exist and `*out_ttl_secs` is 0.
- * `*out_found == true && *out_ttl_secs == 0` means the key exists without a
- * TTL. Otherwise `*out_ttl_secs` is the remaining TTL in seconds.
- */
-tikv_status_t tikv_async_request_take_get_key_ttl_result(
-    const tikv_async_request_t *request,
-    uint64_t *out_ttl_secs,
-    bool *out_found,
-    tikv_error_t **out_error);
-
 tikv_status_t tikv_async_request_take_scan_result(
     const tikv_async_request_t *request,
     tikv_kv_pairs_t *out_pairs,
@@ -492,6 +362,12 @@ void tikv_error_destroy(tikv_error_t *error);
 void tikv_owned_bytes_destroy(tikv_owned_bytes_t bytes);
 void tikv_kv_pairs_destroy(tikv_kv_pairs_t pairs);
 
+/*
+ * Release a completed request handle. NULL is a no-op.
+ *
+ * Call exactly once, in the completion callback or after synchronizing with it.
+ * Destroying a pending request before its callback starts is invalid.
+ */
 void tikv_async_request_destroy(tikv_async_request_t *request);
 void tikv_async_client_destroy(tikv_async_client_t *client);
 
