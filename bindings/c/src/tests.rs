@@ -12,9 +12,9 @@ extern "C" fn noop_completion(
 }
 
 fn synthetic_request(kind: RequestKind, output: RequestOutput) -> *mut tikv_async_request_t {
-    Box::into_raw(Box::new(RequestState {
+    Arc::into_raw(Arc::new(RequestState {
         kind,
-        completion: Mutex::new(CompletionState {
+        completion: RefCell::new(CompletionState {
             complete: true,
             completion_status: Some(tikv_status_t::TIKV_STATUS_OK),
             error_message: None,
@@ -23,12 +23,11 @@ fn synthetic_request(kind: RequestKind, output: RequestOutput) -> *mut tikv_asyn
         }),
         lifecycle: Arc::new(ClientLifecycle {
             accepting: AtomicBool::new(true),
-            drain: Mutex::new(DrainState { inflight: 0 }),
+            inflight: Mutex::new(0),
             drain_ready: Condvar::new(),
         }),
         callback: Some(noop_completion),
         userdata: ptr::null_mut(),
-        retain_count: AtomicUsize::new(1),
     })) as *mut tikv_async_request_t
 }
 

@@ -43,7 +43,13 @@ extern "C" {
  *   Do not destroy a pending request before its callback starts.
  * - A callback may run before the submit function returns. If the callback
  *   destroys the handle, the caller must not use the returned handle.
- * - Result accessors may be called only after completion.
+ * - Status, error, and result accessors may be called only in the completion
+ *   callback or after synchronizing with it to observe completion.
+ * - The caller must serialize all status/error/result accessor and destroy
+ *   calls for the same request, including calls from its callback. Before
+ *   handing the request to another thread, finish accessing it and synchronize
+ *   the handoff; the callback must not access it again after that handoff.
+ *   Different request handles may be accessed concurrently.
  * - Returned buffers and errors are Rust-owned and must be released with the
  *   matching destroy helper from this header.
  *
@@ -325,6 +331,7 @@ tikv_status_t tikv_async_request_completion_status(
 /*
  * Return the terminal request error message, or NULL if none.
  *
+ * This may be called only after completion.
  * The returned pointer is borrowed from the request state and remains valid
  * until `tikv_async_request_destroy`.
  */

@@ -14,13 +14,14 @@ pub use metrics::*;
 pub use raw::*;
 pub use request::*;
 
+use std::cell::{RefCell, RefMut};
 use std::collections::HashSet;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::mem;
 use std::panic::{self, AssertUnwindSafe};
 use std::ptr;
 use std::slice;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -198,6 +199,9 @@ enum WriteBatchRun {
 
 #[derive(Debug)]
 enum RequestOutput {
+    /// Successful completion with no return data, analogous to Rust's unit type `()`.
+    /// Used by put, delete, delete-range, and batch-write requests; the completion
+    /// callback reports their status, so no result extraction accessor is needed.
     Unit,
     Get(Option<Vec<u8>>),
     Pairs(Vec<KvPair>),
@@ -236,13 +240,9 @@ impl FfiError {
     }
 }
 
-struct DrainState {
-    inflight: usize,
-}
-
 struct ClientLifecycle {
     accepting: AtomicBool,
-    drain: Mutex<DrainState>,
+    inflight: Mutex<usize>,
     drain_ready: Condvar,
 }
 
@@ -266,14 +266,19 @@ struct CompletionState {
 
 struct RequestState {
     kind: RequestKind,
-    completion: Mutex<CompletionState>,
+    completion: RefCell<CompletionState>,
     lifecycle: Arc<ClientLifecycle>,
     callback: Option<tikv_async_completion_cb>,
     userdata: *mut c_void,
-    retain_count: AtomicUsize,
 }
 
+// SAFETY: the C contract requires callback userdata to be usable on a runtime
+// worker thread.
 unsafe impl Send for RequestState {}
+// SAFETY: the task finishes writing completion and releases its borrow before
+// invoking the callback. The C contract requires synchronization with that
+// callback before access on another thread, and serializes all accessors and
+// destruction for the same request. No completion borrows overlap across threads.
 unsafe impl Sync for RequestState {}
 
 fn clear_error_slot(out_error: *mut *mut tikv_error_t) {
@@ -351,17 +356,6 @@ where
     Box::pin(future)
 }
 
-fn lock_completion(request: &RequestState) -> std::sync::MutexGuard<'_, CompletionState> {
-    request
-        .completion
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-fn request_ptr(raw: *mut tikv_async_request_t) -> *mut RequestState {
-    raw as *mut RequestState
-}
-
 fn request_ref<'a>(raw: *const tikv_async_request_t) -> FfiResult<&'a RequestState> {
     if raw.is_null() {
         return Err(FfiError::invalid_argument("request must not be null"));
@@ -376,49 +370,46 @@ fn client_ref<'a>(raw: *const tikv_async_client_t) -> FfiResult<&'a AsyncClientH
     Ok(unsafe { &*(raw as *const AsyncClientHandle) })
 }
 
-fn retain_request(request: *mut RequestState) {
-    unsafe {
-        (*request).retain_count.fetch_add(1, Ordering::AcqRel);
-    }
-}
-
-fn release_request(request: *mut RequestState) {
-    let previous = unsafe { (*request).retain_count.fetch_sub(1, Ordering::AcqRel) };
-    if previous == 1 {
-        unsafe {
-            drop(Box::from_raw(request));
-        }
-    }
-}
-
+/// Register work that client destruction must wait for before dropping its
+/// runtime. Submitters and runtime workers update this per-client count
+/// concurrently, so the mutex prevents lost increments/decrements. Increment
+/// before spawning: even an immediately completed task must already be counted.
 fn inflight_add(lifecycle: &ClientLifecycle) {
-    let mut drain = lifecycle
-        .drain
+    let mut inflight = lifecycle
+        .inflight
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    drain.inflight += 1;
+    *inflight += 1;
 }
 
+/// Release a registration after the callback returns and the task releases its
+/// request reference, or undo registration if shutdown rejects the submission.
+/// Client destruction must still wait if C destroys the request in its callback;
+/// completed request handles retained by C do not delay client destruction.
+/// During shutdown, reaching zero wakes `wait_drain`. Sharing its mutex with
+/// the counter check and condition-variable wait prevents a missed wakeup on
+/// the last decrement. If work finishes before shutdown, `wait_drain` observes
+/// zero directly, so no notification is needed while the client is accepting.
 fn inflight_done(lifecycle: &ClientLifecycle) {
-    let mut drain = lifecycle
-        .drain
+    let mut inflight = lifecycle
+        .inflight
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    drain.inflight -= 1;
-    if drain.inflight == 0 {
+    *inflight -= 1;
+    if *inflight == 0 && !lifecycle.accepting.load(Ordering::Acquire) {
         lifecycle.drain_ready.notify_all();
     }
 }
 
 fn wait_drain(lifecycle: &ClientLifecycle) {
-    let mut drain = lifecycle
-        .drain
+    let mut inflight = lifecycle
+        .inflight
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    while drain.inflight != 0 {
-        drain = lifecycle
+    while *inflight != 0 {
+        inflight = lifecycle
             .drain_ready
-            .wait(drain)
+            .wait(inflight)
             .unwrap_or_else(|poisoned| poisoned.into_inner());
     }
 }

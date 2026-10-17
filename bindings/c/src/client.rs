@@ -78,7 +78,7 @@ fn new_client_handle(
             client,
             lifecycle: Arc::new(ClientLifecycle {
                 accepting: AtomicBool::new(true),
-                drain: Mutex::new(DrainState { inflight: 0 }),
+                inflight: Mutex::new(0),
                 drain_ready: Condvar::new(),
             }),
         }),

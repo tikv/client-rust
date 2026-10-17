@@ -27,6 +27,11 @@ destroy the request handle. Destroy each request exactly once, either in its
 callback or after synchronizing with the callback to observe completion; do not
 destroy a pending request. A callback can run before submit returns, so the
 returned handle must not be used if the callback already destroyed it.
+Status, error, and result accessors may be used only in the completion callback
+or after synchronizing with it to observe completion. Serialize all accessors
+and destruction for the same request, including calls from its callback. A
+cross-thread handoff must happen after the previous thread's last access and
+must synchronize the two threads. Different requests may be accessed concurrently.
 Each returned buffer, error, and snapshot has a matching destroy function in the
 headers.
 
