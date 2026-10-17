@@ -76,35 +76,36 @@ impl SecurityManager {
     }
 
     /// Connect to gRPC server using TLS connection. If TLS is not configured, use normal connection.
-    pub async fn connect<Factory, Client>(
+    ///
+    /// The dial is bounded by the default request timeout — see
+    /// [`Self::connect_with_timeout`] to choose the bound.
+    pub async fn connect<Factory, Client>(&self, addr: &str, factory: Factory) -> Result<Client>
+    where
+        Factory: FnOnce(Channel) -> Client,
+    {
+        self.connect_with_timeout(addr, crate::config::DEFAULT_REQUEST_TIMEOUT, factory)
+            .await
+    }
+
+    /// Like [`Self::connect`], with `connect_timeout` bounding the whole dial,
+    /// HTTP/2 handshake included. A frozen peer can complete the TCP handshake
+    /// from its kernel (which keeps running when the process does not) and then
+    /// never answer the HTTP/2 preface, hanging an unbounded connect until the
+    /// peer thaws (#516).
+    ///
+    /// The same bound is handed to the endpoint as tonic's `connect_timeout`,
+    /// which caps the TCP connection phase — tonic installs it on hyper's
+    /// `HttpConnector` — and keeps applying to reconnects the channel makes on
+    /// its own. It stops there, though: TLS and the HTTP/2 handshake both run
+    /// after the connector returns, so only the outer deadline covers them,
+    /// and the handshake is where a frozen peer actually strands the dial.
+    /// Whichever bound trips first decides the error a caller sees — tonic's
+    /// transport error from the connector, or the descriptive one below.
+    pub async fn connect_with_timeout<Factory, Client>(
         &self,
         // env: Arc<Environment>,
         addr: &str,
-        factory: Factory,
-    ) -> Result<Client>
-    where
-        Factory: FnOnce(Channel) -> Client,
-    {
-        self.connect_inner(addr, None, factory).await
-    }
-
-    /// Connect with an explicit TCP connection timeout.
-    pub(crate) async fn connect_with_timeout<Factory, Client>(
-        &self,
-        addr: &str,
-        timeout: Duration,
-        factory: Factory,
-    ) -> Result<Client>
-    where
-        Factory: FnOnce(Channel) -> Client,
-    {
-        self.connect_inner(addr, Some(timeout), factory).await
-    }
-
-    async fn connect_inner<Factory, Client>(
-        &self,
-        addr: &str,
-        timeout: Option<Duration>,
+        connect_timeout: Duration,
         factory: Factory,
     ) -> Result<Client>
     where
@@ -116,11 +117,16 @@ impl SecurityManager {
         } else {
             self.default_channel(addr).await?
         };
-        let channel = match timeout {
-            Some(timeout) => channel.connect_timeout(timeout),
-            None => channel,
-        };
-        let ch = channel.connect().await?;
+        let channel = channel.connect_timeout(connect_timeout);
+        let ch = tokio::time::timeout(connect_timeout, channel.connect())
+            .await
+            .map_err(|_| {
+                internal_err!(
+                    "connecting to {} timed out after {:?}",
+                    addr,
+                    connect_timeout
+                )
+            })??;
 
         Ok(factory(ch))
     }
