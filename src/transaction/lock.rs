@@ -646,8 +646,8 @@ impl LockResolver {
         );
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, req)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
-            .merge(CollectSingle)
             .extract_error()
+            .merge(CollectSingle)
             .post_process_default()
             .plan();
         let mut status: TransactionStatus = match plan.execute().await {
