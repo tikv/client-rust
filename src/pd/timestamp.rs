@@ -14,9 +14,9 @@
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 
-use futures::pin_mut;
 use futures::prelude::*;
 use futures::task::AtomicWaker;
 use futures::task::Context;
@@ -28,7 +28,6 @@ use pin_project::pin_project;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::watch;
-use tokio::sync::Mutex;
 use tokio::time::timeout;
 use tonic::transport::Channel;
 
@@ -88,9 +87,10 @@ impl TimestampOracle {
         let (close_on_exit, worker_closed) = watch::channel(());
 
         // Start a background thread to handle TSO requests and responses
+        let queued = request_tx.downgrade();
         tokio::spawn(async move {
             let _close_on_exit = close_on_exit;
-            run_tso(cluster_id, pd_client, request_rx, timeout).await
+            run_tso(cluster_id, pd_client, request_rx, queued, timeout).await
         });
 
         Ok(TimestampOracle {
@@ -131,9 +131,12 @@ async fn run_tso(
     cluster_id: u64,
     mut pd_client: PdClient<Channel>,
     request_rx: mpsc::Receiver<TimestampRequest>,
+    queued: mpsc::WeakSender<TimestampRequest>,
     deadline: Duration,
 ) -> Result<()> {
-    // The `TimestampRequest`s which are waiting for the responses from the PD server
+    // The `TimestampRequest`s which are waiting for the responses from the PD server.
+    // A std mutex, never held across an await: `TsoRequestStream::poll_next`
+    // must not return `Pending` on contention, since nothing would wake it.
     let pending_requests = Arc::new(Mutex::new(VecDeque::with_capacity(MAX_PENDING_COUNT)));
 
     // When there are too many pending requests, the `send_request` future will refuse to fetch
@@ -147,27 +150,23 @@ async fn run_tso(
         pending_requests: pending_requests.clone(),
         self_waker: sending_future_waker.clone(),
     };
+    let owed = Owed {
+        pending_requests: &pending_requests,
+        queued,
+    };
 
     let result = async {
         // Stream creation needs the same bound as the receive loop, but ARMED
-        // ONLY WHILE A BATCH IS PENDING: PD (a gRPC-go server) sends response
+        // ONLY WHILE A REQUEST IS OWED: PD (a gRPC-go server) sends response
         // headers with its first response, so `tso(..)` legitimately waits as
         // long as the client is idle — while against a frozen peer it would
-        // hang with a request owed (client-go: `checkStreamTimeout`). HTTP/2
-        // lets the request stream flow before response headers arrive, so
-        // batches do get dispatched (and become pending) during this await.
+        // hang with a request owed (client-go: `checkStreamTimeout`).
         let responses = tokio::select! {
             created = pd_client.tso(request_stream) => created?.into_inner(),
-            stalled = stall_watchdog(&pending_requests, deadline) => return Err(stalled),
+            stalled = stall_watchdog(&owed, deadline) => return Err(stalled),
         };
 
-        allocate_from_stream(
-            responses,
-            &pending_requests,
-            &sending_future_waker,
-            deadline,
-        )
-        .await
+        allocate_from_stream(responses, &owed, &sending_future_waker, deadline).await
     }
     .await;
 
@@ -182,80 +181,105 @@ async fn run_tso(
     result
 }
 
-/// Resolve (never `Ok`) once a full `deadline` window has passed with a batch
-/// pending the whole time and no progress possible — the stall signal for
+/// What the worker owes its callers: batches dispatched to PD and awaiting a
+/// response, plus requests enqueued but not yet taken by the transport. The
+/// latter count too — the transport polls the request stream only when it can
+/// send (HTTP/2 flow control, connection readiness), so against a peer that
+/// grants no send window a request is owed without ever becoming a batch.
+/// client-go likewise arms its batch deadline before the RPC is sent.
+struct Owed<'a> {
+    pending_requests: &'a Mutex<VecDeque<RequestGroup>>,
+    /// Weak, so the worker does not keep the request channel open by itself.
+    queued: mpsc::WeakSender<TimestampRequest>,
+}
+
+impl Owed<'_> {
+    fn batches(&self) -> usize {
+        self.pending_requests.lock().unwrap().len()
+    }
+
+    /// Requests in the channel, including senders holding a permit.
+    fn queued(&self) -> usize {
+        self.queued
+            .upgrade()
+            .map_or(0, |tx| tx.max_capacity() - tx.capacity())
+    }
+
+    fn any(&self) -> bool {
+        self.batches() > 0 || self.queued() > 0
+    }
+}
+
+/// Resolve (never `Ok`) once a full `deadline` window has passed with a
+/// request owed the whole time and no progress possible — the stall signal for
 /// stream creation, where no response can arrive by definition. The same
-/// [1, 2]-window guarantee as [`allocate_from_stream`]: a batch dispatched
+/// [1, 2]-window guarantee as [`allocate_from_stream`]: a request enqueued
 /// mid-window is granted the following full window.
-async fn stall_watchdog(
-    pending_requests: &Mutex<VecDeque<RequestGroup>>,
-    deadline: Duration,
-) -> crate::Error {
+async fn stall_watchdog(owed: &Owed<'_>, deadline: Duration) -> crate::Error {
     loop {
-        let pending_at_window_start = !pending_requests.lock().await.is_empty();
+        let owed_at_window_start = owed.any();
         tokio::time::sleep(deadline).await;
-        if pending_at_window_start && !pending_requests.lock().await.is_empty() {
+        if owed_at_window_start && owed.any() {
             return internal_err!(
-                "TSO stream creation stalled: no stream within {:?} with requests pending",
-                deadline
+                "TSO stream creation stalled: no stream within {:?} with {} batches outstanding and {} requests queued",
+                deadline,
+                owed.batches(),
+                owed.queued()
             );
         }
     }
 }
 
 /// Drive the TSO response stream, allocating timestamps to the pending request
-/// batches, until the stream ends or goes silent past `deadline` with batches
-/// outstanding.
+/// batches, until the stream ends or goes silent past `deadline` with requests
+/// owed (see [`Owed`]).
 ///
-/// The deadline is evaluated in whole windows: a batch dispatched near the end
+/// The deadline is evaluated in whole windows: a request owed from near the end
 /// of a silent window is granted one more full window before the stream is
 /// declared stalled, so teardown happens only after between one and two
 /// deadlines of genuine silence. (client-go stamps a deadline per batch at
 /// dispatch time; windows approximate that without tracking send times.)
 async fn allocate_from_stream(
     mut responses: impl Stream<Item = std::result::Result<TsoResponse, tonic::Status>> + Unpin,
-    pending_requests: &Mutex<VecDeque<RequestGroup>>,
+    owed: &Owed<'_>,
     sending_future_waker: &AtomicWaker,
     deadline: Duration,
 ) -> Result<()> {
     loop {
-        let pending_at_window_start = !pending_requests.lock().await.is_empty();
+        let owed_at_window_start = owed.any();
         match timeout(deadline, responses.next()).await {
             Ok(Some(Ok(resp))) => {
-                {
-                    let mut pending_requests = pending_requests.lock().await;
-                    allocate_timestamps(&resp, &mut pending_requests)?;
-                }
+                allocate_timestamps(&resp, &mut owed.pending_requests.lock().unwrap())?;
                 // Wake up the sending future blocked by too many pending requests or locked.
                 sending_future_waker.wake();
             }
             Ok(Some(Err(status))) => return Err(status.into()),
             Ok(None) => {
-                let outstanding = pending_requests.lock().await.len();
-                if outstanding == 0 {
+                if !owed.any() {
                     return Ok(());
                 }
                 return Err(internal_err!(
-                    "TSO stream terminated with {} batches outstanding",
-                    outstanding
+                    "TSO stream terminated with {} batches outstanding and {} requests queued",
+                    owed.batches(),
+                    owed.queued()
                 ));
             }
             Err(_elapsed) => {
-                let outstanding = pending_requests.lock().await.len();
-                if outstanding == 0 {
+                if !owed.any() {
                     // A quiet stream with nothing owed is healthy idleness.
                     continue;
                 }
-                if pending_at_window_start {
+                if owed_at_window_start {
                     // Owed a response for the entire silent window: stalled.
                     return Err(internal_err!(
-                        "TSO stream stalled: no response within {:?} with {} batches outstanding",
+                        "TSO stream stalled: no response within {:?} with {} batches outstanding and {} requests queued",
                         deadline,
-                        outstanding
+                        owed.batches(),
+                        owed.queued()
                     ));
                 }
-                // The batch was dispatched mid-window; grant it one full window
-                // (the next iteration starts with it pending).
+                // The request became owed mid-window; grant it one full window
+                // (the next iteration starts with it owed).
             }
         }
     }
@@ -281,15 +305,7 @@ impl Stream for TsoRequestStream {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
 
-        let pending_requests = this.pending_requests.lock();
-        pin_mut!(pending_requests);
-        let mut pending_requests = if let Poll::Ready(pending_requests) = pending_requests.poll(cx)
-        {
-            pending_requests
-        } else {
-            this.self_waker.register(cx.waker());
-            return Poll::Pending;
-        };
+        let mut pending_requests = this.pending_requests.lock().unwrap();
         let mut requests = Vec::new();
 
         while requests.len() < MAX_BATCH_SIZE && pending_requests.len() < MAX_PENDING_COUNT {
@@ -376,6 +392,15 @@ mod tests {
 
     const DEADLINE: Duration = Duration::from_secs(3);
 
+    /// Nothing queued: the request channel is already gone.
+    fn owed(pending: &Mutex<VecDeque<RequestGroup>>) -> Owed<'_> {
+        let (tx, _) = mpsc::channel(1);
+        Owed {
+            pending_requests: pending,
+            queued: tx.downgrade(),
+        }
+    }
+
     fn group_of_one() -> (RequestGroup, oneshot::Receiver<Timestamp>) {
         let (tx, rx) = oneshot::channel();
         let group = RequestGroup {
@@ -395,11 +420,12 @@ mod tests {
     async fn a_stalled_stream_with_batches_outstanding_fails_within_two_deadlines() {
         let pending = Mutex::new(VecDeque::new());
         let (group, _rx) = group_of_one();
-        pending.lock().await.push_back(group);
+        pending.lock().unwrap().push_back(group);
         let waker = AtomicWaker::new();
 
         let t0 = tokio::time::Instant::now();
-        let result = allocate_from_stream(stream::pending(), &pending, &waker, DEADLINE).await;
+        let result =
+            allocate_from_stream(stream::pending(), &owed(&pending), &waker, DEADLINE).await;
         let elapsed = t0.elapsed();
 
         let err = result.unwrap_err();
@@ -426,7 +452,8 @@ mod tests {
             tokio::spawn(async move {
                 let t0 = tokio::time::Instant::now();
                 let result =
-                    allocate_from_stream(stream::pending(), &pending, &waker, DEADLINE).await;
+                    allocate_from_stream(stream::pending(), &owed(&pending), &waker, DEADLINE)
+                        .await;
                 (result, t0.elapsed())
             })
         };
@@ -434,7 +461,7 @@ mod tests {
         // Dispatch the batch halfway through the first (idle) window.
         tokio::time::sleep(DEADLINE / 2).await;
         let (group, _rx) = group_of_one();
-        pending.lock().await.push_back(group);
+        pending.lock().unwrap().push_back(group);
 
         let (result, elapsed) = task.await.unwrap();
         assert!(result.is_err());
@@ -453,7 +480,7 @@ mod tests {
 
         let outcome = timeout(
             DEADLINE * 20,
-            allocate_from_stream(stream::pending(), &pending, &waker, DEADLINE),
+            allocate_from_stream(stream::pending(), &owed(&pending), &waker, DEADLINE),
         )
         .await;
         assert!(
@@ -469,13 +496,14 @@ mod tests {
         let pending = Mutex::new(VecDeque::new());
         let waker = AtomicWaker::new();
         let empty: Vec<std::result::Result<TsoResponse, tonic::Status>> = vec![];
-        let result = allocate_from_stream(stream::iter(empty), &pending, &waker, DEADLINE).await;
+        let result =
+            allocate_from_stream(stream::iter(empty), &owed(&pending), &waker, DEADLINE).await;
         assert!(result.is_ok());
 
         let (group, _rx) = group_of_one();
-        pending.lock().await.push_back(group);
+        pending.lock().unwrap().push_back(group);
         let empty: Vec<std::result::Result<TsoResponse, tonic::Status>> = vec![];
-        let err = allocate_from_stream(stream::iter(empty), &pending, &waker, DEADLINE)
+        let err = allocate_from_stream(stream::iter(empty), &owed(&pending), &waker, DEADLINE)
             .await
             .unwrap_err();
         assert!(
@@ -491,7 +519,7 @@ mod tests {
         let pending = Mutex::new(VecDeque::new());
         let waker = AtomicWaker::new();
         let items = vec![Err(tonic::Status::unavailable("pd gone"))];
-        let err = allocate_from_stream(stream::iter(items), &pending, &waker, DEADLINE)
+        let err = allocate_from_stream(stream::iter(items), &owed(&pending), &waker, DEADLINE)
             .await
             .unwrap_err();
         assert!(
@@ -507,7 +535,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn an_idle_worker_is_not_torn_down_during_stream_creation() {
         let pending = Mutex::new(VecDeque::new());
-        let outcome = timeout(DEADLINE * 20, stall_watchdog(&pending, DEADLINE)).await;
+        let outcome = timeout(DEADLINE * 20, stall_watchdog(&owed(&pending), DEADLINE)).await;
         assert!(
             outcome.is_err(),
             "the watchdog must keep waiting while nothing is owed, got {outcome:?}"
@@ -520,15 +548,145 @@ mod tests {
     async fn the_creation_watchdog_fires_with_a_batch_pending() {
         let pending = Mutex::new(VecDeque::new());
         let (group, _rx) = group_of_one();
-        pending.lock().await.push_back(group);
+        pending.lock().unwrap().push_back(group);
 
         let t0 = tokio::time::Instant::now();
-        let err = stall_watchdog(&pending, DEADLINE).await;
+        let err = stall_watchdog(&owed(&pending), DEADLINE).await;
         let elapsed = t0.elapsed();
         assert!(err.to_string().contains("creation stalled"));
         assert!(
             elapsed >= DEADLINE && elapsed <= DEADLINE * 2,
             "want the watchdog within [1, 2] windows, took {elapsed:?}"
+        );
+    }
+
+    /// A request the transport has not yet taken from the channel is owed
+    /// too: against a peer that grants no send window the request stream is
+    /// never polled, so no batch becomes pending, yet a caller is waiting.
+    #[tokio::test(start_paused = true)]
+    async fn the_creation_watchdog_fires_with_a_request_queued() {
+        let pending = Mutex::new(VecDeque::new());
+        let (tx, _rx) = mpsc::channel(MAX_BATCH_SIZE);
+        let (request, _response) = oneshot::channel();
+        tx.try_send(request).unwrap();
+        let owed = Owed {
+            pending_requests: &pending,
+            queued: tx.downgrade(),
+        };
+
+        let t0 = tokio::time::Instant::now();
+        let err = stall_watchdog(&owed, DEADLINE).await;
+        let elapsed = t0.elapsed();
+        assert!(err.to_string().contains("1 requests queued"), "{err}");
+        assert!(
+            elapsed >= DEADLINE && elapsed <= DEADLINE * 2,
+            "want the watchdog within [1, 2] windows, took {elapsed:?}"
+        );
+    }
+
+    /// The same for an established stream: a queued request the transport
+    /// cannot send is a stall, not idleness.
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_stream_with_a_request_queued_fails_within_two_deadlines() {
+        let pending = Mutex::new(VecDeque::new());
+        let (tx, _rx) = mpsc::channel(MAX_BATCH_SIZE);
+        let (request, _response) = oneshot::channel();
+        tx.try_send(request).unwrap();
+        let owed = Owed {
+            pending_requests: &pending,
+            queued: tx.downgrade(),
+        };
+        let waker = AtomicWaker::new();
+
+        let t0 = tokio::time::Instant::now();
+        let err = allocate_from_stream(stream::pending(), &owed, &waker, DEADLINE)
+            .await
+            .unwrap_err();
+        let elapsed = t0.elapsed();
+        assert!(err.to_string().contains("stalled"), "{err}");
+        assert!(
+            elapsed >= DEADLINE && elapsed <= DEADLINE * 2,
+            "want teardown within [1, 2] deadlines, took {elapsed:?}"
+        );
+    }
+
+    /// Inspecting the pending queue (the watchdog, the receive loop) must not
+    /// cost the request stream its wakeup: if `poll_next` met a held lock and
+    /// returned `Pending`, nothing would wake it once the lock was released,
+    /// and a queued request would never be dispatched. `poll_next` waits out
+    /// the lock instead.
+    #[test]
+    fn the_request_stream_is_not_parked_by_lock_contention() {
+        let (tx, request_rx) = mpsc::channel(MAX_BATCH_SIZE);
+        let (request, _response) = oneshot::channel();
+        tx.try_send(request).unwrap();
+        let pending_requests = Arc::new(Mutex::new(VecDeque::new()));
+        let mut stream = TsoRequestStream {
+            cluster_id: 1,
+            request_rx,
+            pending_requests: pending_requests.clone(),
+            self_waker: Arc::new(AtomicWaker::new()),
+        };
+
+        let held = Arc::new(std::sync::Barrier::new(2));
+        let inspector = {
+            let pending_requests = pending_requests.clone();
+            let held = held.clone();
+            std::thread::spawn(move || {
+                let _guard = pending_requests.lock().unwrap();
+                held.wait();
+                std::thread::sleep(Duration::from_millis(50));
+            })
+        };
+        held.wait();
+
+        let mut cx = Context::from_waker(futures::task::noop_waker_ref());
+        let polled = Pin::new(&mut stream).poll_next(&mut cx);
+        inspector.join().unwrap();
+        assert!(
+            matches!(polled, Poll::Ready(Some(ref req)) if req.count == 1),
+            "the request must be dispatched despite the contention, got {polled:?}"
+        );
+        assert_eq!(pending_requests.lock().unwrap().len(), 1);
+    }
+
+    /// End to end through a real tonic channel whose transport never becomes
+    /// ready — its connection attempt never completes — so the request body
+    /// is never polled and the request stays in the channel while the worker
+    /// is alive. The caller must still fail within the [1, 2]-window bound.
+    #[tokio::test(start_paused = true)]
+    async fn a_transport_that_never_becomes_ready_fails_within_two_deadlines() {
+        struct NeverConnects;
+        impl tonic::codegen::Service<tonic::transport::Uri> for NeverConnects {
+            type Response = hyper_util::rt::TokioIo<tokio::net::TcpStream>;
+            type Error = std::io::Error;
+            type Future = future::Pending<std::result::Result<Self::Response, Self::Error>>;
+
+            fn poll_ready(
+                &mut self,
+                _: &mut Context<'_>,
+            ) -> Poll<std::result::Result<(), Self::Error>> {
+                Poll::Ready(Ok(()))
+            }
+
+            fn call(&mut self, _: tonic::transport::Uri) -> Self::Future {
+                future::pending()
+            }
+        }
+
+        let channel = tonic::transport::Endpoint::from_static("http://127.0.0.1:1")
+            .connect_with_connector_lazy(NeverConnects);
+        let oracle = TimestampOracle::new(1, &PdClient::new(channel), DEADLINE).unwrap();
+
+        let t0 = tokio::time::Instant::now();
+        let outcome = timeout(DEADLINE * 20, oracle.get_timestamp())
+            .await
+            .expect("a request the transport never takes must fail, not hang");
+        let elapsed = t0.elapsed();
+        assert!(outcome.is_err());
+        assert!(
+            elapsed >= DEADLINE && elapsed <= DEADLINE * 2,
+            "want failure within [1, 2] windows, took {elapsed:?}"
         );
     }
 
@@ -579,7 +737,7 @@ mod tests {
     async fn responses_allocate_timestamps_to_pending_batches() {
         let pending = Mutex::new(VecDeque::new());
         let (group, rx) = group_of_one();
-        pending.lock().await.push_back(group);
+        pending.lock().unwrap().push_back(group);
         let waker = AtomicWaker::new();
 
         let items = vec![Ok(TsoResponse {
@@ -591,7 +749,8 @@ mod tests {
             }),
             ..Default::default()
         })];
-        let result = allocate_from_stream(stream::iter(items), &pending, &waker, DEADLINE).await;
+        let result =
+            allocate_from_stream(stream::iter(items), &owed(&pending), &waker, DEADLINE).await;
         assert!(result.is_ok(), "clean end after all batches answered");
 
         let ts = rx
