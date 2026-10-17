@@ -7,6 +7,8 @@ This crate provides an easy-to-use client for [TiKV](https://github.com/tikv/tik
 
 This crate lets you connect to a TiKV(>= `v5.0.0`) cluster and use either a transactional or raw (simple get/put style without transactional consistency guarantees) API to access and update your data.
 
+For C applications, see the [asynchronous C binding](bindings/c/README.md).
+
 The TiKV Rust client is an open source (Apache 2) project maintained by the TiKV Authors. We welcome contributions, see below for more info.
 
 Note that the current release is not suitable for production use - APIs are not yet stable and the crate has not been thoroughly tested in real-life use.
