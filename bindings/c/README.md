@@ -53,11 +53,14 @@ may issue multiple TiKV requests.
 
 ## Metrics snapshots
 
-`tikv_metrics_snapshot_collect` reads the process-wide Prometheus default
-registry. The current C representation exports counter and histogram samples,
-their metric name, the optional `type` label, and histogram bucket upper
-bounds. It does not attribute samples to a particular C client. Strings in a
-sample remain valid until its snapshot is destroyed with
+`tikv_metrics_snapshot_collect` exports only the eight client-rust TiKV/PD
+request counter and duration histogram families named in
+`tikv_client_metrics_c.h`. It reads the process-wide Prometheus default registry,
+so values include all client instances, including callers outside the C API.
+It accepts only the expected metric type for each family and samples whose sole
+label is `type`; other families and incompatible samples are skipped. Histogram
+samples include cumulative buckets (including +Inf), sum, and count. Strings in
+a sample remain valid until its snapshot is destroyed with
 `tikv_metrics_snapshot_destroy`.
 
 The existing `tikv_request_total` and `pd_request_total` metrics count

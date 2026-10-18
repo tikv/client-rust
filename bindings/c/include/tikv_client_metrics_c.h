@@ -20,7 +20,8 @@ typedef enum tikv_metric_sample_kind_t {
 } tikv_metric_sample_kind_t;
 
 /*
- * Metric names used by the C RawKV operations and their PD requests.
+ * Metric families exported by `tikv_metrics_snapshot_collect`.
+ * Request totals are counters; request durations are histograms.
  */
 #define TIKV_METRIC_TIKV_REQUEST_TOTAL "tikv_request_total"
 #define TIKV_METRIC_TIKV_REQUEST_DURATION_SECONDS                         \
@@ -36,8 +37,8 @@ typedef enum tikv_metric_sample_kind_t {
 
 /*
  * Values of the Prometheus label key `type` used by the C RawKV operations
- * and their PD lookups. These constants are not an exhaustive list of labels
- * that may appear in a process-wide metrics snapshot.
+ * and their PD lookups. Other `type` values may appear when callers outside
+ * the C API use these same metric families.
  */
 #define TIKV_METRIC_LABEL_TYPE_RAW_GET "raw_get"
 #define TIKV_METRIC_LABEL_TYPE_RAW_BATCH_GET "raw_batch_get"
@@ -63,12 +64,20 @@ typedef struct tikv_metric_sample_t {
 } tikv_metric_sample_t;
 
 /*
- * Collect a structured snapshot of the current process Prometheus default
- * registry.
+ * Collect a structured snapshot of only the eight client-rust TiKV/PD request
+ * metric families named above, from the process Prometheus default registry.
+ * Values are shared by all client instances in the process, including callers
+ * outside the C API; they are not scoped to a particular C client handle.
+ *
+ * Only counters for request totals and histograms for request durations are
+ * exported. Each sample must have exactly one label, named `type`. Other
+ * families, unexpected metric types, and samples with missing or additional
+ * labels are skipped. Histograms include cumulative buckets (including +Inf),
+ * sum, and count.
  *
  * Strings referenced by `tikv_metric_sample_t` are owned by the snapshot and
- * remain valid until `tikv_metrics_snapshot_destroy`. `type_label` is NULL when
- * the sample has no Prometheus `type` label.
+ * remain valid until `tikv_metrics_snapshot_destroy`. `type_label` is always
+ * present and contains the sample's Prometheus `type` label value.
  */
 tikv_status_t tikv_metrics_snapshot_collect(
     tikv_metrics_snapshot_t **out_snapshot,
