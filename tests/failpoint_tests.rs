@@ -10,8 +10,8 @@ use std::time::Duration;
 use common::*;
 use fail::FailScenario;
 use log::info;
-use rand::thread_rng;
-use rand::Rng;
+use rand::rng;
+use rand::RngExt;
 use serial_test::serial;
 use tikv_client::transaction::Client;
 use tikv_client::transaction::HeartbeatOption;
@@ -774,14 +774,14 @@ async fn write_data(
     async_commit: bool,
     commit_error: bool,
 ) -> Result<HashSet<Vec<u8>>> {
-    let mut rng = thread_rng();
+    let mut rng = rng();
     // Generate keys inside this case's band so its locks stay within `[lo, hi)` and never
     // collide with another (serial) case's keys, while remaining spread across the band's
     // regions under `MULTI_REGION`.
     let (lo, hi) = band_bounds(band);
     let mut keys: HashSet<Vec<u8>> = HashSet::new();
     while keys.len() < TXN_COUNT * KEY_COUNT {
-        keys.insert(rng.gen_range(lo..hi).to_be_bytes().to_vec());
+        keys.insert(rng.random_range(lo..hi).to_be_bytes().to_vec());
     }
     let mut txns = Vec::with_capacity(TXN_COUNT);
 

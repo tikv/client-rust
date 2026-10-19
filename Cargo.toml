@@ -26,39 +26,40 @@ members = [
 ]
 
 [dependencies]
-async-recursion = "0.3"
+async-recursion = "1.2"
 async-trait = "0.1"
-derive-new = "0.5"
-either = "1.6"
-fail = "0.4"
+derive-new = "0.7"
+either = "1.19"
+fail = "0.5"
 futures = { version = "0.3" }
 lazy_static = "1"
 log = "0.4"
 pin-project = "1"
-prometheus = { version = "0.13", default-features = false }
-prost = "0.13"
-rand = "0.8"
+prometheus = { version = "0.14", default-features = false }
+prost = "0.14"
+rand = "0.10"
 regex = "1"
 semver = "1.0"
 serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1"
 take_mut = "0.2.2"
-thiserror = "1"
-tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "macros"] }
-tonic = { version = "0.12", features = ["tls", "gzip"] }
+thiserror = "2"
+tokio = { version = "1.53", features = ["sync", "rt-multi-thread", "macros"] }
+tonic = { version = "0.14", features = ["tls-ring", "gzip"] }
+tonic-prost = "0.14"
 
 [dev-dependencies]
-clap = "2"
-env_logger = "0.10"
-fail = { version = "0.4", features = ["failpoints"] }
+clap = { version = "4", features = ["cargo", "string"] }
+env_logger = "0.11"
+fail = { version = "0.5", features = ["failpoints"] }
 proptest = "1"
-proptest-derive = "0.5.1"
-reqwest = { version = "0.11", features = ["json", "native-tls-vendored"] }
-rstest = "0.18.2"
+proptest-derive = "0.9.0"
+reqwest = { version = "0.13", features = ["json", "native-tls-vendored"] }
+rstest = "0.28.0"
 serde_json = "1"
-serial_test = "0.5.0"
-tempfile = "=3.14.0"
+serial_test = "3.5.0"
+tempfile = "=3.27.0"
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
 
 [[test]]

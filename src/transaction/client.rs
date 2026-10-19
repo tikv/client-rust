@@ -345,7 +345,7 @@ impl Client {
         loop {
             let resolved_locks = resolve_locks(
                 live_locks.encode_keyspace(self.keyspace, KeyMode::Txn),
-                timestamp.clone(),
+                timestamp,
                 self.pd.clone(),
                 self.keyspace,
             )
