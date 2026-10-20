@@ -63,6 +63,11 @@ typedef struct tikv_metric_sample_t {
   double le;
 } tikv_metric_sample_t;
 
+typedef struct tikv_metric_samples_t {
+  const tikv_metric_sample_t *ptr;
+  size_t len;
+} tikv_metric_samples_t;
+
 /*
  * Collect a structured snapshot of only the eight client-rust TiKV/PD request
  * metric families named above, from the process Prometheus default registry.
@@ -75,20 +80,16 @@ typedef struct tikv_metric_sample_t {
  * labels are skipped. Histograms include cumulative buckets (including +Inf),
  * sum, and count.
  *
- * Strings referenced by `tikv_metric_sample_t` are owned by the snapshot and
- * remain valid until `tikv_metrics_snapshot_destroy`. `type_label` is always
- * present and contains the sample's Prometheus `type` label value.
+ * On success, `out_samples` views every sample in one contiguous array owned
+ * by `out_snapshot`. The array and its strings remain valid until
+ * `tikv_metrics_snapshot_destroy`; callers must not modify or free them.
+ * For an empty snapshot, `*out_samples` is {NULL, 0}.
+ * `type_label` is always present and contains the Prometheus `type` label value.
+ * On failure, each non-NULL output pointer is cleared to NULL or {NULL, 0}.
  */
 tikv_status_t tikv_metrics_snapshot_collect(
     tikv_metrics_snapshot_t **out_snapshot,
-    tikv_error_t **out_error);
-
-size_t tikv_metrics_snapshot_len(const tikv_metrics_snapshot_t *snapshot);
-
-tikv_status_t tikv_metrics_snapshot_get(
-    const tikv_metrics_snapshot_t *snapshot,
-    size_t index,
-    tikv_metric_sample_t *out_sample,
+    tikv_metric_samples_t *out_samples,
     tikv_error_t **out_error);
 
 void tikv_metrics_snapshot_destroy(tikv_metrics_snapshot_t *snapshot);

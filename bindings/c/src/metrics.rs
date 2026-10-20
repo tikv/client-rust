@@ -3,13 +3,10 @@
 use super::*;
 
 struct MetricsSnapshot {
-    samples: Vec<MetricSample>,
-}
-
-struct MetricSample {
-    ffi: tikv_metric_sample_t,
-    _name: CString,
-    _type_label: CString,
+    samples: Vec<tikv_metric_sample_t>,
+    // The samples point into these CString buffers, which remain valid until
+    // the snapshot is destroyed even if this Vec reallocates.
+    _strings: Vec<CString>,
 }
 
 fn ffi_cstring(value: &str) -> CString {
@@ -23,31 +20,34 @@ fn metric_type_label(metric: &prometheus::proto::Metric) -> Option<&str> {
     }
 }
 
-fn new_metric_sample(
-    name: &str,
-    kind: tikv_metric_sample_kind_t,
-    type_label: &str,
-    value: f64,
-    le: f64,
-) -> MetricSample {
-    let name = ffi_cstring(name);
-    let type_label = ffi_cstring(type_label);
-    let ffi = tikv_metric_sample_t {
-        name: name.as_ptr(),
-        type_label: type_label.as_ptr(),
-        kind,
-        value,
-        le,
-    };
-    MetricSample {
-        ffi,
-        _name: name,
-        _type_label: type_label,
+impl MetricsSnapshot {
+    fn push(
+        &mut self,
+        name: &str,
+        kind: tikv_metric_sample_kind_t,
+        type_label: &str,
+        value: f64,
+        le: f64,
+    ) {
+        let name = ffi_cstring(name);
+        let type_label = ffi_cstring(type_label);
+        self.samples.push(tikv_metric_sample_t {
+            name: name.as_ptr(),
+            type_label: type_label.as_ptr(),
+            kind,
+            value,
+            le,
+        });
+        self._strings.push(name);
+        self._strings.push(type_label);
     }
 }
 
 fn collect_metrics_snapshot(registry: &prometheus::Registry) -> MetricsSnapshot {
-    let mut samples = Vec::new();
+    let mut snapshot = MetricsSnapshot {
+        samples: Vec::new(),
+        _strings: Vec::new(),
+    };
 
     for family in registry.gather() {
         let name = family.get_name();
@@ -78,13 +78,13 @@ fn collect_metrics_snapshot(registry: &prometheus::Registry) -> MetricsSnapshot 
                     let Some(type_label) = metric_type_label(metric) else {
                         continue;
                     };
-                    samples.push(new_metric_sample(
+                    snapshot.push(
                         name,
                         tikv_metric_sample_kind_t::TIKV_METRIC_SAMPLE_COUNTER,
                         type_label,
                         metric.get_counter().get_value(),
                         0.0,
-                    ));
+                    );
                 }
             }
             MetricType::HISTOGRAM => {
@@ -97,108 +97,86 @@ fn collect_metrics_snapshot(registry: &prometheus::Registry) -> MetricsSnapshot 
                     for bucket in histogram.get_bucket() {
                         let upper_bound = bucket.get_upper_bound();
                         inf_seen |= upper_bound.is_sign_positive() && upper_bound.is_infinite();
-                        samples.push(new_metric_sample(
+                        snapshot.push(
                             name,
                             tikv_metric_sample_kind_t::TIKV_METRIC_SAMPLE_HISTOGRAM_BUCKET,
                             type_label,
                             bucket.get_cumulative_count() as f64,
                             upper_bound,
-                        ));
+                        );
                     }
                     if !inf_seen {
-                        samples.push(new_metric_sample(
+                        snapshot.push(
                             name,
                             tikv_metric_sample_kind_t::TIKV_METRIC_SAMPLE_HISTOGRAM_BUCKET,
                             type_label,
                             histogram.get_sample_count() as f64,
                             f64::INFINITY,
-                        ));
+                        );
                     }
-                    samples.push(new_metric_sample(
+                    snapshot.push(
                         name,
                         tikv_metric_sample_kind_t::TIKV_METRIC_SAMPLE_HISTOGRAM_SUM,
                         type_label,
                         histogram.get_sample_sum(),
                         0.0,
-                    ));
-                    samples.push(new_metric_sample(
+                    );
+                    snapshot.push(
                         name,
                         tikv_metric_sample_kind_t::TIKV_METRIC_SAMPLE_HISTOGRAM_COUNT,
                         type_label,
                         histogram.get_sample_count() as f64,
                         0.0,
-                    ));
+                    );
                 }
             }
             _ => {}
         }
     }
 
-    MetricsSnapshot { samples }
-}
-
-fn metrics_snapshot_ref<'a>(raw: *const tikv_metrics_snapshot_t) -> FfiResult<&'a MetricsSnapshot> {
-    if raw.is_null() {
-        return Err(FfiError::invalid_argument("snapshot must not be null"));
-    }
-    Ok(unsafe { &*(raw as *const MetricsSnapshot) })
+    snapshot
 }
 
 #[no_mangle]
 pub extern "C" fn tikv_metrics_snapshot_collect(
     out_snapshot: *mut *mut tikv_metrics_snapshot_t,
+    out_samples: *mut tikv_metric_samples_t,
     out_error: *mut *mut tikv_error_t,
 ) -> tikv_status_t {
-    if out_snapshot.is_null() {
-        clear_error_slot(out_error);
-        set_error_slot(out_error, "out_snapshot must not be null".to_owned());
-        return tikv_status_t::TIKV_STATUS_INVALID_ARGUMENT;
+    if !out_snapshot.is_null() {
+        unsafe { *out_snapshot = ptr::null_mut() };
     }
-
-    unsafe {
-        *out_snapshot = ptr::null_mut();
+    if !out_samples.is_null() {
+        unsafe {
+            *out_samples = tikv_metric_samples_t {
+                ptr: ptr::null(),
+                len: 0,
+            }
+        };
+    }
+    if out_snapshot.is_null() || out_samples.is_null() {
+        clear_error_slot(out_error);
+        let name = if out_snapshot.is_null() {
+            "out_snapshot"
+        } else {
+            "out_samples"
+        };
+        set_error_slot(out_error, format!("{name} must not be null"));
+        return tikv_status_t::TIKV_STATUS_INVALID_ARGUMENT;
     }
 
     match run_ffi(out_error, || {
         let snapshot = Box::new(collect_metrics_snapshot(prometheus::default_registry()));
         unsafe {
+            *out_samples = tikv_metric_samples_t {
+                ptr: if snapshot.samples.is_empty() {
+                    ptr::null()
+                } else {
+                    snapshot.samples.as_ptr()
+                },
+                len: snapshot.samples.len(),
+            };
             *out_snapshot = Box::into_raw(snapshot) as *mut tikv_metrics_snapshot_t;
-        }
-        Ok(())
-    }) {
-        Ok(()) => tikv_status_t::TIKV_STATUS_OK,
-        Err(status) => status,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn tikv_metrics_snapshot_len(snapshot: *const tikv_metrics_snapshot_t) -> usize {
-    if snapshot.is_null() {
-        return 0;
-    }
-    unsafe { (*(snapshot as *const MetricsSnapshot)).samples.len() }
-}
-
-#[no_mangle]
-pub extern "C" fn tikv_metrics_snapshot_get(
-    snapshot: *const tikv_metrics_snapshot_t,
-    index: usize,
-    out_sample: *mut tikv_metric_sample_t,
-    out_error: *mut *mut tikv_error_t,
-) -> tikv_status_t {
-    if out_sample.is_null() {
-        clear_error_slot(out_error);
-        set_error_slot(out_error, "out_sample must not be null".to_owned());
-        return tikv_status_t::TIKV_STATUS_INVALID_ARGUMENT;
-    }
-
-    match run_ffi(out_error, || {
-        let snapshot = metrics_snapshot_ref(snapshot)?;
-        let sample = snapshot.samples.get(index).ok_or_else(|| {
-            FfiError::invalid_argument(format!("sample index {index} out of range"))
-        })?;
-        unsafe {
-            *out_sample = sample.ffi;
         }
         Ok(())
     }) {
@@ -276,7 +254,6 @@ mod tests {
         let mut counters = 0;
         let mut histogram_counts = 0;
         for sample in &snapshot.samples {
-            let sample = &sample.ffi;
             names.insert(unsafe { CStr::from_ptr(sample.name) }.to_str().unwrap());
             assert_eq!(
                 unsafe { CStr::from_ptr(sample.type_label) }.to_bytes(),

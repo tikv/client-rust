@@ -59,9 +59,11 @@ request counter and duration histogram families named in
 so values include all client instances, including callers outside the C API.
 It accepts only the expected metric type for each family and samples whose sole
 label is `type`; other families and incompatible samples are skipped. Histogram
-samples include cumulative buckets (including +Inf), sum, and count. Strings in
-a sample remain valid until its snapshot is destroyed with
-`tikv_metrics_snapshot_destroy`.
+samples include cumulative buckets (including +Inf), sum, and count. One call
+returns the snapshot handle and a read-only view of all samples in a contiguous
+array. The array and its strings remain valid until the snapshot is destroyed
+with `tikv_metrics_snapshot_destroy`. For an empty snapshot, the array view is
+`{NULL, 0}`.
 
 The existing `tikv_request_total` and `pd_request_total` metrics count
 underlying RPC attempts. A single C operation can issue multiple RPCs due to

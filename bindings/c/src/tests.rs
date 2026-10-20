@@ -83,30 +83,23 @@ fn metrics_snapshot_collects_supported_counter_and_histogram() {
 
     let mut error = ptr::null_mut();
     let mut snapshot = ptr::null_mut();
-    let status = tikv_metrics_snapshot_collect(&mut snapshot, &mut error);
+    let mut samples = tikv_metric_samples_t {
+        ptr: ptr::null(),
+        len: 0,
+    };
+    let status = tikv_metrics_snapshot_collect(&mut snapshot, &mut samples, &mut error);
     assert_eq!(status, tikv_status_t::TIKV_STATUS_OK);
     assert!(error.is_null());
     assert!(!snapshot.is_null());
-
-    let len = tikv_metrics_snapshot_len(snapshot);
-    assert!(len > 0);
+    assert!(!samples.ptr.is_null());
+    assert!(samples.len > 0);
 
     let mut raw_get_total = None;
     let mut raw_get_duration_count = None;
     let mut saw_inf_bucket = false;
 
-    for index in 0..len {
-        let mut sample = tikv_metric_sample_t {
-            name: ptr::null(),
-            type_label: ptr::null(),
-            kind: tikv_metric_sample_kind_t::TIKV_METRIC_SAMPLE_UNKNOWN,
-            value: 0.0,
-            le: 0.0,
-        };
-        let status = tikv_metrics_snapshot_get(snapshot, index, &mut sample, &mut error);
-        assert_eq!(status, tikv_status_t::TIKV_STATUS_OK);
-        assert!(error.is_null());
-
+    let sample_array = unsafe { std::slice::from_raw_parts(samples.ptr, samples.len) };
+    for sample in sample_array {
         let name = unsafe { CStr::from_ptr(sample.name) }.to_str().unwrap();
         let type_label = if sample.type_label.is_null() {
             None
@@ -146,6 +139,28 @@ fn metrics_snapshot_collects_supported_counter_and_histogram() {
     assert!(saw_inf_bucket);
 
     tikv_metrics_snapshot_destroy(snapshot);
+}
+
+#[test]
+fn metrics_snapshot_collect_rejects_missing_samples_output() {
+    let mut error = ptr::null_mut();
+    let mut snapshot = std::ptr::NonNull::<tikv_metrics_snapshot_t>::dangling().as_ptr();
+    let status = tikv_metrics_snapshot_collect(&mut snapshot, ptr::null_mut(), &mut error);
+    assert_eq!(status, tikv_status_t::TIKV_STATUS_INVALID_ARGUMENT);
+    assert!(snapshot.is_null());
+    assert!(!error.is_null());
+    tikv_error_destroy(error);
+
+    let mut samples = tikv_metric_samples_t {
+        ptr: std::ptr::NonNull::<tikv_metric_sample_t>::dangling().as_ptr(),
+        len: 1,
+    };
+    let status = tikv_metrics_snapshot_collect(ptr::null_mut(), &mut samples, &mut error);
+    assert_eq!(status, tikv_status_t::TIKV_STATUS_INVALID_ARGUMENT);
+    assert!(samples.ptr.is_null());
+    assert_eq!(samples.len, 0);
+    assert!(!error.is_null());
+    tikv_error_destroy(error);
 }
 
 #[test]

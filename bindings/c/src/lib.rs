@@ -115,6 +115,13 @@ pub struct tikv_metric_sample_t {
     pub le: f64,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct tikv_metric_samples_t {
+    pub ptr: *const tikv_metric_sample_t,
+    pub len: usize,
+}
+
 pub type tikv_async_completion_cb = extern "C" fn(
     request: *mut tikv_async_request_t,
     final_status: tikv_status_t,
