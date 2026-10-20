@@ -266,37 +266,40 @@ async fn resolve_lock_with_retry(
                 clean_regions.insert(ver_id);
                 return Ok(());
             }
-            // Retry on region error
-            Err(Error::ExtractedErrors(mut errors)) => {
-                // ResolveLockResponse can have at most 1 error
-                match errors.pop() {
-                    Some(Error::RegionError(e)) => match backoff.next_delay_duration() {
-                        Some(duration) => {
-                            let region_error_resolved =
-                                handle_region_error(pd_client.clone(), *e, store.clone()).await?;
-                            if !region_error_resolved {
-                                sleep(duration).await;
-                            }
-                            continue;
+            // Retry on region error. `ResolveLockResponse` can have at most 1 error, and
+            // the variant now says which kind it is rather than requiring a type test on
+            // a popped element.
+            Err(Error::MultipleRegionErrors(mut errors)) => match errors.pop() {
+                Some(Error::RegionError(e)) => match backoff.next_delay_duration() {
+                    Some(duration) => {
+                        let region_error_resolved =
+                            handle_region_error(pd_client.clone(), *e, store.clone()).await?;
+                        if !region_error_resolved {
+                            sleep(duration).await;
                         }
-                        None => return Err(Error::RegionError(e)),
-                    },
-                    Some(Error::KeyError(key_err)) => {
-                        // Keyspace is not truncated here because we need full key info for logging.
-                        error!(
-                            "resolve_lock error, unexpected resolve err: {:?}, lock: {{key: {}, start_version: {}, commit_version: {}, is_txn_file: {}}}",
-                            key_err,
-                            format_key_for_log(key),
-                            start_version,
-                            commit_version,
-                            is_txn_file,
-                        );
-                        return Err(Error::KeyError(key_err));
+                        continue;
                     }
-                    Some(e) => return Err(e),
-                    None => unreachable!(),
+                    None => return Err(Error::RegionError(e)),
+                },
+                Some(e) => return Err(e),
+                None => unreachable!(),
+            },
+            Err(Error::MultipleKeyErrors(mut errors)) => match errors.pop() {
+                Some(Error::KeyError(key_err)) => {
+                    // Keyspace is not truncated here because we need full key info for logging.
+                    error!(
+                        "resolve_lock error, unexpected resolve err: {:?}, lock: {{key: {}, start_version: {}, commit_version: {}, is_txn_file: {}}}",
+                        key_err,
+                        format_key_for_log(key),
+                        start_version,
+                        commit_version,
+                        is_txn_file,
+                    );
+                    return Err(Error::KeyError(key_err));
                 }
-            }
+                Some(e) => return Err(e),
+                None => unreachable!(),
+            },
             Err(e) if is_grpc_error(&e) => match backoff.next_delay_duration() {
                 Some(duration) => {
                     pd_client.invalidate_region_cache(ver_id.clone()).await;
@@ -652,7 +655,14 @@ impl LockResolver {
             .plan();
         let mut status: TransactionStatus = match plan.execute().await {
             Ok(status) => status,
-            Err(Error::ExtractedErrors(mut errors)) | Err(Error::MultipleKeyErrors(mut errors)) => {
+            // Response key errors now reach us under exactly one variant, whichever
+            // shape the plan has: `single_shard_handler` and `ExtractError` both produce
+            // `MultipleKeyErrors`. Before the variants were split this arm had to accept
+            // two, because a collapsing merge decided which one surfaced — and matching
+            // only one left the lock-resolution heal path (`rollback_if_not_exist` after
+            // TTL expiry in `get_txn_status_from_lock`) unreachable, so an orphaned
+            // secondary lock poisoned its key forever.
+            Err(Error::MultipleKeyErrors(mut errors)) => {
                 match errors.pop() {
                     Some(Error::KeyError(key_err)) => {
                         if let Some(txn_not_found) = key_err.txn_not_found {
