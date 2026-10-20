@@ -15,6 +15,9 @@ prometheus = ["prometheus/push", "prometheus/process"]
 # Enable integration tests with a running TiKV and PD instance.
 # Use $PD_ADDRS, comma separated, to set the addresses the tests use.
 integration-tests = []
+# Test probes: drive a transaction's two-phase commit one phase at a time
+# (`Transaction::probe`). For tests only.
+test-utils = []
 
 [lib]
 name = "tikv_client"

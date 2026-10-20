@@ -95,6 +95,10 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     /// had started — which a rollback retry would otherwise need to know.
     prewritten: bool,
     start_instant: Instant,
+    /// What a [`TransactionProbe`] has set: kept on the transaction so it holds across
+    /// separate `probe()` calls.
+    #[cfg(feature = "test-utils")]
+    probe: ProbeState,
 }
 
 impl<PdC: PdClient> Transaction<PdC> {
@@ -119,6 +123,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             is_heartbeat_started: false,
             prewritten: false,
             start_instant: std::time::Instant::now(),
+            #[cfg(feature = "test-utils")]
+            probe: ProbeState::default(),
         }
     }
 
@@ -1334,6 +1340,10 @@ struct Committer<PdC: PdClient = PdRpcClient> {
     undetermined: bool,
     write_size: u64,
     start_instant: Instant,
+    /// A lock TTL in milliseconds that replaces the computed one. Only a
+    /// [`TransactionProbe`] sets it.
+    #[new(default)]
+    lock_ttl: Option<u64>,
 }
 
 impl<PdC: PdClient> Committer<PdC> {
@@ -1413,20 +1423,25 @@ impl<PdC: PdClient> Committer<PdC> {
             self.mutations.len()
         );
         let primary_lock = self.primary_key.clone().unwrap();
-        let elapsed = self.start_instant.elapsed().as_millis() as u64;
-        let lock_ttl = self.calc_txn_lock_ttl();
+        let lock_ttl = match self.lock_ttl {
+            Some(ttl) => ttl,
+            None => {
+                let elapsed = self.start_instant.elapsed().as_millis() as u64;
+                self.calc_txn_lock_ttl() + elapsed
+            }
+        };
         let mut request = match &self.options.kind {
             TransactionKind::Optimistic => new_prewrite_request(
                 self.mutations.clone(),
                 primary_lock,
                 self.start_version.clone(),
-                lock_ttl + elapsed,
+                lock_ttl,
             ),
             TransactionKind::Pessimistic(for_update_ts) => new_pessimistic_prewrite_request(
                 self.mutations.clone(),
                 primary_lock,
                 self.start_version.clone(),
-                lock_ttl + elapsed,
+                lock_ttl,
                 for_update_ts.clone(),
             ),
         };
@@ -1719,6 +1734,212 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 }
 
+/// Settings a [`TransactionProbe`] has made on its transaction.
+#[cfg(feature = "test-utils")]
+#[derive(Default)]
+struct ProbeState {
+    primary_key: Option<Key>,
+    lock_ttl: Option<u64>,
+}
+
+#[cfg(feature = "test-utils")]
+impl<PdC: PdClient> Transaction<PdC> {
+    /// Drive this transaction's two-phase commit one phase at a time, for tests.
+    ///
+    /// Available with the `test-utils` feature. See [`TransactionProbe`].
+    pub fn probe(&mut self) -> TransactionProbe<'_, PdC> {
+        TransactionProbe { txn: self }
+    }
+}
+
+/// Drives a [`Transaction`]'s two-phase commit one phase at a time, so a test can
+/// build the states a crash or a slow client leaves behind: locks whose primary was
+/// never written, or a committed primary with its secondaries still locked.
+///
+/// Available with the `test-utils` feature, which is meant for tests only. A
+/// transaction driven this way is not cleaned up: nothing here starts the heartbeat,
+/// commits the secondaries or rolls back, and dropping the transaction after
+/// [`prewrite`](Self::prewrite) leaves its locks in place, without the drop check
+/// firing. Use an optimistic transaction (or [`HeartbeatOption::NoHeartbeat`]) when
+/// the locks are meant to expire.
+///
+/// The counterpart of client-go's `CommitterProbe` (`txnkv/transaction/test_probe.go`).
+///
+/// # Examples
+///
+/// Leave a lock on `"secondary"` whose primary, `"primary"`, is never written:
+///
+/// ```rust,no_run
+/// # use tikv_client::{TransactionClient, TransactionOptions, CheckLevel};
+/// # futures::executor::block_on(async {
+/// # let client = TransactionClient::new(vec!["192.168.0.100"]).await.unwrap();
+/// let mut txn = client
+///     .begin_with_options(TransactionOptions::new_optimistic().drop_check(CheckLevel::None))
+///     .await
+///     .unwrap();
+/// txn.put("secondary".to_owned(), "value").await.unwrap();
+/// let mut probe = txn.probe();
+/// probe.set_primary_key("primary".to_owned()).set_lock_ttl(1000);
+/// probe.prewrite(["secondary".to_owned()]).await.unwrap();
+/// drop(txn); // the crash: the lock stays until a reader resolves it
+/// # });
+/// ```
+#[cfg(feature = "test-utils")]
+pub struct TransactionProbe<'a, PdC: PdClient = PdRpcClient> {
+    txn: &'a mut Transaction<PdC>,
+}
+
+#[cfg(feature = "test-utils")]
+impl<PdC: PdClient> TransactionProbe<'_, PdC> {
+    /// Use `key` as the primary key. It does not have to be a key this transaction
+    /// writes: a primary that is never prewritten leaves the secondaries' locks with no
+    /// record of the transaction's fate. Defaults to the transaction's own primary.
+    pub fn set_primary_key(&mut self, key: impl Into<Key>) -> &mut Self {
+        self.txn.probe.primary_key =
+            Some(key.into().encode_keyspace(self.txn.keyspace, KeyMode::Txn));
+        self
+    }
+
+    /// Prewrite with this lock TTL, in milliseconds, instead of the computed one.
+    pub fn set_lock_ttl(&mut self, ttl_ms: u64) -> &mut Self {
+        self.txn.probe.lock_ttl = Some(ttl_ms);
+        self
+    }
+
+    /// Prewrite only `keys`, each of which this transaction must already have written
+    /// (`put`, `insert` or `delete`), and stop: the locks stay until something commits,
+    /// rolls back or resolves them.
+    ///
+    /// Returns the `min_commit_ts` TiKV reported, as [`Transaction::commit`]'s prewrite
+    /// does. After this call the transaction counts as committing: a later
+    /// [`Transaction::rollback`] cleans the locks up with `BatchRollback`.
+    ///
+    /// Refused for a transaction with 1PC or async commit: there the prewrite is the
+    /// commit point, so it could not stop between the phases.
+    pub async fn prewrite(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> Result<Option<Timestamp>> {
+        let txn = &mut *self.txn;
+        txn.refuse_fast_commit_for_probe()?;
+        let keyspace = txn.keyspace;
+        let keys: Vec<Key> = keys
+            .into_iter()
+            .map(|k| k.into().encode_keyspace(keyspace, KeyMode::Txn))
+            .collect();
+        let mutations: Vec<kvrpcpb::Mutation> = txn
+            .buffer
+            .to_proto_mutations()
+            .into_iter()
+            .filter(|m| {
+                keys.iter()
+                    .any(|k| AsRef::<[u8]>::as_ref(k) == m.key.as_slice())
+            })
+            .collect();
+        if keys.is_empty() || mutations.len() != keys.len() {
+            return Err(Error::StringError(format!(
+                "probe: asked to prewrite {} key(s), but the transaction has written {} of \
+                 them; write each key before prewriting it",
+                keys.len(),
+                mutations.len()
+            )));
+        }
+        let primary_key = txn.probe_primary_key()?;
+        txn.enter_commit_for_probe()?;
+        let mut committer = Committer::new(
+            Some(primary_key),
+            mutations,
+            txn.timestamp.clone(),
+            txn.rpc.clone(),
+            txn.options.clone(),
+            keyspace,
+            txn.buffer.get_write_size() as u64,
+            txn.start_instant,
+        );
+        committer.lock_ttl = txn.probe.lock_ttl;
+        committer.prewrite().await
+    }
+
+    /// Commit the primary key alone, at a fresh timestamp from PD, and return that
+    /// commit timestamp. The secondaries stay locked: resolving them is left to a
+    /// reader, which must roll them forward.
+    ///
+    /// A commit timestamp TiKV rejects as too small is retried with a newer one, as in
+    /// [`Transaction::commit`]. On success the transaction is committed, so
+    /// [`Transaction::rollback`] is refused from then on. When the outcome is unknown,
+    /// the error is an [`Error::UndeterminedError`], as from [`Transaction::commit`], and
+    /// rollback is refused too: the primary may be durable, so rolling back its
+    /// secondaries could tear the transaction. The caller has to find out what happened.
+    pub async fn commit_primary(&mut self) -> Result<Timestamp> {
+        let txn = &mut *self.txn;
+        txn.refuse_fast_commit_for_probe()?;
+        let primary_key = txn.probe_primary_key()?;
+        txn.enter_commit_for_probe()?;
+        let mut committer = Committer::new(
+            Some(primary_key),
+            Vec::new(),
+            txn.timestamp.clone(),
+            txn.rpc.clone(),
+            txn.options.clone(),
+            txn.keyspace,
+            txn.buffer.get_write_size() as u64,
+            txn.start_instant,
+        );
+        // Counted as committed from before the commit is sent, so a call cancelled in
+        // flight cannot leave rollback open while the primary may be durable. Only a
+        // clean failure, where the primary did not commit, reopens it.
+        txn.set_status(TransactionStatus::Committed);
+        match committer.commit_primary_with_retry().await {
+            Ok(commit_ts) => Ok(commit_ts),
+            Err(e) if committer.undetermined => Err(Error::UndeterminedError(Box::new(e))),
+            Err(e) => {
+                txn.set_status(TransactionStatus::StartedCommit);
+                Err(e)
+            }
+        }
+    }
+}
+
+#[cfg(feature = "test-utils")]
+impl<PdC: PdClient> Transaction<PdC> {
+    fn probe_primary_key(&self) -> Result<Key> {
+        self.probe
+            .primary_key
+            .clone()
+            .or_else(|| self.buffer.get_primary_key())
+            .ok_or(Error::NoPrimaryKey)
+    }
+
+    /// The probe drives two-phase commit only: with 1PC or async commit the prewrite
+    /// is the commit point, so there is no phase boundary to stop at.
+    fn refuse_fast_commit_for_probe(&self) -> Result<()> {
+        if self.options.try_one_pc || self.options.async_commit {
+            return Err(Error::StringError(
+                "probe: drives two-phase commit only; this transaction uses 1PC or async commit"
+                    .to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Move to `StartedCommit`, as [`Transaction::commit`] does before it prewrites.
+    fn enter_commit_for_probe(&mut self) -> Result<()> {
+        if !self.transit_status(
+            |status| {
+                matches!(
+                    status,
+                    TransactionStatus::StartedCommit | TransactionStatus::Active
+                )
+            },
+            TransactionStatus::StartedCommit,
+        ) {
+            return Err(Error::OperationAfterCommitError);
+        }
+        self.prewritten = true;
+        Ok(())
+    }
+}
+
 /// Is the outcome of a commit-point request unknown?
 ///
 /// Two ways to lose certainty: we failed to receive a response (a gRPC error — the
@@ -1965,5 +2186,259 @@ mod tests {
                 ..Default::default()
             })
         )));
+    }
+
+    /// Every request a mock TiKV received, by type, for the probe tests.
+    #[cfg(feature = "test-utils")]
+    fn recording_pd_client(
+        seen: Arc<Mutex<Vec<String>>>,
+        prewrites: Arc<Mutex<Vec<kvrpcpb::PrewriteRequest>>>,
+        commits: Arc<Mutex<Vec<kvrpcpb::CommitRequest>>>,
+    ) -> Arc<MockPdClient> {
+        Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(r) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    seen.lock().unwrap().push("prewrite".to_owned());
+                    prewrites.lock().unwrap().push(r.clone());
+                    Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>)
+                } else if let Some(r) = req.downcast_ref::<kvrpcpb::CommitRequest>() {
+                    seen.lock().unwrap().push("commit".to_owned());
+                    commits.lock().unwrap().push(r.clone());
+                    Ok(Box::<kvrpcpb::CommitResponse>::default() as Box<dyn Any>)
+                } else if req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>().is_some() {
+                    seen.lock().unwrap().push("heartbeat".to_owned());
+                    Ok(Box::<kvrpcpb::TxnHeartBeatResponse>::default() as Box<dyn Any>)
+                } else {
+                    seen.lock().unwrap().push("other".to_owned());
+                    Ok(Box::<kvrpcpb::BatchRollbackResponse>::default() as Box<dyn Any>)
+                }
+            },
+        )))
+    }
+
+    #[cfg(feature = "test-utils")]
+    #[tokio::test]
+    async fn probe_prewrites_only_the_named_keys_under_the_named_primary() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let prewrites = Arc::new(Mutex::new(Vec::new()));
+        let commits = Arc::new(Mutex::new(Vec::new()));
+        let pd_client = recording_pd_client(seen.clone(), prewrites.clone(), commits.clone());
+        let mut txn = Transaction::new(
+            Timestamp::default(),
+            pd_client,
+            TransactionOptions::new_optimistic(),
+            Keyspace::Disable,
+        );
+        txn.put("secondary".to_owned(), "v").await.unwrap();
+        txn.put("other".to_owned(), "w").await.unwrap();
+
+        let mut probe = txn.probe();
+        probe
+            .set_primary_key("primary".to_owned())
+            .set_lock_ttl(1234);
+        probe.prewrite(["secondary".to_owned()]).await.unwrap();
+
+        // One prewrite, and nothing else: no commit, no heartbeat, no rollback.
+        assert_eq!(*seen.lock().unwrap(), vec!["prewrite".to_owned()]);
+        let req = prewrites.lock().unwrap().pop().unwrap();
+        assert_eq!(req.primary_lock, b"primary".to_vec());
+        assert_eq!(req.lock_ttl, 1234, "the TTL is exactly the one set");
+        let keys: Vec<_> = req.mutations.iter().map(|m| m.key.clone()).collect();
+        assert_eq!(keys, vec![b"secondary".to_vec()]);
+        assert_eq!(req.secondaries, vec![b"secondary".to_vec()]);
+
+        // Dropping it now is the crash: no cleanup, and no drop-check panic either.
+        drop(txn);
+        assert_eq!(*seen.lock().unwrap(), vec!["prewrite".to_owned()]);
+    }
+
+    #[cfg(feature = "test-utils")]
+    #[tokio::test]
+    async fn probe_refuses_a_key_the_transaction_did_not_write() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let pd_client = recording_pd_client(
+            seen.clone(),
+            Arc::new(Mutex::new(Vec::new())),
+            Arc::new(Mutex::new(Vec::new())),
+        );
+        let mut txn = Transaction::new(
+            Timestamp::default(),
+            pd_client,
+            TransactionOptions::new_optimistic().drop_check(crate::CheckLevel::None),
+            Keyspace::Disable,
+        );
+        txn.put("written".to_owned(), "v").await.unwrap();
+        let err = txn
+            .probe()
+            .prewrite(["written".to_owned(), "never-written".to_owned()])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("has written 1 of them"), "{err}");
+        assert!(seen.lock().unwrap().is_empty(), "nothing was sent");
+        // A refused prewrite leaves the transaction usable.
+        txn.rollback().await.unwrap();
+    }
+
+    #[cfg(feature = "test-utils")]
+    #[tokio::test]
+    async fn probe_commits_the_primary_alone() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let commits = Arc::new(Mutex::new(Vec::new()));
+        let pd_client = recording_pd_client(
+            seen.clone(),
+            Arc::new(Mutex::new(Vec::new())),
+            commits.clone(),
+        );
+        let mut txn = Transaction::new(
+            Timestamp::default(),
+            pd_client,
+            TransactionOptions::new_optimistic(),
+            Keyspace::Disable,
+        );
+        txn.put("primary".to_owned(), "p").await.unwrap();
+        txn.put("secondary".to_owned(), "s").await.unwrap();
+        let mut probe = txn.probe();
+        probe.set_primary_key("primary".to_owned());
+        probe
+            .prewrite(["primary".to_owned(), "secondary".to_owned()])
+            .await
+            .unwrap();
+        probe.commit_primary().await.unwrap();
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["prewrite".to_owned(), "commit".to_owned()]
+        );
+        let req = commits.lock().unwrap().pop().unwrap();
+        assert_eq!(
+            req.keys,
+            vec![b"primary".to_vec()],
+            "the primary, and only it"
+        );
+
+        // The primary is durable, so rolling back the secondaries is refused.
+        assert!(matches!(
+            txn.rollback().await,
+            Err(crate::Error::OperationAfterCommitError)
+        ));
+        assert_eq!(seen.lock().unwrap().len(), 2, "no rollback was sent");
+    }
+
+    #[cfg(feature = "test-utils")]
+    #[tokio::test]
+    async fn probe_reports_a_lost_primary_commit_as_undetermined() {
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |req: &dyn Any| {
+                if req.downcast_ref::<kvrpcpb::PrewriteRequest>().is_some() {
+                    Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>)
+                } else {
+                    // The commit's answer never arrives.
+                    Err(crate::Error::GrpcAPI(tonic::Status::unavailable("lost")))
+                }
+            },
+        )));
+        let mut txn = Transaction::new(
+            Timestamp::default(),
+            pd_client,
+            TransactionOptions::new_optimistic().drop_check(crate::CheckLevel::None),
+            Keyspace::Disable,
+        );
+        txn.put("primary".to_owned(), "p").await.unwrap();
+        let mut probe = txn.probe();
+        probe.prewrite(["primary".to_owned()]).await.unwrap();
+        let err = probe.commit_primary().await.unwrap_err();
+        assert!(matches!(err, crate::Error::UndeterminedError(_)), "{err:?}");
+        // The primary may be durable: rolling back its secondaries is refused.
+        assert!(matches!(
+            txn.rollback().await,
+            Err(crate::Error::OperationAfterCommitError)
+        ));
+    }
+
+    #[cfg(feature = "test-utils")]
+    #[tokio::test]
+    async fn probe_commit_primary_rejected_cleanly_leaves_rollback_open() {
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |req: &dyn Any| {
+                if req.downcast_ref::<kvrpcpb::CommitRequest>().is_some() {
+                    Ok(Box::new(kvrpcpb::CommitResponse {
+                        error: Some(kvrpcpb::KeyError {
+                            abort: "rejected".to_owned(),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>)
+                } else if req.downcast_ref::<kvrpcpb::PrewriteRequest>().is_some() {
+                    Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>)
+                } else {
+                    Ok(Box::<kvrpcpb::BatchRollbackResponse>::default() as Box<dyn Any>)
+                }
+            },
+        )));
+        let mut txn = Transaction::new(
+            Timestamp::default(),
+            pd_client,
+            TransactionOptions::new_optimistic().drop_check(crate::CheckLevel::None),
+            Keyspace::Disable,
+        );
+        txn.put("primary".to_owned(), "p").await.unwrap();
+        let mut probe = txn.probe();
+        probe.prewrite(["primary".to_owned()]).await.unwrap();
+        let err = probe.commit_primary().await.unwrap_err();
+        assert!(
+            !matches!(err, crate::Error::UndeterminedError(_)),
+            "{err:?}"
+        );
+        // The primary did not commit, so the locks can still be rolled back.
+        txn.rollback().await.unwrap();
+    }
+
+    #[cfg(feature = "test-utils")]
+    #[tokio::test]
+    async fn probe_refuses_one_pc_and_async_commit() {
+        for options in [
+            TransactionOptions::new_optimistic().try_one_pc(),
+            TransactionOptions::new_optimistic().use_async_commit(),
+        ] {
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let pd_client = recording_pd_client(
+                seen.clone(),
+                Arc::new(Mutex::new(Vec::new())),
+                Arc::new(Mutex::new(Vec::new())),
+            );
+            let mut txn = Transaction::new(
+                Timestamp::default(),
+                pd_client,
+                options.drop_check(crate::CheckLevel::None),
+                Keyspace::Disable,
+            );
+            txn.put("k".to_owned(), "v").await.unwrap();
+            let err = txn.probe().prewrite(["k".to_owned()]).await.unwrap_err();
+            assert!(err.to_string().contains("two-phase commit only"), "{err}");
+            let err = txn.probe().commit_primary().await.unwrap_err();
+            assert!(err.to_string().contains("two-phase commit only"), "{err}");
+            assert!(seen.lock().unwrap().is_empty(), "nothing was sent");
+        }
+    }
+
+    #[cfg(feature = "test-utils")]
+    #[tokio::test]
+    async fn without_the_probe_the_lock_ttl_is_still_computed() {
+        let prewrites = Arc::new(Mutex::new(Vec::new()));
+        let pd_client = recording_pd_client(
+            Arc::new(Mutex::new(Vec::new())),
+            prewrites.clone(),
+            Arc::new(Mutex::new(Vec::new())),
+        );
+        let mut txn = Transaction::new(
+            Timestamp::default(),
+            pd_client,
+            TransactionOptions::new_optimistic().heartbeat_option(HeartbeatOption::NoHeartbeat),
+            Keyspace::Disable,
+        );
+        txn.put("k".to_owned(), "v").await.unwrap();
+        txn.commit().await.unwrap();
+        let req = prewrites.lock().unwrap().pop().unwrap();
+        assert!(req.lock_ttl >= super::DEFAULT_LOCK_TTL, "{}", req.lock_ttl);
     }
 }
