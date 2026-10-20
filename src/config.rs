@@ -28,7 +28,7 @@ pub struct Config {
     pub keyspace: Option<String>,
 }
 
-const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 const DEFAULT_GRPC_MAX_DECODING_MESSAGE_SIZE: usize = 4 * 1024 * 1024; // 4MB
 
 impl Default for Config {
