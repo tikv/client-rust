@@ -23,6 +23,8 @@ pub use transaction::Mutation;
 pub use transaction::Scanner;
 pub use transaction::Transaction;
 pub use transaction::TransactionOptions;
+#[cfg(feature = "test-utils")]
+pub use transaction::TransactionProbe;
 
 mod buffer;
 mod client;
