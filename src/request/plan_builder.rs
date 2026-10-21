@@ -61,6 +61,29 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
     }
 }
 
+impl<PdC: PdClient, Req: KvRequest, Ph: PlanBuilderPhase> PlanBuilder<PdC, Dispatch<Req>, Ph>
+where
+    Req::Response: HasLocks,
+{
+    /// [`resolve_lock`](Self::resolve_lock) for a read at `timestamp` (a get, batch get or
+    /// scan): a lock whose transaction cannot commit at or below `timestamp` is read past
+    /// (`Context.resolved_locks`) instead of waited on. That is the case when the
+    /// transaction's primary has a `min_commit_ts` above `timestamp`, which the
+    /// `CheckTxnStatus` of the resolution pushes it to where it can (client-go's
+    /// `resolvedLocks` of a snapshot read). So a read is not held up by a live or a
+    /// crashed writer's locks until their TTL.
+    pub fn resolve_lock_for_read(
+        self,
+        timestamp: Timestamp,
+        backoff: Backoff,
+        keyspace: Keyspace,
+    ) -> PlanBuilder<PdC, ResolveLock<Dispatch<Req>, PdC>, Ph> {
+        let mut builder = self.resolve_lock(timestamp, backoff, keyspace);
+        builder.plan.read_past = Some(|dispatch, txns| dispatch.request.set_resolved_locks(txns));
+        builder
+    }
+}
+
 impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted> {
     /// Return the built plan, note that this can only be called once the plan
     /// has a target.
@@ -88,6 +111,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 backoff,
                 pd_client: self.pd_client,
                 keyspace,
+                read_past: None,
             },
             phantom: PhantomData,
         }

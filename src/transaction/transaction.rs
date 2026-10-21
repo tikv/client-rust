@@ -153,7 +153,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             .get_or_else(key, |key| async move {
                 let request = new_get_request(key, timestamp.clone());
                 let plan = PlanBuilder::new(rpc, keyspace, request)
-                    .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
+                    .resolve_lock_for_read(timestamp, retry_options.lock_backoff, keyspace)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
                     .merge(CollectSingle)
                     .post_process_default()
@@ -288,7 +288,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             .batch_get_or_else(keys, move |keys| async move {
                 let request = new_batch_get_request(keys, timestamp.clone());
                 let plan = PlanBuilder::new(rpc, keyspace, request)
-                    .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
+                    .resolve_lock_for_read(timestamp, retry_options.lock_backoff, keyspace)
                     .retry_multi_region(retry_options.region_backoff)
                     .merge(Collect)
                     .plan();
@@ -836,7 +836,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                         reverse,
                     );
                     let plan = PlanBuilder::new(rpc, keyspace, request)
-                        .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
+                        .resolve_lock_for_read(timestamp, retry_options.lock_backoff, keyspace)
                         .retry_multi_region(retry_options.region_backoff)
                         .merge(Collect)
                         .plan();
@@ -1439,7 +1439,12 @@ impl<PdC: PdClient> Committer<PdC> {
             .filter(|m| self.primary_key.as_ref().unwrap() != m.key.as_ref())
             .map(|m| m.key.clone())
             .collect();
-        // FIXME set max_commit_ts and min_commit_ts
+        // Every prewrite carries min_commit_ts, as client-go's do: a reader's
+        // CheckTxnStatus can then push the transaction's commit ts above its own read
+        // ts and read past the locks instead of waiting until they expire. A pushed
+        // primary rejects a lower commit ts (`commit_primary_with_retry`).
+        request.min_commit_ts = self.min_commit_ts();
+        // FIXME set max_commit_ts
 
         let builder = PlanBuilder::new(self.rpc.clone(), self.keyspace, request).resolve_lock(
             self.start_version.clone(),
@@ -1708,6 +1713,17 @@ impl<PdC: PdClient> Committer<PdC> {
         Ok(())
     }
 
+    /// The lowest commit ts the prewrite promises: above the start ts and, for a
+    /// pessimistic transaction, above the for_update_ts.
+    fn min_commit_ts(&self) -> u64 {
+        let start_ts = self.start_version.version();
+        let floor = match &self.options.kind {
+            TransactionKind::Pessimistic(for_update_ts) => start_ts.max(for_update_ts.version()),
+            TransactionKind::Optimistic => start_ts,
+        };
+        floor + 1
+    }
+
     fn calc_txn_lock_ttl(&mut self) -> u64 {
         let mut lock_ttl = DEFAULT_LOCK_TTL;
         if self.write_size > TXN_COMMIT_BATCH_SIZE {
@@ -1779,12 +1795,16 @@ mod tests {
 
     use fail::FailScenario;
 
+    use crate::backoff::Backoff;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb;
     use crate::proto::pdpb::Timestamp;
     use crate::request::Keyspace;
+    use crate::transaction::CheckLevel;
     use crate::transaction::HeartbeatOption;
+    use crate::KvPair;
+    use crate::RetryOptions;
     use crate::TimestampExt;
     use crate::Transaction;
     use crate::TransactionOptions;
@@ -1827,6 +1847,132 @@ mod tests {
         assert_eq!(heartbeats.load(Ordering::SeqCst), 1);
         scenario.teardown();
         Ok(())
+    }
+
+    /// A read that meets the lock of a transaction it pushed above its timestamp reads
+    /// past it (`Context.resolved_locks`) at once instead of waiting for the lock's TTL;
+    /// TiKV answers the retried read only because the context names the transaction.
+    #[tokio::test]
+    async fn reads_go_past_the_locks_of_a_pushed_transaction() {
+        const READ_TS: u64 = 10;
+        const WRITER: u64 = 7;
+        let locked = || kvrpcpb::KeyError {
+            locked: Some(kvrpcpb::LockInfo {
+                key: b"k".to_vec(),
+                primary_lock: b"p".to_vec(),
+                lock_version: WRITER,
+                lock_ttl: 20_000,
+                lock_type: kvrpcpb::Op::Put as i32,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let read_past = |ctx: &Option<kvrpcpb::Context>| {
+            ctx.as_ref().map(|c| c.resolved_locks.clone()) == Some(vec![WRITER])
+        };
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
+                    assert_eq!(req.caller_start_ts, READ_TS);
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        lock_ttl: 20_000,
+                        lock_info: Some(kvrpcpb::LockInfo {
+                            key: b"p".to_vec(),
+                            primary_lock: b"p".to_vec(),
+                            lock_version: WRITER,
+                            lock_ttl: 20_000,
+                            min_commit_ts: READ_TS + 1,
+                            ..Default::default()
+                        }),
+                        action: kvrpcpb::Action::MinCommitTsPushed as i32,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::GetRequest>() {
+                    return Ok(Box::new(if read_past(&req.context) {
+                        kvrpcpb::GetResponse {
+                            value: b"v".to_vec(),
+                            ..Default::default()
+                        }
+                    } else {
+                        kvrpcpb::GetResponse {
+                            error: Some(locked()),
+                            ..Default::default()
+                        }
+                    }) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+                    return Ok(Box::new(if read_past(&req.context) {
+                        kvrpcpb::BatchGetResponse {
+                            pairs: vec![kvrpcpb::KvPair {
+                                key: b"k".to_vec(),
+                                value: b"v".to_vec(),
+                                ..Default::default()
+                            }],
+                            ..Default::default()
+                        }
+                    } else {
+                        kvrpcpb::BatchGetResponse {
+                            pairs: vec![kvrpcpb::KvPair {
+                                error: Some(locked()),
+                                ..Default::default()
+                            }],
+                            ..Default::default()
+                        }
+                    }) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::ScanRequest>() {
+                    return Ok(Box::new(if read_past(&req.context) {
+                        kvrpcpb::ScanResponse {
+                            pairs: vec![kvrpcpb::KvPair {
+                                key: b"k".to_vec(),
+                                value: b"v".to_vec(),
+                                ..Default::default()
+                            }],
+                            ..Default::default()
+                        }
+                    } else {
+                        kvrpcpb::ScanResponse {
+                            error: Some(locked()),
+                            ..Default::default()
+                        }
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+        // No lock backoff: a read that waited instead would fail with ResolveLockError.
+        let options = TransactionOptions::new_optimistic()
+            .read_only()
+            .drop_check(CheckLevel::None)
+            .retry_options(RetryOptions {
+                region_backoff: Backoff::no_backoff(),
+                lock_backoff: Backoff::no_jitter_backoff(0, 0, 1),
+            });
+        let snapshot = || {
+            Transaction::new(
+                Timestamp::from_version(READ_TS),
+                pd_client.clone(),
+                options.clone(),
+                Keyspace::Disable,
+            )
+        };
+        assert_eq!(
+            snapshot().get(b"k".to_vec()).await.unwrap(),
+            Some(b"v".to_vec())
+        );
+        let pairs: Vec<KvPair> = snapshot()
+            .batch_get(vec![b"k".to_vec()])
+            .await
+            .unwrap()
+            .collect();
+        assert_eq!(pairs.len(), 1);
+        let pairs: Vec<KvPair> = snapshot()
+            .scan(b"a".to_vec()..b"z".to_vec(), 10)
+            .await
+            .unwrap()
+            .collect();
+        assert_eq!(pairs.len(), 1);
     }
 
     #[rstest::rstest]
@@ -1965,5 +2111,57 @@ mod tests {
                 ..Default::default()
             })
         )));
+    }
+
+    /// The (min_commit_ts, max_commit_ts) of each prewrite request a fake TiKV saw
+    /// while a transaction committed.
+    async fn prewrite_commit_ts_bounds(
+        options: TransactionOptions,
+        keys: &[Vec<u8>],
+    ) -> Vec<(u64, u64)> {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let captured = seen.clone();
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    captured
+                        .lock()
+                        .unwrap()
+                        .push((req.min_commit_ts, req.max_commit_ts));
+                    Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>)
+                } else if req.downcast_ref::<kvrpcpb::CommitRequest>().is_some() {
+                    Ok(Box::<kvrpcpb::CommitResponse>::default() as Box<dyn Any>)
+                } else if req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>().is_some() {
+                    Ok(Box::<kvrpcpb::TxnHeartBeatResponse>::default() as Box<dyn Any>)
+                } else {
+                    panic!("unexpected request: {:?}", req.type_id());
+                }
+            },
+        )));
+        let mut txn = Transaction::new(
+            Timestamp::from_version(START_TS),
+            pd_client,
+            options.heartbeat_option(HeartbeatOption::NoHeartbeat),
+            Keyspace::Disable,
+        );
+        for key in keys {
+            txn.put(key.clone(), "v").await.unwrap();
+        }
+        txn.commit().await.unwrap();
+        let bounds = seen.lock().unwrap().clone();
+        bounds
+    }
+
+    const START_TS: u64 = 400 << 18;
+
+    #[tokio::test]
+    async fn two_phase_prewrite_carries_min_commit_ts() {
+        // min_commit_ts lets a reader push the commit ts past its read; there is no
+        // max_commit_ts outside async commit and 1PC.
+        let bounds =
+            prewrite_commit_ts_bounds(TransactionOptions::new_optimistic(), &[vec![1], vec![20]])
+                .await;
+        assert_eq!(bounds.len(), 2);
+        assert!(bounds.iter().all(|b| *b == (START_TS + 1, 0)), "{bounds:?}");
     }
 }

@@ -89,6 +89,48 @@ pub async fn resolve_locks(
     pd_client: Arc<impl PdClient>,
     keyspace: Keyspace,
 ) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
+    Ok(
+        resolve_locks_with(locks, timestamp, pd_client, keyspace, false)
+            .await?
+            .live_locks,
+    )
+}
+
+/// What [`resolve_locks_for_read`] leaves to its caller.
+#[derive(Debug, Default)]
+pub(crate) struct ReadResolution {
+    /// The primary locks of the transactions that are still alive and may still commit at
+    /// or below the read's timestamp: the read has to wait for them.
+    pub(crate) live_locks: Vec<kvrpcpb::LockInfo>,
+    /// The start timestamps of the transactions that are still alive but cannot commit at
+    /// or below the read's timestamp: the read goes on past their locks
+    /// (`Context.resolved_locks`).
+    pub(crate) read_past: Vec<u64>,
+}
+
+/// [`resolve_locks`] for a read at `timestamp`. A live transaction whose primary's
+/// `min_commit_ts` is above `timestamp` cannot commit at or below it, so the read may go
+/// on past its locks instead of waiting for them: they are returned in `read_past`
+/// rather than in `live_locks`. `CheckTxnStatus`, given the read's timestamp as its
+/// `caller_start_ts`, pushes that `min_commit_ts` above it where it can (a non-zero
+/// `min_commit_ts`, no async commit). This is client-go's snapshot read, which reads past
+/// the locks of pushed transactions through its `resolvedLocks`.
+pub(crate) async fn resolve_locks_for_read(
+    locks: Vec<kvrpcpb::LockInfo>,
+    timestamp: Timestamp,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+) -> Result<ReadResolution> {
+    resolve_locks_with(locks, timestamp, pd_client, keyspace, true).await
+}
+
+async fn resolve_locks_with(
+    locks: Vec<kvrpcpb::LockInfo>,
+    timestamp: Timestamp,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    for_read: bool,
+) -> Result<ReadResolution> {
     debug!("resolving locks");
     reject_shared_locks(&locks)?;
     let ts = pd_client.clone().get_timestamp().await?;
@@ -96,6 +138,7 @@ pub async fn resolve_locks(
     let current_ts = ts.version();
 
     let mut live_locks = Vec::new();
+    let mut read_past = Vec::new();
     // Final transaction statuses are cached in the resolver's context, so a transaction met
     // through several locks is queried (or recovered) only once.
     let mut lock_resolver = LockResolver::new(ResolveLocksContext::default());
@@ -127,7 +170,13 @@ pub async fn resolve_locks(
                 keys,
             } => (commit_version, keys),
             LockAction::Live(primary_lock) => {
-                live_locks.push(primary_lock);
+                if for_read && primary_lock.min_commit_ts > caller_start_ts {
+                    if !read_past.contains(&lock.lock_version) {
+                        read_past.push(lock.lock_version);
+                    }
+                } else {
+                    live_locks.push(primary_lock);
+                }
                 continue;
             }
             LockAction::Done => continue,
@@ -147,7 +196,10 @@ pub async fn resolve_locks(
             .await?;
         }
     }
-    Ok(live_locks)
+    Ok(ReadResolution {
+        live_locks,
+        read_past,
+    })
 }
 
 /// What `resolve_locks` has to do about one encountered lock.
@@ -1034,6 +1086,74 @@ mod tests {
         assert!(live_locks.is_empty());
         assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 1);
         assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 1);
+    }
+
+    /// A live 2PC primary whose `min_commit_ts` a reader at `read_ts` pushed (or found)
+    /// above its read is read past; one it could not push is waited for. A non-read
+    /// resolution never reads past anything.
+    #[rstest::rstest]
+    #[case::pushed_above_the_read(11, true, vec![7])]
+    #[case::at_the_read(10, true, vec![])]
+    #[case::not_pushable(0, true, vec![])]
+    #[case::not_a_read(11, false, vec![])]
+    #[tokio::test]
+    #[serial]
+    async fn test_resolve_locks_for_read_reads_past_a_pushed_transaction(
+        #[case] min_commit_ts: u64,
+        #[case] for_read: bool,
+        #[case] expected_read_past: Vec<u64>,
+    ) {
+        let read_ts = 10;
+        let callers = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let callers_captured = callers.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
+                    callers_captured.lock().unwrap().push(req.caller_start_ts);
+                    let primary = kvrpcpb::LockInfo {
+                        key: vec![1],
+                        primary_lock: vec![1],
+                        lock_version: 7,
+                        lock_ttl: 20_000,
+                        min_commit_ts,
+                        ..Default::default()
+                    };
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        lock_ttl: 20_000,
+                        lock_info: Some(primary),
+                        action: if min_commit_ts > read_ts {
+                            kvrpcpb::Action::MinCommitTsPushed as i32
+                        } else {
+                            kvrpcpb::Action::NoAction as i32
+                        },
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+        let lock = kvrpcpb::LockInfo {
+            key: vec![2],
+            primary_lock: vec![1],
+            lock_version: 7,
+            lock_ttl: 20_000,
+            lock_type: kvrpcpb::Op::Put as i32,
+            ..Default::default()
+        };
+        let resolved = resolve_locks_with(
+            vec![lock],
+            Timestamp::from_version(read_ts),
+            client,
+            Keyspace::Disable,
+            for_read,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resolved.read_past, expected_read_past);
+        assert_eq!(resolved.live_locks.len(), 1 - expected_read_past.len());
+        // The read's timestamp is CheckTxnStatus's caller_start_ts: TiKV pushes past it.
+        assert_eq!(*callers.lock().unwrap(), vec![read_ts]);
     }
 
     #[rstest::rstest]

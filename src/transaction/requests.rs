@@ -413,8 +413,10 @@ pub fn new_pessimistic_lock_request(
     req.is_first_lock = false;
     req.wait_timeout = 0;
     req.return_values = need_value;
-    // FIXME: support large transaction
-    req.min_commit_ts = 0;
+    // As client-go's: a reader can push the commit ts of a transaction whose primary
+    // is still a pessimistic lock above its read ts (CheckTxnStatus), instead of
+    // waiting until the lock expires. The prewrite keeps a pushed min_commit_ts.
+    req.min_commit_ts = for_update_ts + 1;
 
     req
 }
