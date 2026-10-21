@@ -35,6 +35,7 @@ use crate::store::KvClient;
 use crate::store::RegionStore;
 use crate::store::{HasKeyErrors, Store};
 use crate::transaction::resolve_locks;
+use crate::transaction::resolve_locks_for_read;
 use crate::transaction::HasLocks;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::ResolveLocksOptions;
@@ -1249,6 +1250,11 @@ pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
     pub keyspace: Keyspace,
+    /// Reads only (see [`PlanBuilder::resolve_lock_for_read`]): makes `inner` read past
+    /// the locks of the given transactions.
+    ///
+    /// [`PlanBuilder::resolve_lock_for_read`]: crate::request::PlanBuilder::resolve_lock_for_read
+    pub read_past: Option<fn(&mut P, &[u64])>,
 }
 
 impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
@@ -1259,6 +1265,7 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
             keyspace: self.keyspace,
+            read_past: self.read_past,
         }
     }
 }
@@ -1273,6 +1280,8 @@ where
     async fn execute(&self) -> Result<Self::Result> {
         let mut result = self.inner.execute().await?;
         let mut clone = self.clone();
+        // Transactions this read reads past: they cannot commit at or below its timestamp.
+        let mut read_past: Vec<u64> = Vec::new();
         loop {
             let locks = result.take_locks();
             if locks.is_empty() {
@@ -1284,15 +1293,37 @@ where
             }
 
             let pd_client = self.pd_client.clone();
-            let live_locks = resolve_locks(
-                locks,
-                self.timestamp.clone(),
-                pd_client.clone(),
-                self.keyspace,
-            )
-            .await?;
+            let live_locks = match self.read_past {
+                None => {
+                    resolve_locks(
+                        locks,
+                        self.timestamp.clone(),
+                        pd_client.clone(),
+                        self.keyspace,
+                    )
+                    .await?
+                }
+                Some(set_read_past) => {
+                    let resolved = resolve_locks_for_read(
+                        locks,
+                        self.timestamp.clone(),
+                        pd_client.clone(),
+                        self.keyspace,
+                    )
+                    .await?;
+                    if !resolved.read_past.is_empty() {
+                        for txn in resolved.read_past {
+                            if !read_past.contains(&txn) {
+                                read_past.push(txn);
+                            }
+                        }
+                        set_read_past(&mut clone.inner, &read_past);
+                    }
+                    resolved.live_locks
+                }
+            };
             if live_locks.is_empty() {
-                result = self.inner.execute().await?;
+                result = clone.inner.execute().await?;
             } else {
                 match clone.backoff.next_delay_duration() {
                     None => return Err(Error::ResolveLockError(live_locks)),
@@ -1738,6 +1769,7 @@ mod test {
                 backoff: Backoff::no_backoff(),
                 pd_client: Arc::new(MockPdClient::default()),
                 keyspace: Keyspace::Disable,
+                read_past: None,
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),

@@ -383,7 +383,7 @@ impl<PdC: PdClient> RemoteScanner<PdC> {
                 .await
             {
                 Ok(builder) => builder
-                    .resolve_lock(
+                    .resolve_lock_for_read(
                         self.timestamp.clone(),
                         self.retry_options.lock_backoff.clone(),
                         keyspace,

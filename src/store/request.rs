@@ -24,6 +24,9 @@ pub trait Request: Any + Sync + Send + 'static {
     fn as_any(&self) -> &dyn Any;
     fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()>;
     fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion);
+    /// Sets `Context.resolved_locks`: the start timestamps of transactions whose locks
+    /// this read may read past (TiKV's `bypass_locks`). Only reads honour it.
+    fn set_resolved_locks(&mut self, _resolved_locks: &[u64]) {}
 }
 
 macro_rules! impl_request {
@@ -67,6 +70,11 @@ macro_rules! impl_request {
             fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {
                 let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
                 ctx.api_version = api_version.into();
+            }
+
+            fn set_resolved_locks(&mut self, resolved_locks: &[u64]) {
+                let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
+                ctx.resolved_locks = resolved_locks.to_vec();
             }
         }
     };
