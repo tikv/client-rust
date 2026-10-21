@@ -1132,6 +1132,12 @@ const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(MAX_TTL / 2);
 /// each request below 16KB.
 pub const TXN_COMMIT_BATCH_SIZE: u64 = 16 * 1024;
 const TTL_FACTOR: f64 = 6000.0;
+/// How far past "now" the commit timestamp of an async-commit or 1PC transaction may
+/// land: its prewrite carries `max_commit_ts = start_ts + elapsed + this window`
+/// (client-go's `tikv-client.async-commit.safe-window`, 2 s by default).
+const ASYNC_COMMIT_SAFE_WINDOW: Duration = Duration::from_secs(2);
+/// The number of logical bits in a TSO timestamp.
+const TSO_LOGICAL_BITS: u32 = 18;
 
 /// Optimistic or pessimistic transaction.
 #[derive(Clone, PartialEq, Debug)]
@@ -1383,9 +1389,11 @@ impl<PdC: PdClient> Committer<PdC> {
             return Ok(min_commit_ts);
         }
 
+        // `prewrite` turns `async_commit` off when TiKV fell back to 2PC.
         let commit_ts = if self.options.async_commit {
-            // FIXME: min_commit_ts == 0 => fallback to normal 2PC
-            min_commit_ts.unwrap()
+            min_commit_ts.ok_or_else(|| {
+                Error::StringError("async commit prewrite returned no min_commit_ts".to_owned())
+            })?
         } else {
             match self.commit_primary_with_retry().await {
                 Ok(commit_ts) => commit_ts,
@@ -1439,7 +1447,11 @@ impl<PdC: PdClient> Committer<PdC> {
             .filter(|m| self.primary_key.as_ref().unwrap() != m.key.as_ref())
             .map(|m| m.key.clone())
             .collect();
-        // FIXME set max_commit_ts and min_commit_ts
+        if self.options.async_commit || self.options.try_one_pc {
+            let (min_commit_ts, max_commit_ts) = self.async_commit_ts_bounds();
+            request.min_commit_ts = min_commit_ts;
+            request.max_commit_ts = max_commit_ts;
+        }
 
         let builder = PlanBuilder::new(self.rpc.clone(), self.keyspace, request).resolve_lock(
             self.start_version.clone(),
@@ -1461,14 +1473,30 @@ impl<PdC: PdClient> Committer<PdC> {
         let response = plan.execute().await?;
 
         if self.options.try_one_pc && response.len() == 1 {
-            if response[0].one_pc_commit_ts == 0 {
-                return Err(Error::OnePcFailure);
+            if response[0].one_pc_commit_ts != 0 {
+                return Ok(Timestamp::try_from_version(response[0].one_pc_commit_ts));
             }
-
-            return Ok(Timestamp::try_from_version(response[0].one_pc_commit_ts));
+            // TiKV did not commit in one phase (for example because the commit ts
+            // would exceed max_commit_ts) and wrote ordinary locks instead: commit
+            // them, as client-go does, rather than fail and leave them behind.
+            info!(
+                "1PC fell back to a normal commit, start_ts: {}",
+                self.start_version.version()
+            );
         }
 
         self.options.try_one_pc = false;
+
+        // TiKV answers min_commit_ts = 0 where it could not use async commit (the
+        // commit ts would exceed max_commit_ts) and wrote 2PC locks instead. Then the
+        // primary decides the outcome: commit it with a fresh timestamp first.
+        if self.options.async_commit && response.iter().any(|r| r.min_commit_ts == 0) {
+            info!(
+                "async commit fell back to 2PC, start_ts: {}",
+                self.start_version.version()
+            );
+            self.options.async_commit = false;
+        }
 
         let min_commit_ts = response
             .iter()
@@ -1706,6 +1734,26 @@ impl<PdC: PdClient> Committer<PdC> {
             }
         }
         Ok(())
+    }
+
+    /// The `min_commit_ts` and `max_commit_ts` of an async-commit or 1PC prewrite.
+    ///
+    /// TiKV picks the commit ts of such a transaction itself, from the largest
+    /// timestamp any reader has used on the keys, so without an upper bound a reader
+    /// with a timestamp far in the future could push it arbitrarily far. With
+    /// `max_commit_ts`, TiKV falls back to 2PC instead (see `prewrite`). The bound is
+    /// client-go's `calculateMaxCommitTS`: the start ts plus the time the transaction
+    /// has run plus [`ASYNC_COMMIT_SAFE_WINDOW`]. The floor is the start ts (or the
+    /// pessimistic for_update_ts) plus one, as in client-go's prewrite requests.
+    fn async_commit_ts_bounds(&self) -> (u64, u64) {
+        let start_ts = self.start_version.version();
+        let floor = match &self.options.kind {
+            TransactionKind::Pessimistic(for_update_ts) => start_ts.max(for_update_ts.version()),
+            TransactionKind::Optimistic => start_ts,
+        };
+        let window = self.start_instant.elapsed() + ASYNC_COMMIT_SAFE_WINDOW;
+        let window_ts = (window.as_millis() as u64) << TSO_LOGICAL_BITS;
+        (floor + 1, start_ts.saturating_add(window_ts))
     }
 
     fn calc_txn_lock_ttl(&mut self) -> u64 {
@@ -1965,5 +2013,140 @@ mod tests {
                 ..Default::default()
             })
         )));
+    }
+
+    /// What the fake TiKV saw while an async-commit or 1PC transaction committed.
+    #[derive(Debug, Default, Clone)]
+    struct CommitRun {
+        /// (min_commit_ts, max_commit_ts) of each prewrite request.
+        prewrite_bounds: Vec<(u64, u64)>,
+        primary: Vec<u8>,
+        /// The keys of each commit request, in the order they arrived.
+        commits: Vec<Vec<Vec<u8>>>,
+    }
+
+    const START_TS: u64 = 400 << 18;
+
+    /// Commits a transaction that writes keys [1] (region 1) and [20] (region 2).
+    /// `answer` gives the PrewriteResponse for the keys of one prewrite request.
+    /// Returns the commit result and what TiKV saw by the time `commit` returned.
+    async fn commit_with(
+        options: TransactionOptions,
+        keys: &[Vec<u8>],
+        answer: impl Fn(&[Vec<u8>]) -> kvrpcpb::PrewriteResponse + Send + Sync + 'static,
+    ) -> (crate::Result<Option<Timestamp>>, CommitRun) {
+        let seen = Arc::new(Mutex::new(CommitRun::default()));
+        let captured = seen.clone();
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let mut seen = captured.lock().unwrap();
+                if let Some(req) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    seen.prewrite_bounds
+                        .push((req.min_commit_ts, req.max_commit_ts));
+                    seen.primary = req.primary_lock.clone();
+                    let keys: Vec<Vec<u8>> = req.mutations.iter().map(|m| m.key.clone()).collect();
+                    Ok(Box::new(answer(&keys)) as Box<dyn Any>)
+                } else if let Some(req) = req.downcast_ref::<kvrpcpb::CommitRequest>() {
+                    seen.commits.push(req.keys.clone());
+                    Ok(Box::<kvrpcpb::CommitResponse>::default() as Box<dyn Any>)
+                } else if req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>().is_some() {
+                    Ok(Box::<kvrpcpb::TxnHeartBeatResponse>::default() as Box<dyn Any>)
+                } else {
+                    panic!("unexpected request: {:?}", req.type_id());
+                }
+            },
+        )));
+        let mut txn = Transaction::new(
+            Timestamp::from_version(START_TS),
+            pd_client,
+            options.heartbeat_option(HeartbeatOption::NoHeartbeat),
+            Keyspace::Disable,
+        );
+        for key in keys {
+            txn.put(key.clone(), "v").await.unwrap();
+        }
+        let res = txn.commit().await;
+        let run = seen.lock().unwrap().clone();
+        (res, run)
+    }
+
+    fn prewritten(min_commit_ts: u64, one_pc_commit_ts: u64) -> kvrpcpb::PrewriteResponse {
+        kvrpcpb::PrewriteResponse {
+            min_commit_ts,
+            one_pc_commit_ts,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn async_commit_prewrite_bounds_the_commit_ts() {
+        let (res, run) = commit_with(
+            TransactionOptions::new_optimistic().use_async_commit(),
+            &[vec![1], vec![20]],
+            |keys| prewritten(START_TS + if keys[0] == [1] { 7 } else { 9 }, 0),
+        )
+        .await;
+        assert_eq!(res.unwrap().unwrap().version(), START_TS + 9);
+        assert_eq!(run.prewrite_bounds.len(), 2);
+        for (min_commit_ts, max_commit_ts) in run.prewrite_bounds {
+            assert_eq!(min_commit_ts, START_TS + 1);
+            // start_ts + elapsed + the 2 s safe window, in TSO units.
+            assert!(max_commit_ts >= START_TS + (2000 << 18), "{max_commit_ts}");
+            assert!(max_commit_ts < START_TS + (10_000 << 18), "{max_commit_ts}");
+        }
+    }
+
+    #[tokio::test]
+    async fn two_phase_prewrite_carries_no_commit_ts_bounds() {
+        let (res, run) = commit_with(
+            TransactionOptions::new_optimistic(),
+            &[vec![1], vec![20]],
+            |_| prewritten(0, 0),
+        )
+        .await;
+        res.unwrap();
+        assert!(run.prewrite_bounds.iter().all(|b| *b == (0, 0)));
+    }
+
+    #[tokio::test]
+    async fn async_commit_falls_back_to_2pc_when_a_region_did() {
+        // TiKV could not use async commit in region 2 (min_commit_ts would exceed
+        // max_commit_ts) and wrote a 2PC lock there.
+        let (res, run) = commit_with(
+            TransactionOptions::new_optimistic().use_async_commit(),
+            &[vec![1], vec![20]],
+            |keys| prewritten(if keys[0] == [1] { START_TS + 7 } else { 0 }, 0),
+        )
+        .await;
+        res.unwrap();
+        // Two-phase: the primary alone is committed before `commit` returns.
+        assert_eq!(run.commits.first(), Some(&vec![run.primary.clone()]));
+    }
+
+    #[tokio::test]
+    async fn one_pc_fallback_commits_the_locks_instead_of_failing() {
+        let (res, run) = commit_with(
+            TransactionOptions::new_optimistic().try_one_pc(),
+            &[vec![20], vec![21]],
+            |_| prewritten(0, 0),
+        )
+        .await;
+        res.expect("a 1PC fallback must still commit");
+        assert_eq!(run.prewrite_bounds.len(), 1);
+        assert_eq!(run.commits.first(), Some(&vec![run.primary.clone()]));
+    }
+
+    #[tokio::test]
+    async fn one_pc_commit_returns_the_one_pc_commit_ts() {
+        let (res, run) = commit_with(
+            TransactionOptions::new_optimistic()
+                .use_async_commit()
+                .try_one_pc(),
+            &[vec![20], vec![21]],
+            |_| prewritten(0, START_TS + 3),
+        )
+        .await;
+        assert_eq!(res.unwrap().unwrap().version(), START_TS + 3);
+        assert!(run.commits.is_empty());
     }
 }
