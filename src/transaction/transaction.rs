@@ -1975,6 +1975,127 @@ mod tests {
         assert_eq!(pairs.len(), 1);
     }
 
+    /// A read that meets both a pushed transaction's lock and a live lock it cannot push
+    /// backs off for the live one, and its retry still reads past the pushed one.
+    #[tokio::test]
+    async fn a_read_that_backs_off_still_reads_past_a_pushed_transaction() {
+        const READ_TS: u64 = 10;
+        const PUSHED: u64 = 7;
+        const LIVE: u64 = 8;
+        let lock = |key: &[u8], primary: &[u8], version: u64| kvrpcpb::KeyError {
+            locked: Some(kvrpcpb::LockInfo {
+                key: key.to_vec(),
+                primary_lock: primary.to_vec(),
+                lock_version: version,
+                lock_ttl: 20_000,
+                lock_type: kvrpcpb::Op::Put as i32,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let sent_captured = sent.clone();
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
+                    assert_eq!(req.caller_start_ts, READ_TS);
+                    // PUSHED's primary is pushed above the read; LIVE's (min_commit_ts 0)
+                    // cannot be pushed, so the read has to wait for it.
+                    let (primary, version, min_commit_ts, action) = if req.lock_ts == PUSHED {
+                        (
+                            b"p7",
+                            PUSHED,
+                            READ_TS + 1,
+                            kvrpcpb::Action::MinCommitTsPushed,
+                        )
+                    } else {
+                        (b"p8", LIVE, 0, kvrpcpb::Action::NoAction)
+                    };
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        lock_ttl: 20_000,
+                        lock_info: Some(kvrpcpb::LockInfo {
+                            key: primary.to_vec(),
+                            primary_lock: primary.to_vec(),
+                            lock_version: version,
+                            lock_ttl: 20_000,
+                            min_commit_ts,
+                            ..Default::default()
+                        }),
+                        action: action as i32,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+                    let resolved_locks = req
+                        .context
+                        .as_ref()
+                        .map(|c| c.resolved_locks.clone())
+                        .unwrap_or_default();
+                    let mut sent = sent_captured.lock().unwrap();
+                    sent.push(resolved_locks.clone());
+                    // The first attempt meets both locks. By the retry, LIVE has
+                    // committed; PUSHED's lock is still there unless the read names it.
+                    let pairs = if sent.len() == 1 {
+                        vec![
+                            kvrpcpb::KvPair {
+                                error: Some(lock(b"a", b"p7", PUSHED)),
+                                ..Default::default()
+                            },
+                            kvrpcpb::KvPair {
+                                error: Some(lock(b"b", b"p8", LIVE)),
+                                ..Default::default()
+                            },
+                        ]
+                    } else if resolved_locks.contains(&PUSHED) {
+                        vec![
+                            kvrpcpb::KvPair {
+                                key: b"a".to_vec(),
+                                value: b"v".to_vec(),
+                                ..Default::default()
+                            },
+                            kvrpcpb::KvPair {
+                                key: b"b".to_vec(),
+                                value: b"v".to_vec(),
+                                ..Default::default()
+                            },
+                        ]
+                    } else {
+                        vec![kvrpcpb::KvPair {
+                            error: Some(lock(b"a", b"p7", PUSHED)),
+                            ..Default::default()
+                        }]
+                    };
+                    return Ok(Box::new(kvrpcpb::BatchGetResponse {
+                        pairs,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+        // One lock backoff, with no delay: enough for the wait on LIVE and no more.
+        let options = TransactionOptions::new_optimistic()
+            .read_only()
+            .drop_check(CheckLevel::None)
+            .retry_options(RetryOptions {
+                region_backoff: Backoff::no_backoff(),
+                lock_backoff: Backoff::no_jitter_backoff(0, 0, 1),
+            });
+        let mut snapshot = Transaction::new(
+            Timestamp::from_version(READ_TS),
+            pd_client,
+            options,
+            Keyspace::Disable,
+        );
+        let pairs: Vec<KvPair> = snapshot
+            .batch_get(vec![b"a".to_vec(), b"b".to_vec()])
+            .await
+            .unwrap()
+            .collect();
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(*sent.lock().unwrap(), vec![vec![], vec![PUSHED]]);
+    }
+
     #[rstest::rstest]
     #[case(Keyspace::Disable)]
     #[case(Keyspace::Enable { keyspace_id: 0 })]
