@@ -105,7 +105,7 @@ mod compat;
 mod config;
 mod kv;
 mod pd;
-mod proto;
+pub mod proto;
 mod region;
 mod region_cache;
 mod stats;
