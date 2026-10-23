@@ -33,6 +33,13 @@ pub(crate) fn slice_mutations_to_owned(
         .collect()
 }
 
+/// Splits a mixed mutation list into ordered PUT and DELETE runs.
+///
+/// Each run contains one operation kind and is submitted with the matching
+/// `RawClient` batch method. PUT/DELETE transitions preserve the input order.
+/// A repeated key ends the current PUT run so later PUTs for the same key are
+/// submitted separately and retain their input-order semantics. This function
+/// only builds the runs; it does not submit any requests.
 pub(crate) fn build_write_batch_runs(mutations: Vec<OwnedMutation>) -> Vec<WriteBatchRun> {
     let mut runs = Vec::new();
     let mut put_pairs = Vec::new();
