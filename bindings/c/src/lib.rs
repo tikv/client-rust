@@ -253,6 +253,41 @@ struct ClientLifecycle {
     drain_ready: Condvar,
 }
 
+/// Keeps a client operation counted until its callback has returned.
+///
+/// This is separate from `RequestState` because C may retain a completed
+/// request handle after the callback, while client shutdown only waits for
+/// callbacks that are still running.
+struct InflightGuard {
+    lifecycle: Arc<ClientLifecycle>,
+}
+
+impl InflightGuard {
+    fn new(lifecycle: &Arc<ClientLifecycle>) -> Self {
+        inflight_add(lifecycle);
+        Self {
+            lifecycle: Arc::clone(lifecycle),
+        }
+    }
+}
+
+impl Drop for InflightGuard {
+    /// Release the registration after the callback returns, or undo it when
+    /// shutdown rejects a submission. During shutdown, reaching zero wakes
+    /// `wait_drain` while sharing the counter mutex prevents a missed wakeup.
+    fn drop(&mut self) {
+        let mut inflight = self
+            .lifecycle
+            .inflight
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *inflight -= 1;
+        if *inflight == 0 && !self.lifecycle.accepting.load(Ordering::Acquire) {
+            self.lifecycle.drain_ready.notify_all();
+        }
+    }
+}
+
 struct AsyncClientCore {
     runtime: tokio::runtime::Runtime,
     client: RawClient,
@@ -274,7 +309,6 @@ struct CompletionState {
 struct RequestState {
     kind: RequestKind,
     completion: RefCell<CompletionState>,
-    lifecycle: Arc<ClientLifecycle>,
     callback: Option<tikv_async_completion_cb>,
     userdata: *mut c_void,
 }
@@ -387,25 +421,6 @@ fn inflight_add(lifecycle: &ClientLifecycle) {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     *inflight += 1;
-}
-
-/// Release a registration after the callback returns and the task releases its
-/// request reference, or undo registration if shutdown rejects the submission.
-/// Client destruction must still wait if C destroys the request in its callback;
-/// completed request handles retained by C do not delay client destruction.
-/// During shutdown, reaching zero wakes `wait_drain`. Sharing its mutex with
-/// the counter check and condition-variable wait prevents a missed wakeup on
-/// the last decrement. If work finishes before shutdown, `wait_drain` observes
-/// zero directly, so no notification is needed while the client is accepting.
-fn inflight_done(lifecycle: &ClientLifecycle) {
-    let mut inflight = lifecycle
-        .inflight
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    *inflight -= 1;
-    if *inflight == 0 && !lifecycle.accepting.load(Ordering::Acquire) {
-        lifecycle.drain_ready.notify_all();
-    }
 }
 
 fn wait_drain(lifecycle: &ClientLifecycle) {

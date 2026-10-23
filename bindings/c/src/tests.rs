@@ -21,11 +21,6 @@ fn synthetic_request(kind: RequestKind, output: RequestOutput) -> *mut tikv_asyn
             output: Some(output),
             output_taken: false,
         }),
-        lifecycle: Arc::new(ClientLifecycle {
-            accepting: AtomicBool::new(true),
-            inflight: Mutex::new(0),
-            drain_ready: Condvar::new(),
-        }),
         callback: Some(noop_completion),
         userdata: ptr::null_mut(),
     })) as *mut tikv_async_request_t

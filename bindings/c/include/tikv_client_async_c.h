@@ -43,8 +43,9 @@ extern "C" {
  *   Do not destroy a pending request before its callback starts.
  * - A callback may run before the submit function returns. If the callback
  *   destroys the handle, the caller must not use the returned handle.
- * - Status, error, and result accessors may be called only in the completion
- *   callback or after synchronizing with it to observe completion.
+ * - Error and result accessors may be called only in the completion callback
+ *   or after synchronizing with it to observe completion. The callback's
+ *   `final_status` is the terminal request status.
  * - The caller must serialize all status/error/result accessor and destroy
  *   calls for the same request, including calls from its callback. Before
  *   handing the request to another thread, finish accessing it and synchronize
@@ -317,16 +318,6 @@ tikv_status_t tikv_async_raw_batch_get_submit(const tikv_async_client_t *client,
 /*
  * Request lifecycle helpers.
  */
-
-/*
- * Return the terminal request status.
- *
- * This may be called only after completion.
- */
-tikv_status_t tikv_async_request_completion_status(
-    const tikv_async_request_t *request,
-    tikv_status_t *out_status,
-    tikv_error_t **out_error);
 
 /*
  * Return the terminal request error message, or NULL if none.
