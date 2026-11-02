@@ -172,10 +172,11 @@ impl<C: RetryClientTrait> RegionCache<C> {
             .batch_scan_regions(key_bytes.clone())
             .await?;
         regions.sort_by_key(|region| region.start_key());
-        let last_region = regions
+        let last_region_ver_id = regions
             .last()
-            .cloned()
+            .map(RegionWithLeader::ver_id)
             .ok_or(Error::RegionForKeyNotFound { key: key_bytes })?;
+        let mut last_region = None;
         for mut region in regions {
             let cached_leader = {
                 let cache = self.region_cache.read().await;
@@ -187,9 +188,12 @@ impl<C: RetryClientTrait> RegionCache<C> {
             if cached_leader.is_some() {
                 region.leader = cached_leader;
             }
+            if region.ver_id() == last_region_ver_id {
+                last_region = Some(region.clone());
+            }
             self.add_region(region).await;
         }
-        Ok(last_region)
+        Ok(last_region.expect("batch scan returned its final region"))
     }
 
     /// Force read through (query from PD) for the region immediately before
