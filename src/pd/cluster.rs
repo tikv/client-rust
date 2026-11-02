@@ -73,6 +73,7 @@ impl Cluster {
     pub async fn batch_scan_regions(
         &mut self,
         start_key: Vec<u8>,
+        limit: i32,
         timeout: Duration,
     ) -> Result<pdpb::BatchScanRegionsResponse> {
         let mut req = pd_request!(self.id, pdpb::BatchScanRegionsRequest);
@@ -80,7 +81,9 @@ impl Cluster {
             start_key,
             ..Default::default()
         });
-        req.contain_all_key_range = true;
+        req.limit = limit;
+        // A positive limit pages the range; PD may return only a prefix of the requested range.
+        req.contain_all_key_range = false;
         req.send(&mut self.client, timeout).await
     }
 

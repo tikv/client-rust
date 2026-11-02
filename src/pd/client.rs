@@ -285,9 +285,9 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         {
             Ok(region) => region,
             Err(Error::GrpcAPI(status)) if status.code() == tonic::Code::Unimplemented => {
-                walk_to_last_region(self, key).await?
+                return walk_to_last_region(self, key).await;
             }
-            Err(Error::Unimplemented) => walk_to_last_region(self, key).await?,
+            Err(Error::Unimplemented) => return walk_to_last_region(self, key).await,
             Err(error) => return Err(error),
         };
         Self::decode_region(region, enable_codec)

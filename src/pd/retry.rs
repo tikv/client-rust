@@ -39,14 +39,12 @@ pub trait RetryClientTrait {
 
     async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader>;
 
-    /// Return all regions from `start_key` to the end of the keyspace in one PD request.
+    /// Return up to `limit` regions starting at `start_key` in one PD request.
     async fn batch_scan_regions(
         self: Arc<Self>,
         start_key: Vec<u8>,
-    ) -> Result<Vec<RegionWithLeader>> {
-        let _ = start_key;
-        Err(Error::Unimplemented)
-    }
+        limit: i32,
+    ) -> Result<Vec<RegionWithLeader>>;
 
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader>;
 
@@ -187,12 +185,13 @@ impl RetryClientTrait for RetryClient<Cluster> {
     async fn batch_scan_regions(
         self: Arc<Self>,
         start_key: Vec<u8>,
+        limit: i32,
     ) -> Result<Vec<RegionWithLeader>> {
         retry_mut!(self, "batch_scan_regions", |cluster| {
             let start_key = start_key.clone();
             async {
                 cluster
-                    .batch_scan_regions(start_key, self.timeout)
+                    .batch_scan_regions(start_key, limit, self.timeout)
                     .await
                     .and_then(|resp| {
                         resp.regions

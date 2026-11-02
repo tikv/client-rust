@@ -519,9 +519,9 @@ impl<PdC: PdClient> Client<PdC> {
     /// The returned keys are in reversed lexicographical order.
     /// If you want to include the endKey or exclude the startKey, push a '\0' to the key.
     /// An unbounded upper bound is supported by locating the final Region before
-    /// traversing Regions backwards toward the lower bound.
-    /// Without a keyspace prefix, locating that Region walks Region boundaries
-    /// from the lower bound and may require a PD lookup for each uncached Region.
+    /// traversing Regions backwards toward the lower bound. The normal path uses
+    /// paged PD batch-region scans; clients whose PD does not support that RPC
+    /// fall back to walking Region boundaries from the lower bound.
     /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{KvPair, Config, RawClient, IntoOwnedRange};
@@ -913,36 +913,31 @@ impl<PdC: PdClient> Client<PdC> {
             return match resp {
                 Ok(mut r) => {
                     if let Some(err) = r.region_error() {
+                        // Resolved Region errors still consume the retry budget, even
+                        // when a leader correction lets us retry without sleeping.
+                        let Some(duration) = scan_args.backoff.next_delay_duration() else {
+                            return Err(RegionError(Box::new(err)));
+                        };
                         let status =
                             plan::handle_region_error(self.rpc.clone(), err.clone(), store.clone())
                                 .await?;
-                        if status {
-                            if scan_args.reverse {
-                                // Only a known-leader correction preserves the
-                                // Region metadata. EpochNotMatch may have removed
-                                // this Region ID, so resolve it by key again.
-                                if err.not_leader.as_ref().is_some_and(|e| e.leader.is_some()) {
-                                    region_override = Some(region.clone());
-                                } else if scan_args.reverse_unbounded {
-                                    region_override = Some(
-                                        self.rpc
-                                            .last_region_for_key(&scan_args.range_start)
-                                            .await?,
-                                    );
-                                }
-                            }
-                            continue;
-                        } else if let Some(duration) = scan_args.backoff.next_delay_duration() {
-                            if scan_args.reverse_unbounded {
+                        if scan_args.reverse {
+                            // Only a known-leader correction preserves the
+                            // Region metadata. EpochNotMatch may have removed
+                            // this Region ID, so resolve it by key again.
+                            if status && err.not_leader.as_ref().is_some_and(|e| e.leader.is_some())
+                            {
+                                region_override = Some(region.clone());
+                            } else if scan_args.reverse_unbounded {
                                 region_override = Some(
                                     self.rpc.last_region_for_key(&scan_args.range_start).await?,
                                 );
                             }
-                            sleep(duration).await;
-                            continue;
-                        } else {
-                            return Err(RegionError(Box::new(err)));
                         }
+                        if !status {
+                            sleep(duration).await;
+                        }
+                        continue;
                     }
                     let next_key = if scan_args.reverse {
                         region.start_key()
@@ -1414,6 +1409,56 @@ mod tests {
 
         assert_eq!(client.scan_reverse(vec![1]..vec![255], 1).await?.len(), 1);
         assert_eq!(dispatch_count.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reverse_scan_bounds_immediate_region_error_retries() -> Result<()> {
+        let dispatch_count = Arc::new(AtomicUsize::new(0));
+        let requests = dispatch_count.clone();
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                assert!(req.downcast_ref::<kvrpcpb::RawScanRequest>().is_some());
+                assert!(
+                    requests.fetch_add(1, Ordering::SeqCst) < 3,
+                    "retry limit exceeded"
+                );
+                Ok(Box::new(kvrpcpb::RawScanResponse {
+                    region_error: Some(errorpb::Error {
+                        epoch_not_match: Some(errorpb::EpochNotMatch {
+                            current_regions: vec![],
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let client = Client {
+            rpc: pd_client,
+            cf: None,
+            backoff: DEFAULT_REGION_BACKOFF,
+            atomic: false,
+            keyspace: Keyspace::Disable,
+        };
+
+        let result = client
+            .retryable_scan(ScanInnerArgs {
+                current_key: vec![1].into(),
+                range_start: vec![1].into(),
+                range_end: None,
+                reverse_unbounded: true,
+                initial_region: Some(MockPdClient::region3()),
+                limit: 1,
+                key_only: false,
+                reverse: true,
+                backoff: Backoff::no_jitter_backoff(0, 0, 2),
+            })
+            .await;
+        assert!(
+            matches!(result, Err(Error::RegionError(error)) if error.epoch_not_match.is_some())
+        );
+        assert_eq!(dispatch_count.load(Ordering::SeqCst), 3);
         Ok(())
     }
 
