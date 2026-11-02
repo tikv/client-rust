@@ -28,10 +28,13 @@ use crate::store::TikvConnect;
 use crate::store::{KvClient, Store};
 use crate::BoundRange;
 use crate::Config;
+use crate::Error;
 use crate::Key;
 use crate::Result;
 use crate::SecurityManager;
 use crate::Timestamp;
+
+const MAX_REGION_BOUNDARY_RETRIES: usize = 10;
 
 /// The PdClient handles all the encoding stuff.
 ///
@@ -64,6 +67,14 @@ pub trait PdClient: Send + Sync + 'static {
     ///
     /// This is used by reverse scans when they reach a region boundary.
     async fn prev_region_for_key(&self, key: &Key) -> Result<RegionWithLeader>;
+
+    /// Return the final region at or after `key`.
+    ///
+    /// Implementations backed by PD can override this with a batch region scan. The default
+    /// implementation keeps compatibility with other clients by walking region boundaries.
+    async fn last_region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
+        walk_to_last_region(self, key).await
+    }
 
     /// In transactional API, the returned region is decoded (keys in raw format)
     async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader>;
@@ -259,6 +270,29 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         Self::decode_region(region, enable_codec)
     }
 
+    async fn last_region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
+        let enable_codec = self.enable_codec;
+        let encoded_key = if enable_codec {
+            key.to_encoded()
+        } else {
+            key.clone()
+        };
+
+        let region = match self
+            .region_cache
+            .read_through_last_region_by_key(encoded_key)
+            .await
+        {
+            Ok(region) => region,
+            Err(Error::GrpcAPI(status)) if status.code() == tonic::Code::Unimplemented => {
+                walk_to_last_region(self, key).await?
+            }
+            Err(Error::Unimplemented) => walk_to_last_region(self, key).await?,
+            Err(error) => return Err(error),
+        };
+        Self::decode_region(region, enable_codec)
+    }
+
     async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {
         let region = self.region_cache.get_region_by_id(id).await?;
         Self::decode_region(region, self.enable_codec)
@@ -299,6 +333,37 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
         self.pd.load_keyspace(keyspace).await
+    }
+}
+
+async fn walk_to_last_region<P: PdClient + ?Sized>(
+    client: &P,
+    key: &Key,
+) -> Result<RegionWithLeader> {
+    let mut region = client.region_for_key(key).await?;
+    let mut boundary_retries = 0;
+    loop {
+        let end_key = region.end_key();
+        if end_key.is_empty() {
+            return Ok(region);
+        }
+
+        let next_region = client.region_for_key(&end_key).await?;
+        if next_region.start_key() != end_key {
+            if boundary_retries >= MAX_REGION_BOUNDARY_RETRIES {
+                return Err(Error::InternalError {
+                    message: "failed to resolve the final region after exhausting boundary retries"
+                        .to_owned(),
+                });
+            }
+            boundary_retries += 1;
+            client.invalidate_region_cache(region.ver_id()).await;
+            client.invalidate_region_cache(next_region.ver_id()).await;
+            region = client.region_for_key(key).await?;
+            continue;
+        }
+        boundary_retries = 0;
+        region = next_region;
     }
 }
 

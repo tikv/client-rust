@@ -789,7 +789,7 @@ impl<PdC: PdClient> Client<PdC> {
             range_start.clone()
         };
         let mut initial_region = if reverse_unbounded {
-            Some(self.last_region_for_key(&range_start).await?)
+            Some(self.rpc.last_region_for_key(&range_start).await?)
         } else {
             None
         };
@@ -841,35 +841,6 @@ impl<PdC: PdClient> Client<PdC> {
         let result = result.truncate_keyspace(self.keyspace);
 
         Ok(result)
-    }
-
-    async fn last_region_for_key(&self, key: &Key) -> Result<crate::region::RegionWithLeader> {
-        let mut region = self.rpc.clone().region_for_key(key).await?;
-        let mut boundary_retries = 0;
-        loop {
-            let end_key = region.end_key();
-            if end_key.is_empty() {
-                return Ok(region);
-            }
-
-            let next_region = self.rpc.clone().region_for_key(&end_key).await?;
-            if next_region.start_key() != end_key {
-                if boundary_retries >= MAX_REVERSE_SCAN_BOUNDARY_RETRIES {
-                    return Err(Error::InternalError {
-                        message:
-                            "failed to resolve the final region after exhausting boundary retries"
-                                .to_owned(),
-                    });
-                }
-                boundary_retries += 1;
-                self.rpc.invalidate_region_cache(region.ver_id()).await;
-                self.rpc.invalidate_region_cache(next_region.ver_id()).await;
-                region = self.rpc.clone().region_for_key(key).await?;
-                continue;
-            }
-            boundary_retries = 0;
-            region = next_region;
-        }
     }
 
     async fn retryable_scan(
@@ -954,15 +925,18 @@ impl<PdC: PdClient> Client<PdC> {
                                     region_override = Some(region.clone());
                                 } else if scan_args.reverse_unbounded {
                                     region_override = Some(
-                                        self.last_region_for_key(&scan_args.range_start).await?,
+                                        self.rpc
+                                            .last_region_for_key(&scan_args.range_start)
+                                            .await?,
                                     );
                                 }
                             }
                             continue;
                         } else if let Some(duration) = scan_args.backoff.next_delay_duration() {
                             if scan_args.reverse_unbounded {
-                                region_override =
-                                    Some(self.last_region_for_key(&scan_args.range_start).await?);
+                                region_override = Some(
+                                    self.rpc.last_region_for_key(&scan_args.range_start).await?,
+                                );
                             }
                             sleep(duration).await;
                             continue;

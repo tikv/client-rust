@@ -158,6 +158,40 @@ impl<C: RetryClientTrait> RegionCache<C> {
         Ok(region)
     }
 
+    /// Force a batch read through from `key` to the end of the keyspace and return the final
+    /// region. This avoids issuing one PD request per region when an unbounded reverse scan needs
+    /// to locate the final region.
+    pub async fn read_through_last_region_by_key(&self, key: Key) -> Result<RegionWithLeader>
+    where
+        C: Send + Sync,
+    {
+        let key_bytes: Vec<u8> = key.clone().into();
+        let mut regions = self
+            .inner_client
+            .clone()
+            .batch_scan_regions(key_bytes.clone())
+            .await?;
+        regions.sort_by_key(|region| region.start_key());
+        let last_region = regions
+            .last()
+            .cloned()
+            .ok_or(Error::RegionForKeyNotFound { key: key_bytes })?;
+        for mut region in regions {
+            let cached_leader = {
+                let cache = self.region_cache.read().await;
+                cache
+                    .ver_id_to_region
+                    .get(&region.ver_id())
+                    .and_then(|cached| cached.leader.clone())
+            };
+            if cached_leader.is_some() {
+                region.leader = cached_leader;
+            }
+            self.add_region(region).await;
+        }
+        Ok(last_region)
+    }
+
     /// Force read through (query from PD) for the region immediately before
     /// the region containing `key`.
     async fn read_through_prev_region_by_key(&self, key: Key) -> Result<RegionWithLeader> {
@@ -384,6 +418,24 @@ mod test {
                 .find(|r| r.end_key() == key.clone().into())
                 .cloned()
                 .ok_or_else(|| Error::RegionForKeyNotFound { key })
+        }
+
+        async fn batch_scan_regions(
+            self: Arc<Self>,
+            start_key: Vec<u8>,
+        ) -> Result<Vec<crate::region::RegionWithLeader>> {
+            self.get_region_count.fetch_add(1, SeqCst);
+            let start_key: Key = start_key.into();
+            let mut regions = self
+                .regions
+                .lock()
+                .await
+                .values()
+                .filter(|region| region.end_key().is_empty() || region.end_key() > start_key)
+                .cloned()
+                .collect::<Vec<_>>();
+            regions.sort_by_key(|region| region.start_key());
+            Ok(regions)
         }
 
         async fn get_region_by_id(
@@ -619,6 +671,29 @@ mod test {
             .await
             .is_err());
         assert!(cache.get_prev_region_by_key(&Key::EMPTY).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_last_region_by_key_uses_one_batch_pd_request() -> Result<()> {
+        let retry_client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(retry_client.clone());
+        retry_client.regions.lock().await.extend([
+            (1, region(1, vec![], vec![10])),
+            (2, region(2, vec![10], vec![20])),
+            (3, region(3, vec![20], vec![])),
+        ]);
+
+        assert_eq!(
+            cache
+                .read_through_last_region_by_key(vec![1].into())
+                .await?
+                .id(),
+            3
+        );
+        assert_eq!(retry_client.get_region_count.load(SeqCst), 1);
+        assert_eq!(cache.get_region_by_id(2).await?.id(), 2);
+        assert_eq!(retry_client.get_region_count.load(SeqCst), 1);
         Ok(())
     }
 
