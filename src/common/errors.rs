@@ -84,12 +84,24 @@ pub enum Error {
     /// Wraps a per-key error returned by TiKV.
     #[error("{0:?}")]
     KeyError(Box<ProtoKeyError>),
-    /// Multiple errors generated from the ExtractError plan.
-    #[error("Multiple errors: {0:?}")]
-    ExtractedErrors(Vec<Error>),
-    /// Multiple key errors
+    /// Errors the server reported about the request itself — one per affected key,
+    /// or one per failed raw operation.
+    ///
+    /// Elements are [`Error::KeyError`] for transactional endpoints (from a
+    /// `kvrpcpb::KeyError` field) or [`Error::KvError`] for raw endpoints (from a
+    /// string `error` field). Match both if you handle raw and transactional
+    /// requests through one path.
+    ///
+    /// Which of this and [`Error::MultipleRegionErrors`] you receive is decided by
+    /// *what the server reported*, never by how the request's plan happened to be
+    /// composed — matching on one of them is therefore sufficient to handle that
+    /// class of failure.
     #[error("Multiple key errors: {0:?}")]
     MultipleKeyErrors(Vec<Error>),
+    /// Multiple region errors returned by TiKV. Every element is a
+    /// [`Error::RegionError`]. See [`Error::MultipleKeyErrors`].
+    #[error("Multiple region errors: {0:?}")]
+    MultipleRegionErrors(Vec<Error>),
     /// Invalid ColumnFamily
     #[error("Unsupported column family {}", _0)]
     ColumnFamilyError(String),
