@@ -1,6 +1,7 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::marker::PhantomData;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use super::plan::PreserveShard;
@@ -26,7 +27,6 @@ use crate::store::HasKeyErrors;
 use crate::store::HasRegionError;
 use crate::store::HasRegionErrors;
 use crate::store::RegionStore;
-use crate::transaction::HasLocks;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::ResolveLocksOptions;
 use crate::Result;
@@ -59,6 +59,52 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
             phantom: PhantomData,
         }
     }
+
+    /// Install [`super::TxnProtocolCompatibility`] before lock resolution or routing.
+    /// Creates a fresh resend allowance. High-level transactional APIs install this
+    /// automatically; lower-level transactional callers must add it explicitly.
+    pub fn txn_protocol_compatibility(
+        self,
+        policy: crate::TxnRequestPolicy,
+    ) -> PlanBuilder<PdC, super::TxnProtocolCompatibility<Req, PdC>, NoTarget> {
+        self.txn_protocol_compatibility_with_allowance(policy, Arc::new(AtomicBool::new(false)))
+    }
+
+    /// Preserve a logical send's allowance when a caller rebuilds plans during retries.
+    pub(crate) fn txn_protocol_compatibility_with_allowance(
+        self,
+        policy: crate::TxnRequestPolicy,
+        allowance: Arc<AtomicBool>,
+    ) -> PlanBuilder<PdC, super::TxnProtocolCompatibility<Req, PdC>, NoTarget> {
+        PlanBuilder {
+            pd_client: self.pd_client.clone(),
+            plan: super::TxnProtocolCompatibility {
+                inner: self.plan,
+                pd_client: self.pd_client,
+                policy,
+                store: None,
+                resend_used: allowance,
+            },
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<PdC: PdClient, Req: KvRequest>
+    PlanBuilder<PdC, super::TxnProtocolCompatibility<Req, PdC>, NoTarget>
+{
+    /// Direct region targeting also prepares compatibility against that store.
+    pub async fn single_region_with_store(
+        mut self,
+        store: RegionStore,
+    ) -> Result<PlanBuilder<PdC, super::TxnProtocolCompatibility<Req, PdC>, Targetted>> {
+        self.plan.apply_region_store(&store)?;
+        Ok(PlanBuilder {
+            pd_client: self.pd_client,
+            plan: self.plan,
+            phantom: PhantomData,
+        })
+    }
 }
 
 impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted> {
@@ -69,17 +115,17 @@ impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted> {
     }
 }
 
-impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
+impl<PdC: PdClient, Req: KvRequest, Ph: PlanBuilderPhase>
+    PlanBuilder<PdC, super::TxnProtocolCompatibility<Req, PdC>, Ph>
+{
     /// If there is a lock error, then resolve the lock and retry the request.
     pub fn resolve_lock(
         self,
         timestamp: Timestamp,
         backoff: Backoff,
         keyspace: Keyspace,
-    ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
-    where
-        P::Result: HasLocks,
-    {
+    ) -> PlanBuilder<PdC, ResolveLock<super::TxnProtocolCompatibility<Req, PdC>, PdC>, Ph> {
+        let request_policy = self.plan.policy;
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: ResolveLock {
@@ -88,6 +134,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 backoff,
                 pd_client: self.pd_client,
                 keyspace,
+                request_policy,
             },
             phantom: PhantomData,
         }
@@ -99,11 +146,12 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         options: ResolveLocksOptions,
         backoff: Backoff,
         keyspace: Keyspace,
-    ) -> PlanBuilder<PdC, CleanupLocks<P, PdC>, Ph>
+    ) -> PlanBuilder<PdC, CleanupLocks<super::TxnProtocolCompatibility<Req, PdC>, PdC>, Ph>
     where
-        P: Shardable + NextBatch,
-        P::Result: HasLocks + HasNextBatch + HasRegionError + HasKeyErrors,
+        Req: Shardable + NextBatch,
+        Req::Response: HasNextBatch,
     {
+        let request_policy = self.plan.policy;
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: CleanupLocks {
@@ -114,11 +162,14 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 backoff,
                 pd_client: self.pd_client,
                 keyspace,
+                request_policy,
             },
             phantom: PhantomData,
         }
     }
+}
 
+impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     /// Merge the results of a request. Usually used where a request is sent to multiple regions
     /// to combine the responses from each region.
     pub fn merge<In, M: Merge<In>>(self, merge: M) -> PlanBuilder<PdC, MergeResponse<P, In, M>, Ph>

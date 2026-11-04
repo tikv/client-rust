@@ -4,10 +4,13 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 
-use log::debug;
-use tokio::sync::Notify;
+use tokio::time::Instant;
+
+use log::{debug, warn};
 use tokio::sync::RwLock;
+use tokio::sync::{watch, Mutex, Notify};
 
 use crate::common::Error;
 use crate::pd::Cluster;
@@ -52,9 +55,16 @@ impl RegionCacheMap {
     }
 }
 
+// A refresh is shared independently of any individual caller's cancellation.
+struct StoreReload {
+    started_at: Instant,
+    result: watch::Receiver<Option<std::result::Result<Store, String>>>,
+}
+
 pub struct RegionCache<Client = RetryClient<Cluster>> {
     region_cache: RwLock<RegionCacheMap>,
-    store_cache: RwLock<HashMap<StoreId, Store>>,
+    store_cache: Arc<RwLock<HashMap<StoreId, (Instant, Store)>>>,
+    store_reloads: Mutex<HashMap<StoreId, StoreReload>>,
     inner_client: Arc<Client>,
 }
 
@@ -62,7 +72,8 @@ impl<Client> RegionCache<Client> {
     pub fn new(inner_client: Arc<Client>) -> RegionCache<Client> {
         RegionCache {
             region_cache: RwLock::new(RegionCacheMap::new()),
-            store_cache: RwLock::new(HashMap::new()),
+            store_cache: Arc::new(RwLock::new(HashMap::new())),
+            store_reloads: Mutex::new(HashMap::new()),
             inner_client,
         }
     }
@@ -124,7 +135,12 @@ impl<C: RetryClientTrait> RegionCache<C> {
     }
 
     pub async fn get_store_by_id(&self, id: StoreId) -> Result<Store> {
-        let store = self.store_cache.read().await.get(&id).cloned();
+        let store = self
+            .store_cache
+            .read()
+            .await
+            .get(&id)
+            .map(|(_, store)| store.clone());
         match store {
             Some(store) => Ok(store),
             None => self.read_through_store_by_id(id).await,
@@ -161,9 +177,89 @@ impl<C: RetryClientTrait> RegionCache<C> {
     }
 
     async fn read_through_store_by_id(&self, id: StoreId) -> Result<Store> {
+        let started_at = Instant::now();
         let store = self.inner_client.clone().get_store(id).await?;
-        self.store_cache.write().await.insert(id, store.clone());
-        Ok(store)
+        let mut cache = self.store_cache.write().await;
+        Ok(publish_store(&mut cache, started_at, store))
+    }
+
+    /// Reload from PD at most once per second per store. Running refreshes are
+    /// joined even after cooldown; canceling a waiter does not cancel the fetch.
+    pub async fn reload_store(&self, id: StoreId) -> Result<Store>
+    where
+        C: Send + Sync + 'static,
+    {
+        let mut reloads = self.store_reloads.lock().await;
+        let reuse = reloads.get(&id).is_some_and(|reload| {
+            // A stopped task may leave an empty result behind. Only an open
+            // channel represents an in-flight fetch; stopped tasks still enter
+            // cooldown but must not prevent subsequent reloads indefinitely.
+            let running = reload.result.borrow().is_none() && reload.result.has_changed().is_ok();
+            if running {
+                crate::stats::txn_protocol_store_reload("joined");
+                true
+            } else if reload.started_at.elapsed() < Duration::from_secs(1) {
+                crate::stats::txn_protocol_store_reload("suppressed");
+                true
+            } else {
+                false
+            }
+        });
+        if !reuse {
+            let started_at = Instant::now();
+            let (sender, receiver) = watch::channel(None);
+            reloads.insert(
+                id,
+                StoreReload {
+                    started_at,
+                    result: receiver,
+                },
+            );
+            let client = self.inner_client.clone();
+            let cache = self.store_cache.clone();
+            tokio::spawn(async move {
+                crate::stats::txn_protocol_store_reload("started");
+                let fetched = match tokio::time::timeout(
+                    Duration::from_secs(5),
+                    client.get_store(id),
+                )
+                .await
+                {
+                    Ok(result) => result.map_err(|error| error.to_string()),
+                    Err(error) => Err(error.to_string()),
+                };
+                let result = match fetched {
+                    Ok(store) => {
+                        let mut cache = cache.write().await;
+                        let published = publish_store(&mut cache, started_at, store);
+                        crate::stats::txn_protocol_store_reload("success");
+                        Ok(published)
+                    }
+                    Err(error) => {
+                        crate::stats::txn_protocol_store_reload("failure");
+                        debug!("store metadata refresh failed for {}: {}", id, error);
+                        Err(error)
+                    }
+                };
+                sender.send_replace(Some(result));
+            });
+        }
+        let mut receiver = reloads.get(&id).unwrap().result.clone();
+        drop(reloads);
+        loop {
+            let result = receiver.borrow().clone();
+            if let Some(result) = result {
+                // Other metadata fetches may have published a newer snapshot while
+                // this refresh was running, including after a failed refresh.
+                if let Some((_, store)) = self.store_cache.read().await.get(&id) {
+                    return Ok(store.clone());
+                }
+                return result.map_err(Error::StringError);
+            }
+            receiver.changed().await.map_err(|_| {
+                Error::StringError("store metadata refresh task stopped".to_owned())
+            })?;
+        }
     }
 
     pub async fn add_region(&self, region: RegionWithLeader) {
@@ -238,7 +334,7 @@ impl<C: RetryClientTrait> RegionCache<C> {
 
     pub async fn invalidate_store_cache(&self, store_id: StoreId) -> Option<Store> {
         let mut cache = self.store_cache.write().await;
-        let removed = cache.remove(&store_id);
+        let removed = cache.remove(&store_id).map(|(_, store)| store);
         if removed.is_some() {
             debug!("invalidated store cache entry, store: {:?}", store_id);
         }
@@ -246,7 +342,8 @@ impl<C: RetryClientTrait> RegionCache<C> {
     }
 
     pub async fn read_through_all_stores(&self) -> Result<Vec<Store>> {
-        let stores = self
+        let started_at = Instant::now();
+        let mut stores = self
             .inner_client
             .clone()
             .get_all_stores()
@@ -254,14 +351,42 @@ impl<C: RetryClientTrait> RegionCache<C> {
             .into_iter()
             .filter(is_valid_tikv_store)
             .collect::<Vec<_>>();
-        for store in &stores {
-            self.store_cache
-                .write()
-                .await
-                .insert(store.id, store.clone());
+        let mut cache = self.store_cache.write().await;
+        for store in &mut stores {
+            *store = publish_store(&mut cache, started_at, store.clone());
         }
         Ok(stores)
     }
+}
+
+/// Publish metadata consistently for cache misses, conditional reloads, and
+/// full-store fetches. Invalid protocol ranges retain the last valid range (or
+/// unknown); an absent range is a legitimate downgrade and replaces it.
+fn publish_store(
+    cache: &mut HashMap<StoreId, (Instant, Store)>,
+    fetched_at: Instant,
+    mut store: Store,
+) -> Store {
+    let previous = cache.get(&store.id);
+    if let Some((published_at, cached)) = previous {
+        if fetched_at < *published_at {
+            return cached.clone();
+        }
+    }
+    if let Some(range) = store.txn_protocol_version_range.as_ref() {
+        if range.min > range.max {
+            warn!(
+                "ignoring invalid transaction protocol range [{}, {}] for store {}",
+                range.min, range.max, store.id,
+            );
+            store.txn_protocol_version_range =
+                previous.and_then(|(_, cached)| cached.txn_protocol_version_range.clone());
+        }
+    }
+    // Advance the fetch timestamp even when retaining the previous range, so
+    // an older in-flight lookup cannot replace it after this publication.
+    cache.insert(store.id, (fetched_at, store.clone()));
+    store
 }
 
 const ENGINE_LABEL_KEY: &str = "engine";
@@ -307,6 +432,10 @@ mod test {
     struct MockRetryClient {
         pub regions: Mutex<HashMap<RegionId, RegionWithLeader>>,
         pub get_region_count: AtomicU64,
+        pub stores: Mutex<HashMap<u64, metapb::Store>>,
+        pub get_store_count: AtomicU64,
+        pub fail_get_store: std::sync::atomic::AtomicBool,
+        pub get_store_gate: Option<Arc<tokio::sync::Semaphore>>,
     }
 
     #[async_trait]
@@ -343,13 +472,25 @@ mod test {
 
         async fn get_store(
             self: Arc<Self>,
-            _id: crate::region::StoreId,
+            id: crate::region::StoreId,
         ) -> Result<crate::proto::metapb::Store> {
-            todo!()
+            self.get_store_count.fetch_add(1, SeqCst);
+            if let Some(gate) = &self.get_store_gate {
+                gate.acquire().await.unwrap().forget();
+            }
+            if self.fail_get_store.load(SeqCst) {
+                return Err(Error::StringError("PD unavailable".into()));
+            }
+            self.stores
+                .lock()
+                .await
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| Error::StringError("store not found".into()))
         }
 
         async fn get_all_stores(self: Arc<Self>) -> Result<Vec<crate::proto::metapb::Store>> {
-            todo!()
+            Ok(self.stores.lock().await.values().cloned().collect())
         }
 
         async fn get_timestamp(self: Arc<Self>) -> Result<crate::proto::pdpb::Timestamp> {
@@ -592,5 +733,228 @@ mod test {
 
         store.labels[1].value = "other".to_string();
         assert!(is_valid_tikv_store(&store));
+    }
+
+    fn store_metadata(id: u64, range: Option<(u32, u32)>) -> metapb::Store {
+        metapb::Store {
+            id,
+            txn_protocol_version_range: range
+                .map(|(min, max)| metapb::TxnProtocolVersionRange { min, max }),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn protocol_metadata_is_validated_on_every_fetch_path() {
+        let pd = Arc::new(MockRetryClient::default());
+        pd.stores
+            .lock()
+            .await
+            .insert(7, store_metadata(7, Some((0, 1))));
+        let cache = RegionCache::new(pd.clone());
+        let initial = cache.get_store_by_id(7).await.unwrap();
+        pd.stores
+            .lock()
+            .await
+            .insert(7, store_metadata(7, Some((2, 1))));
+        assert_eq!(
+            cache
+                .reload_store(7)
+                .await
+                .unwrap()
+                .txn_protocol_version_range,
+            initial.txn_protocol_version_range
+        );
+        assert_eq!(
+            cache.read_through_all_stores().await.unwrap()[0].txn_protocol_version_range,
+            initial.txn_protocol_version_range
+        );
+        // Absence legitimately downgrades a previously advertised range.
+        pd.stores.lock().await.insert(7, store_metadata(7, None));
+        assert!(cache.read_through_all_stores().await.unwrap()[0]
+            .txn_protocol_version_range
+            .is_none());
+        assert!(cache
+            .get_store_by_id(7)
+            .await
+            .unwrap()
+            .txn_protocol_version_range
+            .is_none());
+        // An invalid initial fetch must publish unknown rather than invalid bounds.
+        pd.stores
+            .lock()
+            .await
+            .insert(8, store_metadata(8, Some((3, 1))));
+        assert!(cache
+            .get_store_by_id(8)
+            .await
+            .unwrap()
+            .txn_protocol_version_range
+            .is_none());
+    }
+
+    #[test]
+    fn protocol_publication_keeps_last_valid_range_and_orders_fetches() {
+        let mut cache = HashMap::new();
+        let now = super::Instant::now();
+        let valid = store_metadata(7, Some((0, 1)));
+        super::publish_store(&mut cache, now, valid.clone());
+        let newer = now + std::time::Duration::from_secs(2);
+        let retained = super::publish_store(&mut cache, newer, store_metadata(7, Some((3, 1))));
+        assert_eq!(
+            retained.txn_protocol_version_range,
+            valid.txn_protocol_version_range
+        );
+        // Even an invalid newer fetch advances publication ordering.
+        let late = super::publish_store(
+            &mut cache,
+            now + std::time::Duration::from_secs(1),
+            store_metadata(7, None),
+        );
+        assert_eq!(
+            late.txn_protocol_version_range,
+            valid.txn_protocol_version_range
+        );
+        let legacy = super::publish_store(
+            &mut cache,
+            newer + std::time::Duration::from_secs(1),
+            store_metadata(7, None),
+        );
+        assert!(legacy.txn_protocol_version_range.is_none());
+    }
+
+    #[tokio::test]
+    async fn protocol_reload_is_shared_survives_cancellation_and_respects_cooldown() {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let pd = Arc::new(MockRetryClient {
+            get_store_gate: Some(gate.clone()),
+            ..Default::default()
+        });
+        pd.stores
+            .lock()
+            .await
+            .insert(7, store_metadata(7, Some((0, 1))));
+        let cache = Arc::new(RegionCache::new(pd.clone()));
+        let owner_cache = cache.clone();
+        let owner = tokio::spawn(async move { owner_cache.reload_store(7).await });
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while pd.get_store_count.load(SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let mut waiter = Box::pin(cache.reload_store(7));
+        assert!(futures::poll!(waiter.as_mut()).is_pending());
+        owner.abort();
+        assert!(owner.await.unwrap_err().is_cancelled());
+        // A long-running fetch remains shared even after cooldown expires.
+        cache
+            .store_reloads
+            .lock()
+            .await
+            .get_mut(&7)
+            .unwrap()
+            .started_at = super::Instant::now() - std::time::Duration::from_secs(2);
+        let mut late_waiter = Box::pin(cache.reload_store(7));
+        assert!(futures::poll!(late_waiter.as_mut()).is_pending());
+        assert_eq!(pd.get_store_count.load(SeqCst), 1);
+        gate.add_permits(1);
+        let first = waiter.await.unwrap();
+        assert_eq!(late_waiter.await.unwrap(), first);
+        assert_eq!(pd.get_store_count.load(SeqCst), 1);
+        // Completed results are reused inside cooldown, then refreshed afterward.
+        cache
+            .store_reloads
+            .lock()
+            .await
+            .get_mut(&7)
+            .unwrap()
+            .started_at = super::Instant::now();
+        pd.stores
+            .lock()
+            .await
+            .insert(7, store_metadata(7, Some((0, 0))));
+        assert_eq!(cache.reload_store(7).await.unwrap(), first);
+        assert_eq!(pd.get_store_count.load(SeqCst), 1);
+        cache
+            .store_reloads
+            .lock()
+            .await
+            .get_mut(&7)
+            .unwrap()
+            .started_at = super::Instant::now() - std::time::Duration::from_secs(2);
+        gate.add_permits(1);
+        assert_eq!(
+            cache.reload_store(7).await.unwrap(),
+            store_metadata(7, Some((0, 0)))
+        );
+        assert_eq!(pd.get_store_count.load(SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn protocol_failed_reload_preserves_cache_and_enters_cooldown() {
+        let pd = Arc::new(MockRetryClient::default());
+        let original = store_metadata(7, Some((0, 1)));
+        pd.stores.lock().await.insert(7, original.clone());
+        let cache = RegionCache::new(pd.clone());
+        assert_eq!(cache.get_store_by_id(7).await.unwrap(), original);
+        pd.fail_get_store.store(true, SeqCst);
+        assert_eq!(cache.reload_store(7).await.unwrap(), original);
+        assert_eq!(cache.reload_store(7).await.unwrap(), original);
+        assert_eq!(pd.get_store_count.load(SeqCst), 2); // Initial fetch + one failed reload.
+    }
+
+    #[tokio::test]
+    async fn protocol_stopped_reload_can_restart_after_cooldown() {
+        let pd = Arc::new(MockRetryClient::default());
+        pd.stores.lock().await.insert(7, store_metadata(7, None));
+        let cache = RegionCache::new(pd.clone());
+        let (sender, receiver) = tokio::sync::watch::channel(None);
+        drop(sender);
+        cache.store_reloads.lock().await.insert(
+            7,
+            super::StoreReload {
+                started_at: super::Instant::now(),
+                result: receiver,
+            },
+        );
+        assert!(cache.reload_store(7).await.is_err());
+        assert_eq!(pd.get_store_count.load(SeqCst), 0);
+        cache
+            .store_reloads
+            .lock()
+            .await
+            .get_mut(&7)
+            .unwrap()
+            .started_at = super::Instant::now() - std::time::Duration::from_secs(2);
+        assert_eq!(
+            cache.reload_store(7).await.unwrap(),
+            store_metadata(7, None)
+        );
+        assert_eq!(pd.get_store_count.load(SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn protocol_reload_timeout_does_not_poison_later_attempts() {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let pd = Arc::new(MockRetryClient {
+            get_store_gate: Some(gate.clone()),
+            ..Default::default()
+        });
+        pd.stores.lock().await.insert(7, store_metadata(7, None));
+        let cache = RegionCache::new(pd.clone());
+        let failed = tokio::time::timeout(std::time::Duration::from_secs(6), cache.reload_store(7))
+            .await
+            .unwrap();
+        assert!(failed.is_err());
+        assert_eq!(pd.get_store_count.load(SeqCst), 1);
+        // Cooldown starts with the attempt, so the timed-out fetch can be retried.
+        gate.add_permits(1);
+        assert_eq!(
+            cache.reload_store(7).await.unwrap(),
+            store_metadata(7, None)
+        );
+        assert_eq!(pd.get_store_count.load(SeqCst), 2);
     }
 }

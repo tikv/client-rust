@@ -22,6 +22,8 @@ pub trait Request: Any + Sync + Send + 'static {
     ) -> Result<Box<dyn Any>>;
     fn label(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
+    /// Borrow the context, creating it if absent. Wrappers delegate to their request.
+    fn context_mut(&mut self) -> &mut kvrpcpb::Context;
     fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()>;
     fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion);
 }
@@ -51,6 +53,10 @@ macro_rules! impl_request {
 
             fn as_any(&self) -> &dyn Any {
                 self
+            }
+
+            fn context_mut(&mut self) -> &mut kvrpcpb::Context {
+                self.context.get_or_insert_with(Default::default)
             }
 
             fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()> {

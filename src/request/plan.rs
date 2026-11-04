@@ -1,6 +1,7 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use async_recursion::async_recursion;
@@ -16,6 +17,7 @@ use tokio::time::sleep;
 use tonic::Code;
 
 use crate::backoff::Backoff;
+use crate::common::ErrorPriority;
 use crate::pd::PdClient;
 use crate::proto::errorpb;
 use crate::proto::errorpb::EpochNotMatch;
@@ -91,6 +93,164 @@ impl<Req: KvRequest + StoreRequest> StoreRequest for Dispatch<Req> {
 
 const MULTI_REGION_CONCURRENCY: usize = 16;
 const MULTI_STORES_CONCURRENCY: usize = 16;
+
+/// Declares origin and selects a compatible version per destination.
+/// Wraps [`Dispatch`] inside lock and routing retries. Missing store ranges mean
+/// `[0, 0]`; a potentially stale maximum permits one metadata reload.
+///
+/// A valid upper-bound rejection permits one immediate resend to the same store
+/// using its returned range, without updating the cache. Routing retries and
+/// re-sharding preserve spent allowances; advancing to a new scan page renews it.
+/// Undetermined outcomes take precedence; other compatibility rejections are terminal.
+pub struct TxnProtocolCompatibility<Req: KvRequest, PdC: PdClient> {
+    pub(super) inner: Dispatch<Req>,
+    pub(super) pd_client: Arc<PdC>,
+    pub(super) policy: crate::TxnRequestPolicy,
+    pub(super) store: Option<metapb::Store>,
+    pub(super) resend_used: Arc<AtomicBool>,
+}
+
+impl<Req: KvRequest, PdC: PdClient> Clone for TxnProtocolCompatibility<Req, PdC> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            pd_client: self.pd_client.clone(),
+            policy: self.policy,
+            store: self.store.clone(),
+            // Execution clones (e.g. cleanup pagination) share their shard's allowance.
+            resend_used: self.resend_used.clone(),
+        }
+    }
+}
+
+impl<Req: KvRequest, PdC: PdClient> TxnProtocolCompatibility<Req, PdC> {
+    pub(super) fn apply_region_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.inner.request.set_leader(&store.region_with_leader)?;
+        self.inner.kv_client = Some(store.client.clone());
+        self.store = Some(store.meta.clone());
+        Ok(())
+    }
+
+    fn required_version(&self) -> u32 {
+        let request = self.inner.request.as_any();
+        let shared = request
+            .downcast_ref::<kvrpcpb::PrewriteRequest>()
+            .is_some_and(|r| {
+                r.mutations
+                    .iter()
+                    .any(|m| m.op == kvrpcpb::Op::SharedLock as i32)
+            })
+            || request
+                .downcast_ref::<kvrpcpb::PessimisticLockRequest>()
+                .is_some_and(|r| {
+                    r.mutations
+                        .iter()
+                        .any(|m| m.op == kvrpcpb::Op::SharedPessimisticLock as i32)
+                });
+        if shared {
+            kvrpcpb::TxnProtocolVersion::TxnVerSupportSharedLock as u32
+        } else {
+            kvrpcpb::TxnProtocolVersion::TxnVerLegacy as u32
+        }
+    }
+
+    fn select_version(&self, range: &metapb::TxnProtocolVersionRange) -> Option<u32> {
+        let selected = (self.policy.protocol_version as u32).min(range.max);
+        (range.min <= range.max && selected >= range.min && selected >= self.required_version())
+            .then_some(selected)
+    }
+}
+
+#[async_trait]
+impl<Req: KvRequest, PdC: PdClient> Plan for TxnProtocolCompatibility<Req, PdC> {
+    type Result = Req::Response;
+
+    async fn execute(&self) -> Result<Self::Result> {
+        let mut store = self.store.clone().ok_or_else(|| {
+            Error::StringError("transaction protocol plan has no destination store".to_owned())
+        })?;
+        let mut range = store.txn_protocol_version_range.clone().unwrap_or_default();
+        let mut selected = self.select_version(&range);
+        if selected.is_none()
+            && range.min <= range.max
+            && self.required_version() > range.max
+            && self.required_version() <= self.policy.protocol_version as u32
+        {
+            // Refresh once when only a stale maximum could block this payload.
+            // A failed refresh keeps the cached range and local rejection semantics.
+            match self.pd_client.reload_store(store.id).await {
+                Ok(fresh) => {
+                    store = fresh;
+                    range = store.txn_protocol_version_range.clone().unwrap_or_default();
+                    selected = self.select_version(&range);
+                }
+                Err(error) => debug!("store protocol refresh failed: {:?}", error),
+            }
+        }
+        let mut version = selected.ok_or_else(|| {
+            crate::stats::txn_protocol_rejection("local");
+            Error::IncompatibleRequest(Box::new(errorpb::IncompatibleRequest {
+                reason: errorpb::IncompatibleRequestReason::Unknown as i32,
+                message: format!(
+                    "store {} range [{}, {}], configured version {}, payload requires {}",
+                    store.id,
+                    range.min,
+                    range.max,
+                    self.policy.protocol_version as u32,
+                    self.required_version(),
+                ),
+                provided_txn_protocol_version: (self.policy.protocol_version as u32).min(range.max),
+                min_compatible_txn_protocol_version: range.min,
+                max_compatible_txn_protocol_version: range.max,
+            }))
+        })?;
+        let mut dispatch = self.inner.clone();
+        loop {
+            let context = dispatch.request.context_mut();
+            context.request_origin = self.policy.origin as i32;
+            context.txn_protocol_version = version;
+            let mut response = dispatch.execute().await?;
+            let Some(error) = response.region_error_ref() else {
+                return Ok(response);
+            };
+            let undetermined = error.undetermined_result.is_some();
+            if !undetermined && error.incompatible_request.is_none() {
+                return Ok(response);
+            }
+            let error = response
+                .region_error()
+                .expect("region error was just inspected");
+            // An unknown apply outcome stops this send before compatibility,
+            // lock-resolution, or region retry handling. Preserve the complete
+            // envelope so the transaction layer can classify commit uncertainty.
+            if undetermined {
+                return Err(Error::RegionError(Box::new(error)));
+            }
+            let rejection = error
+                .incompatible_request
+                .expect("incompatible request was just inspected");
+            crate::stats::txn_protocol_rejection("server");
+            let returned_range = metapb::TxnProtocolVersionRange {
+                min: rejection.min_compatible_txn_protocol_version,
+                max: rejection.max_compatible_txn_protocol_version,
+            };
+            let replacement = self.select_version(&returned_range);
+            if rejection.reason
+                != errorpb::IncompatibleRequestReason::TxnProtocolVersionOutOfRange as i32
+                || returned_range.min > returned_range.max
+                || rejection.provided_txn_protocol_version != version
+                || version <= returned_range.max
+                || replacement.is_none()
+                || self.resend_used.swap(true, Ordering::Relaxed)
+            {
+                return Err(Error::IncompatibleRequest(Box::new(rejection)));
+            }
+            // Only this resend uses the returned range; never publish it to the cache.
+            crate::stats::txn_protocol_resend();
+            version = replacement.unwrap();
+        }
+    }
+}
 
 pub(crate) fn is_grpc_error(e: &Error) -> bool {
     matches!(e, Error::GrpcAPI(_) | Error::Grpc(_))
@@ -217,19 +377,17 @@ where
     fn is_fallback_not_leader(&self) -> bool {
         self.used_fallback
             && self.key_errors.is_none()
-            && self
-                .region_error
-                .as_ref()
-                .is_some_and(|error| error.not_leader.is_some())
+            && self.region_error.as_ref().is_some_and(|error| {
+                error.not_leader.is_some() && error.undetermined_result.is_none()
+            })
     }
 
     fn is_fallback_server_busy(&self) -> bool {
         self.used_fallback
             && self.key_errors.is_none()
-            && self
-                .region_error
-                .as_ref()
-                .is_some_and(|error| error.server_is_busy.is_some())
+            && self.region_error.as_ref().is_some_and(|error| {
+                error.server_is_busy.is_some() && error.undetermined_result.is_none()
+            })
     }
 
     fn accepted_fallback_leader(&self) -> Option<metapb::Peer> {
@@ -422,27 +580,25 @@ where
                 })
                 .collect())
         } else {
-            // A terminal undetermined outcome must never be masked by another shard's
-            // determinate error. `collect::<Result<_>>()` would return the first error
-            // by shard index, so if a lower-index shard failed with (say) a gRPC error
-            // while a higher-index shard reported `UndeterminedResult`, the caller would
-            // be told the request definitely failed — and might replay a transaction
-            // that may already be durable. So an undetermined error
-            // from ANY shard wins over a determinate one.
+            // Unknown apply outcomes and compatibility rejections must survive
+            // ordinary failures from other shards. Equal priorities retain the
+            // first error by shard index.
             let mut oks = Vec::with_capacity(results.len());
-            let mut first_err: Option<Error> = None;
-            let mut undetermined: Option<Error> = None;
+            let mut selected_error: Option<Error> = None;
             for r in results {
                 match r {
                     Ok(v) => oks.push(v),
-                    Err(e) if undetermined.is_none() && is_undetermined_region_error(&e) => {
-                        undetermined = Some(e)
+                    Err(e)
+                        if selected_error
+                            .as_ref()
+                            .is_none_or(|selected| e.priority() < selected.priority()) =>
+                    {
+                        selected_error = Some(e)
                     }
-                    Err(e) if first_err.is_none() => first_err = Some(e),
                     Err(_) => {}
                 }
             }
-            if let Some(e) = undetermined.or(first_err) {
+            if let Some(e) = selected_error {
                 return Err(e);
             }
             Ok(oks.into_iter().flatten().collect())
@@ -811,7 +967,11 @@ where
             return Ok(vec![Ok(response)]);
         };
 
-        if let Some(server_is_busy) = error.server_is_busy.as_ref() {
+        if let Some(server_is_busy) = error
+            .server_is_busy
+            .as_ref()
+            .filter(|_| error.undetermined_result.is_none())
+        {
             if !used_fallback && server_is_busy.estimated_wait_ms == 0 {
                 let mut candidate_state = candidate_state;
                 if let Some(peer) = region_store.region_with_leader.leader.as_ref() {
@@ -925,6 +1085,17 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
     let ver_id = region_store.region_with_leader.ver_id();
     let store_id = region_store.region_with_leader.get_store_id();
     debug!("handling region error: {:?}, region: {:?}", e, ver_id);
+    if e.undetermined_result.is_some() {
+        // The apply outcome is UNKNOWN (a raft timeout, errorpb.UndeterminedResult).
+        // Default: retry — matching client-go's ACTION layers (ordinary prewrites and
+        // secondary commits back off and re-send; re-applying an idempotent request
+        // resolves the uncertainty). Routing is not suspect, so nothing is
+        // invalidated. On backoff exhaustion the error escapes UNCHANGED, and commit
+        // paths classify it via `is_undetermined_region_error`. Plans for which a
+        // replay is unsafe never reach this arm — see `terminal_on_undetermined`.
+        // This outcome takes precedence over other fields in the envelope.
+        return Ok(false);
+    }
     if let Some(not_leader) = e.not_leader {
         if let Some(leader) = not_leader.leader {
             match pd_client
@@ -955,15 +1126,6 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
         on_region_epoch_not_match(pd_client.clone(), region_store, e.epoch_not_match.unwrap()).await
     } else if e.stale_command.is_some() || e.region_not_found.is_some() {
         pd_client.invalidate_region_cache(ver_id).await;
-        Ok(false)
-    } else if e.undetermined_result.is_some() {
-        // The apply outcome is UNKNOWN (a raft timeout, errorpb.UndeterminedResult).
-        // Default: retry — matching client-go's ACTION layers (ordinary prewrites and
-        // secondary commits back off and re-send; re-applying an idempotent request
-        // resolves the uncertainty). Routing is not suspect, so nothing is
-        // invalidated. On backoff exhaustion the error escapes UNCHANGED, and commit
-        // paths classify it via `is_undetermined_region_error`. Plans for which a
-        // replay is unsafe never reach this arm — see `terminal_on_undetermined`.
         Ok(false)
     } else if e.server_is_busy.is_some() {
         // ServerIsBusy is a definitive rejection, so retrying is safe. The
@@ -1249,6 +1411,7 @@ pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
     pub keyspace: Keyspace,
+    pub request_policy: crate::TxnRequestPolicy,
 }
 
 impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
@@ -1259,6 +1422,7 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
             keyspace: self.keyspace,
+            request_policy: self.request_policy,
         }
     }
 }
@@ -1289,6 +1453,7 @@ where
                 self.timestamp.clone(),
                 pd_client.clone(),
                 self.keyspace,
+                self.request_policy,
             )
             .await?;
             if live_locks.is_empty() {
@@ -1323,6 +1488,10 @@ impl Clone for CleanupLocksResult {
 }
 
 impl HasRegionError for CleanupLocksResult {
+    fn region_error_ref(&self) -> Option<&errorpb::Error> {
+        self.region_error.as_ref()
+    }
+
     fn region_error(&mut self) -> Option<errorpb::Error> {
         self.region_error.take()
     }
@@ -1356,6 +1525,7 @@ pub struct CleanupLocks<P: Plan, PdC: PdClient> {
     pub store: Option<RegionStore>,
     pub pd_client: Arc<PdC>,
     pub keyspace: Keyspace,
+    pub request_policy: crate::TxnRequestPolicy,
     pub backoff: Backoff,
 }
 
@@ -1368,6 +1538,7 @@ impl<P: Plan, PdC: PdClient> Clone for CleanupLocks<P, PdC> {
             store: None,
             pd_client: self.pd_client.clone(),
             keyspace: self.keyspace,
+            request_policy: self.request_policy,
             backoff: self.backoff.clone(),
         }
     }
@@ -1383,7 +1554,8 @@ where
     async fn execute(&self) -> Result<Self::Result> {
         let mut result = CleanupLocksResult::default();
         let mut inner = self.inner.clone();
-        let mut lock_resolver = crate::transaction::LockResolver::new(self.ctx.clone());
+        let mut lock_resolver =
+            crate::transaction::LockResolver::new(self.ctx.clone(), self.request_policy);
         let region = &self.store.as_ref().unwrap().region_with_leader;
         let mut has_more_batch = true;
 
@@ -1504,12 +1676,35 @@ where
 
     async fn execute(&self) -> Result<Self::Result> {
         let mut result = self.inner.execute().await?;
+        let mut key_errors = result.key_errors();
+        let mut region_errors = result
+            .region_errors()
+            .map(|errors| errors.into_iter().map(Error::from).collect::<Vec<_>>());
+        // Preserved shard failures arrive through key_errors(), while bare
+        // responses can carry region errors. Inspect both sources before applying
+        // the ordinary wrapping rules, so neither can mask a protocol outcome.
+        let selected = region_errors
+            .iter()
+            .flatten()
+            .chain(key_errors.iter().flatten())
+            .enumerate()
+            .filter(|(_, error)| error.priority() != ErrorPriority::Ordinary)
+            .min_by_key(|(_, error)| error.priority())
+            .map(|(index, _)| index);
+        if let Some(index) = selected {
+            let region_count = region_errors.as_ref().map_or(0, Vec::len);
+            return Err(if index < region_count {
+                region_errors.as_mut().unwrap().remove(index)
+            } else {
+                key_errors.as_mut().unwrap().remove(index - region_count)
+            });
+        }
         // Each branch names what it found. Previously both produced one
         // `ExtractedErrors`, so a caller had to pop an element and inspect its type to
         // learn which kind it was holding — and whether a caller saw that variant at
         // all depended on whether a collapsing merge sat between the retry layer and
         // this plan (see `MultipleKeyErrors`' docs).
-        if let Some(errors) = result.key_errors() {
+        if let Some(errors) = key_errors {
             // `HasKeyErrors for Result<T, Error>` yields *any* per-shard `Err`, not only
             // errors the response carried — that is how a plan keeping its
             // `Vec<Result<_>>` (see `retry_multi_region_preserve_results`) carries a hard
@@ -1530,13 +1725,8 @@ where
                     .find(|e| !is_response_error(e))
                     .expect("a non-response error exists: the all() test above failed"))
             }
-        } else if let Some(errors) = result.region_errors() {
-            Err(Error::MultipleRegionErrors(
-                errors
-                    .into_iter()
-                    .map(|e| Error::RegionError(Box::new(e)))
-                    .collect(),
-            ))
+        } else if let Some(errors) = region_errors {
+            Err(Error::MultipleRegionErrors(errors))
         } else {
             Ok(result)
         }
@@ -1597,6 +1787,10 @@ impl<Resp: HasLocks, Shard> HasLocks for ResponseWithShard<Resp, Shard> {
 }
 
 impl<Resp: HasRegionError, Shard> HasRegionError for ResponseWithShard<Resp, Shard> {
+    fn region_error_ref(&self) -> Option<&errorpb::Error> {
+        self.0.region_error_ref()
+    }
+
     fn region_error(&mut self) -> Option<errorpb::Error> {
         self.0.region_error()
     }
@@ -1738,6 +1932,7 @@ mod test {
                 backoff: Backoff::no_backoff(),
                 pd_client: Arc::new(MockPdClient::default()),
                 keyspace: Keyspace::Disable,
+                request_policy: crate::TxnRequestPolicy::default(),
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),
@@ -2265,5 +2460,787 @@ mod test {
             }
             other => panic!("want MultipleRegionErrors, got {other:?}"),
         }
+    }
+
+    fn protocol_store(client: crate::mock::MockKvClient, range: Option<(u32, u32)>) -> RegionStore {
+        let mut store = RegionStore::new(MockPdClient::region1(), Arc::new(client));
+        store.meta = metapb::Store {
+            id: store.region_with_leader.get_store_id().unwrap(),
+            txn_protocol_version_range: range
+                .map(|(min, max)| metapb::TxnProtocolVersionRange { min, max }),
+            ..Default::default()
+        };
+        store
+    }
+
+    fn admission_rejection() -> errorpb::IncompatibleRequest {
+        errorpb::IncompatibleRequest {
+            reason: errorpb::IncompatibleRequestReason::TxnProtocolVersionOutOfRange as i32,
+            message: "admission rejection".into(),
+            provided_txn_protocol_version: 1,
+            min_compatible_txn_protocol_version: 0,
+            max_compatible_txn_protocol_version: 0,
+        }
+    }
+
+    #[rstest::rstest]
+    #[case(None, 1, Some(0))]
+    #[case(Some((0, 0)), 1, Some(0))]
+    #[case(Some((0, 2)), 1, Some(1))]
+    #[case(Some((1, 1)), 1, Some(1))]
+    #[case(Some((0, 1)), 0, Some(0))]
+    #[case(Some((1, 1)), 0, None)]
+    #[case(Some((2, 3)), 1, None)]
+    #[case(Some((2, 1)), 1, None)]
+    #[tokio::test]
+    async fn protocol_selection_declares_origin_and_version_before_dispatch(
+        #[case] range: Option<(u32, u32)>,
+        #[case] configured: i32,
+        #[case] expected: Option<u32>,
+    ) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let client = crate::mock::MockKvClient::with_dispatch_hook(move |request| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            let context = request
+                .downcast_ref::<kvrpcpb::GetRequest>()
+                .unwrap()
+                .context
+                .as_ref()
+                .unwrap();
+            assert_eq!(Some(context.txn_protocol_version), expected);
+            assert_eq!(context.request_origin, crate::RequestOrigin::TiFlash as i32);
+            Ok(Box::new(kvrpcpb::GetResponse {
+                value: b"value".to_vec(),
+                ..Default::default()
+            }))
+        });
+        let policy = crate::TxnRequestPolicy {
+            origin: crate::RequestOrigin::TiFlash,
+            protocol_version: crate::TxnProtocolVersion::try_from(configured).unwrap(),
+        };
+        let plan = crate::request::PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .txn_protocol_compatibility(policy)
+        .single_region_with_store(protocol_store(client, range))
+        .await
+        .unwrap()
+        .plan();
+        let result = plan.execute().await;
+        if expected.is_some() {
+            assert_eq!(result.unwrap().value, b"value");
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        } else {
+            let Err(Error::IncompatibleRequest(error)) = result else {
+                panic!("expected a local rejection")
+            };
+            assert_eq!(
+                error.reason,
+                errorpb::IncompatibleRequestReason::Unknown as i32
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[rstest::rstest]
+    #[case("upper", true)]
+    #[case("unknown_reason", false)]
+    #[case("invalid_range", false)]
+    #[case("wrong_echo", false)]
+    #[case("lower_bound", false)]
+    #[case("in_range", false)]
+    #[tokio::test]
+    async fn protocol_rejection_resends_only_valid_upper_overflow(
+        #[case] scenario: &str,
+        #[case] resend: bool,
+    ) {
+        let mut rejection = admission_rejection();
+        match scenario {
+            "unknown_reason" => rejection.reason = 42,
+            "invalid_range" => rejection.min_compatible_txn_protocol_version = 2,
+            "wrong_echo" => rejection.provided_txn_protocol_version = 0,
+            "lower_bound" => {
+                rejection.min_compatible_txn_protocol_version = 2;
+                rejection.max_compatible_txn_protocol_version = 2;
+            }
+            "in_range" => rejection.max_compatible_txn_protocol_version = 1,
+            "upper" => {}
+            _ => unreachable!(),
+        }
+        let original = rejection.clone();
+        let versions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = versions.clone();
+        let client = crate::mock::MockKvClient::with_dispatch_hook(move |request| {
+            let version = request
+                .downcast_ref::<kvrpcpb::GetRequest>()
+                .unwrap()
+                .context
+                .as_ref()
+                .unwrap()
+                .txn_protocol_version;
+            let mut sent = observed.lock().unwrap();
+            sent.push(version);
+            Ok(Box::new(kvrpcpb::GetResponse {
+                region_error: (sent.len() == 1).then(|| errorpb::Error {
+                    incompatible_request: Some(rejection.clone()),
+                    not_leader: Some(Default::default()),
+                    server_is_busy: Some(Default::default()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+        });
+        let routed = client.clone();
+        let pd = Arc::new(
+            MockPdClient::new(client)
+                .with_map_region_to_store_hook(move |region| {
+                    let mut store = protocol_store(routed.clone(), Some((0, 1)));
+                    store.region_with_leader = region;
+                    Ok(store)
+                })
+                .with_invalidate_region_hook(|_| {
+                    panic!("compatibility rejection invalidated routing")
+                }),
+        );
+        let plan = crate::request::PlanBuilder::new(
+            pd,
+            Keyspace::Disable,
+            kvrpcpb::GetRequest {
+                key: vec![1],
+                ..Default::default()
+            },
+        )
+        .txn_protocol_compatibility(crate::TxnRequestPolicy::default())
+        .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
+        .plan();
+        let result = plan.execute().await;
+        if resend {
+            assert!(result.is_ok());
+            assert_eq!(*versions.lock().unwrap(), vec![1, 0]);
+        } else {
+            let Err(Error::IncompatibleRequest(error)) = result else {
+                panic!("expected terminal server rejection")
+            };
+            assert_eq!(*error, original);
+            assert_eq!(*versions.lock().unwrap(), vec![1]);
+        }
+    }
+
+    #[tokio::test]
+    async fn protocol_undetermined_envelope_stops_before_other_errors_or_retries() {
+        let original = errorpb::Error {
+            message: "unknown apply outcome".into(),
+            undetermined_result: Some(Default::default()),
+            incompatible_request: Some(admission_rejection()),
+            not_leader: Some(Default::default()),
+            server_is_busy: Some(Default::default()),
+            ..Default::default()
+        };
+        let envelope = original.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let client = crate::mock::MockKvClient::with_dispatch_hook(move |_| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(kvrpcpb::GetResponse {
+                region_error: Some(envelope.clone()),
+                error: Some(kvrpcpb::KeyError {
+                    abort: "must not mask unknown outcome".into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+        });
+        let routed = client.clone();
+        let pd = Arc::new(
+            MockPdClient::new(client)
+                .with_map_region_to_store_hook(move |region| {
+                    let mut store = protocol_store(routed.clone(), Some((0, 1)));
+                    store.region_with_leader = region;
+                    Ok(store)
+                })
+                .with_invalidate_region_hook(|_| panic!("unknown outcome invalidated routing")),
+        );
+        let plan = crate::request::PlanBuilder::new(
+            pd,
+            Keyspace::Disable,
+            kvrpcpb::GetRequest {
+                key: vec![1],
+                ..Default::default()
+            },
+        )
+        .txn_protocol_compatibility(crate::TxnRequestPolicy::default())
+        .resolve_lock(
+            Timestamp::default(),
+            Backoff::no_jitter_backoff(1, 1, 3),
+            Keyspace::Disable,
+        )
+        .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
+        .plan();
+        let Err(Error::RegionError(error)) = plan.execute().await else {
+            panic!("expected original unknown outcome")
+        };
+        assert_eq!(*error, original);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn protocol_allowances_are_independent_for_siblings_and_fresh_sends() {
+        let versions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = versions.clone();
+        let client = crate::mock::MockKvClient::with_dispatch_hook(move |request| {
+            let request = request.downcast_ref::<kvrpcpb::BatchGetRequest>().unwrap();
+            let version = request.context.as_ref().unwrap().txn_protocol_version;
+            observed
+                .lock()
+                .unwrap()
+                .push((request.keys.clone(), version));
+            Ok(Box::new(kvrpcpb::BatchGetResponse {
+                region_error: (version == 1).then(|| errorpb::Error {
+                    incompatible_request: Some(admission_rejection()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+        });
+        let routed = client.clone();
+        let pd = Arc::new(
+            MockPdClient::new(client).with_map_region_to_store_hook(move |region| {
+                let mut store = protocol_store(routed.clone(), Some((0, 1)));
+                store.region_with_leader = region;
+                Ok(store)
+            }),
+        );
+        let plan = crate::request::PlanBuilder::new(
+            pd,
+            Keyspace::Disable,
+            kvrpcpb::BatchGetRequest {
+                keys: vec![vec![1], vec![11]],
+                ..Default::default()
+            },
+        )
+        .txn_protocol_compatibility(crate::TxnRequestPolicy::default())
+        .retry_multi_region(Backoff::no_backoff())
+        .plan();
+        for _ in 0..2 {
+            assert!(plan.execute().await.unwrap().iter().all(Result::is_ok));
+        }
+        let mut sent = versions.lock().unwrap().clone();
+        sent.sort();
+        assert_eq!(
+            sent,
+            vec![
+                (vec![vec![1]], 0),
+                (vec![vec![1]], 0),
+                (vec![vec![1]], 1),
+                (vec![vec![1]], 1),
+                (vec![vec![11]], 0),
+                (vec![vec![11]], 0),
+                (vec![vec![11]], 1),
+                (vec![vec![11]], 1),
+            ]
+        );
+    }
+
+    #[rstest::rstest]
+    #[case(1, false)]
+    #[case(2, false)]
+    #[case(2, true)]
+    #[tokio::test]
+    async fn protocol_payload_requirement_controls_reload_and_dispatch(
+        #[case] configured: i32,
+        #[case] reload_succeeds: bool,
+    ) {
+        let reloads = Arc::new(AtomicUsize::new(0));
+        let observed = reloads.clone();
+        let pd = Arc::new(MockPdClient::default().with_reload_store_hook(move |id| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            if !reload_succeeds {
+                return Err(Error::Unimplemented);
+            }
+            Ok(metapb::Store {
+                id,
+                txn_protocol_version_range: Some(metapb::TxnProtocolVersionRange {
+                    min: 0,
+                    max: 2,
+                }),
+                ..Default::default()
+            })
+        }));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let sent = calls.clone();
+        let client = crate::mock::MockKvClient::with_dispatch_hook(move |request| {
+            sent.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(
+                request
+                    .downcast_ref::<kvrpcpb::PrewriteRequest>()
+                    .unwrap()
+                    .context
+                    .as_ref()
+                    .unwrap()
+                    .txn_protocol_version,
+                2
+            );
+            Ok(Box::new(kvrpcpb::PrewriteResponse::default()))
+        });
+        // Direct policies let the test exercise future shared-lock payload negotiation.
+        let policy = crate::TxnRequestPolicy {
+            protocol_version: crate::TxnProtocolVersion::try_from(configured).unwrap(),
+            ..Default::default()
+        };
+        let plan = crate::request::PlanBuilder::new(
+            pd,
+            Keyspace::Disable,
+            kvrpcpb::PrewriteRequest {
+                mutations: vec![kvrpcpb::Mutation {
+                    op: kvrpcpb::Op::SharedLock as i32,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+        .txn_protocol_compatibility(policy)
+        .single_region_with_store(protocol_store(client, Some((0, 1))))
+        .await
+        .unwrap()
+        .plan();
+        let result = plan.execute().await;
+        assert_eq!(reloads.load(Ordering::SeqCst), usize::from(configured == 2));
+        let should_send = configured == 2 && reload_succeeds;
+        assert_eq!(calls.load(Ordering::SeqCst), usize::from(should_send));
+        if should_send {
+            assert!(result.is_ok());
+        } else {
+            let Err(Error::IncompatibleRequest(error)) = result else {
+                panic!("expected local rejection")
+            };
+            assert_eq!(
+                error.reason,
+                errorpb::IncompatibleRequestReason::Unknown as i32
+            );
+            assert_eq!(error.max_compatible_txn_protocol_version, 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn protocol_allowance_survives_region_retry_and_resharding() {
+        let versions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = versions.clone();
+        let invalidations = Arc::new(AtomicUsize::new(0));
+        let invalidated = invalidations.clone();
+        let client = crate::mock::MockKvClient::with_dispatch_hook(move |request| {
+            let version = request
+                .downcast_ref::<kvrpcpb::GetRequest>()
+                .unwrap()
+                .context
+                .as_ref()
+                .unwrap()
+                .txn_protocol_version;
+            let mut sent = observed.lock().unwrap();
+            sent.push(version);
+            let error = if sent.len() == 2 {
+                errorpb::Error {
+                    region_not_found: Some(Default::default()),
+                    ..Default::default()
+                }
+            } else {
+                errorpb::Error {
+                    incompatible_request: Some(admission_rejection()),
+                    ..Default::default()
+                }
+            };
+            Ok(Box::new(kvrpcpb::GetResponse {
+                region_error: Some(error),
+                ..Default::default()
+            }))
+        });
+        let routed = client.clone();
+        let pd = Arc::new(
+            MockPdClient::new(client)
+                .with_map_region_to_store_hook(move |region| {
+                    let mut store = protocol_store(routed.clone(), Some((0, 1)));
+                    store.region_with_leader = region;
+                    Ok(store)
+                })
+                .with_invalidate_region_hook(move |_| {
+                    invalidated.fetch_add(1, Ordering::SeqCst);
+                }),
+        );
+        let plan = crate::request::PlanBuilder::new(
+            pd,
+            Keyspace::Disable,
+            kvrpcpb::GetRequest {
+                key: vec![1],
+                ..Default::default()
+            },
+        )
+        .txn_protocol_compatibility(crate::TxnRequestPolicy::default())
+        .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
+        .plan();
+        let Err(Error::IncompatibleRequest(error)) = plan.execute().await else {
+            panic!("expected exhausted compatibility allowance")
+        };
+        assert_eq!(*error, admission_rejection());
+        assert_eq!(*versions.lock().unwrap(), vec![1, 0, 1]);
+        assert_eq!(invalidations.load(Ordering::SeqCst), 1);
+    }
+
+    #[rstest::rstest]
+    #[case(false, false)]
+    #[case(true, false)]
+    #[case(false, true)]
+    #[case(true, true)]
+    #[tokio::test]
+    async fn protocol_error_extraction_preserves_priority_across_sources(
+        #[case] reverse: bool,
+        #[case] undetermined: bool,
+    ) {
+        #[derive(Clone)]
+        struct Errors {
+            reverse: bool,
+            undetermined: bool,
+        }
+        #[async_trait]
+        impl Plan for Errors {
+            type Result = Vec<Result<kvrpcpb::GetResponse>>;
+            async fn execute(&self) -> Result<Self::Result> {
+                let mut errors = vec![
+                    Err(Error::Unimplemented),
+                    Ok(kvrpcpb::GetResponse {
+                        region_error: Some(errorpb::Error {
+                            incompatible_request: Some(admission_rejection()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                ];
+                if self.undetermined {
+                    errors.push(Err(Error::RegionError(Box::new(errorpb::Error {
+                        message: "original unknown outcome".into(),
+                        undetermined_result: Some(Default::default()),
+                        ..Default::default()
+                    }))));
+                }
+                if self.reverse {
+                    errors.reverse();
+                }
+                Ok(errors)
+            }
+        }
+        let error = ExtractError {
+            inner: Errors {
+                reverse,
+                undetermined,
+            },
+        }
+        .execute()
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.priority(),
+            if undetermined {
+                ErrorPriority::Undetermined
+            } else {
+                ErrorPriority::Incompatible
+            }
+        );
+        let Error::RegionError(error) = error else {
+            panic!("original region envelope must be preserved")
+        };
+        if undetermined {
+            assert_eq!(error.message, "original unknown outcome");
+        } else {
+            assert_eq!(error.incompatible_request, Some(admission_rejection()));
+        }
+    }
+
+    #[rstest::rstest]
+    #[case(ErrorPriority::Ordinary, ErrorPriority::Incompatible)]
+    #[case(ErrorPriority::Incompatible, ErrorPriority::Ordinary)]
+    #[case(ErrorPriority::Incompatible, ErrorPriority::Undetermined)]
+    #[case(ErrorPriority::Undetermined, ErrorPriority::Incompatible)]
+    #[case(ErrorPriority::Ordinary, ErrorPriority::Ordinary)]
+    #[tokio::test]
+    async fn protocol_shard_aggregation_preserves_highest_priority(
+        #[case] first: ErrorPriority,
+        #[case] second: ErrorPriority,
+    ) {
+        #[derive(Clone)]
+        struct ShardErrors {
+            index: usize,
+            priorities: [ErrorPriority; 2],
+        }
+        #[async_trait]
+        impl Plan for ShardErrors {
+            type Result = kvrpcpb::GetResponse;
+            async fn execute(&self) -> Result<Self::Result> {
+                Err(match self.priorities[self.index] {
+                    ErrorPriority::Ordinary => Error::StringError(format!("shard {}", self.index)),
+                    ErrorPriority::Incompatible => {
+                        Error::IncompatibleRequest(Box::new(admission_rejection()))
+                    }
+                    ErrorPriority::Undetermined => Error::RegionError(Box::new(errorpb::Error {
+                        undetermined_result: Some(Default::default()),
+                        ..Default::default()
+                    })),
+                })
+            }
+        }
+        impl Shardable for ShardErrors {
+            type Shard = usize;
+            fn shards(
+                &self,
+                _: &Arc<impl PdClient>,
+            ) -> BoxStream<'static, Result<(usize, RegionWithLeader)>> {
+                Box::pin(stream::iter(vec![
+                    Ok((0, MockPdClient::region1())),
+                    Ok((1, MockPdClient::region2())),
+                ]))
+            }
+            fn apply_shard(&mut self, index: usize) {
+                self.index = index;
+            }
+            fn apply_store(&mut self, _: &RegionStore) -> Result<()> {
+                Ok(())
+            }
+        }
+        let plan = RetryableMultiRegion {
+            inner: ShardErrors {
+                index: 0,
+                priorities: [first, second],
+            },
+            pd_client: Arc::new(MockPdClient::default()),
+            backoff: Backoff::no_backoff(),
+            preserve_region_results: false,
+            terminal_on_undetermined: false,
+            terminal_on_dispatch_error: false,
+        };
+        let error = plan.execute().await.unwrap_err();
+        assert_eq!(error.priority(), first.min(second));
+        if first == ErrorPriority::Ordinary && second == ErrorPriority::Ordinary {
+            assert!(matches!(error, Error::StringError(message) if message == "shard 0"));
+        }
+    }
+
+    #[tokio::test]
+    async fn protocol_version_is_reselected_for_a_fallback_store() {
+        let sent = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = sent.clone();
+        let client = crate::mock::MockKvClient::with_dispatch_hook(move |request| {
+            let context = request
+                .downcast_ref::<kvrpcpb::GetRequest>()
+                .unwrap()
+                .context
+                .as_ref()
+                .unwrap();
+            let store = context.peer.as_ref().unwrap().store_id;
+            observed
+                .lock()
+                .unwrap()
+                .push((store, context.txn_protocol_version));
+            if store == 41 {
+                return Err(Error::GrpcAPI(tonic::Status::unavailable(
+                    "leader unavailable",
+                )));
+            }
+            Ok(Box::new(kvrpcpb::GetResponse::default()))
+        });
+        let mut region = MockPdClient::region1();
+        region.region.peers = vec![
+            region.leader.clone().unwrap(),
+            metapb::Peer {
+                id: 2,
+                store_id: 44,
+                ..Default::default()
+            },
+        ];
+        let located = region.clone();
+        let routed = client.clone();
+        let pd = Arc::new(
+            MockPdClient::new(client)
+                .with_region_for_key_hook(move |_| Ok(located.clone()))
+                .with_map_region_to_store_hook(move |region| {
+                    let id = region.get_store_id().unwrap();
+                    let mut store = protocol_store(routed.clone(), Some((0, u32::from(id == 41))));
+                    store.meta.id = id;
+                    store.region_with_leader = region;
+                    Ok(store)
+                })
+                .with_update_leader_hook(|_, leader| {
+                    assert_eq!(leader.store_id, 44);
+                    Ok(())
+                }),
+        );
+        let plan = crate::request::PlanBuilder::new(
+            pd,
+            Keyspace::Disable,
+            kvrpcpb::GetRequest {
+                key: vec![1],
+                ..Default::default()
+            },
+        )
+        .txn_protocol_compatibility(crate::TxnRequestPolicy::default())
+        .retry_multi_region(Backoff::no_backoff())
+        .plan();
+        assert!(plan.execute().await.is_ok());
+        assert_eq!(*sent.lock().unwrap(), vec![(41, 1), (44, 0)]);
+    }
+
+    #[tokio::test]
+    async fn protocol_shared_pessimistic_payload_cannot_be_declared_legacy() {
+        let client = crate::mock::MockKvClient::with_dispatch_hook(|_| {
+            panic!("unsupported payload reached dispatch")
+        });
+        let plan = crate::request::PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::PessimisticLockRequest {
+                mutations: vec![kvrpcpb::Mutation {
+                    op: kvrpcpb::Op::SharedPessimisticLock as i32,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+        .txn_protocol_compatibility(crate::TxnRequestPolicy::default())
+        .single_region_with_store(protocol_store(client, Some((0, 2))))
+        .await
+        .unwrap()
+        .plan();
+        let Err(Error::IncompatibleRequest(error)) = plan.execute().await else {
+            panic!("expected payload rejection")
+        };
+        assert_eq!(error.provided_txn_protocol_version, 1);
+        assert_eq!(error.max_compatible_txn_protocol_version, 2);
+    }
+
+    #[test]
+    fn protocol_error_borrow_preserves_response_and_wrapper_state() {
+        let original = errorpb::Error {
+            message: "ordinary region error".into(),
+            not_leader: Some(Default::default()),
+            ..Default::default()
+        };
+        let mut wrapped: Result<ResponseWithShard<kvrpcpb::GetResponse, Vec<u8>>> =
+            Ok(ResponseWithShard(
+                kvrpcpb::GetResponse {
+                    value: b"value".to_vec(),
+                    region_error: Some(original.clone()),
+                    ..Default::default()
+                },
+                vec![1],
+            ));
+        assert_eq!(wrapped.region_error_ref(), Some(&original));
+        assert_eq!(wrapped.region_error_ref(), Some(&original));
+        assert_eq!(wrapped.region_error(), Some(original));
+        assert!(wrapped.region_error_ref().is_none());
+        let ResponseWithShard(response, shard) = wrapped.unwrap();
+        assert_eq!(response.value, b"value");
+        assert_eq!(shard, vec![1]);
+        let mut failed: Result<kvrpcpb::GetResponse> = Err(Error::Unimplemented);
+        assert!(failed.region_error_ref().is_none());
+        assert!(failed.region_error().is_none());
+        assert!(matches!(failed, Err(Error::Unimplemented)));
+    }
+    #[rstest::rstest]
+    #[case(false)]
+    #[case(true)]
+    #[tokio::test]
+    async fn protocol_cleanup_pages_renew_allowance_but_page_retries_do_not(
+        #[case] second_page_routing_error: bool,
+    ) {
+        let sent = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = sent.clone();
+        let client = crate::mock::MockKvClient::with_dispatch_hook(move |request| {
+            let request = request.downcast_ref::<kvrpcpb::ScanLockRequest>().unwrap();
+            let version = request.context.as_ref().unwrap().txn_protocol_version;
+            observed
+                .lock()
+                .unwrap()
+                .push((request.start_key.clone(), version));
+            let response = if version == 1 {
+                kvrpcpb::ScanLockResponse {
+                    region_error: Some(errorpb::Error {
+                        incompatible_request: Some(admission_rejection()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            } else if request.start_key == vec![1] {
+                kvrpcpb::ScanLockResponse {
+                    // A full page advances the scan. The async-only cleanup
+                    // filter excludes this lock, keeping this test about pagination.
+                    locks: vec![kvrpcpb::LockInfo {
+                        key: vec![1],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }
+            } else {
+                assert_eq!(request.start_key, vec![1, 0]);
+                kvrpcpb::ScanLockResponse {
+                    region_error: second_page_routing_error.then(|| errorpb::Error {
+                        region_not_found: Some(Default::default()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            };
+            Ok(Box::new(response))
+        });
+        let routed = client.clone();
+        let invalidations = Arc::new(AtomicUsize::new(0));
+        let invalidated = invalidations.clone();
+        let pd = Arc::new(
+            MockPdClient::new(client)
+                .with_map_region_to_store_hook(move |region| {
+                    let mut store = protocol_store(routed.clone(), Some((0, 1)));
+                    store.region_with_leader = region;
+                    Ok(store)
+                })
+                .with_invalidate_region_hook(move |_| {
+                    invalidated.fetch_add(1, Ordering::SeqCst);
+                }),
+        );
+        let plan = crate::request::PlanBuilder::new(
+            pd,
+            Keyspace::Disable,
+            kvrpcpb::ScanLockRequest {
+                start_key: vec![1],
+                end_key: vec![9],
+                limit: 1,
+                ..Default::default()
+            },
+        )
+        .txn_protocol_compatibility(crate::TxnRequestPolicy::default())
+        .cleanup_locks(
+            crate::transaction::ResolveLocksContext::default(),
+            crate::transaction::ResolveLocksOptions {
+                async_commit_only: true,
+                batch_size: 1,
+            },
+            Backoff::no_backoff(),
+            Keyspace::Disable,
+        )
+        .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 1))
+        .plan();
+        let result = plan.execute().await;
+        let mut expected = vec![(vec![1], 1), (vec![1], 0), (vec![1, 0], 1), (vec![1, 0], 0)];
+        if second_page_routing_error {
+            // Region retry restarts the scan, but cannot replenish the allowance
+            // spent by the failed page's resend.
+            let Err(Error::IncompatibleRequest(error)) = result else {
+                panic!("expected spent page allowance")
+            };
+            assert_eq!(*error, admission_rejection());
+            expected.push((vec![1], 1));
+            assert_eq!(invalidations.load(Ordering::SeqCst), 1);
+        } else {
+            assert!(result.unwrap().iter().all(Result::is_ok));
+            assert_eq!(invalidations.load(Ordering::SeqCst), 0);
+        }
+        assert_eq!(*sent.lock().unwrap(), expected);
     }
 }

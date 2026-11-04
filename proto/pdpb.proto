@@ -1,6 +1,7 @@
 syntax = "proto3";
 package pdpb;
 
+import "apipb.proto";
 import "eraftpb.proto";
 import "gogoproto/gogo.proto";
 import "metapb.proto";
@@ -110,6 +111,8 @@ service PD {
   rpc GetGCState(GetGCStateRequest) returns (GetGCStateResponse) {}
 
   rpc GetAllKeyspacesGCStates(GetAllKeyspacesGCStatesRequest) returns (GetAllKeyspacesGCStatesResponse) {}
+
+  rpc WatchGCStates(WatchGCStatesRequest) returns (stream WatchGCStatesResponse) {}
 
   rpc SyncRegions(stream SyncRegionRequest) returns (stream SyncRegionResponse) {}
 
@@ -231,6 +234,7 @@ message Error {
   string message = 2;
 }
 
+// This message intentionally omits namespace/keyspace-related fields because API v2 never supported keyspaces when routing TSO requests through the PD API server.
 message TsoRequest {
   RequestHeader header = 1;
 
@@ -336,6 +340,7 @@ message GetAllStoresResponse {
 message GetRegionRequest {
   RequestHeader header = 1;
 
+  // Physical key bytes used for Region lookup.
   bytes region_key = 2;
   bool need_buckets = 3;
 }
@@ -370,9 +375,9 @@ message QueryRegionRequest {
   bool need_buckets = 2;
   // The region IDs to query.
   repeated uint64 ids = 3;
-  // The region keys to query.
+  // Physical key bytes to query.
   repeated bytes keys = 4;
-  // The previous region keys to query.
+  // Previous physical key bytes to query.
   repeated bytes prev_keys = 5;
 }
 
@@ -402,9 +407,10 @@ message RegionResponse {
 message ScanRegionsRequest {
   RequestHeader header = 1;
 
+  // Physical start key bytes.
   bytes start_key = 2;
   int32 limit = 3; // no limit when limit <= 0.
-  bytes end_key = 4; // end_key is +inf when it is empty.
+  bytes end_key = 4; // Physical end key bytes. end_key is +inf when it is empty.
 }
 
 message Region {
@@ -431,15 +437,16 @@ message ScanRegionsResponse {
 }
 
 message KeyRange {
+  // Physical start key bytes.
   bytes start_key = 1;
-  bytes end_key = 2; // end_key is +inf when it is empty.
+  bytes end_key = 2; // Physical end key bytes. end_key is +inf when it is empty.
 }
 
 message BatchScanRegionsRequest {
   RequestHeader header = 1;
   bool need_buckets = 2;
 
-  repeated KeyRange ranges = 3; // the given ranges must be in order.
+  repeated KeyRange ranges = 3; // Physical key ranges. The given ranges must be in order.
   int32 limit = 4; // limit the total number of regions to scan.
   // If contain_all_key_range is true, the output must contain all
   // key ranges in the request.
@@ -568,6 +575,9 @@ message RegionHeartbeatRequest {
   // Approximate size of column-based key-value pairs for billing.
   // It's counted on size of user key & value (excluding metadata fields), before compression, and latest versions only.
   uint64 approximate_columnar_kv_size = 19;
+  // Approximate size of row-based key-value pairs stored in the IA tier for billing.
+  // It is a subset of approximate_kv_size and follows the same size accounting rules.
+  uint64 approximate_ia_kv_size = 22;
 
   // BucketMeta is the bucket version and keys of this region if TiKV enabled the bucket feature
   metapb.BucketMeta bucket_meta = 20;
@@ -594,6 +604,7 @@ message Merge {
 
 message SplitRegion {
   CheckPolicy policy = 1;
+  // Physical split key bytes.
   repeated bytes keys = 2;
 }
 
@@ -816,9 +827,12 @@ message DfsStatScope {
   // When true, the statistic is not tied to any keyspace.
   bool is_global = 1;
   // The keyspace of this statistic. Ignore when is_global is true.
+  // NOTE: This field is only meaningful for V1/V2 compatibility. V3 should use keyspace_identities.
   uint32 keyspace_id = 2;
   // The component that provides the statistic.
   string component = 3;
+  // V3 multi-keyspace statistic scope. Ignore when is_global is true.
+  repeated apipb.KeyspaceIdentity keyspace_identities = 4;
 }
 
 message DfsStatItem {
@@ -1005,7 +1019,12 @@ message UpdateServiceGCSafePointResponse {
 message GetGCSafePointV2Request {
   RequestHeader header = 1;
 
-  uint32 keyspace_id = 2;
+  oneof keyspace {
+    // V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+    uint32 keyspace_id = 2;
+    // V3 keyspace identity.
+    apipb.KeyspaceIdentity keyspace_identity = 3;
+  }
 }
 
 message GetGCSafePointV2Response {
@@ -1021,7 +1040,12 @@ message WatchGCSafePointV2Request {
 
 // SafePointEvent is for the rpc WatchGCSafePointV2.
 message SafePointEvent {
-  uint32 keyspace_id = 1;
+  oneof keyspace {
+    // V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+    uint32 keyspace_id = 1;
+    // V3 keyspace identity served by this event.
+    apipb.KeyspaceIdentity keyspace_identity = 4;
+  }
   uint64 safe_point = 2;
   EventType type = 3;
 }
@@ -1035,7 +1059,12 @@ message WatchGCSafePointV2Response {
 message UpdateGCSafePointV2Request {
   RequestHeader header = 1;
 
-  uint32 keyspace_id = 2;
+  oneof keyspace {
+    // V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+    uint32 keyspace_id = 2;
+    // V3 keyspace identity.
+    apipb.KeyspaceIdentity keyspace_identity = 4;
+  }
   uint64 safe_point = 3;
 }
 
@@ -1048,7 +1077,12 @@ message UpdateGCSafePointV2Response {
 message UpdateServiceSafePointV2Request {
   RequestHeader header = 1;
 
-  uint32 keyspace_id = 2;
+  oneof keyspace {
+    // V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+    uint32 keyspace_id = 2;
+    // V3 keyspace identity.
+    apipb.KeyspaceIdentity keyspace_identity = 6;
+  }
   bytes service_id = 3;
   uint64 safe_point = 4;
   // Safe point will be set to expire on (PD Server time + TTL),
@@ -1072,7 +1106,12 @@ message GetAllGCSafePointV2Request {
 }
 
 message GCSafePointV2 {
-  uint32 keyspace_id = 1;
+  oneof keyspace {
+    // V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+    uint32 keyspace_id = 1;
+    // V3 keyspace identity.
+    apipb.KeyspaceIdentity keyspace_identity = 3;
+  }
   uint64 gc_safe_point = 2;
 }
 
@@ -1082,12 +1121,15 @@ message GetAllGCSafePointV2Response {
   int64 revision = 3;
 }
 
-// A wrapper over keyspace_id.
-// When a field is not specified in proto3, its value will be regarded as 0; however, keyspace_id = 0 is regarded as a valid keyspace (which
-// is the "DEFAULT" keyspace). To distinguish unspecified keyspace (NullKeyspace, 0xffffffff) and the default keyspace in some APIs as well
-// as preventing potential misuse, we wrap the keyspace_id into a message type which is nullable.
+// A wrapper over keyspace scope.
+// keyspace_id is kept for V1/V2 compatibility. V3 should use keyspace_identity and reject
+// missing/invalid namespace or keyspace IDs in tenant-scoped requests.
 message KeyspaceScope {
-  uint32 keyspace_id = 1;
+  oneof keyspace {
+    uint32 keyspace_id = 1;
+    // V3 keyspace identity.
+    apipb.KeyspaceIdentity keyspace_identity = 2;
+  }
 }
 
 message AdvanceGCSafePointRequest {
@@ -1188,6 +1230,13 @@ message GetGCStateRequest {
 
   KeyspaceScope keyspace_scope = 2;
   bool exclude_gc_barriers = 3;
+  // Include all stored global GC barriers in the response.
+  //
+  // This uses an include flag, unlike exclude_gc_barriers, because proto3 bool
+  // fields default to false. GetGCState historically omitted global GC
+  // barriers, so false preserves both the existing response and the
+  // no-extra-read path.
+  bool include_global_gc_barriers = 4;
 }
 
 message GCState {
@@ -1199,10 +1248,34 @@ message GCState {
   repeated GCBarrierInfo gc_barriers = 5;
 }
 
+// GCStateChange describes a change to a keyspace's effective GC state.
+// GCState values sent by WatchGCStates omit gc_barriers because barriers are
+// internal inputs used by PD to calculate effective safe points; the stream
+// reports only changes to the resulting effective state.
+message GCStateChange {
+  oneof change {
+    // Insert or replace the complete GC state of this keyspace.
+    GCState upsert = 1;
+
+    // Remove this keyspace from the client's materialized GC-state view.
+    // This does not necessarily mean the keyspace metadata was physically deleted.
+    KeyspaceScope removed = 2;
+  }
+}
+
+// GlobalGCBarriersInfo carries presence independently from the barrier list.
+message GlobalGCBarriersInfo {
+  repeated GlobalGCBarrierInfo barriers = 1;
+}
+
 message GetGCStateResponse {
   ResponseHeader header = 1;
 
   GCState gc_state = 2;
+  // Absent when globals were not requested or the server does not support
+  // this extension. Present-empty when the request was fulfilled but no
+  // global GC barriers are stored.
+  GlobalGCBarriersInfo global_gc_barriers = 3;
 }
 
 message GetAllKeyspacesGCStatesRequest {
@@ -1217,6 +1290,26 @@ message GetAllKeyspacesGCStatesResponse {
 
   repeated GCState gc_states = 2;
   repeated GlobalGCBarrierInfo global_gc_barriers = 3;
+}
+
+message WatchGCStatesRequest {
+  RequestHeader header = 1;
+
+  // If false, when the stream is established, the server first sends the current
+  // GC states of all keyspaces.
+  bool skip_loading_initial = 2;
+}
+
+message WatchGCStatesResponse {
+  ResponseHeader header = 1;
+
+  // Clients apply changes in order within this response and across successive
+  // responses on the stream. A client must not observe an older state for a
+  // keyspace after a newer update. After disconnection, the client reconnects
+  // and reloads the initial state. The stream omits GC barrier details and does
+  // not emit changes for barrier-only updates. If a barrier update changes an
+  // effective GC state, the resulting state change is emitted.
+  repeated GCStateChange changes = 2;
 }
 
 message RegionStat {
@@ -1294,6 +1387,7 @@ message SyncMaxTSResponse {
 
 message SplitRegionsRequest {
   RequestHeader header = 1;
+  // Physical split key bytes.
   repeated bytes split_keys = 2;
   uint64 retry_limit = 3;
 }
@@ -1306,6 +1400,7 @@ message SplitRegionsResponse {
 
 message SplitAndScatterRegionsRequest {
   RequestHeader header = 1;
+  // Physical split key bytes.
   repeated bytes split_keys = 2;
   string group = 3;
   uint64 retry_limit = 4;

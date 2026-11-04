@@ -78,6 +78,11 @@ pub enum Error {
     /// Errors caused by changes of region information
     #[error("Region error: {0:?}")]
     RegionError(Box<ProtoRegionError>),
+    /// Terminal local or server protocol rejection, preserving its structured fields.
+    /// Local failures use reason `Unknown`; undetermined outcomes take precedence
+    /// and retain their original [`Error::RegionError`] envelope.
+    #[error("Incompatible transaction request: {0:?}")]
+    IncompatibleRequest(Box<crate::proto::errorpb::IncompatibleRequest>),
     /// Whether the transaction is committed or not is undetermined
     #[error("Whether the transaction is committed or not is undetermined")]
     UndeterminedError(Box<Error>),
@@ -150,6 +155,30 @@ pub enum Error {
 Use the async TransactionClient instead, or create and use SyncTransactionClient outside of any Tokio runtime.{0}"
     )]
     NestedRuntimeError(String),
+}
+
+/// Precedence when independent RPC or cleanup failures must be combined.
+/// Lower values win. Error wrapping remains the caller's responsibility.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum ErrorPriority {
+    Undetermined,
+    Incompatible,
+    Ordinary,
+}
+
+impl Error {
+    pub(crate) fn priority(&self) -> ErrorPriority {
+        match self {
+            Self::RegionError(error) if error.undetermined_result.is_some() => {
+                ErrorPriority::Undetermined
+            }
+            Self::IncompatibleRequest(_) => ErrorPriority::Incompatible,
+            Self::RegionError(error) if error.incompatible_request.is_some() => {
+                ErrorPriority::Incompatible
+            }
+            _ => ErrorPriority::Ordinary,
+        }
+    }
 }
 
 impl From<ProtoRegionError> for Error {

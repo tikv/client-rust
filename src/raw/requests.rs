@@ -521,6 +521,10 @@ pub struct RawCoprocessorRequest {
 
 #[async_trait]
 impl Request for RawCoprocessorRequest {
+    fn context_mut(&mut self) -> &mut kvrpcpb::Context {
+        self.inner.context_mut()
+    }
+
     async fn dispatch(
         &self,
         client: &TikvClient<Channel>,

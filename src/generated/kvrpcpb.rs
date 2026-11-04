@@ -1290,21 +1290,13 @@ pub struct Context {
     /// Some information used for resource control.
     #[prost(message, optional, tag = "28")]
     pub resource_control_context: ::core::option::Option<ResourceControlContext>,
-    /// The declared origin of the request. TiDB server requests set this to TIDB.
-    /// This field is client-provided metadata; consumers should rely on it only when
-    /// the caller is authenticated/authorized by the transport or deployment boundary.
-    /// UNKNOWN means the origin is unset or not recognized by this protocol version.
-    /// Other components should add dedicated enum variants when they need origin-specific behavior.
+    /// Declared process/product origin; see RequestOrigin.
     #[prost(enumeration = "RequestOrigin", tag = "29")]
     pub request_origin: i32,
     /// The keyspace that the request is sent to.
     /// NOTE: This field is only meaningful while the api_version is V2.
     #[prost(string, tag = "31")]
     pub keyspace_name: ::prost::alloc::string::String,
-    /// The keyspace that the request is sent to.
-    /// NOTE: This field is only meaningful while the api_version is V2.
-    #[prost(uint32, tag = "32")]
-    pub keyspace_id: u32,
     /// The buckets version that the request is sent to.
     /// NOTE: This field is only meaningful while enable buckets.
     #[prost(uint64, tag = "33")]
@@ -1328,6 +1320,32 @@ pub struct Context {
     /// This field is set by client-go based on an extractor function provided by TiDB.
     #[prost(uint64, tag = "37")]
     pub trace_control_flags: u64,
+    /// Transaction protocol version declared for this request; see TxnProtocolVersion.
+    /// Missing or zero means legacy. Any nonzero value promises structured
+    /// IncompatibleRequest handling. BatchCommands declares this per inner request.
+    /// This is a compatibility declaration, not a binary version or authorization.
+    /// Keep uint32 so future version values remain representable.
+    #[prost(uint32, tag = "39")]
+    pub txn_protocol_version: u32,
+    #[prost(oneof = "context::Keyspace", tags = "32, 38")]
+    pub keyspace: ::core::option::Option<context::Keyspace>,
+}
+/// Nested message and enum types in `Context`.
+pub mod context {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// The keyspace that the request is sent to.
+        /// NOTE: This field is only meaningful while the api_version is V2.
+        /// V3 uses keyspace_identity and must not read this legacy field as the full identity.
+        #[prost(uint32, tag = "32")]
+        KeyspaceId(u32),
+        /// The V3 keyspace identity that the request is sent to.
+        /// V3 RPC key fields carry user key bytes; TiKV encodes the physical
+        /// mode + namespace + keyspace prefix at the serving boundary.
+        #[prost(message, tag = "38")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1390,9 +1408,8 @@ pub struct LockInfo {
     /// When lock_type is SharedLock, this describes transactions holding the shared lock.
     /// Important: when lock_type is SharedLock, all shared locks must use shared_lock_infos;
     /// DO NOT read from the wrapper LockInfo.
-    /// TODO(slock): tidb should send requests with a feature flag to indicate whether it
-    /// supports shared locks, so that tikv can fail the requests from old tidb versions
-    /// when needed.
+    /// Before returning a shared lock wrapper, the server must check the caller's
+    /// txn_protocol_version and return IncompatibleRequest if support is insufficient.
     #[prost(message, repeated, tag = "12")]
     pub shared_lock_infos: ::prost::alloc::vec::Vec<LockInfo>,
     /// Reserved for file based transaction.
@@ -1438,6 +1455,12 @@ pub struct KeyError {
     /// TxnLockNotFound indicates the txn lock is not found.
     #[prost(message, optional, tag = "12")]
     pub txn_lock_not_found: ::core::option::Option<TxnLockNotFound>,
+    /// LockUpgradeConflict indicates a shared-lock upgrade protocol conflict.
+    #[prost(message, optional, tag = "13")]
+    pub lock_upgrade_conflict: ::core::option::Option<LockUpgradeConflict>,
+    /// SharedLockLost deterministically confirms that the transaction's shared-lock ownership was lost.
+    #[prost(message, optional, tag = "14")]
+    pub shared_lock_lost: ::core::option::Option<SharedLockLost>,
     /// Extra information for error debugging
     #[prost(message, optional, tag = "100")]
     pub debug_info: ::core::option::Option<DebugInfo>,
@@ -1517,6 +1540,70 @@ pub mod write_conflict {
             }
         }
     }
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LockUpgradeConflict {
+    #[prost(bytes = "vec", tag = "1")]
+    pub key: ::prost::alloc::vec::Vec<u8>,
+    #[prost(uint64, tag = "2")]
+    pub start_ts: u64,
+    #[prost(uint64, tag = "3")]
+    pub owner_start_ts: u64,
+    #[prost(enumeration = "lock_upgrade_conflict::Reason", tag = "4")]
+    pub reason: i32,
+}
+/// Nested message and enum types in `LockUpgradeConflict`.
+pub mod lock_upgrade_conflict {
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum Reason {
+        Unknown = 0,
+        DuplicateInFlight = 1,
+        SecondUpgrader = 2,
+    }
+    impl Reason {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                Reason::Unknown => "Unknown",
+                Reason::DuplicateInFlight => "DuplicateInFlight",
+                Reason::SecondUpgrader => "SecondUpgrader",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "Unknown" => Some(Self::Unknown),
+                "DuplicateInFlight" => Some(Self::DuplicateInFlight),
+                "SecondUpgrader" => Some(Self::SecondUpgrader),
+                _ => None,
+            }
+        }
+    }
+}
+/// SharedLockLost means the pending upgrade did not acquire the exclusive lock.
+/// The transaction must not continue, but rollback remains valid.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SharedLockLost {
+    #[prost(bytes = "vec", tag = "1")]
+    pub key: ::prost::alloc::vec::Vec<u8>,
+    #[prost(uint64, tag = "2")]
+    pub start_ts: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1784,6 +1871,102 @@ pub struct ExecDetailsV2 {
     /// RU (Request Unit) consumption details.
     #[prost(message, optional, tag = "5")]
     pub ru_v2: ::core::option::Option<Ruv2>,
+    /// Scheduling and execution details for the request's read-pool task.
+    /// Available when read-pool task tracking is enabled in TiKV.
+    #[prost(message, optional, tag = "6")]
+    pub read_pool_task_details: ::core::option::Option<PoolTaskDetails>,
+}
+/// Scheduling and execution details collected across all polls of one task running in a pool.
+/// The timing model is:
+/// total_wall_nanos
+/// \<--------------------------------------------------------------------->
+///
+/// ```text
+/// submitted      worker starts       async event       worker starts   done
+///      │                │               completes             │          │
+///      ▼                ▼                   ▼                 ▼          ▼
+/// ┌──────────────┬─────────────────┬─────────────────┬──────────────┬──────┐
+/// │  Queue Wait  │ Poll Execution  │ Async/Wake Wait │  Queue Wait  │ Poll │
+/// │              │                 │                 │              │ Exec │
+/// │ task is      │ Future::poll    │ Future is       │ task is      │      │
+/// │ runnable,    │ returns Pending │ Pending, waiting│ runnable,    │Ready │
+/// │ waiting for  │                 │ for I/O, timer, │ waiting for  │      │
+/// │ a worker     │                 │ lock, etc.      │ a worker     │      │
+/// └──────────────┴─────────────────┴─────────────────┴──────────────┴──────┘
+///         │                │                  │
+///         │                │                  └─ total/max/min_wake_wait_nanos
+///         │                │
+///         │                ├─ poll_wall_nanos
+///         │                └─ poll_cpu_nanos
+///         │
+///         ├─ total/max/min_queue_wait_nanos
+///         └─ fair_queue_waited_task_slices
+/// ```
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PoolTaskDetails {
+    /// Number of Future::poll calls, including immediate repolls within one worker dispatch.
+    #[prost(uint64, tag = "1")]
+    pub poll_count: u64,
+    /// Number of worker dispatches. Immediate repolls in one dispatch are not counted separately.
+    #[prost(uint64, tag = "2")]
+    pub dispatch_count: u64,
+    /// Wall time from immediately before the initial pool submission until the final poll completes.
+    #[prost(uint64, tag = "3")]
+    pub total_wall_nanos: u64,
+    /// Total time from enqueueing a ready task until a worker starts dispatching it.
+    /// Zero when no queue-wait sample was recorded.
+    #[prost(uint64, tag = "4")]
+    pub total_queue_wait_nanos: u64,
+    /// Maximum queue wait time among all dispatches.
+    #[prost(uint64, tag = "5")]
+    pub max_queue_wait_nanos: u64,
+    /// Minimum queue wait time among all dispatches.
+    #[prost(uint64, tag = "6")]
+    pub min_queue_wait_nanos: u64,
+    /// Total time from a pending poll's completion until the task is scheduled again.
+    /// Zero when no wake-wait sample was recorded.
+    #[prost(uint64, tag = "7")]
+    pub total_wake_wait_nanos: u64,
+    /// Maximum wake wait time among all wakeups.
+    #[prost(uint64, tag = "8")]
+    pub max_wake_wait_nanos: u64,
+    /// Minimum wake wait time among all wakeups.
+    #[prost(uint64, tag = "9")]
+    pub min_wake_wait_nanos: u64,
+    /// Whether fair-queue waited-slice data was collected for this task.
+    #[prost(bool, tag = "10")]
+    pub fair_queue_enabled: bool,
+    /// Total number of task slices dispatched ahead of this task while it waited in the fair queue.
+    /// Zero when no fair-queue wait sample was recorded.
+    #[prost(uint64, tag = "11")]
+    pub total_fair_queue_waited_task_slices: u64,
+    /// Maximum number of task slices dispatched ahead of this task during one fair-queue wait.
+    #[prost(uint64, tag = "12")]
+    pub max_fair_queue_waited_task_slices: u64,
+    /// Minimum number of task slices dispatched ahead of this task during one fair-queue wait.
+    #[prost(uint64, tag = "13")]
+    pub min_fair_queue_waited_task_slices: u64,
+    /// Total thread CPU time consumed by Future::poll calls.
+    /// Zero when no poll sample was recorded.
+    #[prost(uint64, tag = "14")]
+    pub poll_cpu_nanos: u64,
+    /// Maximum thread CPU time consumed by one Future::poll call.
+    #[prost(uint64, tag = "15")]
+    pub max_poll_cpu_nanos: u64,
+    /// Minimum thread CPU time consumed by one Future::poll call.
+    #[prost(uint64, tag = "16")]
+    pub min_poll_cpu_nanos: u64,
+    /// Total wall time consumed by Future::poll calls.
+    /// Zero when no poll sample was recorded.
+    #[prost(uint64, tag = "17")]
+    pub poll_wall_nanos: u64,
+    /// Minimum wall time consumed by one Future::poll call.
+    #[prost(uint64, tag = "18")]
+    pub min_poll_wall_nanos: u64,
+    /// Maximum wall time consumed by one Future::poll call.
+    #[prost(uint64, tag = "19")]
+    pub max_poll_wall_nanos: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2251,9 +2434,23 @@ pub struct CompactRequest {
     /// API version of the request
     #[prost(enumeration = "ApiVersion", tag = "7")]
     pub api_version: i32,
-    /// Keyspace of the table located in.
-    #[prost(uint32, tag = "8")]
-    pub keyspace_id: u32,
+    #[prost(oneof = "compact_request::Keyspace", tags = "8, 9")]
+    pub keyspace: ::core::option::Option<compact_request::Keyspace>,
+}
+/// Nested message and enum types in `CompactRequest`.
+pub mod compact_request {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// Keyspace of the table located in.
+        /// NOTE: This field is only meaningful for V1/V2 compatibility. V3 uses
+        /// keyspace_identity and must not read this field as the full identity.
+        #[prost(uint32, tag = "8")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity of the table located in.
+        #[prost(message, tag = "9")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2375,6 +2572,23 @@ pub struct HealthFeedback {
     /// be replaced by `SlowTrend` in the future.
     #[prost(int32, tag = "3")]
     pub slow_score: i32,
+    /// The resource groups that the store currently blames for its own overload, if it reports them
+    /// at all. A store that does not support reporting them leaves this field unset, which is why
+    /// this is a message rather than a bare repeated field: an unset field and an empty list have
+    /// to mean different things to the client.
+    #[prost(message, optional, tag = "4")]
+    pub noisy_groups: ::core::option::Option<NoisyGroups>,
+}
+/// NoisyGroups is the set of resource groups a store holds responsible for its own overload, as
+/// judged by that store alone at the time the feedback was generated.
+///
+/// An empty `names` is a positive statement that the store currently blames nobody, so a client can
+/// treat each message as replacing whatever it previously knew about that store.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NoisyGroups {
+    #[prost(string, repeated, tag = "1")]
+    pub names: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2503,11 +2717,18 @@ impl CommitRole {
         }
     }
 }
+/// Client-provided process/product identity for auditing, not authentication or
+/// authorization. TiDB includes embedded BR; standalone BR uses RequestOriginBR.
+/// Audit unknown values without mapping them to a known origin or rejecting
+/// requests solely because of their origin in the initial rollout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum RequestOrigin {
     Unknown = 0,
     TiDb = 1,
+    TiCdc = 2,
+    Br = 3,
+    TiFlash = 4,
 }
 impl RequestOrigin {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -2518,6 +2739,9 @@ impl RequestOrigin {
         match self {
             RequestOrigin::Unknown => "RequestOriginUnknown",
             RequestOrigin::TiDb => "RequestOriginTiDB",
+            RequestOrigin::TiCdc => "RequestOriginTiCDC",
+            RequestOrigin::Br => "RequestOriginBR",
+            RequestOrigin::TiFlash => "RequestOriginTiFlash",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -2525,6 +2749,9 @@ impl RequestOrigin {
         match value {
             "RequestOriginUnknown" => Some(Self::Unknown),
             "RequestOriginTiDB" => Some(Self::TiDb),
+            "RequestOriginTiCDC" => Some(Self::TiCdc),
+            "RequestOriginBR" => Some(Self::Br),
+            "RequestOriginTiFlash" => Some(Self::TiFlash),
             _ => None,
         }
     }
@@ -2583,6 +2810,11 @@ pub enum ApiVersion {
     /// V2 server accpets V2 requests and V1 transactional requests that statrts with TiDB key
     /// prefix (`m` and `t`).
     V2 = 2,
+    /// `V3` uses user-key wire semantics for normal KV RPCs. Servers encode an
+    /// 8-byte physical prefix at the serving boundary:
+    /// mode(1) + namespace_id(4 bytes, big endian) + keyspace_id(3 bytes, big endian).
+    /// The keyspace identity is carried by Context.keyspace_identity.
+    V3 = 3,
 }
 impl ApiVersion {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -2594,6 +2826,7 @@ impl ApiVersion {
             ApiVersion::V1 => "V1",
             ApiVersion::V1ttl => "V1TTL",
             ApiVersion::V2 => "V2",
+            ApiVersion::V3 => "V3",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -2602,6 +2835,48 @@ impl ApiVersion {
             "V1" => Some(Self::V1),
             "V1TTL" => Some(Self::V1ttl),
             "V2" => Some(Self::V2),
+            "V3" => Some(Self::V3),
+            _ => None,
+        }
+    }
+}
+/// Transaction protocol version registry. Each version includes all earlier
+/// semantics. Keep values stable; new versions require joint review by TiKV,
+/// TiDB and relevant client owners. This registry sets neither client defaults
+/// nor the store's admission range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum TxnProtocolVersion {
+    /// No promise to handle IncompatibleRequest.
+    TxnVerLegacy = 0,
+    /// Handles IncompatibleRequest according to its error contract.
+    TxnVerSupportIncompatibleErrorHandling = 1,
+    /// Also supports shared wrapper parsing and expansion, nested lock information
+    /// preservation, and shared-lock pagination and resolve semantics.
+    TxnVerSupportSharedLock = 2,
+}
+impl TxnProtocolVersion {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            TxnProtocolVersion::TxnVerLegacy => "TXN_VER_LEGACY",
+            TxnProtocolVersion::TxnVerSupportIncompatibleErrorHandling => {
+                "TXN_VER_SUPPORT_INCOMPATIBLE_ERROR_HANDLING"
+            }
+            TxnProtocolVersion::TxnVerSupportSharedLock => "TXN_VER_SUPPORT_SHARED_LOCK",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "TXN_VER_LEGACY" => Some(Self::TxnVerLegacy),
+            "TXN_VER_SUPPORT_INCOMPATIBLE_ERROR_HANDLING" => {
+                Some(Self::TxnVerSupportIncompatibleErrorHandling)
+            }
+            "TXN_VER_SUPPORT_SHARED_LOCK" => Some(Self::TxnVerSupportSharedLock),
             _ => None,
         }
     }

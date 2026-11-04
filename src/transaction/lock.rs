@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fail::fail_point;
@@ -88,6 +89,7 @@ pub async fn resolve_locks(
     timestamp: Timestamp,
     pd_client: Arc<impl PdClient>,
     keyspace: Keyspace,
+    request_policy: crate::TxnRequestPolicy,
 ) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
     debug!("resolving locks");
     reject_shared_locks(&locks)?;
@@ -98,7 +100,7 @@ pub async fn resolve_locks(
     let mut live_locks = Vec::new();
     // Final transaction statuses are cached in the resolver's context, so a transaction met
     // through several locks is queried (or recovered) only once.
-    let mut lock_resolver = LockResolver::new(ResolveLocksContext::default());
+    let mut lock_resolver = LockResolver::new(ResolveLocksContext::default(), request_policy);
     // Regions already swept by ResolveLock, per transaction.
     let mut clean_regions: HashMap<u64, HashSet<RegionVerId>> = HashMap::new();
     // We must check txn status for *all* locks, not only TTL-expired ones.
@@ -143,6 +145,7 @@ pub async fn resolve_locks(
                 keyspace,
                 OPTIMISTIC_BACKOFF,
                 regions,
+                request_policy,
             )
             .await?;
         }
@@ -190,6 +193,7 @@ async fn pessimistic_rollback_lock(
     lock: &kvrpcpb::LockInfo,
     pd_client: Arc<impl PdClient>,
     keyspace: Keyspace,
+    request_policy: crate::TxnRequestPolicy,
 ) -> Result<()> {
     if lock.key == lock.primary_lock {
         // The lock is its transaction's primary: the CheckTxnStatus just sent to this very
@@ -209,6 +213,7 @@ async fn pessimistic_rollback_lock(
         for_update_ts,
     );
     let plan = crate::request::PlanBuilder::new(pd_client, keyspace, req)
+        .txn_protocol_compatibility(request_policy)
         .retry_multi_region(DEFAULT_REGION_BACKOFF)
         .extract_error()
         .plan();
@@ -229,8 +234,11 @@ async fn resolve_lock_with_retry(
     keyspace: Keyspace,
     mut backoff: Backoff,
     clean_regions: &mut HashSet<RegionVerId>,
+    request_policy: crate::TxnRequestPolicy,
 ) -> Result<()> {
     debug!("resolving locks with retry");
+    // Routing retries rebuild the plan but must not replenish its resend allowance.
+    let allowance = Arc::new(AtomicBool::new(false));
     let mut attempt = 0;
     loop {
         attempt += 1;
@@ -244,6 +252,7 @@ async fn resolve_lock_with_retry(
             requests::new_resolve_lock_request(start_version, commit_version, is_txn_file);
         let plan_builder =
             match crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
+                .txn_protocol_compatibility_with_allowance(request_policy, allowance.clone())
                 .single_region_with_store(store.clone())
                 .await
             {
@@ -368,11 +377,22 @@ impl ResolveLocksContext {
 
 pub struct LockResolver {
     ctx: ResolveLocksContext,
+    request_policy: crate::TxnRequestPolicy,
 }
 
 impl LockResolver {
-    pub fn new(ctx: ResolveLocksContext) -> Self {
-        Self { ctx }
+    /// Create a resolver using the initiating client's
+    /// [`request_policy`](crate::TransactionClient::request_policy).
+    pub fn new(ctx: ResolveLocksContext, request_policy: crate::TxnRequestPolicy) -> Self {
+        Self {
+            ctx,
+            request_policy,
+        }
+    }
+
+    /// Return this resolver's immutable transactional request policy.
+    pub fn request_policy(&self) -> crate::TxnRequestPolicy {
+        self.request_policy
     }
 
     /// Decide what `resolve_locks` has to do about `lock`: query its transaction's status and,
@@ -407,7 +427,7 @@ impl LockResolver {
                 // changed its primary after writing this lock (pingcap/tidb#42937). Roll back
                 // only this stale lock — the transaction itself may still be alive, and a
                 // region-wide ResolveLock could roll back its other, legitimate locks.
-                pessimistic_rollback_lock(lock, pd_client, keyspace).await?;
+                pessimistic_rollback_lock(lock, pd_client, keyspace, self.request_policy).await?;
                 return Ok(LockAction::Done);
             }
             Err(err) => return Err(err),
@@ -429,7 +449,7 @@ impl LockResolver {
                 // encountered lock itself may be removed — a region-wide ResolveLock could roll
                 // back the transaction's legitimate locks, prewrite locks included. Pessimistic
                 // locks never block reads, so nothing else is waiting on this region either.
-                pessimistic_rollback_lock(lock, pd_client, keyspace).await?;
+                pessimistic_rollback_lock(lock, pd_client, keyspace, self.request_policy).await?;
                 return Ok(LockAction::Done);
             }
             _ => return Ok(LockAction::from_status(&status)),
@@ -648,6 +668,7 @@ impl LockResolver {
             is_txn_file,
         );
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, req)
+            .txn_protocol_compatibility(self.request_policy)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(CollectSingle)
             .extract_error()
@@ -697,6 +718,7 @@ impl LockResolver {
     ) -> Result<SecondaryLocksStatus> {
         let req = new_check_secondary_locks_request(keys, txn_id);
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, req)
+            .txn_protocol_compatibility(self.request_policy)
             .preserve_shard()
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
@@ -717,6 +739,7 @@ impl LockResolver {
         let ver_id = store.region_with_leader.ver_id();
         let request = requests::new_batch_resolve_lock_request(txn_infos.clone());
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
+            .txn_protocol_compatibility(self.request_policy)
             .single_region_with_store(store.clone())
             .await?
             .extract_error()
@@ -968,6 +991,7 @@ mod tests {
             keyspace,
             backoff.clone(),
             &mut clean_regions,
+            crate::TxnRequestPolicy::default(),
         )
         .await
         .unwrap();
@@ -989,6 +1013,7 @@ mod tests {
             keyspace,
             backoff,
             &mut clean_regions,
+            crate::TxnRequestPolicy::default(),
         )
         .await
         .expect_err("should return error");
@@ -1027,9 +1052,15 @@ mod tests {
         lock.lock_version = 1;
         lock.lock_ttl = 100; // not expired under MockPdClient's Timestamp::default()
 
-        let live_locks = resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable)
-            .await
-            .unwrap();
+        let live_locks = resolve_locks(
+            vec![lock],
+            Timestamp::default(),
+            client,
+            Keyspace::Disable,
+            crate::TxnRequestPolicy::default(),
+        )
+        .await
+        .unwrap();
 
         assert!(live_locks.is_empty());
         assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 1);
@@ -1104,9 +1135,15 @@ mod tests {
             })
             .collect();
 
-        let live_locks = resolve_locks(locks, Timestamp::default(), client, keyspace)
-            .await
-            .unwrap();
+        let live_locks = resolve_locks(
+            locks,
+            Timestamp::default(),
+            client,
+            keyspace,
+            crate::TxnRequestPolicy::default(),
+        )
+        .await
+        .unwrap();
 
         assert!(live_locks.is_empty());
         assert_eq!(check_secondary_count.load(Ordering::SeqCst), 1);
@@ -1158,9 +1195,15 @@ mod tests {
 
         let lock = async_commit_primary_lock(PRIMARY_KEY, 42, vec![SECONDARY_KEY.to_vec()]);
 
-        let live_locks = resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable)
-            .await
-            .unwrap();
+        let live_locks = resolve_locks(
+            vec![lock],
+            Timestamp::default(),
+            client,
+            Keyspace::Disable,
+            crate::TxnRequestPolicy::default(),
+        )
+        .await
+        .unwrap();
 
         assert!(live_locks.is_empty());
         assert_eq!(check_secondary_count.load(Ordering::SeqCst), 1);
@@ -1233,9 +1276,15 @@ mod tests {
 
         let lock = async_commit_primary_lock(PRIMARY_KEY, 42, vec![SECONDARY_KEY.to_vec()]);
 
-        let live_locks = resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable)
-            .await
-            .unwrap();
+        let live_locks = resolve_locks(
+            vec![lock],
+            Timestamp::default(),
+            client,
+            Keyspace::Disable,
+            crate::TxnRequestPolicy::default(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 2);
         assert_eq!(force_sync_count.load(Ordering::SeqCst), 1);
@@ -1344,9 +1393,15 @@ mod tests {
 
         let lock = async_commit_primary_lock(&[1], 40, vec![vec![2], vec![3]]);
 
-        let live_locks = resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable)
-            .await
-            .unwrap();
+        let live_locks = resolve_locks(
+            vec![lock],
+            Timestamp::default(),
+            client,
+            Keyspace::Disable,
+            crate::TxnRequestPolicy::default(),
+        )
+        .await
+        .unwrap();
 
         assert!(live_locks.is_empty());
         // One failed pre-split request plus one per post-split region.
@@ -1400,9 +1455,15 @@ mod tests {
             ..Default::default()
         };
 
-        let live_locks = resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable)
-            .await
-            .unwrap();
+        let live_locks = resolve_locks(
+            vec![lock],
+            Timestamp::default(),
+            client,
+            Keyspace::Disable,
+            crate::TxnRequestPolicy::default(),
+        )
+        .await
+        .unwrap();
 
         assert!(live_locks.is_empty());
         assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 2);
@@ -1464,9 +1525,15 @@ mod tests {
         // Two stale pessimistic locks of the same transaction in the same mock region.
         let locks = vec![make_lock(1), make_lock(2)];
 
-        let live_locks = resolve_locks(locks, Timestamp::default(), client, Keyspace::Disable)
-            .await
-            .unwrap();
+        let live_locks = resolve_locks(
+            locks,
+            Timestamp::default(),
+            client,
+            Keyspace::Disable,
+            crate::TxnRequestPolicy::default(),
+        )
+        .await
+        .unwrap();
 
         assert!(live_locks.is_empty());
         assert_eq!(
@@ -1553,9 +1620,15 @@ mod tests {
             ..Default::default()
         };
 
-        let live_locks = resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable)
-            .await
-            .unwrap();
+        let live_locks = resolve_locks(
+            vec![lock],
+            Timestamp::default(),
+            client,
+            Keyspace::Disable,
+            crate::TxnRequestPolicy::default(),
+        )
+        .await
+        .unwrap();
 
         assert!(live_locks.is_empty());
         assert_eq!(*rolled_back_keys.lock().unwrap(), vec![vec![1]]);
@@ -1596,9 +1669,15 @@ mod tests {
             ..Default::default()
         };
 
-        let live_locks = resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable)
-            .await
-            .unwrap();
+        let live_locks = resolve_locks(
+            vec![lock],
+            Timestamp::default(),
+            client,
+            Keyspace::Disable,
+            crate::TxnRequestPolicy::default(),
+        )
+        .await
+        .unwrap();
 
         assert!(live_locks.is_empty());
         assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 1);
@@ -1690,6 +1769,7 @@ mod tests {
             Timestamp::default(),
             client,
             Keyspace::Disable,
+            crate::TxnRequestPolicy::default(),
         )
         .await
         .unwrap();
@@ -1737,8 +1817,14 @@ mod tests {
             ..Default::default()
         };
 
-        let result =
-            resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable).await;
+        let result = resolve_locks(
+            vec![lock],
+            Timestamp::default(),
+            client,
+            Keyspace::Disable,
+            crate::TxnRequestPolicy::default(),
+        )
+        .await;
         assert!(matches!(result, Err(Error::KeyError(_))));
     }
 
@@ -1754,5 +1840,66 @@ mod tests {
             format_key_for_log(&key),
             "len=20, prefix=000102030405060708090A0B0C0D0E0F"
         );
+    }
+
+    #[tokio::test]
+    async fn protocol_resolve_lock_retry_does_not_replenish_allowance() {
+        let versions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = versions.clone();
+        let rejection = errorpb::IncompatibleRequest {
+            reason: errorpb::IncompatibleRequestReason::TxnProtocolVersionOutOfRange as i32,
+            message: "original rejection".into(),
+            provided_txn_protocol_version: 1,
+            min_compatible_txn_protocol_version: 0,
+            max_compatible_txn_protocol_version: 0,
+        };
+        let original = rejection.clone();
+        let client = MockKvClient::with_dispatch_hook(move |request| {
+            let request = request
+                .downcast_ref::<kvrpcpb::ResolveLockRequest>()
+                .unwrap();
+            let mut sent = observed.lock().unwrap();
+            sent.push(request.context.as_ref().unwrap().txn_protocol_version);
+            let error = if sent.len() == 2 {
+                errorpb::Error {
+                    region_not_found: Some(Default::default()),
+                    ..Default::default()
+                }
+            } else {
+                errorpb::Error {
+                    incompatible_request: Some(rejection.clone()),
+                    ..Default::default()
+                }
+            };
+            Ok(Box::new(kvrpcpb::ResolveLockResponse {
+                region_error: Some(error),
+                ..Default::default()
+            }) as Box<dyn Any>)
+        });
+        let routed = client.clone();
+        let pd = Arc::new(
+            MockPdClient::new(client).with_map_region_to_store_hook(move |region| {
+                let mut store = crate::store::RegionStore::new(region, Arc::new(routed.clone()));
+                store.meta.id = store.region_with_leader.get_store_id().unwrap();
+                store.meta.txn_protocol_version_range =
+                    Some(metapb::TxnProtocolVersionRange { min: 0, max: 1 });
+                Ok(store)
+            }),
+        );
+        let error = resolve_lock_with_retry(
+            &Key::from(vec![1]),
+            1,
+            2,
+            false,
+            pd,
+            Keyspace::Disable,
+            Backoff::no_jitter_backoff(1, 1, 3),
+            &mut HashSet::new(),
+            crate::TxnRequestPolicy::default(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, Error::IncompatibleRequest(error) if *error == original));
+        assert_eq!(*versions.lock().unwrap(), vec![1, 0, 1]);
     }
 }

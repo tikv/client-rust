@@ -135,6 +135,44 @@ impl<Req: KvRequest + NextBatch> NextBatch for Dispatch<Req> {
     }
 }
 
+impl<Req: KvRequest + Shardable, PdC: PdClient> Shardable
+    for super::TxnProtocolCompatibility<Req, PdC>
+{
+    type Shard = Req::Shard;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
+        self.inner.shards(pd_client)
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard) {
+        // Initial siblings fork independently. Re-sharded descendants inherit
+        // an already spent allowance rather than replenishing it.
+        self.resend_used = Arc::new(std::sync::atomic::AtomicBool::new(
+            self.resend_used.load(std::sync::atomic::Ordering::Relaxed),
+        ));
+        self.inner.apply_shard(shard);
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.apply_region_store(store)
+    }
+}
+
+impl<Req: KvRequest + NextBatch, PdC: PdClient> NextBatch
+    for super::TxnProtocolCompatibility<Req, PdC>
+{
+    fn next_batch(&mut self, range: (Vec<u8>, Vec<u8>)) {
+        self.inner.next_batch(range);
+        // A new page starts a new send. Keep the shared flag so execution
+        // clones and outer retries observe this page's allowance together.
+        self.resend_used
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
     type Shard = P::Shard;
 

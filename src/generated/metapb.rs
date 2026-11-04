@@ -57,6 +57,22 @@ pub struct Store {
     /// NodeState is used to replace StoreState which will be deprecated in the future.
     #[prost(enumeration = "NodeState", tag = "13")]
     pub node_state: i32,
+    /// The store's current transaction RPC admission range, not a feature switch or
+    /// a value derived from Store.version. Absence means legacy/unknown; clients
+    /// conservatively use \[0, 0\] while preserving absence versus an explicit \[0, 0\].
+    /// Consumers must fail closed if min > max. TiKV reports this on every startup,
+    /// including upgrades and rollbacks; PD updates and persists it.
+    #[prost(message, optional, tag = "14")]
+    pub txn_protocol_version_range: ::core::option::Option<TxnProtocolVersionRange>,
+}
+/// Inclusive transaction protocol version bounds; see kvrpcpb.TxnProtocolVersion.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TxnProtocolVersionRange {
+    #[prost(uint32, tag = "1")]
+    pub min: u32,
+    #[prost(uint32, tag = "2")]
+    pub max: u32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

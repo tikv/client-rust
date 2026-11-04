@@ -458,9 +458,15 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
         >,
     ) -> Result<Self::Out> {
         if input.iter().any(Result::is_err) {
-            let (success, mut errors): (Vec<_>, Vec<_>) =
-                input.into_iter().partition(Result::is_ok);
-            let first_err = errors.pop().unwrap();
+            let (success, errors): (Vec<_>, Vec<_>) = input.into_iter().partition(Result::is_ok);
+            // Preserve the previous last-error choice among equal priorities,
+            // while preventing ordinary failures from masking protocol outcomes.
+            let selected_error = errors
+                .into_iter()
+                .rev()
+                .map(Result::unwrap_err)
+                .min_by_key(Error::priority)
+                .expect("at least one shard failed");
             let success_keys = success
                 .into_iter()
                 .map(Result::unwrap)
@@ -469,7 +475,7 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
                 })
                 .collect();
             Err(PessimisticLockError {
-                inner: Box::new(first_err.unwrap_err()),
+                inner: Box::new(selected_error),
                 success_keys,
             })
         } else {
@@ -1359,6 +1365,64 @@ mod tests {
             } else {
                 panic!();
             }
+        }
+    }
+
+    #[rstest::rstest]
+    #[case(false, false)]
+    #[case(true, false)]
+    #[case(false, true)]
+    #[case(true, true)]
+    #[tokio::test]
+    async fn protocol_lock_merge_keeps_error_priority_and_successful_keys(
+        #[case] reverse: bool,
+        #[case] undetermined: bool,
+    ) {
+        let rejection = crate::proto::errorpb::IncompatibleRequest {
+            message: "original rejection".into(),
+            ..Default::default()
+        };
+        let mut input = vec![
+            Err(crate::Error::Unimplemented),
+            Err(crate::Error::IncompatibleRequest(Box::new(
+                rejection.clone(),
+            ))),
+        ];
+        if undetermined {
+            input.push(Err(crate::Error::RegionError(Box::new(
+                crate::proto::errorpb::Error {
+                    message: "unknown outcome".into(),
+                    undetermined_result: Some(Default::default()),
+                    ..Default::default()
+                },
+            ))));
+        }
+        input.push(Ok(crate::request::ResponseWithShard(
+            kvrpcpb::PessimisticLockResponse::default(),
+            vec![kvrpcpb::Mutation {
+                key: vec![1],
+                ..Default::default()
+            }],
+        )));
+        if reverse {
+            input.reverse();
+        }
+        let crate::Error::PessimisticLockError {
+            inner,
+            success_keys,
+        } = CollectWithShard.merge(input).unwrap_err()
+        else {
+            panic!("expected partial lock failure")
+        };
+        assert_eq!(success_keys, vec![vec![1]]);
+        if undetermined {
+            assert!(
+                matches!(*inner, crate::Error::RegionError(error) if error.undetermined_result.is_some() && error.message == "unknown outcome")
+            );
+        } else {
+            assert!(
+                matches!(*inner, crate::Error::IncompatibleRequest(error) if *error == rejection)
+            );
         }
     }
 }
