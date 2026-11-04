@@ -213,19 +213,13 @@ impl<Req: KvRequest, PdC: PdClient> Plan for TxnProtocolCompatibility<Req, PdC> 
             let Some(error) = response.region_error_ref() else {
                 return Ok(response);
             };
-            let undetermined = error.undetermined_result.is_some();
-            if !undetermined && error.incompatible_request.is_none() {
+            // Leave unknown apply outcomes to the retry plan's terminal policy.
+            if error.undetermined_result.is_some() || error.incompatible_request.is_none() {
                 return Ok(response);
             }
             let error = response
                 .region_error()
                 .expect("region error was just inspected");
-            // An unknown apply outcome stops this send before compatibility,
-            // lock-resolution, or region retry handling. Preserve the complete
-            // envelope so the transaction layer can classify commit uncertainty.
-            if undetermined {
-                return Err(Error::RegionError(Box::new(error)));
-            }
             let rejection = error
                 .incompatible_request
                 .expect("incompatible request was just inspected");
@@ -959,6 +953,20 @@ where
             used_fallback,
         } = response;
 
+        if region_error
+            .as_ref()
+            .is_some_and(|error| error.undetermined_result.is_some())
+        {
+            return Self::handle_region_response(
+                context,
+                plan,
+                region.ver_id(),
+                region_store,
+                backoff,
+                region_error.unwrap(),
+            )
+            .await;
+        }
         if let Some(error) = key_errors {
             debug!("single_shard_handler:execute: key errors: {:?}", error);
             return Ok(vec![Err(Error::MultipleKeyErrors(error))]);
@@ -1430,7 +1438,7 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
 #[async_trait]
 impl<P: Plan, PdC: PdClient> Plan for ResolveLock<P, PdC>
 where
-    P::Result: HasLocks,
+    P::Result: HasLocks + HasRegionError,
 {
     type Result = P::Result;
 
@@ -1438,6 +1446,9 @@ where
         let mut result = self.inner.execute().await?;
         let mut clone = self.clone();
         loop {
+            if result.region_error_ref().is_some() {
+                return Ok(result);
+            }
             let locks = result.take_locks();
             if locks.is_empty() {
                 return Ok(result);
@@ -1563,13 +1574,10 @@ where
             let mut scan_lock_resp = inner.execute().await?;
 
             // Propagate errors to `retry_multi_region` for retry.
-            if let Some(e) = scan_lock_resp.key_errors() {
-                info!("CleanupLocks::execute, inner key errors:{:?}", e);
-                result.key_error = Some(e);
-                return Ok(result);
-            } else if let Some(e) = scan_lock_resp.region_error() {
-                info!("CleanupLocks::execute, inner region error:{}", e.message);
-                result.region_error = Some(e);
+            result.region_error = scan_lock_resp.region_error();
+            result.key_error = scan_lock_resp.key_errors();
+            if result.region_error.is_some() || result.key_error.is_some() {
+                info!("CleanupLocks::execute, inner errors:{:?}", result);
                 return Ok(result);
             }
 
@@ -2629,8 +2637,16 @@ mod test {
         }
     }
 
+    #[rstest::rstest]
+    #[case(false, true, 2)]
+    #[case(false, false, 4)]
+    #[case(true, true, 1)]
     #[tokio::test]
-    async fn protocol_undetermined_envelope_stops_before_other_errors_or_retries() {
+    async fn protocol_undetermined_envelope_obeys_retry_policy(
+        #[case] terminal: bool,
+        #[case] recover: bool,
+        #[case] expected_calls: usize,
+    ) {
         let original = errorpb::Error {
             message: "unknown apply outcome".into(),
             undetermined_result: Some(Default::default()),
@@ -2642,12 +2658,27 @@ mod test {
         let envelope = original.clone();
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = calls.clone();
-        let client = crate::mock::MockKvClient::with_dispatch_hook(move |_| {
-            observed.fetch_add(1, Ordering::SeqCst);
+        let client = crate::mock::MockKvClient::with_dispatch_hook(move |request| {
+            // Lock resolution and compatibility recovery must not handle this
+            // mixed response before the retry policy sees the unknown outcome.
+            let request = request.downcast_ref::<kvrpcpb::GetRequest>().unwrap();
+            assert_eq!(request.context.as_ref().unwrap().txn_protocol_version, 1);
+            let call = observed.fetch_add(1, Ordering::SeqCst);
+            if recover && call > 0 {
+                return Ok(Box::new(kvrpcpb::GetResponse {
+                    value: b"recovered".to_vec(),
+                    ..Default::default()
+                }));
+            }
             Ok(Box::new(kvrpcpb::GetResponse {
                 region_error: Some(envelope.clone()),
                 error: Some(kvrpcpb::KeyError {
                     abort: "must not mask unknown outcome".into(),
+                    locked: Some(kvrpcpb::LockInfo {
+                        key: vec![1],
+                        primary_lock: vec![1],
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -2676,14 +2707,24 @@ mod test {
             Timestamp::default(),
             Backoff::no_jitter_backoff(1, 1, 3),
             Keyspace::Disable,
-        )
-        .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
+        );
+        let backoff = Backoff::no_jitter_backoff(1, 1, 3);
+        let plan = if terminal {
+            plan.retry_multi_region_terminal_on_undetermined(backoff)
+        } else {
+            plan.retry_multi_region(backoff)
+        }
         .plan();
-        let Err(Error::RegionError(error)) = plan.execute().await else {
-            panic!("expected original unknown outcome")
+        let result = plan.execute().await;
+        if recover && !terminal {
+            assert_eq!(result.unwrap().pop().unwrap().unwrap().value, b"recovered");
+        } else {
+            let Err(Error::RegionError(error)) = result else {
+                panic!("expected original unknown outcome")
+            };
+            assert_eq!(*error, original);
         };
-        assert_eq!(*error, original);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), expected_calls);
     }
 
     #[tokio::test]
@@ -3144,6 +3185,81 @@ mod test {
         assert!(failed.region_error().is_none());
         assert!(matches!(failed, Err(Error::Unimplemented)));
     }
+    #[rstest::rstest]
+    #[case(false)]
+    #[case(true)]
+    #[tokio::test]
+    async fn protocol_cleanup_undetermined_response_reaches_retry_policy(#[case] recover: bool) {
+        let original = errorpb::Error {
+            undetermined_result: Some(Default::default()),
+            incompatible_request: Some(admission_rejection()),
+            ..Default::default()
+        };
+        let envelope = original.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let client = crate::mock::MockKvClient::with_dispatch_hook(move |request| {
+            let request = request.downcast_ref::<kvrpcpb::ScanLockRequest>().unwrap();
+            assert_eq!(request.context.as_ref().unwrap().txn_protocol_version, 1);
+            let call = observed.fetch_add(1, Ordering::SeqCst);
+            if recover && call > 0 {
+                return Ok(Box::new(kvrpcpb::ScanLockResponse::default()));
+            }
+            Ok(Box::new(kvrpcpb::ScanLockResponse {
+                region_error: Some(envelope.clone()),
+                error: Some(kvrpcpb::KeyError {
+                    abort: "must not mask unknown outcome".into(),
+                    ..Default::default()
+                }),
+                locks: vec![kvrpcpb::LockInfo {
+                    key: vec![1],
+                    primary_lock: vec![1],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }))
+        });
+        let routed = client.clone();
+        let pd = Arc::new(
+            MockPdClient::new(client)
+                .with_map_region_to_store_hook(move |region| {
+                    let mut store = protocol_store(routed.clone(), Some((0, 1)));
+                    store.region_with_leader = region;
+                    Ok(store)
+                })
+                .with_invalidate_region_hook(|_| panic!("unknown outcome invalidated routing")),
+        );
+        let plan = crate::request::PlanBuilder::new(
+            pd,
+            Keyspace::Disable,
+            kvrpcpb::ScanLockRequest {
+                start_key: vec![1],
+                end_key: vec![9],
+                limit: 1,
+                ..Default::default()
+            },
+        )
+        .txn_protocol_compatibility(crate::TxnRequestPolicy::default())
+        .cleanup_locks(
+            crate::transaction::ResolveLocksContext::default(),
+            crate::transaction::ResolveLocksOptions::default(),
+            Backoff::no_backoff(),
+            Keyspace::Disable,
+        )
+        .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 1))
+        .plan();
+        let result = plan.execute().await;
+        if recover {
+            assert!(result.unwrap().iter().all(Result::is_ok));
+        } else {
+            let Err(Error::RegionError(error)) = result else {
+                panic!("expected original unknown outcome")
+            };
+            assert_eq!(*error, original);
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
     #[rstest::rstest]
     #[case(false)]
     #[case(true)]
