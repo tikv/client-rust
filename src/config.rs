@@ -14,7 +14,7 @@ pub use crate::proto::kvrpcpb::{RequestOrigin, TxnProtocolVersion};
 /// supported version; transactional client construction validates [`Config`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TxnRequestPolicy {
-    /// Product identity for auditing.
+    /// Default product identity for auditing, applied when the request origin is `Unknown`.
     pub origin: RequestOrigin,
     /// Configured version; each destination may select a lower compatible version.
     pub protocol_version: TxnProtocolVersion,

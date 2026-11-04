@@ -207,7 +207,9 @@ impl<Req: KvRequest, PdC: PdClient> Plan for TxnProtocolCompatibility<Req, PdC> 
         let mut dispatch = self.inner.clone();
         loop {
             let context = dispatch.request.context_mut();
-            context.request_origin = self.policy.origin as i32;
+            if context.request_origin == crate::RequestOrigin::Unknown as i32 {
+                context.request_origin = self.policy.origin as i32;
+            }
             context.txn_protocol_version = version;
             let mut response = dispatch.execute().await?;
             let Some(error) = response.region_error_ref() else {
@@ -1816,6 +1818,7 @@ mod test {
     use super::*;
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb::BatchGetResponse;
+    use crate::RequestOrigin;
 
     #[test]
     fn grpc_statuses_are_classified_without_cache_churn_for_deadlines() {
@@ -2551,6 +2554,64 @@ mod test {
             );
             assert_eq!(calls.load(Ordering::SeqCst), 0);
         }
+    }
+
+    #[rstest::rstest]
+    #[case(None, RequestOrigin::TiFlash, 4)]
+    #[case(Some(RequestOrigin::Unknown as i32), RequestOrigin::TiFlash, 4)]
+    #[case(Some(RequestOrigin::TiDb as i32), RequestOrigin::TiFlash, 1)]
+    #[case(Some(RequestOrigin::TiDb as i32), RequestOrigin::Unknown, 1)]
+    #[case(Some(42), RequestOrigin::TiFlash, 42)]
+    #[case(Some(RequestOrigin::Unknown as i32), RequestOrigin::Unknown, 0)]
+    #[tokio::test]
+    async fn protocol_origin_defaults_only_unknown_through_resend(
+        #[case] request_origin: Option<i32>,
+        #[case] policy_origin: RequestOrigin,
+        #[case] expected_origin: i32,
+    ) {
+        let versions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = versions.clone();
+        let client = crate::mock::MockKvClient::with_dispatch_hook(move |request| {
+            let context = request
+                .downcast_ref::<kvrpcpb::GetRequest>()
+                .unwrap()
+                .context
+                .as_ref()
+                .unwrap();
+            assert_eq!(context.request_origin, expected_origin);
+            let mut sent = observed.lock().unwrap();
+            sent.push(context.txn_protocol_version);
+            Ok(Box::new(kvrpcpb::GetResponse {
+                region_error: (sent.len() == 1).then(|| errorpb::Error {
+                    incompatible_request: Some(admission_rejection()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+        });
+        let plan = crate::request::PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest {
+                context: request_origin.map(|request_origin| kvrpcpb::Context {
+                    request_origin,
+                    // Caller-supplied versions must still be replaced per attempt.
+                    txn_protocol_version: 2,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .txn_protocol_compatibility(crate::TxnRequestPolicy {
+            origin: policy_origin,
+            ..Default::default()
+        })
+        .single_region_with_store(protocol_store(client, Some((0, 1))))
+        .await
+        .unwrap()
+        .plan();
+        assert!(plan.execute().await.is_ok());
+        assert_eq!(*versions.lock().unwrap(), vec![1, 0]);
     }
 
     #[rstest::rstest]
