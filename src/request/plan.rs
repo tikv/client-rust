@@ -3407,6 +3407,133 @@ mod test {
     }
 
     #[rstest::rstest]
+    #[case(true, 1)]
+    #[case(false, 2)]
+    #[case(false, 0)]
+    #[tokio::test]
+    async fn protocol_cleanup_rebuilt_batches_get_fresh_allowances(
+        #[case] recover: bool,
+        #[case] retries: u32,
+    ) {
+        let routing_error = errorpb::Error {
+            message: "retry the cleanup batch".into(),
+            region_not_found: Some(Default::default()),
+            ..Default::default()
+        };
+        let envelope = routing_error.clone();
+        let attempts = if recover { 2 } else { retries as usize + 1 };
+        let versions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed_versions = versions.clone();
+        let scan_starts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed_starts = scan_starts.clone();
+        let client = crate::mock::MockKvClient::with_dispatch_hook(move |request| {
+            if let Some(request) = request.downcast_ref::<kvrpcpb::ScanLockRequest>() {
+                observed_starts
+                    .lock()
+                    .unwrap()
+                    .push(request.start_key.clone());
+                return Ok(Box::new(kvrpcpb::ScanLockResponse {
+                    locks: vec![kvrpcpb::LockInfo {
+                        key: vec![1],
+                        primary_lock: vec![1],
+                        lock_version: 1,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }));
+            }
+            if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse::default()));
+            }
+            let request = request
+                .downcast_ref::<kvrpcpb::ResolveLockRequest>()
+                .unwrap();
+            assert_eq!(request.txn_infos.len(), 1);
+            assert_eq!(request.txn_infos[0].txn, 1);
+            assert_eq!(request.txn_infos[0].status, 0);
+            let version = request.context.as_ref().unwrap().txn_protocol_version;
+            let mut sent = observed_versions.lock().unwrap();
+            sent.push(version);
+            assert!(
+                sent.len() <= attempts * 2,
+                "cleanup exceeded its retry budget"
+            );
+            let error = if version == 1 {
+                Some(errorpb::Error {
+                    incompatible_request: Some(admission_rejection()),
+                    ..Default::default()
+                })
+            } else if recover && sent.len() == 4 {
+                None
+            } else {
+                Some(envelope.clone())
+            };
+            Ok(Box::new(kvrpcpb::ResolveLockResponse {
+                region_error: error,
+                ..Default::default()
+            }))
+        });
+        let routed = client.clone();
+        let invalidations = Arc::new(AtomicUsize::new(0));
+        let invalidated = invalidations.clone();
+        let pd = Arc::new(
+            MockPdClient::new(client)
+                .with_map_region_to_store_hook(move |region| {
+                    let mut store = protocol_store(routed.clone(), Some((0, 1)));
+                    store.region_with_leader = region;
+                    Ok(store)
+                })
+                .with_invalidate_region_hook(move |_| {
+                    invalidated.fetch_add(1, Ordering::SeqCst);
+                }),
+        );
+        let ctx = crate::transaction::ResolveLocksContext::default();
+        let plan = crate::request::PlanBuilder::new(
+            pd,
+            Keyspace::Disable,
+            kvrpcpb::ScanLockRequest {
+                start_key: vec![1],
+                end_key: vec![9],
+                limit: 2,
+                ..Default::default()
+            },
+        )
+        .txn_protocol_compatibility(crate::TxnRequestPolicy::default())
+        .cleanup_locks(
+            ctx.clone(),
+            crate::transaction::ResolveLocksOptions::default(),
+            Backoff::no_backoff(),
+            Keyspace::Disable,
+        )
+        .retry_multi_region(Backoff::no_jitter_backoff(0, 0, retries))
+        .plan();
+        let result = plan.execute().await;
+        if recover {
+            let results = result.unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(
+                results.into_iter().next().unwrap().unwrap().resolved_locks,
+                1
+            );
+        } else {
+            let Err(Error::RegionError(error)) = result else {
+                panic!("expected the routing error after exhausting cleanup retries")
+            };
+            assert_eq!(*error, routing_error);
+        }
+        // Outer cleanup rebuilds the same page and transaction batch. Each new
+        // batch send gets one compatibility resend, matching client-go's SendReq.
+        assert_eq!(*versions.lock().unwrap(), [1, 0].repeat(attempts));
+        assert_eq!(*scan_starts.lock().unwrap(), vec![vec![1]; attempts]);
+        assert_eq!(invalidations.load(Ordering::SeqCst), attempts - 1);
+        assert_eq!(
+            ctx.is_region_cleaned(1, &MockPdClient::region1().ver_id())
+                .await,
+            recover
+        );
+    }
+
+    #[rstest::rstest]
     #[case(false)]
     #[case(true)]
     #[tokio::test]
