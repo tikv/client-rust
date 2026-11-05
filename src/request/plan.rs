@@ -1625,13 +1625,11 @@ where
                 Ok(()) => {
                     result.resolved_locks += lock_size;
                 }
-                // Propagate errors to `retry_multi_region` for retry. The variant now
-                // says which kind arrived, so neither arm has to pop an element to find
-                // out. That also fixes a real leak in the old single-variant code: it
-                // popped the last error to type-test it, and on the key-error path
-                // assigned the *remaining* vec to `key_error` — so a lone key error was
-                // dropped and `key_errors()` went on to report `Some(vec![])`, an error
-                // carrying no errors.
+                // Propagate both direct and wrapped region errors to the retry plan.
+                Err(Error::RegionError(e)) => {
+                    result.region_error = Some(*e);
+                    return Ok(result);
+                }
                 Err(Error::MultipleRegionErrors(mut errors)) => {
                     if let Some(Error::RegionError(e)) = errors.pop() {
                         result.region_error = Some(*e);
@@ -3319,6 +3317,93 @@ mod test {
             assert_eq!(*error, original);
         }
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[rstest::rstest]
+    #[case(false)]
+    #[case(true)]
+    #[tokio::test]
+    async fn cleanup_retries_undetermined_batch_resolve_results(#[case] recover: bool) {
+        let original = errorpb::Error {
+            message: "unknown batch resolve outcome".into(),
+            undetermined_result: Some(Default::default()),
+            incompatible_request: Some(admission_rejection()),
+            region_not_found: Some(Default::default()),
+            ..Default::default()
+        };
+        let envelope = original.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let client = crate::mock::MockKvClient::with_dispatch_hook(move |request| {
+            if request.is::<kvrpcpb::ScanLockRequest>() {
+                return Ok(Box::new(kvrpcpb::ScanLockResponse {
+                    locks: vec![kvrpcpb::LockInfo {
+                        key: vec![1],
+                        primary_lock: vec![1],
+                        lock_version: 1,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }));
+            }
+            if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse::default()));
+            }
+            let request = request
+                .downcast_ref::<kvrpcpb::ResolveLockRequest>()
+                .unwrap();
+            assert_eq!(request.txn_infos.len(), 1);
+            assert_eq!(request.txn_infos[0].txn, 1);
+            let call = observed.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(kvrpcpb::ResolveLockResponse {
+                region_error: (!recover || call == 0).then(|| envelope.clone()),
+                ..Default::default()
+            }))
+        });
+        let pd = Arc::new(
+            MockPdClient::new(client)
+                .with_invalidate_region_hook(|_| panic!("unknown outcome invalidated routing")),
+        );
+        let ctx = crate::transaction::ResolveLocksContext::default();
+        let plan = crate::request::PlanBuilder::new(
+            pd,
+            Keyspace::Disable,
+            kvrpcpb::ScanLockRequest {
+                start_key: vec![1],
+                end_key: vec![9],
+                limit: 2,
+                ..Default::default()
+            },
+        )
+        .txn_protocol_compatibility(crate::TxnRequestPolicy::default())
+        .cleanup_locks(
+            ctx.clone(),
+            crate::transaction::ResolveLocksOptions::default(),
+            Backoff::no_backoff(),
+            Keyspace::Disable,
+        )
+        .retry_multi_region(Backoff::no_jitter_backoff(0, 0, 1))
+        .plan();
+        let result = plan.execute().await;
+        if recover {
+            let results = result.unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(
+                results.into_iter().next().unwrap().unwrap().resolved_locks,
+                1
+            );
+        } else {
+            let Err(Error::RegionError(error)) = result else {
+                panic!("expected original unknown outcome")
+            };
+            assert_eq!(*error, original);
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            ctx.is_region_cleaned(1, &MockPdClient::region1().ver_id())
+                .await,
+            recover
+        );
     }
 
     #[rstest::rstest]

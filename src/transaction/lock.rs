@@ -270,26 +270,15 @@ async fn resolve_lock_with_retry(
                 Err(err) => return Err(err),
             };
         let plan = plan_builder.extract_error().plan();
-        match plan.execute().await {
+        let region_error = match plan.execute().await {
             Ok(_) => {
                 clean_regions.insert(ver_id);
                 return Ok(());
             }
-            // Retry on region error. `ResolveLockResponse` can have at most 1 error, and
-            // the variant now says which kind it is rather than requiring a type test on
-            // a popped element.
+            // ExtractError returns priority region errors directly and wraps ordinary ones.
+            Err(Error::RegionError(e)) => e,
             Err(Error::MultipleRegionErrors(mut errors)) => match errors.pop() {
-                Some(Error::RegionError(e)) => match backoff.next_delay_duration() {
-                    Some(duration) => {
-                        let region_error_resolved =
-                            handle_region_error(pd_client.clone(), *e, store.clone()).await?;
-                        if !region_error_resolved {
-                            sleep(duration).await;
-                        }
-                        continue;
-                    }
-                    None => return Err(Error::RegionError(e)),
-                },
+                Some(Error::RegionError(e)) => e,
                 Some(e) => return Err(e),
                 None => unreachable!(),
             },
@@ -321,6 +310,16 @@ async fn resolve_lock_with_retry(
                 None => return Err(e),
             },
             Err(e) => return Err(e),
+        };
+        match backoff.next_delay_duration() {
+            Some(duration) => {
+                let region_error_resolved =
+                    handle_region_error(pd_client.clone(), *region_error, store).await?;
+                if !region_error_resolved {
+                    sleep(duration).await;
+                }
+            }
+            None => return Err(Error::RegionError(region_error)),
         }
     }
 }
@@ -1840,6 +1839,61 @@ mod tests {
             format_key_for_log(&key),
             "len=20, prefix=000102030405060708090A0B0C0D0E0F"
         );
+    }
+
+    #[rstest::rstest]
+    #[case(true)]
+    #[case(false)]
+    #[tokio::test]
+    async fn resolve_lock_retries_undetermined_results(#[case] recover: bool) {
+        let original = errorpb::Error {
+            message: "unknown resolve outcome".into(),
+            undetermined_result: Some(Default::default()),
+            incompatible_request: Some(Default::default()),
+            region_not_found: Some(Default::default()),
+            ..Default::default()
+        };
+        let envelope = original.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let client = Arc::new(
+            MockPdClient::new(MockKvClient::with_dispatch_hook(move |request| {
+                assert!(request.is::<kvrpcpb::ResolveLockRequest>());
+                let call = observed.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::new(kvrpcpb::ResolveLockResponse {
+                    region_error: (!recover || call == 0).then(|| envelope.clone()),
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            }))
+            .with_invalidate_region_hook(|_| panic!("unknown outcome invalidated routing")),
+        );
+        let mut clean_regions = HashSet::new();
+        let result = resolve_lock_with_retry(
+            &Key::from(vec![1]),
+            1,
+            2,
+            false,
+            client,
+            Keyspace::Disable,
+            Backoff::no_jitter_backoff(0, 0, 1),
+            &mut clean_regions,
+            crate::TxnRequestPolicy::default(),
+        )
+        .await;
+        if recover {
+            result.unwrap();
+            assert_eq!(
+                clean_regions,
+                HashSet::from([MockPdClient::region1().ver_id()])
+            );
+        } else {
+            let Err(Error::RegionError(error)) = result else {
+                panic!("expected original unknown outcome")
+            };
+            assert_eq!(*error, original);
+            assert!(clean_regions.is_empty());
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
