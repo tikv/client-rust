@@ -14,9 +14,9 @@
 mod common;
 use common::*;
 use futures::prelude::*;
+use rand::rng;
 use rand::seq::IteratorRandom;
-use rand::thread_rng;
-use rand::Rng;
+use rand::RngExt;
 use serial_test::serial;
 use std::collections::HashMap;
 use std::iter;
@@ -200,14 +200,14 @@ async fn txn_split_batch() -> Result<()> {
         TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
             .await?;
     let mut txn = client.begin_optimistic().await?;
-    let mut rng = thread_rng();
+    let mut rng = rng();
 
     // testing with raft-entry-max-size = "1MB"
     let keys_count: usize = 1000;
     let val_len = 15000;
 
     let values: Vec<_> = (0..keys_count)
-        .map(|_| (0..val_len).map(|_| rng.gen::<u8>()).collect::<Vec<_>>())
+        .map(|_| (0..val_len).map(|_| rng.random::<u8>()).collect::<Vec<_>>())
         .collect();
 
     for (i, value) in values.iter().enumerate() {
@@ -238,12 +238,12 @@ async fn raw_bank_transfer() -> Result<()> {
     init().await?;
     let client =
         RawClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace()).await?;
-    let mut rng = thread_rng();
+    let mut rng = rng();
 
     let people = gen_u32_keys(NUM_PEOPLE, &mut rng);
     let mut sum: u32 = 0;
     for person in &people {
-        let init = rng.gen::<u8>() as u32;
+        let init = rng.random::<u8>() as u32;
         sum += init;
         client
             .put(person.clone(), init.to_be_bytes().to_vec())
@@ -252,7 +252,7 @@ async fn raw_bank_transfer() -> Result<()> {
 
     // transfer
     for _ in 0..NUM_TRNASFER {
-        let chosen_people = people.iter().choose_multiple(&mut rng, 2);
+        let chosen_people = people.iter().sample(&mut rng, 2);
         let alice = chosen_people[0];
         let mut alice_balance = get_u32(&client, alice.clone()).await?;
         let bob = chosen_people[1];
@@ -260,7 +260,7 @@ async fn raw_bank_transfer() -> Result<()> {
         if alice_balance == 0 {
             continue;
         }
-        let transfer = rng.gen_range(0..alice_balance);
+        let transfer = rng.random_range(0..alice_balance);
         alice_balance -= transfer;
         bob_balance += transfer;
         client
@@ -324,7 +324,7 @@ async fn txn_read() -> Result<()> {
     assert_eq!(res.count(), 2usize.pow(NUM_BITS_KEY_PER_TXN + NUM_BITS_TXN));
 
     // scan by small range and combine them
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let mut keys = gen_u32_keys(200, &mut rng)
         .iter()
         .cloned()
@@ -386,7 +386,7 @@ async fn txn_bank_transfer() -> Result<()> {
     let client =
         TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
             .await?;
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let options = TransactionOptions::new_optimistic()
         .use_async_commit()
         .drop_check(tikv_client::CheckLevel::Warn);
@@ -395,7 +395,7 @@ async fn txn_bank_transfer() -> Result<()> {
     let mut txn = client.begin_with_options(options.clone()).await?;
     let mut sum: u32 = 0;
     for person in &people {
-        let init = rng.gen::<u8>() as u32;
+        let init = rng.random::<u8>() as u32;
         sum += init;
         txn.put(person.clone(), init.to_be_bytes().to_vec()).await?;
     }
@@ -404,7 +404,7 @@ async fn txn_bank_transfer() -> Result<()> {
     // transfer
     for _ in 0..NUM_TRNASFER {
         let mut txn = client.begin_with_options(options.clone()).await?;
-        let chosen_people = people.iter().choose_multiple(&mut rng, 2);
+        let chosen_people = people.iter().sample(&mut rng, 2);
         let alice = chosen_people[0];
         let mut alice_balance = get_txn_u32(&mut txn, alice.clone()).await?;
         let bob = chosen_people[1];
@@ -413,7 +413,7 @@ async fn txn_bank_transfer() -> Result<()> {
             txn.rollback().await?;
             continue;
         }
-        let transfer = rng.gen_range(0..alice_balance);
+        let transfer = rng.random_range(0..alice_balance);
         alice_balance -= transfer;
         bob_balance += transfer;
         txn.put(alice.clone(), alice_balance.to_be_bytes().to_vec())
