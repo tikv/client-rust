@@ -114,9 +114,7 @@ impl Client<PdRpcClient> {
         let keyspace = match config.keyspace {
             Some(name) => {
                 let keyspace = rpc.load_keyspace(&name).await?;
-                Keyspace::Enable {
-                    keyspace_id: keyspace.id,
-                }
+                Keyspace::from_metadata(keyspace)?
             }
             None => Keyspace::Disable,
         };

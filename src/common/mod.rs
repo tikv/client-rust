@@ -4,6 +4,7 @@ mod errors;
 pub mod security;
 
 pub use self::errors::Error;
+pub(crate) use self::errors::ErrorPriority;
 pub use self::errors::ProtoKeyError;
 pub use self::errors::ProtoRegionError;
 pub use self::errors::Result;

@@ -5,6 +5,9 @@ use crate::Error;
 
 // Those that can have a single region error
 pub trait HasRegionError {
+    /// Borrow the same error as [`Self::region_error`] without consuming it.
+    fn region_error_ref(&self) -> Option<&crate::proto::errorpb::Error>;
+    /// Take ownership of the region error.
     fn region_error(&mut self) -> Option<crate::proto::errorpb::Error>;
 }
 
@@ -26,6 +29,10 @@ impl<T: HasRegionError> HasRegionErrors for T {
 macro_rules! has_region_error {
     ($type:ty) => {
         impl HasRegionError for $type {
+            fn region_error_ref(&self) -> Option<&crate::proto::errorpb::Error> {
+                self.region_error.as_ref()
+            }
+
             fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
                 self.region_error.take().map(|e| e.into())
             }
@@ -175,17 +182,21 @@ impl<T: HasKeyErrors> HasKeyErrors for Result<T, Error> {
 
 impl<T: HasKeyErrors> HasKeyErrors for Vec<T> {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
+        let mut errors = None;
         for t in self {
-            if let Some(e) = t.key_errors() {
-                return Some(e);
+            if let Some(mut next) = t.key_errors() {
+                errors.get_or_insert_with(Vec::new).append(&mut next);
             }
         }
-
-        None
+        errors
     }
 }
 
 impl<T: HasRegionError, E> HasRegionError for Result<T, E> {
+    fn region_error_ref(&self) -> Option<&crate::proto::errorpb::Error> {
+        self.as_ref().ok().and_then(|t| t.region_error_ref())
+    }
+
     fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
         self.as_mut().ok().and_then(|t| t.region_error())
     }
