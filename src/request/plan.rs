@@ -970,7 +970,14 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
         // cached leader remains valid; the caller applies the normal Region
         // backoff and may run the one-shot follower probe for ServerIsBusy(0).
         Ok(false)
-    } else if e.raft_entry_too_large.is_some() || e.max_timestamp_not_synced.is_some() {
+    } else if e.max_timestamp_not_synced.is_some() {
+        // A new leader (after a leader transfer, split or merge) rejects async-commit
+        // and 1PC prewrites until it has synced max_ts from PD, usually within
+        // milliseconds. TiKV checks this before writing anything, so the rejection is
+        // definitive and even commit points may resend; the cached leader remains
+        // valid. Back off and retry, as client-go does with `BoMaxTsNotSynced`.
+        Ok(false)
+    } else if e.raft_entry_too_large.is_some() {
         Err(Error::RegionError(Box::new(e)))
     } else {
         debug!(
@@ -1864,6 +1871,98 @@ mod test {
             RETRIES as usize + 1,
             "the default path retries: one initial dispatch plus one per backoff attempt"
         );
+    }
+
+    /// Answers `MaxTimestampNotSynced` to its first `rejections` dispatches and then
+    /// succeeds, counting dispatches like [`UndeterminedPlan`].
+    #[derive(Clone)]
+    struct MaxTsNotSyncedPlan {
+        rejections: usize,
+        dispatches: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Plan for MaxTsNotSyncedPlan {
+        type Result = BatchGetResponse;
+
+        async fn execute(&self) -> Result<Self::Result> {
+            if self.dispatches.fetch_add(1, Ordering::SeqCst) >= self.rejections {
+                return Ok(BatchGetResponse::default());
+            }
+            Ok(BatchGetResponse {
+                region_error: Some(errorpb::Error {
+                    max_timestamp_not_synced: Some(errorpb::MaxTimestampNotSynced::default()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        }
+    }
+
+    impl Shardable for MaxTsNotSyncedPlan {
+        type Shard = ();
+
+        fn shards(
+            &self,
+            _: &Arc<impl crate::pd::PdClient>,
+        ) -> BoxStream<'static, crate::Result<(Self::Shard, RegionWithLeader)>> {
+            Box::pin(stream::iter(vec![Ok(((), MockPdClient::region1()))])).boxed()
+        }
+
+        fn apply_shard(&mut self, _: Self::Shard) {}
+
+        fn apply_store(&mut self, _: &crate::store::RegionStore) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn max_ts_not_synced_plan(
+        rejections: usize,
+        retries: u32,
+    ) -> RetryableMultiRegion<MaxTsNotSyncedPlan, MockPdClient> {
+        RetryableMultiRegion {
+            inner: MaxTsNotSyncedPlan {
+                rejections,
+                dispatches: Arc::default(),
+            },
+            pd_client: Arc::new(MockPdClient::default()),
+            backoff: Backoff::no_jitter_backoff(1, 2, retries),
+            preserve_region_results: false,
+            // Async-commit and 1PC prewrites are commit points; the rejection must
+            // not be treated as an unknown outcome.
+            terminal_on_undetermined: true,
+            terminal_on_dispatch_error: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_commit_point_resends_after_max_ts_not_synced() {
+        let plan = max_ts_not_synced_plan(2, 10);
+        let dispatches = plan.inner.dispatches.clone();
+
+        let results = plan
+            .execute()
+            .await
+            .expect("the resent request is accepted once max_ts is synced");
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_ok(), "got {:?}", results[0]);
+        assert_eq!(dispatches.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn max_ts_not_synced_surfaces_as_a_region_error_when_retries_exhaust() {
+        const RETRIES: u32 = 3;
+        let plan = max_ts_not_synced_plan(usize::MAX, RETRIES);
+        let dispatches = plan.inner.dispatches.clone();
+
+        let err = plan.execute().await.unwrap_err();
+
+        assert!(
+            matches!(&err, Error::RegionError(e) if e.max_timestamp_not_synced.is_some()),
+            "want the MaxTimestampNotSynced region error, got {err:?}"
+        );
+        assert_eq!(dispatches.load(Ordering::SeqCst), RETRIES as usize + 1);
     }
 
     /// Always fails DISPATCH with a gRPC status error (the shape of a lost response:
