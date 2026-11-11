@@ -37,6 +37,15 @@ pub trait RetryClientTrait {
     // It does not know about encoding. Caller should take care of it.
     async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader>;
 
+    async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader>;
+
+    /// Return up to `limit` regions starting at `start_key` in one PD request.
+    async fn batch_scan_regions(
+        self: Arc<Self>,
+        start_key: Vec<u8>,
+        limit: i32,
+    ) -> Result<Vec<RegionWithLeader>>;
+
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader>;
 
     async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store>;
@@ -159,6 +168,41 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
+    async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
+        retry_mut!(self, "get_prev_region", |cluster| {
+            let key = key.clone();
+            async {
+                cluster
+                    .get_prev_region(key.clone(), self.timeout)
+                    .await
+                    .and_then(|resp| {
+                        region_from_response(resp, || Error::RegionForKeyNotFound { key })
+                    })
+            }
+        })
+    }
+
+    async fn batch_scan_regions(
+        self: Arc<Self>,
+        start_key: Vec<u8>,
+        limit: i32,
+    ) -> Result<Vec<RegionWithLeader>> {
+        retry_mut!(self, "batch_scan_regions", |cluster| {
+            let start_key = start_key.clone();
+            async {
+                cluster
+                    .batch_scan_regions(start_key, limit, self.timeout)
+                    .await
+                    .and_then(|resp| {
+                        resp.regions
+                            .into_iter()
+                            .map(region_from_batch_scan_response)
+                            .collect()
+                    })
+            }
+        })
+    }
+
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader> {
         retry_mut!(self, "get_region_by_id", |cluster| async {
             cluster
@@ -222,6 +266,13 @@ fn region_from_response(
 ) -> Result<RegionWithLeader> {
     let region = resp.region.take().ok_or_else(err)?;
     Ok(RegionWithLeader::new(region, resp.leader.take()))
+}
+
+fn region_from_batch_scan_response(resp: pdpb::Region) -> Result<RegionWithLeader> {
+    let region = resp.region.ok_or_else(|| Error::InternalError {
+        message: "PD returned a batch-scanned region without metadata".to_owned(),
+    })?;
+    Ok(RegionWithLeader::new(region, resp.leader))
 }
 
 // A node-like thing that can be connected to.

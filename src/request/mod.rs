@@ -293,6 +293,10 @@ mod test {
                 Ok(Self::region())
             }
 
+            async fn prev_region_for_key(&self, _key: &Key) -> Result<RegionWithLeader> {
+                Err(Error::Unimplemented)
+            }
+
             async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {
                 match id {
                     1 => self.region_for_key(&Key::EMPTY).await,
@@ -574,6 +578,10 @@ mod test {
 
             async fn region_for_key(&self, _: &Key) -> Result<RegionWithLeader> {
                 Ok(Self::region())
+            }
+
+            async fn prev_region_for_key(&self, _key: &Key) -> Result<RegionWithLeader> {
+                Err(Error::Unimplemented)
             }
 
             async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {

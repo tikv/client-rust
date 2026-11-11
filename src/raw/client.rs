@@ -33,6 +33,7 @@ use crate::Result;
 use crate::Value;
 
 const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
+const MAX_REVERSE_SCAN_BOUNDARY_RETRIES: usize = 10;
 
 /// The TiKV raw `Client` is used to interact with TiKV using raw requests.
 ///
@@ -517,7 +518,10 @@ impl<PdC: PdClient> Client<PdC> {
     /// from startKey(lowerBound) to endKey(upperBound) in reverse order, up to limit pairs.
     /// The returned keys are in reversed lexicographical order.
     /// If you want to include the endKey or exclude the startKey, push a '\0' to the key.
-    /// It doesn't support Scanning from "", because locating the last Region is not yet implemented.
+    /// An unbounded upper bound is supported by locating the final Region before
+    /// traversing Regions backwards toward the lower bound. The normal path uses
+    /// paged PD batch-region scans; clients whose PD does not support that RPC
+    /// fall back to walking Region boundaries from the lower bound.
     /// # Examples
     /// ```rust,no_run
     /// # use tikv_client::{KvPair, Config, RawClient, IntoOwnedRange};
@@ -764,17 +768,39 @@ impl<PdC: PdClient> Client<PdC> {
                 max_limit: MAX_RAW_KV_SCAN_LIMIT,
             });
         }
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
         let backoff = DEFAULT_STORE_BACKOFF;
-        let mut range = range.into().encode_keyspace(self.keyspace, KeyMode::Raw);
+        let range = range.into().encode_keyspace(self.keyspace, KeyMode::Raw);
         let mut result = Vec::new();
         let mut current_limit = limit;
-        let (start_key, end_key) = range.clone().into_keys();
-        let mut current_key: Key = start_key;
+        let (range_start, range_end) = range.into_keys();
+        // `encode_keyspace` represents an unbounded upper bound as an empty key
+        // when keyspace prefixes are disabled. Keyspace-enabled ranges use the
+        // next keyspace prefix instead, so their encoded upper bound is non-empty.
+        let mut reverse_unbounded = reverse
+            && (range_end.is_none()
+                || (range_end.as_ref().is_some_and(Key::is_empty)
+                    && !matches!(self.keyspace, Keyspace::Enable { .. })));
+        let mut current_key = if reverse && !reverse_unbounded {
+            range_end.clone().unwrap()
+        } else {
+            range_start.clone()
+        };
+        let mut initial_region = if reverse_unbounded {
+            Some(self.rpc.last_region_for_key(&range_start).await?)
+        } else {
+            None
+        };
 
         while current_limit > 0 {
             let scan_args = ScanInnerArgs {
-                start_key: current_key.clone(),
-                end_key: end_key.clone(),
+                current_key: current_key.clone(),
+                range_start: range_start.clone(),
+                range_end: range_end.clone(),
+                reverse_unbounded,
+                initial_region: initial_region.take(),
                 limit: current_limit,
                 key_only,
                 reverse,
@@ -790,15 +816,22 @@ impl<PdC: PdClient> Client<PdC> {
                 current_limit -= kvs.len() as u32;
                 result.append(&mut kvs);
             }
-            if next_key.is_empty() {
+            if reverse && !reverse_unbounded {
+                if next_key.is_empty() || next_key <= range_start {
+                    break;
+                }
+            } else if reverse_unbounded {
+                if next_key.is_empty() || next_key <= range_start {
+                    break;
+                }
+                // The first request used the final region with an unbounded
+                // upper edge. Subsequent requests walk bounded regions back
+                // toward the lower edge just like an ordinary reverse scan.
+                reverse_unbounded = false;
+            } else if next_key.is_empty() || range_end.clone().is_some_and(|ek| ek <= next_key) {
                 break;
             }
-            if end_key.clone().is_some_and(|ek| ek <= next_key) {
-                break;
-            } else {
-                current_key = next_key;
-                range = BoundRange::new(std::ops::Bound::Included(current_key.clone()), range.to);
-            }
+            current_key = next_key;
         }
 
         // limit is a soft limit, so we need check the number of results
@@ -814,11 +847,61 @@ impl<PdC: PdClient> Client<PdC> {
         &self,
         mut scan_args: ScanInnerArgs,
     ) -> Result<(Option<RawScanResponse>, Key)> {
-        let start_key = scan_args.start_key;
-        let end_key = scan_args.end_key;
+        let current_key = scan_args.current_key;
+        let mut region_override = scan_args.initial_region.take();
+        let mut boundary_retries = 0;
         loop {
-            let region = self.rpc.clone().region_for_key(&start_key).await?;
+            let region = if let Some(region) = region_override.take() {
+                region
+            } else if scan_args.reverse && !scan_args.reverse_unbounded {
+                let region = self.rpc.clone().region_for_key(&current_key).await?;
+                if !current_key.is_empty() && region.start_key() == current_key {
+                    let previous = match self.rpc.clone().prev_region_for_key(&current_key).await {
+                        Ok(previous) if previous.end_key() == current_key => {
+                            boundary_retries = 0;
+                            previous
+                        }
+                        Ok(_) | Err(Error::RegionForKeyNotFound { .. }) => {
+                            // The cached containing region is stale (for example,
+                            // after a merge), so the predecessor no longer ends
+                            // at this cursor. Drop it and resolve the cursor again.
+                            if boundary_retries >= MAX_REVERSE_SCAN_BOUNDARY_RETRIES {
+                                return Err(Error::InternalError {
+                                    message: "failed to resolve the predecessor region after exhausting boundary retries"
+                                        .to_owned(),
+                                });
+                            }
+                            boundary_retries += 1;
+                            self.rpc.invalidate_region_cache(region.ver_id()).await;
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    };
+                    previous
+                } else {
+                    boundary_retries = 0;
+                    region
+                }
+            } else {
+                boundary_retries = 0;
+                self.rpc.clone().region_for_key(&current_key).await?
+            };
             let store = self.rpc.clone().store_for_id(region.id()).await?;
+            let (start_key, end_key) = if scan_args.reverse {
+                let region_start = region.start_key();
+                let start_key = if region_start < scan_args.range_start {
+                    scan_args.range_start.clone()
+                } else {
+                    region_start
+                };
+                if scan_args.reverse_unbounded {
+                    (start_key, None)
+                } else {
+                    (start_key, Some(current_key.clone()))
+                }
+            } else {
+                (current_key.clone(), scan_args.range_end.clone())
+            };
             let request = new_raw_scan_request(
                 (start_key.clone(), end_key.clone()).into(),
                 scan_args.limit,
@@ -830,19 +913,38 @@ impl<PdC: PdClient> Client<PdC> {
             return match resp {
                 Ok(mut r) => {
                     if let Some(err) = r.region_error() {
+                        // Resolved Region errors still consume the retry budget, even
+                        // when a leader correction lets us retry without sleeping.
+                        let Some(duration) = scan_args.backoff.next_delay_duration() else {
+                            return Err(RegionError(Box::new(err)));
+                        };
                         let status =
                             plan::handle_region_error(self.rpc.clone(), err.clone(), store.clone())
                                 .await?;
-                        if status {
-                            continue;
-                        } else if let Some(duration) = scan_args.backoff.next_delay_duration() {
-                            sleep(duration).await;
-                            continue;
-                        } else {
-                            return Err(RegionError(Box::new(err)));
+                        if scan_args.reverse {
+                            // Only a known-leader correction preserves the
+                            // Region metadata. EpochNotMatch may have removed
+                            // this Region ID, so resolve it by key again.
+                            if status && err.not_leader.as_ref().is_some_and(|e| e.leader.is_some())
+                            {
+                                region_override = Some(region.clone());
+                            } else if scan_args.reverse_unbounded {
+                                region_override = Some(
+                                    self.rpc.last_region_for_key(&scan_args.range_start).await?,
+                                );
+                            }
                         }
+                        if !status {
+                            sleep(duration).await;
+                        }
+                        continue;
                     }
-                    Ok((Some(r), region.end_key()))
+                    let next_key = if scan_args.reverse {
+                        region.start_key()
+                    } else {
+                        region.end_key()
+                    };
+                    Ok((Some(r), next_key))
                 }
                 Err(err) => Err(err),
             };
@@ -910,8 +1012,11 @@ impl<PdC: PdClient> Client<PdC> {
 
 #[derive(Clone)]
 struct ScanInnerArgs {
-    start_key: Key,
-    end_key: Option<Key>,
+    current_key: Key,
+    range_start: Key,
+    range_end: Option<Key>,
+    reverse_unbounded: bool,
+    initial_region: Option<crate::region::RegionWithLeader>,
     limit: u32,
     key_only: bool,
     reverse: bool,
@@ -921,14 +1026,441 @@ struct ScanInnerArgs {
 #[cfg(test)]
 mod tests {
     use std::any::Any;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::Mutex;
 
     use super::*;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
+    use crate::proto::errorpb;
     use crate::proto::kvrpcpb;
     use crate::Result;
+
+    #[tokio::test]
+    async fn reverse_scan_across_regions_uses_previous_regions() -> Result<()> {
+        let keys = Arc::new(vec![vec![1], vec![11], vec![251]]);
+        let requests = Arc::new(Mutex::new(Vec::<(Vec<u8>, Vec<u8>)>::new()));
+        let dispatched_keys = keys.clone();
+        let dispatched_requests = requests.clone();
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let req = req.downcast_ref::<kvrpcpb::RawScanRequest>().unwrap();
+                assert!(req.reverse);
+                dispatched_requests
+                    .lock()
+                    .unwrap()
+                    .push((req.start_key.clone(), req.end_key.clone()));
+
+                let kvs = dispatched_keys
+                    .iter()
+                    .filter(|key| key.as_slice() >= req.end_key.as_slice())
+                    .filter(|key| key.as_slice() < req.start_key.as_slice())
+                    .rev()
+                    .map(|key| kvrpcpb::KvPair {
+                        key: key.clone(),
+                        value: key.clone(),
+                        ..Default::default()
+                    })
+                    .collect();
+                Ok(Box::new(kvrpcpb::RawScanResponse {
+                    kvs,
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let client = Client {
+            rpc: pd_client,
+            cf: None,
+            backoff: DEFAULT_REGION_BACKOFF,
+            atomic: false,
+            keyspace: Keyspace::Disable,
+        };
+
+        let pairs = client.scan_reverse(vec![1]..vec![255], 2).await?;
+        assert_eq!(
+            pairs.into_iter().map(|pair| pair.0).collect::<Vec<_>>(),
+            vec![Key::from(vec![251]), Key::from(vec![11])]
+        );
+        assert_eq!(
+            requests.lock().unwrap().as_slice(),
+            &[(vec![255], vec![250, 250]), (vec![250, 250], vec![10]),]
+        );
+
+        requests.lock().unwrap().clear();
+        let pairs = client.scan_reverse(vec![1]..vec![250, 250], 2).await?;
+        assert_eq!(
+            pairs.into_iter().map(|pair| pair.0).collect::<Vec<_>>(),
+            vec![Key::from(vec![11]), Key::from(vec![1])]
+        );
+        assert_eq!(
+            requests.lock().unwrap().as_slice(),
+            &[(vec![250, 250], vec![10]), (vec![10], vec![1]),]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reverse_scan_from_unbounded_upper_bound_uses_range_start() -> Result<()> {
+        let looked_up_keys = Arc::new(Mutex::new(Vec::<Key>::new()));
+        let dispatched_lookups = looked_up_keys.clone();
+        let pd_client = Arc::new(
+            MockPdClient::new(MockKvClient::with_dispatch_hook(move |req: &dyn Any| {
+                let req = req.downcast_ref::<kvrpcpb::RawScanRequest>().unwrap();
+                assert!(req.reverse);
+                assert!(req.start_key.is_empty());
+                assert_eq!(req.end_key, vec![251]);
+                Ok(Box::new(kvrpcpb::RawScanResponse {
+                    kvs: vec![kvrpcpb::KvPair {
+                        key: vec![251],
+                        value: vec![42],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            }))
+            .with_region_for_key_hook(move |key| {
+                dispatched_lookups.lock().unwrap().push(key.clone());
+                Ok(MockPdClient::region3())
+            }),
+        );
+        let client = Client {
+            rpc: pd_client,
+            cf: None,
+            backoff: DEFAULT_REGION_BACKOFF,
+            atomic: false,
+            keyspace: Keyspace::Disable,
+        };
+
+        assert_eq!(client.scan_reverse(vec![251].., 1).await?.len(), 1);
+        assert_eq!(
+            looked_up_keys.lock().unwrap().as_slice(),
+            &[Key::from(vec![251])]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reverse_scan_with_zero_limit_does_not_resolve_a_region() -> Result<()> {
+        let lookups = Arc::new(AtomicUsize::new(0));
+        let lookup_count = lookups.clone();
+        let pd_client = Arc::new(
+            MockPdClient::new(MockKvClient::with_dispatch_hook(|_: &dyn Any| {
+                panic!("zero-limit scan must not dispatch")
+            }))
+            .with_region_for_key_hook(move |_| {
+                lookup_count.fetch_add(1, Ordering::SeqCst);
+                panic!("zero-limit scan must not resolve a region")
+            }),
+        );
+        let client = Client {
+            rpc: pd_client,
+            cf: None,
+            backoff: DEFAULT_REGION_BACKOFF,
+            atomic: false,
+            keyspace: Keyspace::Disable,
+        };
+
+        assert!(client.scan_reverse(vec![1].., 0).await?.is_empty());
+        assert_eq!(lookups.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reverse_scan_stops_after_repeated_stale_boundaries() -> Result<()> {
+        let pd_client = Arc::new(
+            MockPdClient::new(MockKvClient::with_dispatch_hook(|_: &dyn Any| {
+                panic!("stale boundary must not dispatch")
+            }))
+            .with_region_for_key_hook(|_| Ok(MockPdClient::region2()))
+            .with_prev_region_for_key_hook(|_| Ok(MockPdClient::region2())),
+        );
+        let client = Client {
+            rpc: pd_client,
+            cf: None,
+            backoff: Backoff::no_backoff(),
+            atomic: false,
+            keyspace: Keyspace::Disable,
+        };
+
+        assert!(matches!(
+            client.scan_reverse(vec![1]..vec![10], 1).await,
+            Err(Error::InternalError { .. })
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reverse_scan_stops_after_repeated_final_region_boundaries() -> Result<()> {
+        let pd_client = Arc::new(
+            MockPdClient::new(MockKvClient::with_dispatch_hook(|_: &dyn Any| {
+                panic!("stale boundary must not dispatch")
+            }))
+            .with_region_for_key_hook(|key| {
+                let key_bytes: &[u8] = key.into();
+                if key_bytes == [1] {
+                    Ok(MockPdClient::region1())
+                } else {
+                    Ok(MockPdClient::region3())
+                }
+            }),
+        );
+        let client = Client {
+            rpc: pd_client,
+            cf: None,
+            backoff: Backoff::no_backoff(),
+            atomic: false,
+            keyspace: Keyspace::Disable,
+        };
+
+        assert!(matches!(
+            client.scan_reverse(vec![1].., 1).await,
+            Err(Error::InternalError { .. })
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reverse_scan_unbounded_upper_traverses_from_final_region() -> Result<()> {
+        let requests = Arc::new(Mutex::new(Vec::<(Vec<u8>, Vec<u8>)>::new()));
+        let dispatched_requests = requests.clone();
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let req = req.downcast_ref::<kvrpcpb::RawScanRequest>().unwrap();
+                assert!(req.reverse);
+                dispatched_requests
+                    .lock()
+                    .unwrap()
+                    .push((req.start_key.clone(), req.end_key.clone()));
+                let key = match (req.start_key.as_slice(), req.end_key.as_slice()) {
+                    ([], [250, 250]) => vec![251],
+                    ([250, 250], [10]) => vec![11],
+                    request => panic!("unexpected reverse scan request: {request:?}"),
+                };
+                Ok(Box::new(kvrpcpb::RawScanResponse {
+                    kvs: vec![kvrpcpb::KvPair {
+                        key: key.clone(),
+                        value: key,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let client = Client {
+            rpc: pd_client,
+            cf: None,
+            backoff: DEFAULT_REGION_BACKOFF,
+            atomic: false,
+            keyspace: Keyspace::Disable,
+        };
+
+        assert_eq!(
+            client
+                .scan_reverse(vec![1].., 2)
+                .await?
+                .into_iter()
+                .map(|pair| pair.0)
+                .collect::<Vec<_>>(),
+            vec![Key::from(vec![251]), Key::from(vec![11])]
+        );
+        assert_eq!(
+            requests.lock().unwrap().as_slice(),
+            &[(vec![], vec![250, 250]), (vec![250, 250], vec![10])]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reverse_scan_refreshes_stale_region_boundary() -> Result<()> {
+        let refreshed = Arc::new(AtomicBool::new(false));
+        let invalidations = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(Mutex::new(Vec::<(Vec<u8>, Vec<u8>)>::new()));
+        let region_refreshed = refreshed.clone();
+        let invalidation_count = invalidations.clone();
+        let dispatched_requests = requests.clone();
+        let stale_region = MockPdClient::region3();
+        let mut merged_region = MockPdClient::region3();
+        merged_region.region.start_key = vec![10];
+        merged_region.region.region_epoch.as_mut().unwrap().version = 1;
+        let merged_region_for_lookup = merged_region.clone();
+        let pd_client = Arc::new(
+            MockPdClient::new(MockKvClient::with_dispatch_hook(move |req: &dyn Any| {
+                let req = req.downcast_ref::<kvrpcpb::RawScanRequest>().unwrap();
+                dispatched_requests
+                    .lock()
+                    .unwrap()
+                    .push((req.start_key.clone(), req.end_key.clone()));
+                Ok(Box::new(kvrpcpb::RawScanResponse::default()) as Box<dyn Any>)
+            }))
+            .with_region_for_key_hook(move |key| {
+                if region_refreshed.load(Ordering::SeqCst) {
+                    let key_bytes: &[u8] = key.into();
+                    if key_bytes >= [10].as_slice() {
+                        Ok(merged_region_for_lookup.clone())
+                    } else {
+                        Ok(MockPdClient::region1())
+                    }
+                } else {
+                    Ok(stale_region.clone())
+                }
+            })
+            .with_prev_region_for_key_hook(|_| Ok(MockPdClient::region1()))
+            .with_invalidate_region_hook(move |_| {
+                invalidation_count.fetch_add(1, Ordering::SeqCst);
+                refreshed.store(true, Ordering::SeqCst);
+            }),
+        );
+        let client = Client {
+            rpc: pd_client,
+            cf: None,
+            backoff: DEFAULT_REGION_BACKOFF,
+            atomic: false,
+            keyspace: Keyspace::Disable,
+        };
+
+        client.scan_reverse(vec![1]..vec![250, 250], 1).await?;
+        assert_eq!(invalidations.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            requests.lock().unwrap().as_slice(),
+            &[(vec![250, 250], vec![10]), (vec![10], vec![1])]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reverse_scan_reloads_region_after_epoch_not_match() -> Result<()> {
+        let refreshed = Arc::new(AtomicBool::new(false));
+        let dispatch_count = Arc::new(AtomicUsize::new(0));
+        let region_refreshed = refreshed.clone();
+        let request_count = dispatch_count.clone();
+        let region_id_lookups = Arc::new(AtomicUsize::new(0));
+        let region_id_lookup_count = region_id_lookups.clone();
+        let mut stale_region = MockPdClient::region3();
+        stale_region.region.region_epoch.as_mut().unwrap().version = 0;
+        let mut refreshed_region = stale_region.clone();
+        refreshed_region.region.id = 4;
+        refreshed_region.region.start_key = vec![10];
+        refreshed_region.region.end_key = vec![];
+        refreshed_region
+            .region
+            .region_epoch
+            .as_mut()
+            .unwrap()
+            .version = 1;
+        let refreshed_for_lookup = refreshed_region.clone();
+        let refreshed_for_id = refreshed_region.clone();
+        let stale_for_id = stale_region.clone();
+        let pd_client = Arc::new(
+            MockPdClient::new(MockKvClient::with_dispatch_hook(move |req: &dyn Any| {
+                let req = req.downcast_ref::<kvrpcpb::RawScanRequest>().unwrap();
+                assert!(req.reverse);
+                if request_count.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Ok(Box::new(kvrpcpb::RawScanResponse {
+                        region_error: Some(errorpb::Error {
+                            epoch_not_match: Some(errorpb::EpochNotMatch {
+                                current_regions: vec![],
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>)
+                } else {
+                    assert_eq!(req.end_key, vec![10]);
+                    Ok(Box::new(kvrpcpb::RawScanResponse {
+                        kvs: vec![kvrpcpb::KvPair {
+                            key: vec![11],
+                            value: vec![42],
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }) as Box<dyn Any>)
+                }
+            }))
+            .with_region_for_key_hook(move |_| {
+                if region_refreshed.load(Ordering::SeqCst) {
+                    Ok(refreshed_for_lookup.clone())
+                } else {
+                    Ok(stale_region.clone())
+                }
+            })
+            .with_region_for_id_hook(move |id| {
+                if id == refreshed_for_id.id() {
+                    Ok(refreshed_for_id.clone())
+                } else if id == stale_for_id.id()
+                    && region_id_lookup_count.fetch_add(1, Ordering::SeqCst) == 0
+                {
+                    Ok(stale_for_id.clone())
+                } else {
+                    Err(Error::RegionNotFoundInResponse { region_id: id })
+                }
+            })
+            .with_invalidate_region_hook(move |_| {
+                refreshed.store(true, Ordering::SeqCst);
+            }),
+        );
+        let client = Client {
+            rpc: pd_client,
+            cf: None,
+            backoff: DEFAULT_REGION_BACKOFF,
+            atomic: false,
+            keyspace: Keyspace::Disable,
+        };
+
+        assert_eq!(client.scan_reverse(vec![1]..vec![255], 1).await?.len(), 1);
+        assert_eq!(dispatch_count.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reverse_scan_bounds_immediate_region_error_retries() -> Result<()> {
+        let dispatch_count = Arc::new(AtomicUsize::new(0));
+        let requests = dispatch_count.clone();
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                assert!(req.downcast_ref::<kvrpcpb::RawScanRequest>().is_some());
+                assert!(
+                    requests.fetch_add(1, Ordering::SeqCst) < 3,
+                    "retry limit exceeded"
+                );
+                Ok(Box::new(kvrpcpb::RawScanResponse {
+                    region_error: Some(errorpb::Error {
+                        epoch_not_match: Some(errorpb::EpochNotMatch {
+                            current_regions: vec![],
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let client = Client {
+            rpc: pd_client,
+            cf: None,
+            backoff: DEFAULT_REGION_BACKOFF,
+            atomic: false,
+            keyspace: Keyspace::Disable,
+        };
+
+        let result = client
+            .retryable_scan(ScanInnerArgs {
+                current_key: vec![1].into(),
+                range_start: vec![1].into(),
+                range_end: None,
+                reverse_unbounded: true,
+                initial_region: Some(MockPdClient::region3()),
+                limit: 1,
+                key_only: false,
+                reverse: true,
+                backoff: Backoff::no_jitter_backoff(0, 0, 2),
+            })
+            .await;
+        assert!(
+            matches!(result, Err(Error::RegionError(error)) if error.epoch_not_match.is_some())
+        );
+        assert_eq!(dispatch_count.load(Ordering::SeqCst), 3);
+        Ok(())
+    }
 
     #[rstest::rstest]
     #[case::forward(false)]

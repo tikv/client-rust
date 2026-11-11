@@ -86,6 +86,14 @@ pub struct MockPdClient {
     #[new(default)]
     region_for_key_hook:
         Option<Arc<dyn Fn(&Key) -> Result<RegionWithLeader> + Send + Sync + 'static>>,
+    /// Optional override for `region_for_id`, e.g. after a Region is removed.
+    #[new(default)]
+    region_for_id_hook:
+        Option<Arc<dyn Fn(RegionId) -> Result<RegionWithLeader> + Send + Sync + 'static>>,
+    /// Optional override for `prev_region_for_key`.
+    #[new(default)]
+    prev_region_for_key_hook:
+        Option<Arc<dyn Fn(&Key) -> Result<RegionWithLeader> + Send + Sync + 'static>>,
     /// Optional observer/override for leader cache updates.
     #[new(default)]
     update_leader_hook:
@@ -137,6 +145,22 @@ impl MockPdClient {
         F: Fn(&Key) -> Result<RegionWithLeader> + Send + Sync + 'static,
     {
         self.region_for_key_hook = Some(Arc::new(hook));
+        self
+    }
+
+    pub fn with_prev_region_for_key_hook<F>(mut self, hook: F) -> MockPdClient
+    where
+        F: Fn(&Key) -> Result<RegionWithLeader> + Send + Sync + 'static,
+    {
+        self.prev_region_for_key_hook = Some(Arc::new(hook));
+        self
+    }
+
+    pub fn with_region_for_id_hook<F>(mut self, hook: F) -> MockPdClient
+    where
+        F: Fn(RegionId) -> Result<RegionWithLeader> + Send + Sync + 'static,
+    {
+        self.region_for_id_hook = Some(Arc::new(hook));
         self
     }
 
@@ -241,7 +265,25 @@ impl PdClient for MockPdClient {
         Ok(region)
     }
 
+    async fn prev_region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
+        if let Some(hook) = &self.prev_region_for_key_hook {
+            return hook(key);
+        }
+        let region = self.region_for_key(key).await?;
+        match region.id() {
+            1 => Err(Error::RegionForKeyNotFound { key: key.to_vec() }),
+            2 => Ok(Self::region1()),
+            3 => Ok(Self::region2()),
+            _ => Err(Error::RegionNotFoundInResponse {
+                region_id: region.id(),
+            }),
+        }
+    }
+
     async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {
+        if let Some(hook) = &self.region_for_id_hook {
+            return hook(id);
+        }
         match id {
             1 => Ok(Self::region1()),
             2 => Ok(Self::region2()),

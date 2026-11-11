@@ -41,6 +41,11 @@ macro_rules! pd_request {
     }};
 }
 
+enum RegionRequestKind {
+    Current,
+    Previous,
+}
+
 // These methods make a single attempt to make a request.
 impl Cluster {
     pub async fn get_region(
@@ -50,7 +55,59 @@ impl Cluster {
     ) -> Result<pdpb::GetRegionResponse> {
         let mut req = pd_request!(self.id, pdpb::GetRegionRequest);
         req.region_key = key;
+        self.send_region_request(req, timeout, RegionRequestKind::Current)
+            .await
+    }
+
+    pub async fn get_prev_region(
+        &mut self,
+        key: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<pdpb::GetRegionResponse> {
+        let mut req = pd_request!(self.id, pdpb::GetRegionRequest);
+        req.region_key = key;
+        self.send_region_request(req, timeout, RegionRequestKind::Previous)
+            .await
+    }
+
+    pub async fn batch_scan_regions(
+        &mut self,
+        start_key: Vec<u8>,
+        limit: i32,
+        timeout: Duration,
+    ) -> Result<pdpb::BatchScanRegionsResponse> {
+        let mut req = pd_request!(self.id, pdpb::BatchScanRegionsRequest);
+        req.ranges.push(pdpb::KeyRange {
+            start_key,
+            ..Default::default()
+        });
+        req.limit = limit;
+        // A positive limit pages the range; PD may return only a prefix of the requested range.
+        req.contain_all_key_range = false;
         req.send(&mut self.client, timeout).await
+    }
+
+    async fn send_region_request(
+        &mut self,
+        request: pdpb::GetRegionRequest,
+        timeout: Duration,
+        kind: RegionRequestKind,
+    ) -> Result<pdpb::GetRegionResponse> {
+        let mut req = request.into_request();
+        req.set_timeout(timeout);
+        let response = match kind {
+            RegionRequestKind::Current => self.client.get_region(req).await?,
+            RegionRequestKind::Previous => self.client.get_prev_region(req).await?,
+        }
+        .into_inner();
+        if let Some(err) = &response
+            .header
+            .as_ref()
+            .and_then(|header| header.error.as_ref())
+        {
+            return Err(internal_err!(err.message.clone()));
+        }
+        Ok(response)
     }
 
     pub async fn get_region_by_id(
@@ -379,6 +436,16 @@ impl PdMessage for pdpb::GetRegionRequest {
 }
 
 #[async_trait]
+impl PdMessage for pdpb::BatchScanRegionsRequest {
+    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Response = pdpb::BatchScanRegionsResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.batch_scan_regions(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
 impl PdMessage for pdpb::GetRegionByIdRequest {
     type Client = pdpb::pd_client::PdClient<Channel>;
     type Response = pdpb::GetRegionResponse;
@@ -439,6 +506,12 @@ impl PdResponse for pdpb::GetStoreResponse {
 }
 
 impl PdResponse for pdpb::GetRegionResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.header.as_ref().unwrap()
+    }
+}
+
+impl PdResponse for pdpb::BatchScanRegionsResponse {
     fn header(&self) -> &pdpb::ResponseHeader {
         self.header.as_ref().unwrap()
     }
