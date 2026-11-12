@@ -22,6 +22,7 @@ name = "tikv_client"
 [workspace]
 members = [
     ".",
+    "bindings/c",
     "proto-build",
 ]
 

@@ -50,6 +50,20 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: unit test
         run: make unit-test
+      - name: C ABI smoke test
+        run: |
+          cargo build -p tikv-client-rust-c
+          # Compile and link the RawKV API example without requiring a cluster.
+          cc -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror \
+            -Ibindings/c/include bindings/c/examples/raw_async_demo.c \
+            -Ltarget/debug -ltikv_client_rust_c \
+            -Wl,-rpath,"$PWD/target/debug" -o target/debug/raw_async_demo
+          # Exercise both public headers and the loaded library in a C process.
+          cc -std=c11 -Wall -Wextra -Werror \
+            -Ibindings/c/include bindings/c/tests/abi_smoke.c \
+            -Ltarget/debug -ltikv_client_rust_c \
+            -Wl,-rpath,"$PWD/target/debug" -o target/debug/c_abi_smoke
+          target/debug/c_abi_smoke
 
   integration-test:
     name: integration test
