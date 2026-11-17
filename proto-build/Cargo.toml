@@ -12,6 +12,5 @@ edition = "2021"
 
 [dependencies]
 glob = "0.3"
-tonic-build = { version = "0.10", features = ["cleanup-markdown"] }
-# Keep this compatible with rust-toolchain 1.84.1.
-tempfile = "=3.14.0"
+tonic-prost-build = "0.14"
+tempfile = "=3.27.0"

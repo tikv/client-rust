@@ -261,7 +261,7 @@ mod test {
                     store_id: 43,
                     ..Default::default()
                 };
-                region.region.peers = vec![leader.clone(), follower, second_follower];
+                region.region.peers = vec![leader, follower, second_follower];
                 region.leader = Some(leader);
                 region
             }
@@ -441,7 +441,7 @@ mod test {
             store_id: 45,
             ..Default::default()
         };
-        new_region.region.peers = vec![new_leader.clone()];
+        new_region.region.peers = vec![new_leader];
         new_region.leader = Some(new_leader);
 
         let region_invalidated = Arc::new(AtomicBool::new(false));
@@ -723,7 +723,7 @@ mod test {
             store_id: 44,
             ..Default::default()
         };
-        region.region.peers = vec![leader.clone(), learner, witness, follower.clone()];
+        region.region.peers = vec![leader, learner, witness, follower];
         region.leader = Some(leader);
 
         let accesses = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -778,7 +778,7 @@ mod test {
             store_id: 41,
             ..Default::default()
         };
-        region.region.peers.push(leader.clone());
+        region.region.peers.push(leader);
         region
             .region
             .peers

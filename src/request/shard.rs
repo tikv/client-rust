@@ -308,17 +308,17 @@ macro_rules! shardable_range {
 
 #[cfg(test)]
 mod test {
-    use rand::thread_rng;
-    use rand::Rng;
+    use rand::rng;
+    use rand::RngExt;
 
     use super::Batchable;
 
     #[test]
     fn test_batches() {
-        let mut rng = thread_rng();
+        let mut rng = rng();
 
         let items: Vec<_> = (0..3)
-            .map(|_| (0..2).map(|_| rng.gen::<u8>()).collect::<Vec<_>>())
+            .map(|_| (0..2).map(|_| rng.random::<u8>()).collect::<Vec<_>>())
             .collect();
 
         let batch_size = 5;
@@ -335,10 +335,10 @@ mod test {
 
     #[test]
     fn test_batches_big_item() {
-        let mut rng = thread_rng();
+        let mut rng = rng();
 
         let items: Vec<_> = (0..3)
-            .map(|_| (0..3).map(|_| rng.gen::<u8>()).collect::<Vec<_>>())
+            .map(|_| (0..3).map(|_| rng.random::<u8>()).collect::<Vec<_>>())
             .collect();
 
         let batch_size = 2;
