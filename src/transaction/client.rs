@@ -57,6 +57,7 @@ const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
 pub struct Client {
     pd: Arc<PdRpcClient>,
     keyspace: Keyspace,
+    request_policy: crate::TxnRequestPolicy,
 }
 
 impl Clone for Client {
@@ -64,6 +65,7 @@ impl Clone for Client {
         Self {
             pd: self.pd.clone(),
             keyspace: self.keyspace,
+            request_policy: self.request_policy,
         }
     }
 }
@@ -114,18 +116,21 @@ impl Client {
         config: Config,
     ) -> Result<Client> {
         debug!("creating new transactional client");
+        let request_policy = config.txn_request_policy()?;
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?);
         let keyspace = match config.keyspace {
             Some(name) => {
                 let keyspace = pd.load_keyspace(&name).await?;
-                Keyspace::Enable {
-                    keyspace_id: keyspace.id,
-                }
+                Keyspace::from_metadata(keyspace)?
             }
             None => Keyspace::Disable,
         };
-        Ok(Client { pd, keyspace })
+        Ok(Client {
+            pd,
+            keyspace,
+            request_policy,
+        })
     }
 
     /// Create a transactional [`Client`] that uses API V2 without adding or removing any API V2
@@ -136,6 +141,7 @@ impl Client {
         pd_endpoints: Vec<S>,
         config: Config,
     ) -> Result<Client> {
+        let request_policy = config.txn_request_policy()?;
         if config.keyspace.is_some() {
             return Err(crate::Error::StringError(
                 "config.keyspace must be unset when using api-v2-no-prefix mode".to_owned(),
@@ -148,6 +154,7 @@ impl Client {
         Ok(Client {
             pd,
             keyspace: Keyspace::ApiV2NoPrefix,
+            request_policy,
         })
     }
 
@@ -302,6 +309,7 @@ impl Client {
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         let req = new_scan_lock_request(range, safepoint, options.batch_size);
         let plan = crate::request::PlanBuilder::new(self.pd.clone(), self.keyspace, req)
+            .txn_protocol_compatibility(self.request_policy)
             .cleanup_locks(ctx.clone(), options, backoff, self.keyspace)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
@@ -322,6 +330,7 @@ impl Client {
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         let req = new_scan_lock_request(range, safepoint, batch_size);
         let plan = crate::request::PlanBuilder::new(self.pd.clone(), self.keyspace, req)
+            .txn_protocol_compatibility(self.request_policy)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(crate::request::Collect)
             .plan();
@@ -348,6 +357,7 @@ impl Client {
                 timestamp.clone(),
                 self.pd.clone(),
                 self.keyspace,
+                self.request_policy,
             )
             .await?;
             live_locks = resolved_locks.truncate_keyspace(self.keyspace);
@@ -373,7 +383,12 @@ impl Client {
     /// This interface is intended for special scenarios that resemble operations like "drop table" or "drop database" in TiDB.
     pub async fn unsafe_destroy_range(&self, range: impl Into<BoundRange>) -> Result<()> {
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
-        let req = new_unsafe_destroy_range_request(range);
+        let mut req = new_unsafe_destroy_range_request(range);
+        // This store-level RPC is outside transaction protocol admission, matching
+        // client-go. It still identifies the initiating product for auditing.
+        req.context
+            .get_or_insert_with(Default::default)
+            .request_origin = self.request_policy.origin as i32;
         let plan = crate::request::PlanBuilder::new(self.pd.clone(), self.keyspace, req)
             .all_stores(DEFAULT_STORE_BACKOFF)
             .merge(crate::request::Collect)
@@ -383,5 +398,11 @@ impl Client {
 
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
         Transaction::new(timestamp, self.pd.clone(), options, self.keyspace)
+            .with_request_policy(self.request_policy)
+    }
+
+    /// Return this client's immutable transactional request policy.
+    pub fn request_policy(&self) -> crate::TxnRequestPolicy {
+        self.request_policy
     }
 }

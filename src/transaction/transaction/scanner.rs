@@ -2,7 +2,7 @@
 
 use std::cmp::Ordering;
 use std::sync::atomic;
-use std::sync::atomic::AtomicU8;
+use std::sync::atomic::{AtomicBool, AtomicU8};
 use std::sync::Arc;
 
 use log::debug;
@@ -130,6 +130,7 @@ struct RemoteScanner<PdC: PdClient> {
     status: Arc<AtomicU8>,
     pd_client: Arc<PdC>,
     keyspace: Keyspace,
+    request_policy: crate::TxnRequestPolicy,
     timestamp: Timestamp,
     retry_options: RetryOptions,
     end: Option<Key>,
@@ -263,6 +264,7 @@ impl<PdC: PdClient> RemoteScanner<PdC> {
             status: txn.status.clone(),
             pd_client: txn.rpc.clone(),
             keyspace: txn.keyspace,
+            request_policy: txn.request_policy,
             timestamp: txn.timestamp.clone(),
             retry_options: txn.options.retry_options.clone(),
             end,
@@ -322,6 +324,8 @@ impl<PdC: PdClient> RemoteScanner<PdC> {
         self.check_allow_operation()?;
         let keyspace = self.keyspace;
         let mut region_backoff = self.retry_options.region_backoff.clone();
+        // One allowance per page, preserved across location and transport retries.
+        let allowance = Arc::new(AtomicBool::new(false));
 
         loop {
             let range: BoundRange = (self.next_start.clone(), self.end.clone()).into();
@@ -379,6 +383,7 @@ impl<PdC: PdClient> RemoteScanner<PdC> {
                 false,
             );
             let plan = match PlanBuilder::new(self.pd_client.clone(), keyspace, request)
+                .txn_protocol_compatibility_with_allowance(self.request_policy, allowance.clone())
                 .single_region_with_store(region_store.clone())
                 .await
             {
@@ -1095,5 +1100,60 @@ mod tests {
         assert_eq!(get_calls.load(Ordering::SeqCst), 1);
 
         txn.rollback().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn protocol_scanner_page_retry_does_not_replenish_allowance() {
+        let versions = Arc::new(Mutex::new(Vec::new()));
+        let observed = versions.clone();
+        let rejection = errorpb::IncompatibleRequest {
+            reason: errorpb::IncompatibleRequestReason::TxnProtocolVersionOutOfRange as i32,
+            message: "original rejection".into(),
+            provided_txn_protocol_version: 1,
+            min_compatible_txn_protocol_version: 0,
+            max_compatible_txn_protocol_version: 0,
+        };
+        let original = rejection.clone();
+        let client = MockKvClient::with_dispatch_hook(move |request| {
+            let request = request.downcast_ref::<kvrpcpb::ScanRequest>().unwrap();
+            let mut sent = observed.lock().unwrap();
+            sent.push(request.context.as_ref().unwrap().txn_protocol_version);
+            let error = if sent.len() == 2 {
+                errorpb::Error {
+                    region_not_found: Some(Default::default()),
+                    ..Default::default()
+                }
+            } else {
+                errorpb::Error {
+                    incompatible_request: Some(rejection.clone()),
+                    ..Default::default()
+                }
+            };
+            Ok(Box::new(kvrpcpb::ScanResponse {
+                region_error: Some(error),
+                ..Default::default()
+            }) as Box<dyn Any>)
+        });
+        let routed = client.clone();
+        let pd = Arc::new(
+            MockPdClient::new(client).with_map_region_to_store_hook(move |region| {
+                let mut store = RegionStore::new(region, Arc::new(routed.clone()));
+                store.meta.id = store.region_with_leader.get_store_id().unwrap();
+                store.meta.txn_protocol_version_range =
+                    Some(metapb::TxnProtocolVersionRange { min: 0, max: 1 });
+                Ok(store)
+            }),
+        );
+        let mut txn = Transaction::new(
+            Timestamp::default(),
+            pd,
+            TransactionOptions::new_optimistic().drop_check(super::super::CheckLevel::None),
+            Keyspace::Disable,
+        );
+        let Err(error) = txn.scanner(..).await else {
+            panic!("expected exhausted page allowance")
+        };
+        assert!(matches!(error, crate::Error::IncompatibleRequest(error) if *error == original));
+        assert_eq!(*versions.lock().unwrap(), vec![1, 0, 1]);
     }
 }

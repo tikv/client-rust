@@ -14,6 +14,7 @@ use tokio::time::Duration;
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
+use crate::common::ErrorPriority;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::kvrpcpb;
@@ -88,6 +89,7 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     rpc: Arc<PdC>,
     options: TransactionOptions,
     keyspace: Keyspace,
+    request_policy: crate::TxnRequestPolicy,
     is_heartbeat_started: bool,
     /// Set once the transaction enters the commit path (`StartedCommit`), where
     /// prewrite may place 2PC locks. Kept as a dedicated flag because the status
@@ -116,10 +118,21 @@ impl<PdC: PdClient> Transaction<PdC> {
             rpc,
             options,
             keyspace,
+            request_policy: crate::TxnRequestPolicy::default(),
             is_heartbeat_started: false,
             prewritten: false,
             start_instant: std::time::Instant::now(),
         }
+    }
+
+    pub(crate) fn with_request_policy(mut self, policy: crate::TxnRequestPolicy) -> Self {
+        self.request_policy = policy;
+        self
+    }
+
+    /// Return the transactional request policy inherited from the client.
+    pub fn request_policy(&self) -> crate::TxnRequestPolicy {
+        self.request_policy
     }
 
     /// Create a new 'get' request
@@ -148,11 +161,13 @@ impl<PdC: PdClient> Transaction<PdC> {
         let key = key.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         let retry_options = self.options.retry_options.clone();
         let keyspace = self.keyspace;
+        let request_policy = self.request_policy;
 
         self.buffer
             .get_or_else(key, |key| async move {
                 let request = new_get_request(key, timestamp.clone());
                 let plan = PlanBuilder::new(rpc, keyspace, request)
+                    .txn_protocol_compatibility(request_policy)
                     .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
                     .merge(CollectSingle)
@@ -279,6 +294,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         let keyspace = self.keyspace;
+        let request_policy = self.request_policy;
         let keys = keys
             .into_iter()
             .map(move |k| k.into().encode_keyspace(keyspace, KeyMode::Txn));
@@ -288,6 +304,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             .batch_get_or_else(keys, move |keys| async move {
                 let request = new_batch_get_request(keys, timestamp.clone());
                 let plan = PlanBuilder::new(rpc, keyspace, request)
+                    .txn_protocol_compatibility(request_policy)
                     .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
                     .retry_multi_region(retry_options.region_backoff)
                     .merge(Collect)
@@ -687,6 +704,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.rpc.clone(),
             self.options.clone(),
             self.keyspace,
+            self.request_policy,
             self.buffer.get_write_size() as u64,
             self.start_instant,
         )
@@ -756,6 +774,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.rpc.clone(),
             self.options.clone(),
             self.keyspace,
+            self.request_policy,
             self.buffer.get_write_size() as u64,
             self.start_instant,
         )
@@ -794,6 +813,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.start_instant.elapsed().as_millis() as u64 + MAX_TTL,
         );
         let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
+            .txn_protocol_compatibility(self.request_policy)
             .resolve_lock(
                 self.timestamp.clone(),
                 self.options.retry_options.lock_backoff.clone(),
@@ -819,6 +839,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let rpc = self.rpc.clone();
         let retry_options = self.options.retry_options.clone();
         let keyspace = self.keyspace;
+        let request_policy = self.request_policy;
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
 
         self.buffer
@@ -836,6 +857,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                         reverse,
                     );
                     let plan = PlanBuilder::new(rpc, keyspace, request)
+                        .txn_protocol_compatibility(request_policy)
                         .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
                         .retry_multi_region(retry_options.region_backoff)
                         .merge(Collect)
@@ -895,6 +917,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             need_value,
         );
         let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
+            .txn_protocol_compatibility(self.request_policy)
             .resolve_lock(
                 self.timestamp.clone(),
                 self.options.retry_options.lock_backoff.clone(),
@@ -919,9 +942,28 @@ impl<PdC: PdClient> Transaction<PdC> {
                         for_update_ts.version(),
                     );
                     let keys = success_keys.into_iter().map(Key::from);
-                    self.pessimistic_lock_rollback(keys, self.timestamp.clone(), for_update_ts)
-                        .await?;
-                    Err(*inner)
+                    match self
+                        .pessimistic_lock_rollback(keys, self.timestamp.clone(), for_update_ts)
+                        .await
+                    {
+                        Ok(()) => Err(*inner),
+                        Err(rollback_error) => {
+                            warn!(
+                                "partial pessimistic lock rollback failed, start_ts: {}, original error: {}, rollback error: {}",
+                                self.timestamp.version(), inner, rollback_error,
+                            );
+                            // Original protocol outcomes survive cleanup failures
+                            // unless cleanup reports a higher-priority outcome.
+                            // Ordinary original errors retain rollback's failure.
+                            if inner.priority() != ErrorPriority::Ordinary
+                                && inner.priority() <= rollback_error.priority()
+                            {
+                                Err(*inner)
+                            } else {
+                                Err(rollback_error)
+                            }
+                        }
+                    }
                 }
                 _ => Err(err),
             }
@@ -963,6 +1005,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             for_update_ts,
         );
         let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, req)
+            .txn_protocol_compatibility(self.request_policy)
             .resolve_lock(
                 start_version,
                 self.options.retry_options.lock_backoff.clone(),
@@ -1015,6 +1058,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         };
         let start_instant = self.start_instant;
         let keyspace = self.keyspace;
+        let request_policy = self.request_policy;
         debug!(
             "starting auto-heartbeat, start_ts: {}, interval: {:?}",
             self.timestamp.version(),
@@ -1041,6 +1085,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     start_instant.elapsed().as_millis() as u64 + MAX_TTL,
                 );
                 let plan = PlanBuilder::new(rpc.clone(), keyspace, request)
+                    .txn_protocol_compatibility(request_policy)
                     .retry_multi_region(region_backoff.clone())
                     .merge(CollectSingle)
                     .plan();
@@ -1330,6 +1375,7 @@ struct Committer<PdC: PdClient = PdRpcClient> {
     rpc: Arc<PdC>,
     options: TransactionOptions,
     keyspace: Keyspace,
+    request_policy: crate::TxnRequestPolicy,
     #[new(default)]
     undetermined: bool,
     write_size: u64,
@@ -1441,15 +1487,17 @@ impl<PdC: PdClient> Committer<PdC> {
             .collect();
         // FIXME set max_commit_ts and min_commit_ts
 
-        let builder = PlanBuilder::new(self.rpc.clone(), self.keyspace, request).resolve_lock(
-            self.start_version.clone(),
-            self.options.retry_options.lock_backoff.clone(),
-            self.keyspace,
-        );
-        // With async commit or 1PC this prewrite IS the commit point, so an unknown
-        // apply outcome must not be retried away or overwritten by a later error
-        // (stricter than client-go, in the safe direction; commit() classifies it).
-        // An ordinary 2PC prewrite retries, as client-go's does.
+        let builder = PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
+            .txn_protocol_compatibility(self.request_policy)
+            .resolve_lock(
+                self.start_version.clone(),
+                self.options.retry_options.lock_backoff.clone(),
+                self.keyspace,
+            );
+        // With async commit or 1PC this prewrite IS the commit point; commit()
+        // classifies an unknown apply outcome as transaction uncertainty.
+        // Ordinary 2PC prewrites use normal routing retries, but the compatibility
+        // plan also stops their send on an unknown apply outcome.
         let builder = if self.options.async_commit || self.options.try_one_pc {
             builder.retry_multi_region_terminal_on_undetermined(
                 self.options.retry_options.region_backoff.clone(),
@@ -1496,6 +1544,7 @@ impl<PdC: PdClient> Committer<PdC> {
             commit_version.clone(),
         );
         let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, req)
+            .txn_protocol_compatibility(self.request_policy)
             .resolve_lock(
                 self.start_version.clone(),
                 self.options.retry_options.lock_backoff.clone(),
@@ -1635,6 +1684,7 @@ impl<PdC: PdClient> Committer<PdC> {
             new_commit_request(keys, start_version.clone(), commit_version)
         };
         let plan = PlanBuilder::new(self.rpc, self.keyspace, req)
+            .txn_protocol_compatibility(self.request_policy)
             .resolve_lock(
                 start_version,
                 self.options.retry_options.lock_backoff,
@@ -1682,11 +1732,13 @@ impl<PdC: PdClient> Committer<PdC> {
         let region_backoff = self.options.retry_options.region_backoff.clone();
         let rpc = self.rpc;
         let keyspace = self.keyspace;
+        let request_policy = self.request_policy;
         match self.options.kind {
             TransactionKind::Pessimistic(for_update_ts) if !prewritten => {
                 let req =
                     new_pessimistic_rollback_request(keys, start_version.clone(), for_update_ts);
                 let plan = PlanBuilder::new(rpc, keyspace, req)
+                    .txn_protocol_compatibility(request_policy)
                     .resolve_lock(start_version, lock_backoff, keyspace)
                     .retry_multi_region(region_backoff)
                     .extract_error()
@@ -1698,6 +1750,7 @@ impl<PdC: PdClient> Committer<PdC> {
             _ => {
                 let req = new_batch_rollback_request(keys, start_version.clone());
                 let plan = PlanBuilder::new(rpc, keyspace, req)
+                    .txn_protocol_compatibility(request_policy)
                     .resolve_lock(start_version, lock_backoff, keyspace)
                     .retry_multi_region(region_backoff)
                     .extract_error()
@@ -1768,6 +1821,7 @@ impl From<u8> for TransactionStatus {
 
 #[cfg(test)]
 mod tests {
+    use crate::common::ErrorPriority;
     use std::any::Any;
     use std::io;
     use std::sync::atomic::AtomicUsize;
@@ -1965,5 +2019,153 @@ mod tests {
                 ..Default::default()
             })
         )));
+    }
+
+    #[derive(Clone, Copy)]
+    enum LockRollbackOutcome {
+        Success,
+        Grpc,
+        Incompatible,
+        Undetermined,
+    }
+
+    #[rstest::rstest]
+    #[case(ErrorPriority::Incompatible, LockRollbackOutcome::Success, true)]
+    #[case(ErrorPriority::Incompatible, LockRollbackOutcome::Grpc, true)]
+    #[case(ErrorPriority::Incompatible, LockRollbackOutcome::Incompatible, true)]
+    #[case(ErrorPriority::Incompatible, LockRollbackOutcome::Undetermined, false)]
+    #[case(ErrorPriority::Undetermined, LockRollbackOutcome::Success, true)]
+    #[case(ErrorPriority::Undetermined, LockRollbackOutcome::Grpc, true)]
+    #[case(ErrorPriority::Undetermined, LockRollbackOutcome::Incompatible, true)]
+    #[case(ErrorPriority::Undetermined, LockRollbackOutcome::Undetermined, true)]
+    #[case(ErrorPriority::Ordinary, LockRollbackOutcome::Success, true)]
+    #[case(ErrorPriority::Ordinary, LockRollbackOutcome::Grpc, false)]
+    #[case(ErrorPriority::Ordinary, LockRollbackOutcome::Incompatible, false)]
+    #[case(ErrorPriority::Ordinary, LockRollbackOutcome::Undetermined, false)]
+    #[tokio::test]
+    async fn partial_pessimistic_lock_preserves_error_priority_after_rollback(
+        #[case] original_priority: ErrorPriority,
+        #[case] rollback: LockRollbackOutcome,
+        #[case] preserve_original: bool,
+    ) {
+        fn region_error(priority: ErrorPriority, message: &str) -> crate::proto::errorpb::Error {
+            let mut error = crate::proto::errorpb::Error {
+                message: message.into(),
+                ..Default::default()
+            };
+            match priority {
+                ErrorPriority::Undetermined => error.undetermined_result = Some(Default::default()),
+                ErrorPriority::Incompatible => {
+                    error.incompatible_request = Some(crate::proto::errorpb::IncompatibleRequest {
+                        message: message.into(),
+                        ..Default::default()
+                    });
+                }
+                ErrorPriority::Ordinary => unreachable!(),
+            }
+            error
+        }
+
+        let lock_keys = Arc::new(Mutex::new(Vec::new()));
+        let locked = lock_keys.clone();
+        let rollback_keys = Arc::new(Mutex::new(Vec::new()));
+        let rolled_back = rollback_keys.clone();
+        let client = MockKvClient::with_dispatch_hook(move |request| {
+            if let Some(request) = request.downcast_ref::<kvrpcpb::PessimisticLockRequest>() {
+                let keys = request
+                    .mutations
+                    .iter()
+                    .map(|m| m.key.clone())
+                    .collect::<Vec<_>>();
+                locked.lock().unwrap().extend(keys.clone());
+                assert_eq!(keys.len(), 1);
+                let mut response = kvrpcpb::PessimisticLockResponse::default();
+                if keys[0] == vec![11] {
+                    if original_priority == ErrorPriority::Ordinary {
+                        response.errors.push(kvrpcpb::KeyError {
+                            abort: "original lock error".into(),
+                            ..Default::default()
+                        });
+                    } else {
+                        response.region_error =
+                            Some(region_error(original_priority, "original lock error"));
+                    }
+                } else {
+                    assert_eq!(keys[0], vec![1]);
+                }
+                return Ok(Box::new(response) as Box<dyn Any>);
+            }
+            let request = request
+                .downcast_ref::<kvrpcpb::PessimisticRollbackRequest>()
+                .expect("expected a rollback of the successfully locked shard");
+            rolled_back.lock().unwrap().push(request.keys.clone());
+            let mut response = kvrpcpb::PessimisticRollbackResponse::default();
+            match rollback {
+                LockRollbackOutcome::Success => {}
+                LockRollbackOutcome::Grpc => {
+                    return Err(crate::Error::GrpcAPI(tonic::Status::unavailable(
+                        "rollback error",
+                    )));
+                }
+                LockRollbackOutcome::Incompatible => {
+                    response.region_error =
+                        Some(region_error(ErrorPriority::Incompatible, "rollback error"));
+                }
+                LockRollbackOutcome::Undetermined => {
+                    response.region_error =
+                        Some(region_error(ErrorPriority::Undetermined, "rollback error"));
+                }
+            }
+            Ok(Box::new(response) as Box<dyn Any>)
+        });
+        let mut txn = Transaction::new(
+            Timestamp::from_version(123),
+            Arc::new(MockPdClient::new(client)),
+            TransactionOptions::new_pessimistic()
+                .no_resolve_locks()
+                .no_resolve_regions()
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(super::CheckLevel::None),
+            Keyspace::Disable,
+        );
+        let error = txn.lock_keys([vec![1], vec![11]]).await.unwrap_err();
+
+        let expected_message = if preserve_original {
+            "original lock error"
+        } else {
+            "rollback error"
+        };
+        let expected_priority = if preserve_original {
+            original_priority
+        } else {
+            match rollback {
+                LockRollbackOutcome::Grpc => ErrorPriority::Ordinary,
+                LockRollbackOutcome::Incompatible => ErrorPriority::Incompatible,
+                LockRollbackOutcome::Undetermined => ErrorPriority::Undetermined,
+                LockRollbackOutcome::Success => unreachable!(),
+            }
+        };
+        assert_eq!(error.priority(), expected_priority);
+        match error {
+            crate::Error::IncompatibleRequest(error) => assert_eq!(error.message, expected_message),
+            crate::Error::RegionError(error) => {
+                assert!(error.undetermined_result.is_some());
+                assert_eq!(error.message, expected_message);
+            }
+            crate::Error::GrpcAPI(status) => {
+                assert_eq!(status.code(), tonic::Code::Unavailable);
+                assert_eq!(status.message(), expected_message);
+            }
+            crate::Error::MultipleKeyErrors(errors) => {
+                assert_eq!(errors.len(), 1);
+                assert!(matches!(&errors[0], crate::Error::KeyError(error)
+                    if error.abort == expected_message));
+            }
+            error => panic!("unexpected error: {error:?}"),
+        }
+        let mut keys = lock_keys.lock().unwrap().clone();
+        keys.sort();
+        assert_eq!(keys, vec![vec![1], vec![11]]);
+        assert_eq!(*rollback_keys.lock().unwrap(), vec![vec![vec![1]]]);
     }
 }

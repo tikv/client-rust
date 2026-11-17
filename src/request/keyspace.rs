@@ -34,6 +34,20 @@ pub enum KeyMode {
 }
 
 impl Keyspace {
+    pub(crate) fn from_metadata(
+        meta: crate::proto::keyspacepb::KeyspaceMeta,
+    ) -> crate::Result<Self> {
+        use crate::proto::keyspacepb::keyspace_meta::Keyspace as MetaKeyspace;
+
+        match meta.keyspace {
+            Some(MetaKeyspace::Id(keyspace_id)) => Ok(Self::Enable { keyspace_id }),
+            None => Ok(Self::Enable { keyspace_id: 0 }),
+            Some(MetaKeyspace::KeyspaceIdentity(_)) => Err(crate::Error::StringError(
+                "API V3 keyspace identities are not supported by this client".to_owned(),
+            )),
+        }
+    }
+
     pub fn api_version(&self) -> kvrpcpb::ApiVersion {
         match self {
             Keyspace::Disable => kvrpcpb::ApiVersion::V1,
@@ -291,6 +305,27 @@ fn pretruncate_bytes<const N: usize>(vec: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyspace_metadata_preserves_legacy_ids_and_rejects_v3() {
+        use crate::proto::keyspacepb::KeyspaceMeta;
+        use prost::Message;
+
+        // Field 1 remains the V1/V2 keyspace ID on the wire.
+        let legacy = KeyspaceMeta::decode(&[0x08, 42][..]).unwrap();
+        assert_eq!(
+            Keyspace::from_metadata(legacy).unwrap(),
+            Keyspace::Enable { keyspace_id: 42 }
+        );
+        let default_id = KeyspaceMeta::decode(&[][..]).unwrap();
+        assert_eq!(
+            Keyspace::from_metadata(default_id).unwrap(),
+            Keyspace::Enable { keyspace_id: 0 }
+        );
+        // Field 8 is a V3 identity; an empty identity must not become a V2 ID of zero.
+        let v3 = KeyspaceMeta::decode(&[0x42, 0x00][..]).unwrap();
+        assert!(Keyspace::from_metadata(v3).is_err());
+    }
 
     #[test]
     fn test_keyspace_prefix() {

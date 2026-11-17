@@ -5,9 +5,11 @@ use std::time::Instant;
 
 use prometheus::register_histogram;
 use prometheus::register_histogram_vec;
+use prometheus::register_int_counter;
 use prometheus::register_int_counter_vec;
 use prometheus::Histogram;
 use prometheus::HistogramVec;
+use prometheus::IntCounter;
 use prometheus::IntCounterVec;
 
 use crate::Result;
@@ -78,7 +80,40 @@ pub fn observe_tso_batch(batch_size: usize) {
     PD_TSO_BATCH_SIZE_HISTOGRAM.observe(batch_size as f64);
 }
 
+pub(crate) fn txn_protocol_rejection(source: &'static str) {
+    TXN_PROTOCOL_REJECTION_COUNTER
+        .with_label_values(&[source])
+        .inc();
+}
+
+pub(crate) fn txn_protocol_resend() {
+    TXN_PROTOCOL_RESEND_COUNTER.inc();
+}
+
+pub(crate) fn txn_protocol_store_reload(event: &'static str) {
+    TXN_PROTOCOL_STORE_RELOAD_COUNTER
+        .with_label_values(&[event])
+        .inc();
+}
+
 lazy_static::lazy_static! {
+    static ref TXN_PROTOCOL_REJECTION_COUNTER: IntCounterVec = register_int_counter_vec!(
+        "tikv_txn_protocol_rejection_total",
+        "Transaction protocol rejections by source: local or server",
+        &["source"]
+    )
+    .unwrap();
+    static ref TXN_PROTOCOL_RESEND_COUNTER: IntCounter = register_int_counter!(
+        "tikv_txn_protocol_resend_total",
+        "Transaction RPC resends attempted after compatibility rejections"
+    )
+    .unwrap();
+    static ref TXN_PROTOCOL_STORE_RELOAD_COUNTER: IntCounterVec = register_int_counter_vec!(
+        "tikv_txn_protocol_store_reload_total",
+        "Store metadata reload events: started, success, failure, joined or suppressed",
+        &["event"]
+    )
+    .unwrap();
     static ref TIKV_REQUEST_DURATION_HISTOGRAM_VEC: HistogramVec = register_histogram_vec!(
         "tikv_request_duration_seconds",
         "Bucketed histogram of TiKV requests duration",

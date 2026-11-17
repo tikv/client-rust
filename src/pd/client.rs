@@ -54,6 +54,11 @@ use crate::Timestamp;
 pub trait PdClient: Send + Sync + 'static {
     type KvClient: KvClient + Send + Sync + 'static;
 
+    /// Reload store metadata from PD, coalescing concurrent refreshes.
+    async fn reload_store(&self, _store_id: StoreId) -> Result<metapb::Store> {
+        Err(crate::Error::Unimplemented)
+    }
+
     /// In transactional API, `region` is decoded (keys in raw format).
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore>;
 
@@ -223,11 +228,17 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
 impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     type KvClient = KvC::KvClient;
 
+    async fn reload_store(&self, store_id: StoreId) -> Result<metapb::Store> {
+        self.region_cache.reload_store(store_id).await
+    }
+
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
         let store_id = region.get_store_id()?;
         let store = self.region_cache.get_store_by_id(store_id).await?;
         let kv_client = self.kv_client(&store.address).await?;
-        Ok(RegionStore::new(region, Arc::new(kv_client)))
+        let mut region_store = RegionStore::new(region, Arc::new(kv_client));
+        region_store.meta = store;
+        Ok(region_store)
     }
 
     async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {

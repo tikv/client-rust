@@ -30,6 +30,9 @@ use crate::Result;
 pub struct RegionStore {
     pub region_with_leader: RegionWithLeader,
     pub client: Arc<dyn KvClient + Send + Sync>,
+    // Default metadata preserves the constructor used by mock routing clients.
+    #[new(default)]
+    pub meta: crate::proto::metapb::Store,
 }
 
 #[derive(new, Clone)]

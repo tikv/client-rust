@@ -2,6 +2,38 @@
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KeyspaceMeta {
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(enumeration = "KeyspaceState", tag = "3")]
+    pub state: i32,
+    #[prost(int64, tag = "4")]
+    pub created_at: i64,
+    #[prost(int64, tag = "5")]
+    pub state_changed_at: i64,
+    #[prost(map = "string, string", tag = "7")]
+    pub config: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(oneof = "keyspace_meta::Keyspace", tags = "1, 8")]
+    pub keyspace: ::core::option::Option<keyspace_meta::Keyspace>,
+}
+/// Nested message and enum types in `KeyspaceMeta`.
+pub mod keyspace_meta {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should read keyspace_identity instead.
+        #[prost(uint32, tag = "1")]
+        Id(u32),
+        /// Canonical V3 keyspace identity.
+        #[prost(message, tag = "8")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NamespaceMeta {
     #[prost(uint32, tag = "1")]
     pub id: u32,
     #[prost(string, tag = "2")]
@@ -20,19 +52,127 @@ pub struct KeyspaceMeta {
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NamespaceRef {
+    #[prost(oneof = "namespace_ref::Namespace", tags = "1, 2")]
+    pub namespace: ::core::option::Option<namespace_ref::Namespace>,
+}
+/// Nested message and enum types in `NamespaceRef`.
+pub mod namespace_ref {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Namespace {
+        /// API V3 namespace id.
+        #[prost(uint32, tag = "1")]
+        NamespaceId(u32),
+        /// API V3 namespace name.
+        #[prost(string, tag = "2")]
+        NamespaceName(::prost::alloc::string::String),
+    }
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateNamespaceRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(map = "string, string", tag = "3")]
+    pub config: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateNamespaceResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub namespace: ::core::option::Option<NamespaceMeta>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LoadNamespaceRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub namespace: ::core::option::Option<NamespaceRef>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LoadNamespaceResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub namespace: ::core::option::Option<NamespaceMeta>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetAllNamespacesRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(uint32, tag = "2")]
+    pub start_id: u32,
+    #[prost(uint32, tag = "3")]
+    pub limit: u32,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetAllNamespacesResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
+    #[prost(message, repeated, tag = "2")]
+    pub namespaces: ::prost::alloc::vec::Vec<NamespaceMeta>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateNamespaceStateRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub namespace: ::core::option::Option<NamespaceRef>,
+    #[prost(enumeration = "KeyspaceState", tag = "3")]
+    pub state: i32,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateNamespaceStateResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub namespace: ::core::option::Option<NamespaceMeta>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LoadKeyspaceRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
     #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
+    /// V3 namespace-scoped name lookup. If unset, V3 name-only lookup should use LookupKeyspace and may return multiple keyspaces.
+    #[prost(message, optional, tag = "3")]
+    pub namespace: ::core::option::Option<NamespaceRef>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LoadKeyspaceByIdRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
-    #[prost(uint32, tag = "2")]
-    pub id: u32,
+    #[prost(oneof = "load_keyspace_by_id_request::Keyspace", tags = "2, 3")]
+    pub keyspace: ::core::option::Option<load_keyspace_by_id_request::Keyspace>,
+}
+/// Nested message and enum types in `LoadKeyspaceByIDRequest`.
+pub mod load_keyspace_by_id_request {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        Id(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "3")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -41,6 +181,22 @@ pub struct LoadKeyspaceResponse {
     pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
     #[prost(message, optional, tag = "2")]
     pub keyspace: ::core::option::Option<KeyspaceMeta>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LookupKeyspaceRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LookupKeyspaceResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
+    #[prost(message, repeated, tag = "2")]
+    pub keyspaces: ::prost::alloc::vec::Vec<KeyspaceMeta>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -61,10 +217,23 @@ pub struct WatchKeyspacesResponse {
 pub struct UpdateKeyspaceStateRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
-    #[prost(uint32, tag = "2")]
-    pub id: u32,
     #[prost(enumeration = "KeyspaceState", tag = "3")]
     pub state: i32,
+    #[prost(oneof = "update_keyspace_state_request::Keyspace", tags = "2, 4")]
+    pub keyspace: ::core::option::Option<update_keyspace_state_request::Keyspace>,
+}
+/// Nested message and enum types in `UpdateKeyspaceStateRequest`.
+pub mod update_keyspace_state_request {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        Id(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "4")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -79,10 +248,26 @@ pub struct UpdateKeyspaceStateResponse {
 pub struct GetAllKeyspacesRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
-    #[prost(uint32, tag = "2")]
-    pub start_id: u32,
     #[prost(uint32, tag = "3")]
     pub limit: u32,
+    /// V3 namespace-scoped pagination. Must be non-zero in V3.
+    #[prost(message, optional, tag = "4")]
+    pub namespace: ::core::option::Option<NamespaceRef>,
+    #[prost(oneof = "get_all_keyspaces_request::StartKeyspace", tags = "2, 5")]
+    pub start_keyspace: ::core::option::Option<get_all_keyspaces_request::StartKeyspace>,
+}
+/// Nested message and enum types in `GetAllKeyspacesRequest`.
+pub mod get_all_keyspaces_request {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum StartKeyspace {
+        /// V1/V2 compatibility pagination cursor. V3 should use namespace_id and start_keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        StartId(u32),
+        /// V3 pagination cursor within namespace_id.
+        #[prost(message, tag = "5")]
+        StartKeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -121,6 +306,194 @@ impl KeyspaceState {
             "ARCHIVED" => Some(Self::Archived),
             "TOMBSTONE" => Some(Self::Tombstone),
             _ => None,
+        }
+    }
+}
+/// Generated client implementations.
+pub mod namespace_client {
+    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    /// Namespace provides services to manage namespaces.
+    #[derive(Debug, Clone)]
+    pub struct NamespaceClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl NamespaceClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> NamespaceClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::BoxBody>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> NamespaceClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+            >>::Error: Into<StdError> + Send + Sync,
+        {
+            NamespaceClient::new(InterceptedService::new(inner, interceptor))
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        pub async fn create_namespace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateNamespaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Namespace/CreateNamespace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Namespace", "CreateNamespace"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn load_namespace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::LoadNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::LoadNamespaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Namespace/LoadNamespace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Namespace", "LoadNamespace"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_all_namespaces(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetAllNamespacesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetAllNamespacesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Namespace/GetAllNamespaces",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Namespace", "GetAllNamespaces"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn update_namespace_state(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateNamespaceStateRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpdateNamespaceStateResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Namespace/UpdateNamespaceState",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Namespace", "UpdateNamespaceState"));
+            self.inner.unary(req, path, codec).await
         }
     }
 }
@@ -233,6 +606,31 @@ pub mod keyspace_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("keyspacepb.Keyspace", "LoadKeyspace"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn lookup_keyspace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::LookupKeyspaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::LookupKeyspaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Keyspace/LookupKeyspace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Keyspace", "LookupKeyspace"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn load_keyspace_by_id(

@@ -129,7 +129,7 @@ pub use common::ProtoRegionError;
 #[doc(inline)]
 pub use common::Result;
 #[doc(inline)]
-pub use config::Config;
+pub use config::{Config, RequestOrigin, TxnProtocolVersion, TxnRequestPolicy};
 
 #[doc(inline)]
 pub use crate::backoff::Backoff;

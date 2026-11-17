@@ -93,6 +93,8 @@ pub struct MockPdClient {
     /// Optional observer for region cache invalidations.
     #[new(default)]
     invalidate_region_hook: Option<Arc<dyn Fn(RegionVerId) + Send + Sync + 'static>>,
+    #[new(default)]
+    reload_store_hook: Option<Arc<dyn Fn(u64) -> Result<metapb::Store> + Send + Sync + 'static>>,
 }
 
 #[async_trait]
@@ -118,6 +120,14 @@ impl KvConnect for MockKvConnect {
 }
 
 impl MockPdClient {
+    pub fn with_reload_store_hook<F>(mut self, hook: F) -> Self
+    where
+        F: Fn(u64) -> Result<metapb::Store> + Send + Sync + 'static,
+    {
+        self.reload_store_hook = Some(Arc::new(hook));
+        self
+    }
+
     pub fn default() -> MockPdClient {
         MockPdClient::new(MockKvClient::default())
     }
@@ -217,6 +227,13 @@ impl MockPdClient {
 #[async_trait]
 impl PdClient for MockPdClient {
     type KvClient = MockKvClient;
+
+    async fn reload_store(&self, id: u64) -> Result<metapb::Store> {
+        match &self.reload_store_hook {
+            Some(hook) => hook(id),
+            None => panic!("unexpected store metadata reload"),
+        }
+    }
 
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
         if let Some(hook) = &self.map_region_to_store_hook {

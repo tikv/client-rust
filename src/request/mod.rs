@@ -22,6 +22,7 @@ pub use self::plan::ProcessResponse;
 pub use self::plan::ResolveLock;
 pub use self::plan::ResponseWithShard;
 pub use self::plan::RetryableMultiRegion;
+pub use self::plan::TxnProtocolCompatibility;
 pub use self::plan_builder::PlanBuilder;
 pub use self::plan_builder::SingleKey;
 pub use self::shard::Batchable;
@@ -34,7 +35,7 @@ use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::backoff::OPTIMISTIC_BACKOFF;
 use crate::backoff::PESSIMISTIC_BACKOFF;
 use crate::store::Request;
-use crate::store::{HasKeyErrors, Store};
+use crate::store::{HasKeyErrors, HasRegionError, Store};
 use crate::transaction::HasLocks;
 
 mod keyspace;
@@ -46,7 +47,7 @@ mod shard;
 #[async_trait]
 pub trait KvRequest: Request + Sized + Clone + Sync + Send + 'static {
     /// The expected response to the request.
-    type Response: HasKeyErrors + HasLocks + Clone + Send + 'static;
+    type Response: HasKeyErrors + HasRegionError + HasLocks + Clone + Send + 'static;
 }
 
 /// For requests or plans which are handled at TiKV store (other than region) level.
@@ -116,8 +117,10 @@ mod test {
 
     #[tokio::test]
     async fn test_region_retry() {
-        #[derive(Debug, Clone)]
-        struct MockRpcResponse;
+        #[derive(Debug, Clone, Default)]
+        struct MockRpcResponse {
+            region_error: crate::proto::errorpb::Error,
+        }
 
         impl HasKeyErrors for MockRpcResponse {
             fn key_errors(&mut self) -> Option<Vec<Error>> {
@@ -126,8 +129,12 @@ mod test {
         }
 
         impl HasRegionError for MockRpcResponse {
+            fn region_error_ref(&self) -> Option<&crate::proto::errorpb::Error> {
+                Some(&self.region_error)
+            }
+
             fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
-                Some(crate::proto::errorpb::Error::default())
+                Some(self.region_error.clone())
             }
         }
 
@@ -135,13 +142,17 @@ mod test {
 
         #[derive(Clone)]
         struct MockKvRequest {
+            context: kvrpcpb::Context,
             test_invoking_count: Arc<AtomicUsize>,
         }
 
         #[async_trait]
         impl Request for MockKvRequest {
+            fn context_mut(&mut self) -> &mut kvrpcpb::Context {
+                &mut self.context
+            }
             async fn dispatch(&self, _: &TikvClient<Channel>, _: Duration) -> Result<Box<dyn Any>> {
-                Ok(Box::new(MockRpcResponse {}))
+                Ok(Box::new(MockRpcResponse::default()))
             }
 
             fn label(&self) -> &'static str {
@@ -193,11 +204,12 @@ mod test {
         let invoking_count = Arc::new(AtomicUsize::new(0));
 
         let request = MockKvRequest {
+            context: kvrpcpb::Context::default(),
             test_invoking_count: invoking_count.clone(),
         };
 
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
-            |_: &dyn Any| Ok(Box::new(MockRpcResponse) as Box<dyn Any>),
+            |_: &dyn Any| Ok(Box::new(MockRpcResponse::default()) as Box<dyn Any>),
         )));
 
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, request)
@@ -222,6 +234,10 @@ mod test {
         }
 
         impl HasRegionError for MockOkResponse {
+            fn region_error_ref(&self) -> Option<&crate::proto::errorpb::Error> {
+                None
+            }
+
             fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
                 None
             }
@@ -335,11 +351,15 @@ mod test {
 
         #[derive(Clone)]
         struct MockKvRequest {
+            context: kvrpcpb::Context,
             shard_invoking_count: Arc<AtomicUsize>,
         }
 
         #[async_trait]
         impl Request for MockKvRequest {
+            fn context_mut(&mut self) -> &mut kvrpcpb::Context {
+                &mut self.context
+            }
             async fn dispatch(&self, _: &TikvClient<Channel>, _: Duration) -> Result<Box<dyn Any>> {
                 Ok(Box::new(MockOkResponse))
             }
@@ -408,6 +428,7 @@ mod test {
         });
 
         let request = MockKvRequest {
+            context: kvrpcpb::Context::default(),
             shard_invoking_count: shard_invoking_count.clone(),
         };
 
@@ -530,6 +551,10 @@ mod test {
         }
 
         impl HasRegionError for MockOkResponse {
+            fn region_error_ref(&self) -> Option<&crate::proto::errorpb::Error> {
+                None
+            }
+
             fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
                 None
             }
@@ -617,10 +642,15 @@ mod test {
         }
 
         #[derive(Clone)]
-        struct MockKvRequest;
+        struct MockKvRequest {
+            context: kvrpcpb::Context,
+        }
 
         #[async_trait]
         impl Request for MockKvRequest {
+            fn context_mut(&mut self) -> &mut kvrpcpb::Context {
+                &mut self.context
+            }
             async fn dispatch(&self, _: &TikvClient<Channel>, _: Duration) -> Result<Box<dyn Any>> {
                 Ok(Box::new(MockOkResponse))
             }
@@ -683,10 +713,15 @@ mod test {
             invalidate_store_count: AtomicUsize::new(0),
         });
 
-        let plan =
-            crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, MockKvRequest)
-                .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 1))
-                .plan();
+        let plan = crate::request::PlanBuilder::new(
+            pd_client.clone(),
+            Keyspace::Disable,
+            MockKvRequest {
+                context: kvrpcpb::Context::default(),
+            },
+        )
+        .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 1))
+        .plan();
         let response = plan.execute().await;
         assert!(response.is_ok());
         assert_eq!(pd_client.invalidate_region_count.load(Ordering::SeqCst), 1);
