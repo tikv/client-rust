@@ -620,6 +620,10 @@ mod tests {
             }
         }
 
+        async fn prev_region_for_key(&self, _key: &Key) -> crate::Result<RegionWithLeader> {
+            Err(crate::Error::Unimplemented)
+        }
+
         async fn region_for_id(&self, id: RegionId) -> crate::Result<RegionWithLeader> {
             match id {
                 10 => Ok(Self::unsplit_region()),

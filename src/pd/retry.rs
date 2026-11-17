@@ -37,6 +37,8 @@ pub trait RetryClientTrait {
     // It does not know about encoding. Caller should take care of it.
     async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader>;
 
+    async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader>;
+
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader>;
 
     async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store>;
@@ -151,6 +153,20 @@ impl RetryClientTrait for RetryClient<Cluster> {
             async {
                 cluster
                     .get_region(key.clone(), self.timeout)
+                    .await
+                    .and_then(|resp| {
+                        region_from_response(resp, || Error::RegionForKeyNotFound { key })
+                    })
+            }
+        })
+    }
+
+    async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
+        retry_mut!(self, "get_prev_region", |cluster| {
+            let key = key.clone();
+            async {
+                cluster
+                    .get_prev_region(key.clone(), self.timeout)
                     .await
                     .and_then(|resp| {
                         region_from_response(resp, || Error::RegionForKeyNotFound { key })
