@@ -1,0 +1,15 @@
+[package]
+name = "tikv-client-rust-c"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "tikv_client_rust_c"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+futures = "0.3"
+prometheus = { version = "0.13", default-features = false }
+tikv-client = { path = "../..", default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
