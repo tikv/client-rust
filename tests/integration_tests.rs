@@ -1623,3 +1623,91 @@ async fn txn_unsafe_destroy_range() -> Result<()> {
 
     Ok(())
 }
+
+/// The probe leaves the lock a crashed client would: a secondary whose primary was never
+/// written. Once its TTL has passed, a reader resolves it as rolled back.
+#[cfg(feature = "test-utils")]
+#[tokio::test]
+#[serial]
+async fn txn_probe_leaves_an_orphaned_secondary_lock() -> Result<()> {
+    init().await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
+    let primary = "probe-orphan/a-primary".to_owned();
+    let secondary = "probe-orphan/z-secondary".to_owned();
+
+    let mut txn = client
+        .begin_with_options(
+            TransactionOptions::new_optimistic().drop_check(tikv_client::CheckLevel::None),
+        )
+        .await?;
+    txn.put(secondary.clone(), "orphan").await?;
+    let mut probe = txn.probe();
+    probe.set_primary_key(primary.clone()).set_lock_ttl(1000);
+    probe.prewrite([secondary.clone()]).await?;
+    drop(txn);
+
+    let locks = client
+        .scan_locks(
+            &client.current_timestamp().await?,
+            "probe-orphan/".to_owned()..,
+            16,
+        )
+        .await?;
+    assert_eq!(locks.len(), 1, "{locks:?}");
+    assert_eq!(locks[0].key, secondary.clone().into_bytes());
+    assert_eq!(locks[0].primary_lock, primary.into_bytes());
+
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    let mut reader = client.begin_optimistic().await?;
+    assert_eq!(reader.get(secondary).await?, None);
+    reader.rollback().await?;
+    Ok(())
+}
+
+/// With the primary committed and the secondary still locked, a reader must roll the
+/// secondary forward.
+#[cfg(feature = "test-utils")]
+#[tokio::test]
+#[serial]
+async fn txn_probe_commit_primary_leaves_the_secondary_to_roll_forward() -> Result<()> {
+    init().await?;
+    let client =
+        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
+            .await?;
+    let primary = "probe-forward/a-primary".to_owned();
+    let secondary = "probe-forward/z-secondary".to_owned();
+
+    let mut txn = client
+        .begin_with_options(
+            TransactionOptions::new_optimistic().drop_check(tikv_client::CheckLevel::None),
+        )
+        .await?;
+    txn.put(primary.clone(), "p").await?;
+    txn.put(secondary.clone(), "s").await?;
+    let mut probe = txn.probe();
+    probe.set_primary_key(primary.clone());
+    probe.prewrite([primary.clone(), secondary.clone()]).await?;
+    probe.commit_primary().await?;
+    drop(txn);
+
+    let locks = client
+        .scan_locks(
+            &client.current_timestamp().await?,
+            "probe-forward/".to_owned()..,
+            16,
+        )
+        .await?;
+    assert_eq!(
+        locks.len(),
+        1,
+        "only the secondary is still locked: {locks:?}"
+    );
+    assert_eq!(locks[0].key, secondary.clone().into_bytes());
+
+    let mut reader = client.begin_optimistic().await?;
+    assert_eq!(reader.get(secondary).await?, Some(b"s".to_vec()));
+    reader.rollback().await?;
+    Ok(())
+}

@@ -5,11 +5,11 @@ export RUSTFLAGS=-Dwarnings
 export PD_ADDRS     ?= 127.0.0.1:2379
 export MULTI_REGION ?= 1
 
-ALL_FEATURES := integration-tests
+ALL_FEATURES := integration-tests test-utils
 
 NEXTEST_ARGS := --config-file $(shell pwd)/config/nextest.toml
 
-INTEGRATION_TEST_ARGS := --features "integration-tests" --test-threads 1
+INTEGRATION_TEST_ARGS := --features "integration-tests test-utils" --test-threads 1
 
 RUN_INTEGRATION_TEST := cargo nextest run ${NEXTEST_ARGS} --all ${INTEGRATION_TEST_ARGS}
 
@@ -24,7 +24,7 @@ check: generate
 	cargo clippy --all-targets --features "${ALL_FEATURES}" -- -D clippy::all
 
 unit-test: generate
-	cargo nextest run ${NEXTEST_ARGS} --all --no-default-features
+	cargo nextest run ${NEXTEST_ARGS} --all --no-default-features --features test-utils
 
 integration-test: integration-test-txn integration-test-raw
 
